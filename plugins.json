@@ -36,5 +36,28 @@
         "description": "Lorem ipsum",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/ExampleProvider.cs3",
         "name": "ExampleProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 23746,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "KatanimeProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/KatanimeProvider.cs3",
+        "name": "KatanimeProvider"
     }
 ]
