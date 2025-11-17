@@ -342,7 +342,7 @@ class KatanimeProvider : MainAPI() {
 
                 val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
 
-                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
+                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
                 val finalKey = derivedKeyAndIv.first
 
                 val finalIvSpec = IvParameterSpec(iv)
