@@ -18,6 +18,13 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import kotlin.collections.ArrayList
 import kotlinx.coroutines.*
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 
 class KatanimeProvider : MainAPI() {
     override var mainUrl = "https://katanime.net"
@@ -280,16 +287,21 @@ class KatanimeProvider : MainAPI() {
         val tokenCsrf = doc.selectFirst("meta[name='csrf-token']")?.attr("content") ?: ""
         val dataId = doc.selectFirst("h1.comics-title.ajp")?.attr("data-id")
 
+        // *** MODIFICACIÓN CLAVE: Generar la nueva clave dinámica ***
+        val dynamicKey = generateDynamicKey(dataId ?: "")
+        // Nota: generateDynamicKey debe manejar el caso de dataId nulo o vacío.
+
         if (!tokenCsrf.isNullOrBlank() && !dataId.isNullOrBlank()) {
             try {
-                val tokenPlus = "$dataId-temp-token"
+                // 1. Usar la clave dinámica como token_plus para el POST
+                val tokenPlus = dynamicKey
 
                 app.post(
                     episodeUrl,
                     data = mapOf("_token" to tokenCsrf, "token_plus" to tokenPlus),
                     cookies = response.cookies
                 )
-                Log.d("KatanimeProvider", "POST de autenticación enviado.")
+                Log.d("KatanimeProvider", "POST de autenticación enviado con clave dinámica.")
 
             } catch (e: Exception) {
                 Log.e("KatanimeProvider", "Fallo al ejecutar POST de autenticación: ${e.message}")
@@ -312,7 +324,7 @@ class KatanimeProvider : MainAPI() {
 
                 if (playerPayload.isNotBlank() && allowedPlayers.any { playerName.contains(it, ignoreCase = true) }) {
                     try {
-                        val iframeUrl = decryptPlayerUrl(playerPayload, tokenCsrf)
+                        val iframeUrl = decryptPlayerUrl(playerPayload, dynamicKey)
                         Log.d("KatanimeProvider", "Procesando reproductor: $playerName")
                         Log.d("KatanimeProvider", "URL de Iframe desencriptada: $iframeUrl")
 
@@ -381,6 +393,19 @@ class KatanimeProvider : MainAPI() {
         }
 
         return result
+    }
+
+    private fun generateDynamicKey(dataId: String): String {
+        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+
+        calendar.add(Calendar.SECOND, 10)
+
+        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
+        formatter.timeZone = TimeZone.getTimeZone("UTC")
+
+        val formattedTime = formatter.format(calendar.time)
+
+        return dataId + "_" + formattedTime
     }
 
     private fun deriveKeyAndIv(password: ByteArray, salt: ByteArray, keyLength: Int, ivLength: Int): Pair<ByteArray, ByteArray> {
