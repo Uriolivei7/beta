@@ -287,13 +287,10 @@ class KatanimeProvider : MainAPI() {
         val tokenCsrf = doc.selectFirst("meta[name='csrf-token']")?.attr("content") ?: ""
         val dataId = doc.selectFirst("h1.comics-title.ajp")?.attr("data-id")
 
-        // *** MODIFICACIÓN CLAVE: Generar la nueva clave dinámica ***
         val dynamicKey = generateDynamicKey(dataId ?: "")
-        // Nota: generateDynamicKey debe manejar el caso de dataId nulo o vacío.
 
         if (!tokenCsrf.isNullOrBlank() && !dataId.isNullOrBlank()) {
             try {
-                // 1. Usar la clave dinámica como token_plus para el POST
                 val tokenPlus = dynamicKey
 
                 app.post(
@@ -324,7 +321,7 @@ class KatanimeProvider : MainAPI() {
 
                 if (playerPayload.isNotBlank() && allowedPlayers.any { playerName.contains(it, ignoreCase = true) }) {
                     try {
-                        val iframeUrl = decryptPlayerUrl(playerPayload, dynamicKey)
+                        val iframeUrl = decryptPlayerUrl(playerPayload, tokenCsrf)
                         Log.d("KatanimeProvider", "Procesando reproductor: $playerName")
                         Log.d("KatanimeProvider", "URL de Iframe desencriptada: $iframeUrl")
 
@@ -371,9 +368,10 @@ class KatanimeProvider : MainAPI() {
                 val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
                 val encryptedValue = encryptedValueB64.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
 
+                val password = csrfToken.toByteArray(Charsets.UTF_8)
                 val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
 
-                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
+                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
                 val finalKey = derivedKeyAndIv.first
 
                 val finalIvSpec = IvParameterSpec(iv)
@@ -384,7 +382,8 @@ class KatanimeProvider : MainAPI() {
 
                 val decryptedBytes = cipher.doFinal(encryptedValue)
 
-                return decryptedBytes.toString(Charsets.UTF_8)
+                val decoded = decryptedBytes.toString(Charsets.UTF_8)
+                return decoded.trim().replace("\u0000", "")
             }
 
         } catch (e: Exception) {
