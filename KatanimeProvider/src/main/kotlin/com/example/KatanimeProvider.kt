@@ -335,34 +335,34 @@ class KatanimeProvider : MainAPI() {
 
             if (ivValue == null || encryptedValueB64 == null) {
                 Log.e("KatanimeProvider", "Desencriptación: Fallo al obtener IV o valor cifrado. JSON: $json")
-                return null
+                null
+            } else {
+                val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
+                val encryptedValue = encryptedValueB64.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
+
+                val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
+
+                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
+                val finalKey = derivedKeyAndIv.first
+
+                val finalIvSpec = IvParameterSpec(iv)
+                val finalKeySpec = SecretKeySpec(finalKey, "AES")
+
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+                cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
+
+                val decryptedBytes = cipher.doFinal(encryptedValue)
+
+                decryptedBytes.toString(Charsets.UTF_8)
             }
-
-            val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
-            val encryptedValue = encryptedValueB64.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
-
-            val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
-
-            val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
-            val finalKey = derivedKeyAndIv.first
-
-            val finalIvSpec = IvParameterSpec(iv)
-            val finalKeySpec = SecretKeySpec(finalKey, "AES")
-
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
-
-            val decryptedBytes = cipher.doFinal(encryptedValue)
-
-            decryptedBytes.toString(Charsets.UTF_8)
 
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Error al desencriptar el payload: ${e.message}")
             null
         }
+
         return result
     }
-
 
     private fun deriveKeyAndIv(password: ByteArray, salt: ByteArray, keyLength: Int, ivLength: Int): Pair<ByteArray, ByteArray> {
         val keyAndIvLength = keyLength + ivLength
