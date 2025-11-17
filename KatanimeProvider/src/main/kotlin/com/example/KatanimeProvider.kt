@@ -4,18 +4,6 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.MainAPI
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Element
-import kotlin.collections.ArrayList
-import kotlinx.coroutines.delay
-import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.ShowStatus
-import com.lagradost.cloudstream3.HomePageList
-import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Base64 as AndroidBase64
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -24,20 +12,21 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import okhttp3.FormBody
 import javax.crypto.Cipher.DECRYPT_MODE
-import android.net.Uri
 import java.security.MessageDigest
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
+import kotlin.collections.ArrayList
+import kotlinx.coroutines.*
 
 class KatanimeProvider : MainAPI() {
     override var mainUrl = "https://katanime.net"
-    override var name = "Katanime"
+    override var name = "KatAnime"
     override val supportedTypes = setOf(
         TvType.Anime,
     )
 
     override var lang = "mx"
-
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
@@ -283,21 +272,24 @@ class KatanimeProvider : MainAPI() {
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    ): Boolean = coroutineScope {
         val episodeUrl = tryParseJson<EpisodeLoadData>(data)?.episodeUrl ?: data
         val response = app.get(episodeUrl)
         val doc = response.document
 
         val players = doc.select("ul.ul-drop.dropcaps li a.play-video.cap")
-        var linksFound = false
-
         val allowedPlayers = listOf("FileMoon", "Mp4Upload", "Mega", "StreamW", "Streamtape", "LuluStream", "Hexupload", "VidGuard")
 
-        if (players.isNotEmpty()) {
+        if (players.isEmpty()) {
+            Log.d("KatanimeProvider", "No se encontraron reproductores.")
+            return@coroutineScope false
+        }
 
-            players.forEach { player ->
+        val jobs = players.map { player ->
+            async {
                 val playerName = player.attr("data-player-name")
                 val playerPayload = player.attr("data-player")
+                var success = false
 
                 if (playerPayload.isNotBlank() && allowedPlayers.any { playerName.contains(it, ignoreCase = true) }) {
                     try {
@@ -307,8 +299,8 @@ class KatanimeProvider : MainAPI() {
 
                         if (!iframeUrl.isNullOrBlank()) {
                             if (loadExtractor(iframeUrl, episodeUrl, subtitleCallback, callback)) {
-                                linksFound = true
                                 Log.d("KatanimeProvider", "Enlaces encontrados por loadExtractor para $playerName")
+                                success = true
                             }
                         }
 
@@ -316,11 +308,14 @@ class KatanimeProvider : MainAPI() {
                         Log.e("KatanimeProvider", "Error al procesar $playerName: ${e.message}")
                     }
                 }
+                success
             }
         }
 
+        val linksFound = jobs.awaitAll().any { it }
+
         Log.d("KatanimeProvider", "Finalizando loadLinks. ¿Se encontraron enlaces? $linksFound")
-        return linksFound
+        return@coroutineScope linksFound
     }
 
     private fun decryptPlayerUrl(encodedPayload: String): String? {
@@ -331,19 +326,16 @@ class KatanimeProvider : MainAPI() {
                 @JsonProperty("s") val salt: String? = null
             )
 
-            // Decodificar el payload de Base64 para obtener el JSON.
-            val json = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT).toString(Charsets.UTF_8)
-            val playerData = tryParseJson<PlayerData>(json)
+            val playerData = tryParseJson<PlayerData>(encodedPayload)
 
             val password = "hanabi".toByteArray(Charsets.UTF_8)
 
-            // Corregido: La sal, el IV y el valor cifrado se decodifican desde Base64.
             val salt = playerData?.salt?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
             val iv = playerData?.iv?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
             val encryptedValue = playerData?.value?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
 
             if (salt == null || iv == null || encryptedValue == null) {
-                Log.e("KatanimeProvider", "Datos de desencriptación incompletos (Sal, IV o valor nulo)")
+                Log.e("KatanimeProvider", "Datos de desencriptación incompletos (Sal, IV o valor nulo). Payload: ${encodedPayload.take(100)}")
                 return null
             }
 
