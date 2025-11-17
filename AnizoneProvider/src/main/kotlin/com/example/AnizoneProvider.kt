@@ -117,13 +117,13 @@ class AnizoneProvider : MainAPI() {
             referer = "$mainUrl/anime"
         )
 
-        val body = req.body
+        val bodyString = req.text
 
-        if (body == null) {
-            throw Exception("Respuesta Livewire nula o fallida (HTTP ${req.code}).")
+        if (bodyString.isBlank()) {
+            throw Exception("Respuesta Livewire vacía o en blanco (HTTP ${req.code}).")
         }
 
-        val responseJson = JSONObject(body as String)
+        val responseJson = JSONObject(bodyString)
 
         if (remember) {
             wireCreds["wireSnapshot"] = getSnapshot(responseJson)
