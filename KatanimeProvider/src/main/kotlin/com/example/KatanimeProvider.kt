@@ -326,7 +326,8 @@ class KatanimeProvider : MainAPI() {
                 @JsonProperty("s") val salt: String? = null
             )
 
-            val playerData = tryParseJson<PlayerData>(encodedPayload)
+            val json = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT).toString(Charsets.UTF_8)
+            val playerData = tryParseJson<PlayerData>(json)
 
             val password = "hanabi".toByteArray(Charsets.UTF_8)
 
@@ -335,7 +336,8 @@ class KatanimeProvider : MainAPI() {
             val encryptedValue = playerData?.value?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
 
             if (salt == null || iv == null || encryptedValue == null) {
-                Log.e("KatanimeProvider", "Datos de desencriptación incompletos (Sal, IV o valor nulo). Payload: ${encodedPayload.take(100)}")
+                Log.e("KatanimeProvider", "Desencriptación: Fallo al parsear componentes (IV, Salt, CT). JSON: $json")
+                Log.e("KatanimeProvider", "Desencriptación: Payload inicial: ${encodedPayload.take(100)}")
                 return null
             }
 
@@ -354,7 +356,7 @@ class KatanimeProvider : MainAPI() {
 
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Error al desencriptar el payload: ${e.message}")
-            null
+            return null
         }
     }
 
