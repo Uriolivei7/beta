@@ -351,14 +351,18 @@ class KatanimeProvider : MainAPI() {
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         return try {
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
-            data class PlayerData(@JsonProperty("iv") val iv: String?, @JsonProperty("value") val value: String?)
+            data class PlayerData(
+                @JsonProperty("iv") val iv: String?,
+                @JsonProperty("value") val value: String?
+            )
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
             val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
             val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
-            val key = (csrfToken + "0123456789abcdef").toByteArray(Charsets.UTF_8)
-                .copyOf(32)
+            val realKey = csrfToken.reversed().toByteArray(Charsets.UTF_8)
+            val key = ByteArray(32)
+            System.arraycopy(realKey, 0, key, 0, realKey.size.coerceAtMost(32))
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
@@ -366,7 +370,7 @@ class KatanimeProvider : MainAPI() {
 
             String(decrypted, Charsets.UTF_8).trim()
         } catch (e: Exception) {
-            Log.e("KatanimeProvider", "Fallo desencriptado: ${e.message}", e)
+            Log.e("KatanimeProvider", "Fallo al desencriptar player: ${e.message}", e)
             null
         }
     }
