@@ -277,7 +277,7 @@ class KatanimeProvider : MainAPI() {
         val response = app.get(episodeUrl)
         val doc = response.document
 
-        val tokenCsrf = doc.selectFirst("meta[name='csrf-token']")?.attr("content")
+        val tokenCsrf = doc.selectFirst("meta[name='csrf-token']")?.attr("content") ?: ""
         val dataId = doc.selectFirst("h1.comics-title.ajp")?.attr("data-id")
 
         if (!tokenCsrf.isNullOrBlank() && !dataId.isNullOrBlank()) {
@@ -312,7 +312,7 @@ class KatanimeProvider : MainAPI() {
 
                 if (playerPayload.isNotBlank() && allowedPlayers.any { playerName.contains(it, ignoreCase = true) }) {
                     try {
-                        val iframeUrl = decryptPlayerUrl(playerPayload)
+                        val iframeUrl = decryptPlayerUrl(playerPayload, tokenCsrf)
                         Log.d("KatanimeProvider", "Procesando reproductor: $playerName")
                         Log.d("KatanimeProvider", "URL de Iframe desencriptada: $iframeUrl")
 
@@ -337,7 +337,7 @@ class KatanimeProvider : MainAPI() {
         return@coroutineScope linksFound
     }
 
-    private fun decryptPlayerUrl(encodedPayload: String): String? {
+    private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         val result = try {
             data class PlayerData(
                 @JsonProperty("iv") val iv: String? = null,
@@ -347,7 +347,7 @@ class KatanimeProvider : MainAPI() {
             val json = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT).toString(Charsets.UTF_8)
             val playerData = tryParseJson<PlayerData>(json)
 
-            val password = "kawaidesu".toByteArray(Charsets.UTF_8)
+            val password = csrfToken.toByteArray(Charsets.UTF_8)
 
             val ivValue = playerData?.iv
             val encryptedValueB64 = playerData?.value
