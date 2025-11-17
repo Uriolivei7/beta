@@ -45,25 +45,22 @@ class AnizoneProvider : MainAPI() {
     override val hasMainPage = true
     override val hasQuickSearch = true
     override val hasDownloadSupport = true
-
     override val mainPage = mainPageOf(
-        "a-2" to "Últimos Animes",
-        "a-4" to "Últimas Películas",
-        "a-6" to "Recientes",
-        "e-list" to "Últimos Episodios"
+        "2" to "Animes",
+        "4" to "Películas",
+        "6" to "Más Contenido"
     )
-
     private var cookies = mutableMapOf<String, String>()
     private var wireData = mutableMapOf(
         "wireSnapshot" to "",
         "token" to ""
     )
-
     private suspend fun initializeLiveWire(): Boolean {
         if (!wireData["wireSnapshot"].isNullOrBlank()) return true
 
         try {
             val initReq = app.get("$mainUrl/anime")
+
             val doc = initReq.document
 
             val csrfToken = doc.select("script[data-csrf]").attr("data-csrf")
@@ -78,6 +75,7 @@ class AnizoneProvider : MainAPI() {
             wireData["token"] = csrfToken
             wireData["wireSnapshot"] = snapshot
 
+            sortAnimeLatest()
             return true
 
         } catch (e: Exception) {
@@ -85,6 +83,15 @@ class AnizoneProvider : MainAPI() {
             return false
         }
     }
+
+    private suspend fun sortAnimeLatest() {
+        try {
+            liveWireBuilder(mapOf("sort" to "release-desc"), mutableListOf(), this.cookies, this.wireData, true)
+        } catch (e: Exception) {
+            Log.e("AniZone Init", "Error al ejecutar sortAnimeLatest (Livewire): ${e.message}")
+        }
+    }
+
 
     private fun getSnapshot(doc : Document) : String {
         return doc.select("main div[wire:snapshot]")
@@ -124,8 +131,7 @@ class AnizoneProvider : MainAPI() {
             url = "$mainUrl/livewire/update",
             requestBody = requestBody,
             headers = mapOf(
-                "X-CSRF-TOKEN" to wireCreds["token"]!!,
-                "X-Requested-With" to "XMLHttpRequest"
+                "X-CSRF-TOKEN" to wireCreds["token"]!!
             ),
             cookies = biscuit,
             referer = "$mainUrl/anime"
@@ -139,7 +145,8 @@ class AnizoneProvider : MainAPI() {
 
         if (bodyString.trim().startsWith("<!DOCTYPE", ignoreCase = true) ||
             bodyString.trim().startsWith("<html", ignoreCase = true)) {
-            Log.e("AniZone LiveWire ERROR", "Respuesta inesperada: Recibido HTML/<!DOCTYPE en lugar de JSON. El sitio podría estar bloqueando el acceso o mostrando un CAPTCHA/error.")
+            Log.e("AniZone", "Respuesta inesperada: Recibido HTML/<!DOCTYPE en lugar de JSON. El sitio podría estar bloqueando el acceso o mostrando un CAPTCHA/error.")
+
             throw Exception("Livewire no devolvió JSON. Código de estado HTTP: ${req.code}. URL: ${req.url}")
         }
 
@@ -153,67 +160,8 @@ class AnizoneProvider : MainAPI() {
         return responseJson
     }
 
-    private suspend fun getEpisodePage(page: Int, name: String): HomePageResponse {
-        val episodeUrl = "$mainUrl/episode"
-        val initReq = app.get(episodeUrl)
-        var currentDoc = initReq.document
-        val cookies = initReq.cookies.toMutableMap()
-
-        val wireCreds = mutableMapOf(
-            "wireSnapshot" to getSnapshot(currentDoc),
-            "token" to currentDoc.select("script[data-csrf]").attr("data-csrf")
-        )
-
-        if (wireCreds["token"].isNullOrBlank() || wireCreds["wireSnapshot"].isNullOrBlank()) {
-            Log.e("AniZone Episode", "Fallo al inicializar LiveWire para /episode.")
-            return newHomePageResponse(HomePageList(name, emptyList(), isHorizontalImages = true), hasNext = false)
-        }
-
-        try {
-            for (i in 1 until page) {
-                if (currentDoc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") == null) break
-
-                val responseJson = liveWireBuilder(
-                    mutableMapOf(),
-                    mutableListOf(mapOf("path" to "", "method" to "loadMore", "params" to listOf<String>())),
-                    cookies,
-                    wireCreds,
-                    true
-                )
-                currentDoc = getHtmlFromWire(responseJson)
-            }
-        } catch (e: Exception) {
-            Log.e("AniZone Episode", "Fallo al paginar LiveWire para episodios: ${e.message}")
-        }
-
-        val home: List<Element> = currentDoc.select("li[x-data]")
-
-        return newHomePageResponse(
-            HomePageList(name, home.mapNotNull { toEpisodeResult(it) }, isHorizontalImages = true),
-            hasNext = (currentDoc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") != null)
-        )
-    }
-
-    private fun toEpisodeResult(post: Element): SearchResponse? {
-        val animeLink = post.selectFirst("a[href*=/anime/]") ?: return null
-
-        val animeUrl = animeLink.attr("href").substringBeforeLast("/")
-
-        val animeTitle = animeLink.attr("title") ?: animeLink.text() ?: "Anime Desconocido"
-
-        val posterUrl = post.selectFirst("img")?.attr("src")
-
-        return newMovieSearchResponse(animeTitle, animeUrl, TvType.Anime) {
-            this.posterUrl = posterUrl
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest
     ): HomePageResponse {
-
-        if (request.data.startsWith("e-")) {
-            return getEpisodePage(page, request.name)
-        }
 
         val initialized = initializeLiveWire()
         if (!initialized) {
@@ -224,10 +172,8 @@ class AnizoneProvider : MainAPI() {
             )
         }
         try {
-            val typeKey = request.data.substringAfter("a-")
-
             var responseJson = liveWireBuilder(
-                mapOf("type" to typeKey, "sort" to "new"), mutableListOf(), this.cookies, this.wireData, true
+                mapOf("type" to request.data), mutableListOf(), this.cookies, this.wireData, true
             )
             var doc = getHtmlFromWire(responseJson)
 
@@ -264,6 +210,7 @@ class AnizoneProvider : MainAPI() {
         return newMovieSearchResponse(title, url, TvType.Movie) {
             this.posterUrl = post.selectFirst("img")
                 ?.attr("src")
+
         }
     }
 
@@ -271,17 +218,11 @@ class AnizoneProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
 
-        val initialized = initializeLiveWire()
-        if (!initialized) return emptyList()
+        initializeLiveWire()
 
-        try {
-            val doc = getHtmlFromWire(liveWireBuilder(mapOf("search" to query),mutableListOf(), this.cookies,
-                this.wireData,false))
-            return doc.select("div[wire:key]").mapNotNull { toResult(it) }
-        } catch (e: Exception) {
-            Log.e("AniZone Search", "Error en la búsqueda LiveWire: ${e.message}")
-            return emptyList()
-        }
+        val doc = getHtmlFromWire(liveWireBuilder(mapOf("search" to query),mutableListOf(), this.cookies,
+            this.wireData,false))
+        return doc.select("div[wire:key]").mapNotNull { toResult(it) }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -289,7 +230,6 @@ class AnizoneProvider : MainAPI() {
             .method(Connection.Method.GET).execute()
         var doc = Jsoup.parse(r.body())
         val cookie = r.cookies()
-
         val wireData = mutableMapOf(
             "wireSnapshot" to getSnapshot(doc=r.parse()),
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
@@ -340,11 +280,14 @@ class AnizoneProvider : MainAPI() {
                     ?.replace(Regex("\\s+"), "")
                     ?.ifEmpty { null }
                     ?.let { dateText ->
+                        Log.e("AniZone", "Fecha encontrada para ${this.name}: $dateText")
+
                         try {
                             val parsedTime = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).parse(dateText)?.time
+                            Log.e("AniZone", "Parseo exitoso para ${this.name}: $parsedTime")
                             parsedTime
                         } catch (e: Exception) {
-                            Log.e("AniZone", "FALLO de parseo para fecha '$dateText': ${e.message}")
+                            Log.e("AniZone", "FALLO de parseo para ${this.name} con texto '$dateText': ${e.message}")
                             null
                         }
                     } ?: 0L
