@@ -371,13 +371,13 @@ class KatanimeProvider : MainAPI() {
                 val password = csrfToken.toByteArray(Charsets.UTF_8)
                 val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
 
-                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
+                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
                 val finalKey = derivedKeyAndIv.first
 
                 val finalIvSpec = IvParameterSpec(iv)
                 val finalKeySpec = SecretKeySpec(finalKey, "AES")
 
-                val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
 
                 cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
 
