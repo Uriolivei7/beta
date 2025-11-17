@@ -277,6 +277,25 @@ class KatanimeProvider : MainAPI() {
         val response = app.get(episodeUrl)
         val doc = response.document
 
+        val tokenCsrf = doc.selectFirst("meta[name='csrf-token']")?.attr("content")
+        val dataId = doc.selectFirst("h1.comics-title.ajp")?.attr("data-id")
+
+        if (!tokenCsrf.isNullOrBlank() && !dataId.isNullOrBlank()) {
+            try {
+                val tokenPlus = "$dataId-temp-token"
+
+                app.post(
+                    episodeUrl,
+                    data = mapOf("_token" to tokenCsrf, "token_plus" to tokenPlus),
+                    cookies = response.cookies
+                )
+                Log.d("KatanimeProvider", "POST de autenticación enviado.")
+
+            } catch (e: Exception) {
+                Log.e("KatanimeProvider", "Fallo al ejecutar POST de autenticación: ${e.message}")
+            }
+        }
+
         val players = doc.select("ul.ul-drop.dropcaps li a.play-video.cap")
         val allowedPlayers = listOf("FileMoon", "Mp4Upload", "Mega", "StreamW", "Streamtape", "LuluStream", "Hexupload", "VidGuard")
 
@@ -328,7 +347,7 @@ class KatanimeProvider : MainAPI() {
             val json = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT).toString(Charsets.UTF_8)
             val playerData = tryParseJson<PlayerData>(json)
 
-            val password = "hanabi".toByteArray(Charsets.UTF_8)
+            val password = "kawaidesu".toByteArray(Charsets.UTF_8)
 
             val ivValue = playerData?.iv
             val encryptedValueB64 = playerData?.value
