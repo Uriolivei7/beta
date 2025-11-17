@@ -1,8 +1,8 @@
 [
   {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/Ranita/master/plugins/AnizoneProvider.cs3",
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/AnizoneProvider.cs3",
     "status": 1,
-    "version": 7,
+    "version": 1,
     "apiVersion": 1,
     "name": "AniZone",
     "internalName": "AnizoneProvider",
