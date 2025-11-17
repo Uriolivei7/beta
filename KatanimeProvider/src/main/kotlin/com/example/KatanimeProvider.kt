@@ -25,6 +25,8 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import javax.crypto.Cipher.DECRYPT_MODE
+import javax.crypto.Cipher.ENCRYPT_MODE
 
 class KatanimeProvider : MainAPI() {
     override var mainUrl = "https://katanime.net"
@@ -347,61 +349,26 @@ class KatanimeProvider : MainAPI() {
     }
 
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
-        val result = try {
-            data class PlayerData(
-                @JsonProperty("iv") val iv: String? = null,
-                @JsonProperty("value") val value: String? = null,
-            )
+        return try {
+            val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
+            data class PlayerData(@JsonProperty("iv") val iv: String?, @JsonProperty("value") val value: String?)
+            val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
-            val json = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT).toString(Charsets.UTF_8)
-            val playerData = tryParseJson<PlayerData>(json)
+            val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
+            val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
-            val password = csrfToken.toByteArray(Charsets.UTF_8)
+            val key = (csrfToken + "0123456789abcdef").toByteArray(Charsets.UTF_8)
+                .copyOf(32)
 
-            val ivValue = playerData?.iv
-            val encryptedValueB64 = playerData?.value
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+            val decrypted = cipher.doFinal(encrypted)
 
-            if (ivValue == null || encryptedValueB64 == null) {
-                Log.e("KatanimeProvider", "Desencriptación: Fallo al obtener IV o valor cifrado. JSON: $json")
-                null
-            } else {
-                val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
-                val encryptedValue = encryptedValueB64.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
-
-                val password = csrfToken.toByteArray(Charsets.UTF_8)
-                val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
-
-                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
-                val finalKey = derivedKeyAndIv.first
-
-                val finalIvSpec = IvParameterSpec(iv)
-                val finalKeySpec = SecretKeySpec(finalKey, "AES")
-
-                val cipher = Cipher.getInstance("AES/CBC/NoPadding")
-
-                cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
-
-                var decryptedBytes = cipher.doFinal(encryptedValue)
-
-                var trimIndex = decryptedBytes.size
-                while (trimIndex > 0 && decryptedBytes[trimIndex - 1].toInt() == 0) {
-                    trimIndex--
-                }
-                if (trimIndex < decryptedBytes.size) {
-                    decryptedBytes = decryptedBytes.copyOf(trimIndex)
-                }
-
-                val decoded = decryptedBytes.toString(Charsets.UTF_8)
-
-                return decoded.trim().replace("\u0000", "")
-            }
-
+            String(decrypted, Charsets.UTF_8).trim()
         } catch (e: Exception) {
-            Log.e("KatanimeProvider", "Error al desencriptar el payload: ${e.message}")
+            Log.e("KatanimeProvider", "Fallo desencriptado: ${e.message}", e)
             null
         }
-
-        return result
     }
 
     private fun generateDynamicKey(dataId: String): String {
@@ -417,28 +384,6 @@ class KatanimeProvider : MainAPI() {
         return dataId + "_" + formattedTime
     }
 
-    private fun deriveKeyAndIv(password: ByteArray, salt: ByteArray, keyLength: Int, ivLength: Int): Pair<ByteArray, ByteArray> {
-        val keyAndIvLength = keyLength + ivLength
-        val keyAndIv = ByteArray(keyAndIvLength)
-        val md = MessageDigest.getInstance("MD5")
-        var currentHash = md.digest(password + salt)
-        System.arraycopy(currentHash, 0, keyAndIv, 0, currentHash.size)
-
-        var currentLength = currentHash.size
-        while (currentLength < keyAndIvLength) {
-            md.reset()
-            currentHash = md.digest(currentHash + password + salt)
-            val remainingLength = keyAndIvLength - currentLength
-            val toCopy = minOf(currentHash.size, remainingLength)
-            System.arraycopy(currentHash, 0, keyAndIv, currentLength, toCopy)
-            currentLength += toCopy
-        }
-
-        val key = keyAndIv.copyOfRange(0, keyLength)
-        val iv = keyAndIv.copyOfRange(keyLength, keyAndIvLength)
-
-        return Pair(key, iv)
-    }
 
     private fun parseStatus(statusString: String): ShowStatus {
         return when (statusString.lowercase()) {
