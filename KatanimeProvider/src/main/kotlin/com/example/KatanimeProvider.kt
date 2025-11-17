@@ -322,8 +322,7 @@ class KatanimeProvider : MainAPI() {
         return try {
             data class PlayerData(
                 @JsonProperty("iv") val iv: String? = null,
-                @JsonProperty("ct") val value: String? = null,
-                @JsonProperty("s") val salt: String? = null
+                @JsonProperty("value") val value: String? = null,
             )
 
             val json = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT).toString(Charsets.UTF_8)
@@ -331,25 +330,27 @@ class KatanimeProvider : MainAPI() {
 
             val password = "hanabi".toByteArray(Charsets.UTF_8)
 
-            val salt = playerData?.salt?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
-            val iv = playerData?.iv?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
-            val encryptedValue = playerData?.value?.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
+            val ivValue = playerData?.iv
+            val encryptedValueB64 = playerData?.value
 
-            if (salt == null || iv == null || encryptedValue == null) {
-                Log.e("KatanimeProvider", "Desencriptación: Fallo al parsear componentes (IV, Salt, CT). JSON: $json")
-                Log.e("KatanimeProvider", "Desencriptación: Payload inicial: ${encodedPayload.take(100)}")
+            if (ivValue == null || encryptedValueB64 == null) {
+                Log.e("KatanimeProvider", "Desencriptación: Fallo al obtener IV o valor cifrado. JSON: $json")
                 return null
             }
 
-            val derivedKeyAndIv = deriveKeyAndIv(password, salt, 32, 16)
-            val key = derivedKeyAndIv.first
-            val derivedIv = derivedKeyAndIv.second
+            val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
+            val encryptedValue = AndroidBase64.decode(encryptedValueB64, AndroidBase64.DEFAULT)
 
-            val ivSpec = IvParameterSpec(derivedIv)
-            val keySpec = SecretKeySpec(key, "AES")
+            val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
+
+            val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
+            val finalKey = derivedKeyAndIv.first
+
+            val finalIvSpec = IvParameterSpec(iv)
+            val finalKeySpec = SecretKeySpec(finalKey, "AES")
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(DECRYPT_MODE, keySpec, ivSpec)
+            cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
 
             val decryptedBytes = cipher.doFinal(encryptedValue)
             return decryptedBytes.toString(Charsets.UTF_8)
