@@ -319,7 +319,7 @@ class KatanimeProvider : MainAPI() {
     }
 
     private fun decryptPlayerUrl(encodedPayload: String): String? {
-        return try {
+        val result = try {
             data class PlayerData(
                 @JsonProperty("iv") val iv: String? = null,
                 @JsonProperty("value") val value: String? = null,
@@ -339,11 +339,11 @@ class KatanimeProvider : MainAPI() {
             }
 
             val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
-            val encryptedValue = AndroidBase64.decode(encryptedValueB64, AndroidBase64.DEFAULT)
+            val encryptedValue = encryptedValueB64.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
 
             val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
 
-            val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
+            val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
             val finalKey = derivedKeyAndIv.first
 
             val finalIvSpec = IvParameterSpec(iv)
@@ -353,13 +353,16 @@ class KatanimeProvider : MainAPI() {
             cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
 
             val decryptedBytes = cipher.doFinal(encryptedValue)
-            return decryptedBytes.toString(Charsets.UTF_8)
+
+            decryptedBytes.toString(Charsets.UTF_8)
 
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Error al desencriptar el payload: ${e.message}")
-            return null
+            null
         }
+        return result
     }
+
 
     private fun deriveKeyAndIv(password: ByteArray, salt: ByteArray, keyLength: Int, ivLength: Int): Pair<ByteArray, ByteArray> {
         val keyAndIvLength = keyLength + ivLength
