@@ -18,7 +18,7 @@ dependencyResolutionManagement {
         maven { url = uri("https://jitpack.io") }
     }
 }
-rootProject.name = "Ranita"
+rootProject.name = "beta"
 
 
 val disabled = listOf<String>()

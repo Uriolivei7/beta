@@ -29,7 +29,8 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 import android.util.Log
-
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class AnizoneProvider : MainAPI() {
 
@@ -49,14 +50,11 @@ class AnizoneProvider : MainAPI() {
         "4" to "Latest Movies",
         "6" to "Latest Web"
     )
-
-
     private var cookies = mutableMapOf<String, String>()
     private var wireData = mutableMapOf(
         "wireSnapshot" to "",
         "token" to ""
     )
-
     private suspend fun initializeLiveWire() {
         val initReq = app.get("$mainUrl/anime")
 
@@ -70,7 +68,7 @@ class AnizoneProvider : MainAPI() {
         sortAnimeLatest()
     }
 
-    private fun sortAnimeLatest() {
+    private suspend fun sortAnimeLatest() {
         liveWireBuilder(mapOf("sort" to "release-desc"), mutableListOf(), this.cookies, this.wireData, true)
     }
 
@@ -90,10 +88,11 @@ class AnizoneProvider : MainAPI() {
             .getString("html"))
     }
 
-    private fun liveWireBuilder (updates : Map<String,String>, calls: List<Map<String, Any>>,
-                                 biscuit : MutableMap<String, String>,
-                                 wireCreds : MutableMap<String,String>,
-                                 remember : Boolean): JSONObject {
+    private suspend fun liveWireBuilder (
+        updates : Map<String,String>, calls: List<Map<String, Any>>,
+        biscuit : MutableMap<String, String>,
+        wireCreds : MutableMap<String,String>,
+        remember : Boolean): JSONObject {
 
         val payload = mapOf(
             "_token" to wireCreds["token"], "components" to listOf(
@@ -103,20 +102,35 @@ class AnizoneProvider : MainAPI() {
             )
         )
 
-        val req = Jsoup.connect("$mainUrl/livewire/update")
-            .method(Connection.Method.POST)
-            .header("Content-Type", "application/json")
-            .cookies(biscuit)
-            .ignoreContentType(true)
-            .requestBody(payload.toJson())
-            .execute()
+        val jsonString = payload.toJson()!!
 
-        if (remember) {
-            wireCreds["wireSnapshot"] = getSnapshot(JSONObject(req.body()))
-            biscuit.putAll(req.cookies())
+        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+        val requestBody = jsonString.toRequestBody(mediaType)
+
+        val req = app.post(
+            url = "$mainUrl/livewire/update",
+            requestBody = requestBody,
+            headers = mapOf(
+                "X-CSRF-TOKEN" to wireCreds["token"]!!
+            ),
+            cookies = biscuit,
+            referer = "$mainUrl/anime"
+        )
+
+        val body = req.body
+
+        if (body == null) {
+            throw Exception("Respuesta Livewire nula o fallida (HTTP ${req.code}).")
         }
 
-        return JSONObject(req.body())
+        val responseJson = JSONObject(body as String)
+
+        if (remember) {
+            wireCreds["wireSnapshot"] = getSnapshot(responseJson)
+            biscuit.putAll(req.cookies)
+        }
+
+        return responseJson
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest
