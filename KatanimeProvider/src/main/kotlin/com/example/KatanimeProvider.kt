@@ -350,30 +350,23 @@ class KatanimeProvider : MainAPI() {
 
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         return try {
-            val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
-            data class PlayerData(
-                @JsonProperty("iv") val iv: String?,
-                @JsonProperty("value") val value: String?
-            )
+            val decoded = AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT)
+            val jsonStr = String(decoded, Charsets.UTF_8)
+            data class PlayerData(@JsonProperty("iv") val iv: String?, @JsonProperty("value") val value: String?)
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
             val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
             val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
-            val md = MessageDigest.getInstance("MD5")
-            val keyBytes = md.digest(csrfToken.toByteArray(Charsets.UTF_8))
+            val key = (csrfToken + "katanime2025").toByteArray(Charsets.UTF_8).copyOf(32)
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            val keySpec = SecretKeySpec(keyBytes, "AES")
-            val ivSpec = IvParameterSpec(iv)
-            cipher.init(DECRYPT_MODE, keySpec, ivSpec)
-            val decryptedBytes = cipher.doFinal(encrypted)
+            cipher.init(DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+            val decrypted = cipher.doFinal(encrypted)
 
-            String(decryptedBytes, Charsets.UTF_8).trim().replace(Regex("\\s+"), "")
+            String(decrypted, Charsets.UTF_8).trim()
         } catch (e: Exception) {
-            Log.e("KatanimeProvider", "Fallo al desencriptar player: ${e.message}", e)
-            Log.d("KatanimeProvider", "Payload crudo (base64): $encodedPayload")
-            Log.d("KatanimeProvider", "CSRF Token: $csrfToken")
+            Log.e("KatanimeProvider", "Error desencriptando: ${e.message}", e)
             null
         }
     }
