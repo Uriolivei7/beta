@@ -124,7 +124,8 @@ class AnizoneProvider : MainAPI() {
             url = "$mainUrl/livewire/update",
             requestBody = requestBody,
             headers = mapOf(
-                "X-CSRF-TOKEN" to wireCreds["token"]!!
+                "X-CSRF-TOKEN" to wireCreds["token"]!!,
+                "X-Requested-With" to "XMLHttpRequest"
             ),
             cookies = biscuit,
             referer = "$mainUrl/anime"
@@ -138,7 +139,7 @@ class AnizoneProvider : MainAPI() {
 
         if (bodyString.trim().startsWith("<!DOCTYPE", ignoreCase = true) ||
             bodyString.trim().startsWith("<html", ignoreCase = true)) {
-            Log.e("AniZone", "Respuesta inesperada: Recibido HTML/<!DOCTYPE en lugar de JSON. El sitio podría estar bloqueando el acceso o mostrando un CAPTCHA/error.")
+            Log.e("AniZone LiveWire ERROR", "Respuesta inesperada: Recibido HTML/<!DOCTYPE en lugar de JSON. El sitio podría estar bloqueando el acceso o mostrando un CAPTCHA/error.")
             throw Exception("Livewire no devolvió JSON. Código de estado HTTP: ${req.code}. URL: ${req.url}")
         }
 
@@ -182,7 +183,7 @@ class AnizoneProvider : MainAPI() {
                 currentDoc = getHtmlFromWire(responseJson)
             }
         } catch (e: Exception) {
-            Log.e("AniZone", "Fallo al paginar LiveWire para episodios: ${e.message}")
+            Log.e("AniZone Episode", "Fallo al paginar LiveWire para episodios: ${e.message}")
         }
 
         val home: List<Element> = currentDoc.select("li[x-data]")
