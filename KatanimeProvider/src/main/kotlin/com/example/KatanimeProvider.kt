@@ -361,24 +361,18 @@ class KatanimeProvider : MainAPI() {
 
                 val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
 
-                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
+                val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 32, 16)
                 val finalKey = derivedKeyAndIv.first
 
                 val finalIvSpec = IvParameterSpec(iv)
                 val finalKeySpec = SecretKeySpec(finalKey, "AES")
 
-                val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
                 cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
 
-                val decryptedBytes = try {
-                    cipher.doFinal(encryptedValue)
-                } catch (e: Exception) {
-                    Log.e("KatanimeProvider", "Error con NoPadding: ${e.message}")
-                    return null
-                }
+                val decryptedBytes = cipher.doFinal(encryptedValue)
 
-                val decoded = decryptedBytes.toString(Charsets.UTF_8)
-                return decoded.replace("\u0000", "").trim()
+                return decryptedBytes.toString(Charsets.UTF_8)
             }
 
         } catch (e: Exception) {
