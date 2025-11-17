@@ -55,21 +55,41 @@ class AnizoneProvider : MainAPI() {
         "wireSnapshot" to "",
         "token" to ""
     )
-    private suspend fun initializeLiveWire() {
-        val initReq = app.get("$mainUrl/anime")
+    private suspend fun initializeLiveWire(): Boolean {
+        if (!wireData["wireSnapshot"].isNullOrBlank()) return true
 
-        this.cookies = initReq.cookies.toMutableMap()
+        try {
+            val initReq = app.get("$mainUrl/anime")
 
-        val doc = initReq.document
+            val doc = initReq.document
 
-        wireData["token"] = doc.select("script[data-csrf]").attr("data-csrf")
-        wireData["wireSnapshot"] = getSnapshot(doc)
+            val csrfToken = doc.select("script[data-csrf]").attr("data-csrf")
+            val snapshot = getSnapshot(doc)
 
-        sortAnimeLatest()
+            if (csrfToken.isBlank() || snapshot.isBlank()) {
+                Log.e("AniZone Init", "Fallo la inicialización: token o snapshot vacíos. Esto puede ser un error de HTML/CAPTCHA en la página inicial.")
+                return false
+            }
+
+            this.cookies = initReq.cookies.toMutableMap()
+            wireData["token"] = csrfToken
+            wireData["wireSnapshot"] = snapshot
+
+            sortAnimeLatest()
+            return true
+
+        } catch (e: Exception) {
+            Log.e("AniZone Init", "Error fatal durante initializeLiveWire: ${e.message}")
+            return false
+        }
     }
 
     private suspend fun sortAnimeLatest() {
-        liveWireBuilder(mapOf("sort" to "release-desc"), mutableListOf(), this.cookies, this.wireData, true)
+        try {
+            liveWireBuilder(mapOf("sort" to "release-desc"), mutableListOf(), this.cookies, this.wireData, true)
+        } catch (e: Exception) {
+            Log.e("AniZone Init", "Error al ejecutar sortAnimeLatest (Livewire): ${e.message}")
+        }
     }
 
 
@@ -123,6 +143,13 @@ class AnizoneProvider : MainAPI() {
             throw Exception("Respuesta Livewire vacía o en blanco (HTTP ${req.code}).")
         }
 
+        if (bodyString.trim().startsWith("<!DOCTYPE", ignoreCase = true) ||
+            bodyString.trim().startsWith("<html", ignoreCase = true)) {
+            Log.e("AniZone", "Respuesta inesperada: Recibido HTML/<!DOCTYPE en lugar de JSON. El sitio podría estar bloqueando el acceso o mostrando un CAPTCHA/error.")
+
+            throw Exception("Livewire no devolvió JSON. Código de estado HTTP: ${req.code}. URL: ${req.url}")
+        }
+
         val responseJson = JSONObject(bodyString)
 
         if (remember) {
@@ -136,32 +163,45 @@ class AnizoneProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest
     ): HomePageResponse {
 
-        initializeLiveWire()
-
-        var responseJson = liveWireBuilder(
-            mapOf("type" to request.data), mutableListOf(), this.cookies, this.wireData, true
-        )
-        var doc = getHtmlFromWire(responseJson)
-
-        for (i in 1 until page) {
-            if (doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") == null) break
-
-            responseJson = liveWireBuilder(
-                mutableMapOf(), mutableListOf(
-                    mapOf("path" to "", "method" to "loadMore", "params" to listOf<String>())
-                ), this.cookies, this.wireData, true
+        val initialized = initializeLiveWire()
+        if (!initialized) {
+            Log.w("AniZone", "Inicialización LiveWire fallida. Retornando lista de inicio vacía.")
+            return newHomePageResponse(
+                HomePageList(request.name, emptyList(), isHorizontalImages = false),
+                hasNext = false
             )
-            doc = getHtmlFromWire(responseJson)
         }
+        try {
+            var responseJson = liveWireBuilder(
+                mapOf("type" to request.data), mutableListOf(), this.cookies, this.wireData, true
+            )
+            var doc = getHtmlFromWire(responseJson)
 
-        val home: List<Element> = doc.select("div[wire:key]")
+            for (i in 1 until page) {
+                if (doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") == null) break
 
-        return newHomePageResponse(
-            HomePageList(request.name, home.map { toResult(it) }, isHorizontalImages = false),
-            hasNext = (doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") != null)
-        )
+                responseJson = liveWireBuilder(
+                    mutableMapOf(), mutableListOf(
+                        mapOf("path" to "", "method" to "loadMore", "params" to listOf<String>())
+                    ), this.cookies, this.wireData, true
+                )
+                doc = getHtmlFromWire(responseJson)
+            }
+
+            val home: List<Element> = doc.select("div[wire:key]")
+
+            return newHomePageResponse(
+                HomePageList(request.name, home.map { toResult(it) }, isHorizontalImages = false),
+                hasNext = (doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") != null)
+            )
+        } catch (e: Exception) {
+            Log.e("AniZone", "Fallo al procesar LiveWire en getMainPage: ${e.message}")
+            return newHomePageResponse(
+                HomePageList(request.name, emptyList(), isHorizontalImages = false),
+                hasNext = false
+            )
+        }
     }
-
 
     private fun toResult(post: Element): SearchResponse {
         val title = post.selectFirst("img")?.attr("alt") ?: ""
