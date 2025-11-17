@@ -368,7 +368,9 @@ class KatanimeProvider : MainAPI() {
                 val iv = AndroidBase64.decode(ivValue, AndroidBase64.DEFAULT)
                 val encryptedValue = encryptedValueB64.let { AndroidBase64.decode(it, AndroidBase64.DEFAULT) }
 
-                val password = csrfToken.toByteArray(Charsets.UTF_8)
+                val hardcodedKey = "kawaidesu"
+
+                val password = hardcodedKey.toByteArray(Charsets.UTF_8)
                 val fakeSalt = "Salted__".toByteArray(Charsets.UTF_8)
 
                 val derivedKeyAndIv = deriveKeyAndIv(password, fakeSalt, 16, 16)
@@ -377,24 +379,15 @@ class KatanimeProvider : MainAPI() {
                 val finalIvSpec = IvParameterSpec(iv)
                 val finalKeySpec = SecretKeySpec(finalKey, "AES")
 
-                val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
 
                 cipher.init(DECRYPT_MODE, finalKeySpec, finalIvSpec)
 
-                var decryptedBytes = cipher.doFinal(encryptedValue)
-
-                val lastByte = decryptedBytes.lastOrNull()?.toInt() ?: 0
-                if (lastByte == 0) {
-                    var trimIndex = decryptedBytes.size
-                    while (trimIndex > 0 && decryptedBytes[trimIndex - 1].toInt() == 0) {
-                        trimIndex--
-                    }
-                    decryptedBytes = decryptedBytes.copyOf(trimIndex)
-                }
+                val decryptedBytes = cipher.doFinal(encryptedValue)
 
                 val decoded = decryptedBytes.toString(Charsets.UTF_8)
 
-                return decoded.trim()
+                return decoded.trim().replace("\u0000", "")
             }
 
         } catch (e: Exception) {
