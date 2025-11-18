@@ -293,27 +293,38 @@ class KatanimeProvider : MainAPI() {
 
         if (!tokenCsrf.isNullOrBlank() && !dataId.isNullOrBlank()) {
             try {
-                val tokenPlus = dynamicKey
-
                 app.post(
                     episodeUrl,
-                    data = mapOf("_token" to tokenCsrf, "token_plus" to tokenPlus),
-                    cookies = response.cookies
+                    headers = mapOf(
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Referer" to episodeUrl,
+                        "Origin" to mainUrl,
+                        "Accept" to "application/json",
+                        "Content-Type" to "application/x-www-form-urlencoded"
+                    ),
+                    data = mapOf(
+                        "_token" to tokenCsrf,
+                        "token_plus" to dynamicKey
+                    ),
+                    cookies = response.cookies,
+                    timeout = 20_000
                 )
-                Log.d("KatanimeProvider", "POST de autenticación enviado con clave dinámica.")
-
+                Log.d("KatanimeProvider", "POST de autenticación enviado correctamente.")
             } catch (e: Exception) {
-                Log.e("KatanimeProvider", "Fallo al ejecutar POST de autenticación: ${e.message}")
+                Log.e("KatanimeProvider", "Fallo POST: ${e.message}")
             }
         }
 
-        val players = doc.select("ul.ul-drop.dropcaps li a.play-video.cap")
-        val allowedPlayers = listOf("FileMoon", "Mp4Upload", "Mega", "StreamW", "Streamtape", "LuluStream", "Hexupload", "VidGuard")
+        val reloadedResponse = app.get(episodeUrl, headers = mapOf("Referer" to episodeUrl), timeout = 15_000)
+        val reloadedDoc = reloadedResponse.document
+        val players = reloadedDoc.select("ul.ul-drop.dropcaps li a.play-video.cap")
 
         if (players.isEmpty()) {
-            Log.d("KatanimeProvider", "No se encontraron reproductores.")
+            Log.d("KatanimeProvider", "No players encontrados después de POST.")
             return@coroutineScope false
         }
+
+        val allowedPlayers = listOf("FileMoon", "Mp4Upload", "Mega", "StreamW", "Streamtape", "LuluStream", "Hexupload", "VidGuard")
 
         val jobs = players.map { player ->
             async {
@@ -324,18 +335,19 @@ class KatanimeProvider : MainAPI() {
                 if (playerPayload.isNotBlank() && allowedPlayers.any { playerName.contains(it, ignoreCase = true) }) {
                     try {
                         val iframeUrl = decryptPlayerUrl(playerPayload, tokenCsrf)
-                        Log.d("KatanimeProvider", "Procesando reproductor: $playerName")
-                        Log.d("KatanimeProvider", "URL de Iframe desencriptada: $iframeUrl")
+                        Log.d("KatanimeProvider", "Reproductor: $playerName | URL: $iframeUrl")
 
-                        if (!iframeUrl.isNullOrBlank()) {
-                            if (loadExtractor(iframeUrl, episodeUrl, subtitleCallback, callback)) {
-                                Log.d("KatanimeProvider", "Enlaces encontrados por loadExtractor para $playerName")
-                                success = true
-                            }
+                        if (!iframeUrl.isNullOrBlank() && iframeUrl.startsWith("http")) {
+                            loadExtractor(
+                                url = iframeUrl,
+                                referer = episodeUrl,
+                                subtitleCallback = subtitleCallback,
+                                callback = callback
+                            )
+                            success = true
                         }
-
                     } catch (e: Exception) {
-                        Log.e("KatanimeProvider", "Error al procesar $playerName: ${e.message}")
+                        Log.e("KatanimeProvider", "Error en $playerName: ${e.message}")
                     }
                 }
                 success
@@ -343,8 +355,7 @@ class KatanimeProvider : MainAPI() {
         }
 
         val linksFound = jobs.awaitAll().any { it }
-
-        Log.d("KatanimeProvider", "Finalizando loadLinks. ¿Se encontraron enlaces? $linksFound")
+        Log.d("KatanimeProvider", "Enlaces encontrados: $linksFound")
         return@coroutineScope linksFound
     }
 
@@ -360,7 +371,7 @@ class KatanimeProvider : MainAPI() {
             val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
             val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
-            val salt = "KATANIME_V3_2025_SALT"
+            val salt = "KATANIME_2025_V4_SECURE"
             val rawKey = (csrfToken + salt).toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
             val keyBytes = md.digest(rawKey)
@@ -369,14 +380,9 @@ class KatanimeProvider : MainAPI() {
             cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(iv))
             val decrypted = cipher.doFinal(encrypted)
 
-            val url = String(decrypted, Charsets.UTF_8).trim()
-            if (url.startsWith("http")) return url
-
-            return null
+            String(decrypted, Charsets.UTF_8).trim()
         } catch (e: Exception) {
-            Log.e("KatanimeProvider", "Fallo al desencriptar player: ${e.message}", e)
-            Log.d("KatanimeProvider", "Payload crudo: $encodedPayload")
-            Log.d("KatanimeProvider", "Token usado: $csrfToken")
+            Log.e("KatanimeProvider", "Desencriptación falló: ${e.message}")
             null
         }
     }
