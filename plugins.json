@@ -16,23 +16,5 @@
     "iconUrl": "https://img.icons8.com/?size=200&id=fztMk7eF9g8D&format=png",
     "language": "en",
     "fileSize": 18000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/KatanimeProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 2,
-    "name": "KatAnime",
-    "internalName": "KatanimeProvider",
-    "authors": [
-      "Ranita"
-    ],
-    "description": "Plugin para animes Subtitulados",
-    "tvTypes": [
-      "Anime"
-    ],
-    "iconUrl": "https://katanime.net/favicon.ico?v=5.0.65",
-    "language": "mx",
-    "fileSize": 25000
   }
 ]
