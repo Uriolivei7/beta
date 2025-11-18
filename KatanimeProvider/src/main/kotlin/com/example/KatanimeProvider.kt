@@ -351,30 +351,23 @@ class KatanimeProvider : MainAPI() {
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         return try {
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
-            data class PlayerData(
-                @JsonProperty("iv") val iv: String?,
-                @JsonProperty("value") val value: String?,
-                @JsonProperty("mac") val mac: String?
-            )
+            data class PlayerData(@JsonProperty("iv") val iv: String?, @JsonProperty("value") val value: String?)
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
             val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
             val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
+            val rawKey = (csrfToken + "KatAnimeSecure2025").toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
-            val keyBytes = md.digest(csrfToken.toByteArray(Charsets.UTF_8))
+            val keyBytes = md.digest(rawKey)
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            val keySpec = SecretKeySpec(keyBytes, "AES")
-            val ivSpec = IvParameterSpec(iv)
-            cipher.init(DECRYPT_MODE, keySpec, ivSpec)
-            val decryptedBytes = cipher.doFinal(encrypted)
+            cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(iv))
+            val decrypted = cipher.doFinal(encrypted)
 
-            String(decryptedBytes, Charsets.UTF_8).trim()
+            String(decrypted, Charsets.UTF_8).trim()
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Error desencriptando: ${e.message}", e)
-            Log.d("KatanimeProvider", "Payload crudo: $encodedPayload")
-            Log.d("KatanimeProvider", "Token: $csrfToken")
             null
         }
     }
