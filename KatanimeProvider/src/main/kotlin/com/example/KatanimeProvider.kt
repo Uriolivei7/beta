@@ -360,17 +360,23 @@ class KatanimeProvider : MainAPI() {
             val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
             val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
-            val salt = "KATANIME_2025_SECURE_SALT_V2"
-            val keyBytes = MessageDigest.getInstance("SHA-256")
-                .digest((csrfToken + salt).toByteArray(Charsets.UTF_8))
+            val salt = "KATANIME_V3_2025_SALT"
+            val rawKey = (csrfToken + salt).toByteArray(Charsets.UTF_8)
+            val md = MessageDigest.getInstance("SHA-256")
+            val keyBytes = md.digest(rawKey)
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(iv))
             val decrypted = cipher.doFinal(encrypted)
 
-            String(decrypted, Charsets.UTF_8).trim()
+            val url = String(decrypted, Charsets.UTF_8).trim()
+            if (url.startsWith("http")) return url
+
+            return null
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Fallo al desencriptar player: ${e.message}", e)
+            Log.d("KatanimeProvider", "Payload crudo: $encodedPayload")
+            Log.d("KatanimeProvider", "Token usado: $csrfToken")
             null
         }
     }
