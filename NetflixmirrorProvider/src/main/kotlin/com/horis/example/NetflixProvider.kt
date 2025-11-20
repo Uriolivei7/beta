@@ -289,8 +289,8 @@ class NetflixProvider : MainAPI() {
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
                 subtitleCallback.invoke(
                     SubtitleFile(
-                        track.label.toString(), // lang/label
-                        httpsify(track.file.toString()), // url
+                        track.label.toString(),
+                        httpsify(track.file.toString()),
                     )
                 )
                 subtitleCount++
