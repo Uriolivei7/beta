@@ -194,7 +194,7 @@ class NetflixProvider : MainAPI() {
             year = data.year.toIntOrNull()
             tags = genre
             actors = cast
-            this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
+            this.rating = rating?.toRatingInt()
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
@@ -329,8 +329,7 @@ class NetflixProvider : MainAPI() {
         val title: String, val id: String
     )
 
-    data class Score(
-        val score: Long?,
-        val type: String?
+    data class Cookie(
+        val cookie: String
     )
 }
