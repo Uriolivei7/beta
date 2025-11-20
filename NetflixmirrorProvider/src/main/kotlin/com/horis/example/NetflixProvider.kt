@@ -328,4 +328,9 @@ class NetflixProvider : MainAPI() {
     data class LoadData(
         val title: String, val id: String
     )
+
+    data class Score(
+        val score: Long?,
+        val type: String?
+    )
 }
