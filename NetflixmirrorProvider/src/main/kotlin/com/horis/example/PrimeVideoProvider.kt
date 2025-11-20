@@ -196,7 +196,7 @@ class PrimeVideoProvider : MainAPI() {
             year = data.year.toIntOrNull()
             tags = genre
             actors = cast
-            this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
+            //this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
