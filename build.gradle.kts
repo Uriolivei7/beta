@@ -54,7 +54,8 @@ subprojects {
                     "-Xno-call-assertions",
                     "-Xno-param-assertions",
                     "-Xno-receiver-assertions",
-                    "-Xsuppress-version-warnings"
+                    "-Xsuppress-version-warnings",
+                    "-Xallow-deprecated-access",
                 )
             }
         }
