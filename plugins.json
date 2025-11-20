@@ -59,5 +59,44 @@
         "description": "Contenido en Latino",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/KatanimeProvider.cs3",
         "name": "KatanimeProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 48569,
+        "status": 1,
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "AsianDrama",
+            "Anime"
+        ],
+        "version": 35,
+        "internalName": "NetflixmirrorProvider",
+        "description": "Netflix y PrimeVideo Contenido en M\u00faltiples Lenguajes",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/NetflixmirrorProvider.cs3",
+        "name": "NetflixmirrorProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 22553,
+        "status": 1,
+        "language": "mx",
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "PelisplushdProvider",
+        "description": "Ranita Repositorio",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplushdProvider.cs3",
+        "name": "PelisplushdProvider"
     }
 ]
