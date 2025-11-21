@@ -130,7 +130,7 @@ class PelisplusicuProvider : MainAPI() {
                         this.year = year
                     }
                 }
-            }
+            }.distinctBy { it.url }
 
             Log.d(name, "search: Búsqueda HTML completada. ${results.size} resultados encontrados.")
             return results
@@ -186,16 +186,21 @@ class PelisplusicuProvider : MainAPI() {
                 val capitulosJson = jsonScript?.substringAfter("\"capitulos\":[")?.substringBefore("],\"")?.replace("\\\"", "\"")
                 Log.d(name, "load(Series): JSON de capítulos extraído (Longitud: ${capitulosJson?.length})")
 
-                val capitulos = AppUtils.tryParseJson<List<Capitulo>>("[$capitulosJson]")
+                val capitulos = AppUtils.tryParseJson<List<Capitulo?>>("[$capitulosJson]")
 
                 val episodes = if (!capitulos.isNullOrEmpty()) {
                     Log.d(name, "load(Series): ${capitulos.size} capítulos parseados.")
-                    capitulos.amap { capitulo ->
-                        val episodeUrl = "$url/${capitulo.temporada}-${capitulo.capitulo}"
+
+                    capitulos.filterNotNull().amap { capitulo ->
+                        val temporada = capitulo.temporada ?: 1
+                        val episodio = capitulo.capitulo ?: 1
+
+                        val episodeUrl = "$url/$temporada-$episodio"
+
                         newEpisode(episodeUrl){
                             this.name = capitulo.titulo?.replace(title.substringBefore(" ("), "")?.trim()
-                            this.season = capitulo.temporada
-                            this.episode = capitulo.capitulo
+                            this.season = temporada
+                            this.episode = episodio
                             this.posterUrl = capitulo.imagen?.let { "https://image.tmdb.org/t/p/w185/$it.jpg" } ?: poster
                         }
                     }
