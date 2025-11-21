@@ -64,14 +64,10 @@ class PelisplusicuProvider : MainAPI() {
                 val url = "$mainUrl$path"
                 val doc = app.get(url, timeout = 15L).document
 
-                val home = doc.select("main a[href*='/']").mapNotNull { element ->
-
+                val home = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
+                    val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
                     val link = element.attr("href")
-
-                    val titleContainer = element.selectFirst("span.overflow-hidden")
-                    val title = titleContainer?.text()?.trim()
-
-                    val img = element.selectFirst("img.w-full")?.attr("src")
+                    val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
 
                     val year = element.select("div:not([class]) span")
                         .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
@@ -86,10 +82,9 @@ class PelisplusicuProvider : MainAPI() {
                             this.year = year
                         }
                     }
-                }.distinctBy { it.url }
-
+                }
                 if(!home.isNullOrEmpty()){
-                    items.add(HomePageList(name, home))
+                    items.add(HomePageList(name, home.distinctBy { it.url })) // Usamos distinctBy para evitar duplicados
                     Log.d(this.name, "getMainPage: Lista '$name' cargada con ${home.size} ítems.")
                 } else {
                     Log.w(this.name, "getMainPage: Lista '$name' vacía o selectores fallaron para URL: $url")
@@ -117,14 +112,10 @@ class PelisplusicuProvider : MainAPI() {
         try {
             val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
 
-            val results = doc.select("main a[href*='/']").mapNotNull { element ->
-
+            val results = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
+                val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
                 val link = element.attr("href")
-
-                val titleContainer = element.selectFirst("span.overflow-hidden")
-                val title = titleContainer?.text()?.trim()
-
-                val img = element.selectFirst("img.w-full")?.attr("src")
+                val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
 
                 val year = element.select("div:not([class]) span")
                     .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
@@ -139,7 +130,7 @@ class PelisplusicuProvider : MainAPI() {
                         this.year = year
                     }
                 }
-            }.distinctBy { it.url }
+            }
 
             Log.d(name, "search: Búsqueda HTML completada. ${results.size} resultados encontrados.")
             return results
@@ -198,32 +189,16 @@ class PelisplusicuProvider : MainAPI() {
                 val capitulos = AppUtils.tryParseJson<List<Capitulo>>("[$capitulosJson]")
 
                 val episodes = if (!capitulos.isNullOrEmpty()) {
-                    Log.d(name, "load(Series): ${capitulos.size} capítulos parseados. Usando amap.")
-
-                    val nonNullCapitulos = capitulos.filterNotNull()
-
-                    nonNullCapitulos.amap { capitulo ->
-
-                        val season = capitulo.temporada
-                        val episode = capitulo.capitulo
-                        val epTitle = capitulo.titulo
-                        val epImage = capitulo.imagen
-
-                        if (season == null || episode == null || epTitle == null) {
-                            Log.w(name, "load(Series): Saltando episodio con Temporada, Capítulo o Título nulo.")
-                            return@amap null
-                        }
-
-                        val episodeUrl = "$url/$season-$episode"
-
+                    Log.d(name, "load(Series): ${capitulos.size} capítulos parseados.")
+                    capitulos.amap { capitulo ->
+                        val episodeUrl = "$url/${capitulo.temporada}-${capitulo.capitulo}"
                         newEpisode(episodeUrl){
-                            this.name = epTitle.replace(title.substringBefore(" ("), "")?.trim()
-                            this.season = season
-                            this.episode = episode
-                            this.posterUrl = epImage?.let { "https://image.tmdb.org/t/p/w185/$it.jpg" } ?: poster
+                            this.name = capitulo.titulo?.replace(title.substringBefore(" ("), "")?.trim()
+                            this.season = capitulo.temporada
+                            this.episode = capitulo.capitulo
+                            this.posterUrl = capitulo.imagen?.let { "https://image.tmdb.org/t/p/w185/$it.jpg" } ?: poster
                         }
-                    }.filterNotNull()
-
+                    }
                 } else {
                     Log.w(name, "load(Series): No se pudieron extraer episodios (JSON vacío o nulo).")
                     listOf()
