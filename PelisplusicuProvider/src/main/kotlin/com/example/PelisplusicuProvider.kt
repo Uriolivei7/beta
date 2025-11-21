@@ -183,20 +183,21 @@ class PelisplusicuProvider : MainAPI() {
                     it.html().contains("capitulos") && it.html().contains("__NEXT_DATA__")
                 }?.html()
 
-                val capitulosJson = jsonScript?.substringAfter("\"capitulos\":[")?.substringBefore("],\"")?.replace("\\\"", "\"")
+                val capitulosJson = Regex(""""capitulos":(\\[[^\\]]*?\\])""").find(jsonScript ?: "")?.groupValues?.getOrNull(1)
+                    ?.replace("\\\"", "\"")
+
                 Log.d(name, "load(Series): JSON de capítulos extraído (Longitud: ${capitulosJson?.length})")
 
-                val capitulos = AppUtils.tryParseJson<List<Capitulo?>>("[$capitulosJson]")
+                val capitulos = AppUtils.tryParseJson<List<Capitulo?>>(capitulosJson ?: "[]")
 
                 val episodes = if (!capitulos.isNullOrEmpty()) {
-                    Log.d(name, "load(Series): ${capitulos.size} capítulos parseados.")
+                    Log.d(name, "load(Series): ${capitulos.size} elementos parseados (incluyendo nulos).")
 
                     capitulos.filterNotNull().amap { capitulo ->
                         val temporada = capitulo.temporada ?: 1
                         val episodio = capitulo.capitulo ?: 1
 
                         val episodeUrl = "$url/$temporada-$episodio"
-
                         newEpisode(episodeUrl){
                             this.name = capitulo.titulo?.replace(title.substringBefore(" ("), "")?.trim()
                             this.season = temporada
