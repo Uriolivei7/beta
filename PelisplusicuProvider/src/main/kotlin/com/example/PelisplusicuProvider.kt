@@ -106,7 +106,7 @@ class PelisplusicuProvider : MainAPI() {
 
         val jsonBody = JSONObject(bodyMap).toString()
         val requestBodyString = "[$jsonBody]"
-        Log.d(name, "SEARCH LOGS --- Request Body JSON: $requestBodyString")
+        //Log.d(name, "SEARCH LOGS --- Request Body JSON: $requestBodyString")
 
         val mediaType = "text/plain; charset=UTF-8".toMediaType()
 
@@ -117,7 +117,7 @@ class PelisplusicuProvider : MainAPI() {
         )
 
         val requestUrl = "$mainUrl/directorio?search=${query}r"
-        Log.d(name, "SEARCH LOGS --- Request URL: $requestUrl")
+        //Log.d(name, "SEARCH LOGS --- Request URL: $requestUrl")
 
         val requestBody = RequestBody.create(mediaType, requestBodyString)
 
@@ -279,7 +279,7 @@ class PelisplusicuProvider : MainAPI() {
                     .replace(""""]\)$""".toRegex(), "")
             }
 
-            Log.d(name, "LOADLINKS LOGS --- 2. Longitud del texto extraído: ${text.length}")
+            //Log.d(name, "LOADLINKS LOGS --- 2. Longitud del texto extraído: ${text.length}")
 
             if (text.isEmpty()) {
                 Log.e(name, "LOADLINKS LOGS --- 3. Fallo: Texto de script (Next.js chunk) está vacío.")
@@ -288,7 +288,7 @@ class PelisplusicuProvider : MainAPI() {
 
             val linksRaw = fetchLinks(text.replace("\\\"", "\""))
 
-            Log.d(name, "LOADLINKS LOGS --- 4. Enlaces brutos (Raw Links) encontrados: ${linksRaw.size}")
+            //Log.d(name, "LOADLINKS LOGS --- 4. Enlaces brutos (Raw Links) encontrados: ${linksRaw.size}")
 
             if (linksRaw.isEmpty()) {
                 Log.w(name, "LOADLINKS LOGS --- 5. Advertencia: No se encontraron enlaces válidos en el texto.")
@@ -296,7 +296,7 @@ class PelisplusicuProvider : MainAPI() {
 
             linksRaw.amap { link ->
                 val fixedUrl = fixHostsLinks(link.url!!)
-                Log.d(name, "LOADLINKS LOGS --- 6. Procesando link: [${link.lang}] URL original: ${link.url} -> URL fija: $fixedUrl")
+                //Log.d(name, "LOADLINKS LOGS --- 6. Procesando link: [${link.lang}] URL original: ${link.url} -> URL fija: $fixedUrl")
 
                 loadSourceNameExtractor(link.lang!!, fixedUrl, data, subtitleCallback, callback)
             }
@@ -331,7 +331,6 @@ class PelisplusicuProvider : MainAPI() {
             else -> ""
         }
     }
-
 }
 
 suspend fun loadSourceNameExtractor(
