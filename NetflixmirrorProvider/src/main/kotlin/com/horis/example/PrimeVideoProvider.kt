@@ -315,17 +315,26 @@ class PrimeVideoProvider : MainAPI() {
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
+
+        val refererUrl = "$newUrl/"
+
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
+                val url = request.url.toString()
+                val newRequest = request.newBuilder()
+
+                if (url.contains(".m3u8")) {
                     Log.i(TAG, "Applying 'hd=on' cookie to M3U8 request.")
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
+                    newRequest.header("Cookie", "hd=on")
                 }
-                return chain.proceed(request)
+
+                if (url.contains("subs.nfmirrorcdn.top")) {
+                    Log.i(TAG, "Applying Referer for Subtitle request: $refererUrl")
+                    newRequest.header("Referer", refererUrl)
+                }
+
+                return chain.proceed(newRequest.build())
             }
         }
     }
