@@ -112,7 +112,7 @@ class PelisplusicuProvider : MainAPI() {
         try {
             val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
 
-            val results = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
+            val results = doc.select("main div.grid a[href]").mapNotNull { element ->
                 val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
                 val link = element.attr("href")
                 val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
@@ -189,16 +189,30 @@ class PelisplusicuProvider : MainAPI() {
                 val capitulos = AppUtils.tryParseJson<List<Capitulo>>("[$capitulosJson]")
 
                 val episodes = if (!capitulos.isNullOrEmpty()) {
-                    Log.d(name, "load(Series): ${capitulos.size} capítulos parseados.")
+                    Log.d(name, "load(Series): ${capitulos.size} capítulos parseados. Usando amap.")
+
                     capitulos.amap { capitulo ->
-                        val episodeUrl = "$url/${capitulo.temporada}-${capitulo.capitulo}"
-                        newEpisode(episodeUrl){
-                            this.name = capitulo.titulo?.replace(title.substringBefore(" ("), "")?.trim()
-                            this.season = capitulo.temporada
-                            this.episode = capitulo.capitulo
-                            this.posterUrl = capitulo.imagen?.let { "https://image.tmdb.org/t/p/w185/$it.jpg" } ?: poster
+
+                        val season = capitulo.temporada
+                        val episode = capitulo.capitulo
+                        val epTitle = capitulo.titulo
+                        val epImage = capitulo.imagen
+
+                        if (season == null || episode == null || epTitle == null) {
+                            Log.w(name, "load(Series): Saltando episodio con Temporada, Capítulo o Título nulo.")
+                            return@amap null
                         }
-                    }
+
+                        val episodeUrl = "$url/$season-$episode"
+
+                        newEpisode(episodeUrl){
+                            this.name = epTitle.replace(title.substringBefore(" ("), "")?.trim()
+                            this.season = season
+                            this.episode = episode
+                            this.posterUrl = epImage?.let { "https://image.tmdb.org/t/p/w185/$it.jpg" } ?: poster
+                        }
+                    }.filterNotNull()
+
                 } else {
                     Log.w(name, "load(Series): No se pudieron extraer episodios (JSON vacío o nulo).")
                     listOf()
