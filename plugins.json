@@ -98,5 +98,42 @@
         "description": "Ranita Repositorio",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplushdProvider.cs3",
         "name": "PelisplushdProvider"
+    },
+    {
+        "iconUrl": "https://pelis-plus.icu/assets/img/ic/favicon-96x96.png",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 24539,
+        "status": 1,
+        "language": "mx",
+        "authors": [
+            "redblacker8"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 5,
+        "internalName": "PelisplusorgProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusorgProvider.cs3",
+        "name": "PelisplusorgProvider"
+    },
+    {
+        "iconUrl": "https://www.cablevisionhd.com/imge/cablevisionhd.png",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 21659,
+        "status": 1,
+        "language": "mx",
+        "authors": [
+            "misajimenezmx"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 5,
+        "internalName": "TvporinternetProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvporinternetProvider.cs3",
+        "name": "TvporinternetProvider"
     }
 ]
