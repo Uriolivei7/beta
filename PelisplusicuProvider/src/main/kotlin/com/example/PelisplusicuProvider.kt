@@ -64,19 +64,16 @@ class PelisplusicuProvider : MainAPI() {
                 val url = "$mainUrl$path"
                 val doc = app.get(url, timeout = 15L).document
 
-                val home = doc.select("div.relative.rounded-md.shadow-xl").mapNotNull { element ->
+                val home = doc.select("main a[href*='/']").mapNotNull { element ->
 
-                    val mainLinkElement = element.selectFirst("a[href]")
+                    val link = element.attr("href")
 
-                    if (mainLinkElement == null) return@mapNotNull null
+                    val titleContainer = element.selectFirst("span.overflow-hidden")
+                    val title = titleContainer?.text()?.trim()
 
-                    val link = mainLinkElement.attr("href")
+                    val img = element.selectFirst("img.w-full")?.attr("src")
 
-                    val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
-
-                    val img = mainLinkElement.selectFirst("img.w-full")?.attr("src")
-
-                    val year = mainLinkElement.select("div:not([class]) span")
+                    val year = element.select("div:not([class]) span")
                         .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
                         ?.text()?.toIntOrNull()
 
@@ -89,9 +86,10 @@ class PelisplusicuProvider : MainAPI() {
                             this.year = year
                         }
                     }
-                }
+                }.distinctBy { it.url }
+
                 if(!home.isNullOrEmpty()){
-                    items.add(HomePageList(name, home.distinctBy { it.url }))
+                    items.add(HomePageList(name, home))
                     Log.d(this.name, "getMainPage: Lista '$name' cargada con ${home.size} ítems.")
                 } else {
                     Log.w(this.name, "getMainPage: Lista '$name' vacía o selectores fallaron para URL: $url")
@@ -119,17 +117,16 @@ class PelisplusicuProvider : MainAPI() {
         try {
             val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
 
-            val results = doc.select("div.relative.rounded-md.shadow-xl").mapNotNull { element ->
+            val results = doc.select("main a[href*='/']").mapNotNull { element ->
 
-                val mainLinkElement = element.selectFirst("a[href]")
+                val link = element.attr("href")
 
-                if (mainLinkElement == null) return@mapNotNull null
+                val titleContainer = element.selectFirst("span.overflow-hidden")
+                val title = titleContainer?.text()?.trim()
 
-                val link = mainLinkElement.attr("href")
-                val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
-                val img = mainLinkElement.selectFirst("img.w-full")?.attr("src")
+                val img = element.selectFirst("img.w-full")?.attr("src")
 
-                val year = mainLinkElement.select("div:not([class]) span")
+                val year = element.select("div:not([class]) span")
                     .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
                     ?.text()?.toIntOrNull()
 
@@ -142,7 +139,7 @@ class PelisplusicuProvider : MainAPI() {
                         this.year = year
                     }
                 }
-            }
+            }.distinctBy { it.url }
 
             Log.d(name, "search: Búsqueda HTML completada. ${results.size} resultados encontrados.")
             return results
