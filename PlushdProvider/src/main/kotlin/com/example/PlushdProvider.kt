@@ -18,17 +18,17 @@ class PlushdProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.Movie,
         TvType.TvSeries,
-        TvType.AsianDrama,
         TvType.Anime,
+        TvType.Movie,
+        TvType.AsianDrama,
     )
 
     override val mainPage = mainPageOf(
-        "peliculas" to "Peliculas",
         "series" to "Series",
-        "doramas" to "Doramas",
         "animes" to "Animes",
+        "peliculas" to "Peliculas",
+        "doramas" to "Doramas",
     )
 
     private fun base64Encode(bytes: ByteArray): String {
@@ -75,8 +75,8 @@ class PlushdProvider : MainAPI() {
         val searchType = when {
             link.contains("/serie") -> TvType.TvSeries
             link.contains("/anime") -> TvType.Anime
-            link.contains("/dorama") -> TvType.AsianDrama
             link.contains("/pelicula") -> TvType.Movie
+            link.contains("/dorama") -> TvType.AsianDrama
             else -> TvType.Movie
         }
 
@@ -106,9 +106,9 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(url).document
 
         val tvType = when {
-            url.contains("/pelicula") -> TvType.Movie
             url.contains("/serie") -> TvType.TvSeries
             url.contains("/anime") -> TvType.Anime
+            url.contains("/pelicula") -> TvType.Movie
             url.contains("/dorama") -> TvType.AsianDrama
             else -> TvType.TvSeries
         }
