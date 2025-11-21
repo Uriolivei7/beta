@@ -1,4 +1,4 @@
-package com.stormunblessed
+package com.example
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
@@ -92,6 +92,7 @@ class PlushdProvider : MainAPI() {
         return results
     }
 
+
     data class MainTemporada(val elements: Map<String, List<MainTemporadaElement>>)
 
     data class MainTemporadaElement(
@@ -156,7 +157,7 @@ class PlushdProvider : MainAPI() {
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e("Pelisplus4KProvider", "Error al parsear seasonsJson: ${e.message}")
+                        Log.e("PlushdProvider", "Error al parsear seasonsJson: ${e.message}")
                     }
                 }
             }
@@ -195,7 +196,12 @@ class PlushdProvider : MainAPI() {
         var linksFound = false
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
-        val doc = app.get(data).document
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to data
+        )
+
+        val doc = app.get(data, headers = headers).document
 
         doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
@@ -206,10 +212,10 @@ class PlushdProvider : MainAPI() {
                 val encodedTwo = base64Encode(encodedOne)
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                val text = app.get(playerUrl).text
+                val text = app.get(playerUrl, headers = headers).text
 
                 if (text.contains("bloqueo temporal")) {
-                    Log.w("Pelisplus4KProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
+                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
                     return@forEach
                 }
 
@@ -218,14 +224,14 @@ class PlushdProvider : MainAPI() {
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
 
-                    loadExtractor(fixedLink, mainUrl, subtitleCallback, callback)
+                    loadExtractor(fixedLink, playerUrl, subtitleCallback, callback)
                     linksFound = true
                 }
             } catch (e: Exception) {
-                Log.e("Pelisplus4KProvider", "Error al procesar el servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
             }
 
-            delay(1000L)
+            delay(1500L)
         }
 
         return linksFound
