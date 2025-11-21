@@ -144,6 +144,29 @@
     {
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 18622,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "PlushdProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PlushdProvider.cs3",
+        "name": "PlushdProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
         "fileSize": 29845,
         "status": 1,
         "language": "es",
