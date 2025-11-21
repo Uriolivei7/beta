@@ -147,16 +147,16 @@ class PelisplusicuProvider : MainAPI() {
                 return emptyList()
             }
 
-            Log.d(name, "SEARCH LOGS --- JSON a parsear (Inicio): ${jsonToParse.take(200)}")
+            //Log.d(name, "SEARCH LOGS --- JSON a parsear (Inicio): ${jsonToParse.take(200)}")
 
             val result = AppUtils.tryParseJson<ApiResponse>(jsonToParse)
 
             if (result == null) {
-                Log.e(name, "SEARCH LOGS --- Fallo: AppUtils.tryParseJson devolvió NULL. Revisar estructura de ApiResponse.")
+                //Log.e(name, "SEARCH LOGS --- Fallo: AppUtils.tryParseJson devolvió NULL. Revisar estructura de ApiResponse.")
                 return emptyList()
             }
 
-            Log.d(name, "SEARCH LOGS --- Videos encontrados: ${result.videos?.size ?: 0}")
+            //Log.d(name, "SEARCH LOGS --- Videos encontrados: ${result.videos?.size ?: 0}")
 
             return result.videos?.filterNotNull()?.amap { video ->
                 val title = video.titulo
@@ -165,7 +165,7 @@ class PelisplusicuProvider : MainAPI() {
                 val img = video.imagen
 
                 if (title.isNullOrBlank() || link.isNullOrBlank() || img.isNullOrBlank()) {
-                    Log.w(name, "SEARCH LOGS --- Ítem omitido por campos nulos: $video")
+                    //Log.w(name, "SEARCH LOGS --- Ítem omitido por campos nulos: $video")
                     null
                 } else {
                     val year = video.release_date?.substringBefore("-")?.toIntOrNull()
@@ -265,17 +265,48 @@ class PelisplusicuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
-        val text = doc.select("script").filter {
-            it.html().trim().startsWith("self.__next_f.push([1")
-        }.joinToString("") {
-            it.html().replaceFirst("self.__next_f.push([1,\"", "")
-                .replace(""""]\)$""".toRegex(), "")
+        Log.d(name, "LOADLINKS LOGS --- 1. Iniciando extracción de links para URL: $data")
+
+        try {
+            val doc = app.get(data).document
+
+            val scriptChunks = doc.select("script").filter {
+                it.html().trim().startsWith("self.__next_f.push([1")
+            }
+
+            val text = scriptChunks.joinToString("") {
+                it.html().replaceFirst("self.__next_f.push([1,\"", "")
+                    .replace(""""]\)$""".toRegex(), "")
+            }
+
+            Log.d(name, "LOADLINKS LOGS --- 2. Longitud del texto extraído: ${text.length}")
+
+            if (text.isEmpty()) {
+                Log.e(name, "LOADLINKS LOGS --- 3. Fallo: Texto de script (Next.js chunk) está vacío.")
+                return false
+            }
+
+            val linksRaw = fetchLinks(text.replace("\\\"", "\""))
+
+            Log.d(name, "LOADLINKS LOGS --- 4. Enlaces brutos (Raw Links) encontrados: ${linksRaw.size}")
+
+            if (linksRaw.isEmpty()) {
+                Log.w(name, "LOADLINKS LOGS --- 5. Advertencia: No se encontraron enlaces válidos en el texto.")
+            }
+
+            linksRaw.amap { link ->
+                val fixedUrl = fixHostsLinks(link.url!!)
+                Log.d(name, "LOADLINKS LOGS --- 6. Procesando link: [${link.lang}] URL original: ${link.url} -> URL fija: $fixedUrl")
+
+                loadSourceNameExtractor(link.lang!!, fixedUrl, data, subtitleCallback, callback)
+            }
+
+            Log.d(name, "LOADLINKS LOGS --- 7. Finalizada la carga de links.")
+            return true
+        } catch (e: Exception) {
+            Log.e(name, "LOADLINKS LOGS --- 8. Excepción crítica en loadLinks: ${e.message}", e)
+            return false
         }
-        fetchLinks(text.replace("\\\"", "\"")).amap {
-            loadSourceNameExtractor(it.lang!!, fixHostsLinks(it.url!!), data, subtitleCallback, callback)
-        }
-        return true
     }
 
     data class Link(
