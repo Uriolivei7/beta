@@ -50,98 +50,93 @@ class PelisplusicuProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(name, "getMainPage: Iniciando carga de página principal.")
         val items = ArrayList<HomePageList>()
-        val year = Calendar.getInstance().get(Calendar.YEAR)
 
         val urls = listOf(
-            Pair("Películas de Estreno", "/peliculas"),
-            Pair("Películas Actualizadas", "/peliculas"),
             Pair("Series de Estreno", "/series"),
-            Pair("Series Actualizadas", "/series"),
             Pair("Animes Actualizados", "/animes"),
-            Pair("Animes Recomendados", "/animes"),
+            Pair("Películas de Estreno", "/peliculas"),
             Pair("Doramas de Estreno", "/doramas"),
-            Pair("Doramas Actualizadas", "/doramas"),
+            Pair("Directorio (General)", "/directorio"),
         )
 
         urls.amap { (name, path) ->
             try {
                 val url = "$mainUrl$path"
-                val doc = app.get(url).document
+                val doc = app.get(url, timeout = 15L).document
 
-                val section = doc.select("h2.text-xl, h2.text-2xl").firstOrNull {
-                    it.text().trim().startsWith(name.substringBefore(" de"))
-                } ?: doc.select("main section").firstOrNull()
+                val home = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
+                    val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
+                    val link = element.attr("href")
+                    val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
 
-                val home = section?.parent()?.select("a[href]")?.mapNotNull {
-                    val title = it.selectFirst("span.overflow-hidden")?.text()?.trim()
-                    val link = it.attr("href")
-                    val img = it.selectFirst("div.w-full img.w-full")?.attr("src")
-                    val year = it.select("div:not([class]) span")
+                    val year = element.select("div:not([class]) span")
                         .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
                         ?.text()?.toIntOrNull()
 
                     if (title.isNullOrBlank() || link.isNullOrBlank() || img.isNullOrBlank()) {
-                        Log.w(name, "getMainPage: Elemento omitido (datos incompletos).")
                         null
                     } else {
-                        newTvSeriesSearchResponse(title, fixUrl(link), TvType.TvSeries){
+                        val type = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
+                        newTvSeriesSearchResponse(title, fixUrl(link), type){
                             this.posterUrl = fixUrl(img)
                             this.year = year
                         }
                     }
                 }
                 if(!home.isNullOrEmpty()){
-                    items.add(HomePageList(name, home))
-                    Log.d(name, "getMainPage: Lista '$name' cargada con ${home.size} ítems.")
+                    items.add(HomePageList(name, home.distinctBy { it.url })) // Usamos distinctBy para evitar duplicados
+                    Log.d(this.name, "getMainPage: Lista '$name' cargada con ${home.size} ítems.")
                 } else {
-                    Log.w(name, "getMainPage: Lista '$name' vacía o selectores fallaron para URL: $url")
+                    Log.w(this.name, "getMainPage: Lista '$name' vacía o selectores fallaron para URL: $url")
                 }
             } catch (e: Exception) {
-                Log.e(name, "getMainPage: Error al procesar la lista '$name': ${e.message}", e)
+                Log.e(this.name, "getMainPage: Error al procesar la lista '$name': ${e.message}", e)
             }
         }
-        return newHomePageResponse(items)
+        if (items.isEmpty()) {
+            Log.e(this.name, "getMainPage: No se pudo cargar ninguna lista.")
+        }
+
+        return newHomePageResponse(items, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(name, "search: Buscando query '$query'...")
-        val searchApiUrl = "$mainUrl/api/search?q=$query"
+        Log.d(name, "search: Buscando query '$query' mediante HTML de Directorio.")
+        val searchUrl = "$mainUrl/directorio?search=$query"
 
         val headers = mapOf(
-            "Referer" to "$mainUrl/directorio?search=$query",
-            "Content-Type" to "application/json",
+            "Referer" to "$mainUrl/",
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         )
 
         try {
-            val resultText = app.get(searchApiUrl, headers = headers).text
-            Log.d(name, "search: Respuesta de la API recibida. Longitud: ${resultText.length}")
+            val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
 
-            val result = AppUtils.tryParseJson<List<Video>>(resultText)
+            val results = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
+                val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
+                val link = element.attr("href")
+                val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
 
-            if (result == null) {
-                Log.e(name, "search: Fallo al parsear JSON. Respuesta cruda: ${resultText.take(500)}...")
-                return emptyList()
+                val year = element.select("div:not([class]) span")
+                    .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
+                    ?.text()?.toIntOrNull()
+
+                if (title.isNullOrBlank() || link.isNullOrBlank() || img.isNullOrBlank()) {
+                    null
+                } else {
+                    val type = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
+                    newTvSeriesSearchResponse(title, fixUrl(link), type){
+                        this.posterUrl = fixUrl(img)
+                        this.year = year
+                    }
+                }
             }
 
-            Log.d(name, "search: JSON parseado. Encontrados ${result.size} videos.")
-
-            return result.amap { video ->
-                val title = video.titulo
-                val type = if(video.modo == 1) TvType.Movie else TvType.TvSeries
-                val typeName = if(video.modo == 1) "pelicula" else "serie"
-                val link = "$mainUrl/$typeName/${video.slug}"
-                val img = "https://image.tmdb.org/t/p/w185/${video.imagen}.jpg"
-                val year = video.release_date?.substringBefore("-")?.toIntOrNull()
-
-                newTvSeriesSearchResponse(title, link, type){
-                    this.posterUrl = fixUrl(img)
-                    this.year = year
-                }
-            }.orEmpty()
+            Log.d(name, "search: Búsqueda HTML completada. ${results.size} resultados encontrados.")
+            return results
 
         } catch (e: Exception) {
-            Log.e(name, "search: Error crítico en la búsqueda: ${e.message}", e)
+            Log.e(name, "search: Error crítico en la búsqueda HTML: ${e.message}", e)
             return emptyList()
         }
     }
