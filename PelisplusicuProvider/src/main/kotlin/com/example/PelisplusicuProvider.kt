@@ -64,12 +64,14 @@ class PelisplusicuProvider : MainAPI() {
                 val url = "$mainUrl$path"
                 val doc = app.get(url, timeout = 15L).document
 
-                val home = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
-                    val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
-                    val link = element.attr("href")
-                    val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
+                val home = doc.select("a.relative.shadow-xl").mapNotNull { element ->
+                    val mainLinkElement = element.selectFirst("a[href]") ?: element
 
-                    val year = element.select("div:not([class]) span")
+                    val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
+                    val link = mainLinkElement.attr("href")
+                    val img = mainLinkElement.selectFirst("img.w-full")?.attr("src")
+
+                    val year = mainLinkElement.select("div:not([class]) span")
                         .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
                         ?.text()?.toIntOrNull()
 
@@ -84,7 +86,7 @@ class PelisplusicuProvider : MainAPI() {
                     }
                 }
                 if(!home.isNullOrEmpty()){
-                    items.add(HomePageList(name, home.distinctBy { it.url })) // Usamos distinctBy para evitar duplicados
+                    items.add(HomePageList(name, home.distinctBy { it.url }))
                     Log.d(this.name, "getMainPage: Lista '$name' cargada con ${home.size} ítems.")
                 } else {
                     Log.w(this.name, "getMainPage: Lista '$name' vacía o selectores fallaron para URL: $url")
@@ -112,12 +114,14 @@ class PelisplusicuProvider : MainAPI() {
         try {
             val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
 
-            val results = doc.select("main div.grid a[href]").mapNotNull { element ->
-                val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
-                val link = element.attr("href")
-                val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
+            val results = doc.select("a.relative.shadow-xl").mapNotNull { element ->
+                val mainLinkElement = element.selectFirst("a[href]") ?: element
 
-                val year = element.select("div:not([class]) span")
+                val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
+                val link = mainLinkElement.attr("href")
+                val img = mainLinkElement.selectFirst("img.w-full")?.attr("src")
+
+                val year = mainLinkElement.select("div:not([class]) span")
                     .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
                     ?.text()?.toIntOrNull()
 
@@ -191,7 +195,9 @@ class PelisplusicuProvider : MainAPI() {
                 val episodes = if (!capitulos.isNullOrEmpty()) {
                     Log.d(name, "load(Series): ${capitulos.size} capítulos parseados. Usando amap.")
 
-                    capitulos.amap { capitulo ->
+                    val nonNullCapitulos = capitulos.filterNotNull()
+
+                    nonNullCapitulos.amap { capitulo ->
 
                         val season = capitulo.temporada
                         val episode = capitulo.capitulo
