@@ -67,28 +67,29 @@ class PelisplusicuProvider : MainAPI() {
 
 
     data class ApiResponse(
-        val videos: List<Video>,
+        val videos: List<Video?>?
     )
+
     data class Video(
-        val id: Int,
-        val slug: String,
-        val titulo: String,
-        val original: String,
-        val modo: Int,
-        val tipo: Int,
-        val score: Int,
-        val votes: String,
-        val calidad: String,
-        val descripcion: String,
-        val imagen: String,
-        val portada: String,
-        val tmdb_id: String,
-        val trailer: String,
-        val release_date: String,
-        val duracion: String,
-        val status: String,
-        val created_at: String,
-        val updated_at: String
+        val slug: String? = null,
+        val titulo: String? = null,
+        val modo: Int? = null,
+        val imagen: String? = null,
+        val release_date: String? = null,
+        val id: Int? = null,
+        val original: String? = null,
+        val tipo: Int? = null,
+        val score: Int? = null,
+        val votes: String? = null,
+        val calidad: String? = null,
+        val descripcion: String? = null,
+        val portada: String? = null,
+        val tmdb_id: String? = null,
+        val trailer: String? = null,
+        val duracion: String? = null,
+        val status: String? = null,
+        val created_at: String? = null,
+        val updated_at: String? = null
     )
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -155,19 +156,25 @@ class PelisplusicuProvider : MainAPI() {
                 return emptyList()
             }
 
-            Log.d(name, "SEARCH LOGS --- Videos encontrados: ${result.videos.size}")
+            Log.d(name, "SEARCH LOGS --- Videos encontrados: ${result.videos?.size ?: 0}")
 
-            return result.videos.amap {
-                val title = it.titulo
-                val typeName = if(it.modo == 1) "pelicula" else "serie"
-                val link = "$mainUrl/$typeName/${it.slug}"
-                val img = "https://image.tmdb.org/t/p/w185/${it.imagen}.jpg"
-                val year = it.release_date.substringBefore("-").toIntOrNull()
-                newTvSeriesSearchResponse(title!!, link!!, TvType.TvSeries){
-                    this.posterUrl = fixUrl(img!!)
-                    this.year = year
+            return result.videos?.filterNotNull()?.amap { video ->
+                val title = video.titulo
+                val typeName = if(video.modo == 1) "pelicula" else "serie"
+                val link = video.slug
+                val img = video.imagen
+
+                if (title.isNullOrBlank() || link.isNullOrBlank() || img.isNullOrBlank()) {
+                    Log.w(name, "SEARCH LOGS --- Ítem omitido por campos nulos: $video")
+                    null
+                } else {
+                    val year = video.release_date?.substringBefore("-")?.toIntOrNull()
+                    newTvSeriesSearchResponse(title, fixUrl("$mainUrl/$typeName/$link"), TvType.TvSeries){
+                        this.posterUrl = fixUrl("https://image.tmdb.org/t/p/w185/$img.jpg")
+                        this.year = year
+                    }
                 }
-            }.orEmpty()
+            }?.filterNotNull().orEmpty()
         } catch (e: Exception) {
             Log.e(name, "SEARCH LOGS --- Excepción crítica: ${e.message}", e)
             return emptyList()
