@@ -55,5 +55,24 @@
     "iconUrl": "https://www.tvporinternet2.com/imge/favicon.png",
     "language": "mx",
     "fileSize": 22000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/PelisplusicuProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "PelisPlusIcu",
+    "internalName": "PelisplusicuProvider",
+    "authors": [
+      "Ranita"
+    ],
+    "description": "Plugin para series",
+    "tvTypes": [
+      "TvSeries",
+      "Movie"
+    ],
+    "iconUrl": "https://www.tvporinternet2.com/imge/favicon.png",
+    "language": "mx",
+    "fileSize": 26000
   }
 ]

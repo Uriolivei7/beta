@@ -98,13 +98,13 @@ class TvporinternetProvider : MainAPI() {
     private fun getCategory(title: String): String {
         val normalizedTitle = title.uppercase().replace(" EN VIVO", "").trim()
         return when {
-            deportesCat.any { normalizedTitle.contains(it.uppercase()) } -> "Deportes ⚽"
-            peliculasSeriesCat.any { normalizedTitle.contains(it.uppercase()) } -> "Películas y Series 🍿"
-            infantilCat.any { normalizedTitle.contains(it.uppercase()) } -> "Infantil 👶"
-            educacionCat.any { normalizedTitle.contains(it.uppercase()) } -> "Documentales/Educación 📚"
-            noticiasCat.any { normalizedTitle.contains(it.uppercase()) } -> "Noticias 📰"
-            entretenimientoCat.any { normalizedTitle.contains(it.uppercase()) } -> "Entretenimiento ✨"
-            localLatinoCat.any { normalizedTitle.contains(it.uppercase()) } -> "Latinoamérica 🌎"
+            deportesCat.any { normalizedTitle.contains(it.uppercase()) } -> "Deportes"
+            peliculasSeriesCat.any { normalizedTitle.contains(it.uppercase()) } -> "Películas y Series"
+            infantilCat.any { normalizedTitle.contains(it.uppercase()) } -> "Infantil"
+            educacionCat.any { normalizedTitle.contains(it.uppercase()) } -> "Documentales/Educación"
+            noticiasCat.any { normalizedTitle.contains(it.uppercase()) } -> "Noticias"
+            entretenimientoCat.any { normalizedTitle.contains(it.uppercase()) } -> "Entretenimiento"
+            localLatinoCat.any { normalizedTitle.contains(it.uppercase()) } -> "Latinoamérica"
             else -> "Otros Canales"
         }
     }
@@ -333,13 +333,15 @@ class TvporinternetProvider : MainAPI() {
 
         val dataSource = doc.selectFirst("[data-src], [data-url], [data-source], [data-hls]")
         if (dataSource != null) {
-            val url = dataSource.attr("data-src") ?: dataSource.attr("data-url")
-            ?: dataSource.attr("data-source") ?: dataSource.attr("data-hls")
-            if (url.contains(".m3u8")) {
+            val url = dataSource.attr("data-src").ifBlank { null }
+                ?: dataSource.attr("data-url").ifBlank { null }
+                ?: dataSource.attr("data-source").ifBlank { null }
+                ?: dataSource.attr("data-hls").ifBlank { null }
+
+            if (!url.isNullOrEmpty() && url.contains(".m3u8")) {
                 return url
             }
         }
-
         return null
     }
 }
