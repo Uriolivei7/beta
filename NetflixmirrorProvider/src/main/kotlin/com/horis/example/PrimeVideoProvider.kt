@@ -303,7 +303,7 @@ class PrimeVideoProvider : MainAPI() {
                     )
                 )
                 subtitleCount++
-                Log.i(TAG, "Found Subtitle: ${track.label} at ${track.file} (Kind: ${track.kind})")
+                Log.i(TAG, "Found Subtitle: ${track.label} at $finalSubtitleUrl (Kind: ${track.kind})")
             }
         }
 
