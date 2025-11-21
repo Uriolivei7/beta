@@ -103,7 +103,7 @@
         "iconUrl": "https://pelis-plus.icu/assets/img/ic/favicon-96x96.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 24539,
+        "fileSize": 25801,
         "status": 1,
         "language": "mx",
         "authors": [
@@ -114,15 +114,15 @@
             "TvSeries"
         ],
         "version": 5,
-        "internalName": "PelisplusorgProvider",
-        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusorgProvider.cs3",
-        "name": "PelisplusorgProvider"
+        "internalName": "PelisplusicuProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusicuProvider.cs3",
+        "name": "PelisplusicuProvider"
     },
     {
         "iconUrl": "https://www.cablevisionhd.com/imge/cablevisionhd.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 21659,
+        "fileSize": 21730,
         "status": 1,
         "language": "mx",
         "authors": [
