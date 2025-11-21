@@ -64,11 +64,16 @@ class PelisplusicuProvider : MainAPI() {
                 val url = "$mainUrl$path"
                 val doc = app.get(url, timeout = 15L).document
 
-                val home = doc.select("a.relative.shadow-xl").mapNotNull { element ->
-                    val mainLinkElement = element.selectFirst("a[href]") ?: element
+                val home = doc.select("div.relative.rounded-md.shadow-xl").mapNotNull { element ->
+
+                    val mainLinkElement = element.selectFirst("a[href]")
+
+                    if (mainLinkElement == null) return@mapNotNull null
+
+                    val link = mainLinkElement.attr("href")
 
                     val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
-                    val link = mainLinkElement.attr("href")
+
                     val img = mainLinkElement.selectFirst("img.w-full")?.attr("src")
 
                     val year = mainLinkElement.select("div:not([class]) span")
@@ -114,11 +119,14 @@ class PelisplusicuProvider : MainAPI() {
         try {
             val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
 
-            val results = doc.select("a.relative.shadow-xl").mapNotNull { element ->
-                val mainLinkElement = element.selectFirst("a[href]") ?: element
+            val results = doc.select("div.relative.rounded-md.shadow-xl").mapNotNull { element ->
 
-                val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
+                val mainLinkElement = element.selectFirst("a[href]")
+
+                if (mainLinkElement == null) return@mapNotNull null
+
                 val link = mainLinkElement.attr("href")
+                val title = mainLinkElement.selectFirst("span.overflow-hidden")?.text()?.trim()
                 val img = mainLinkElement.selectFirst("img.w-full")?.attr("src")
 
                 val year = mainLinkElement.select("div:not([class]) span")
