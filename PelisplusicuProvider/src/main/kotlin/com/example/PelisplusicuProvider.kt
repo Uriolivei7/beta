@@ -265,7 +265,7 @@ class PelisplusicuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(name, "LOADLINKS LOGS --- 1. Iniciando extracción de links para URL: $data")
+        //Log.d(name, "LOADLINKS LOGS --- 1. Iniciando extracción de links para URL: $data")
 
         try {
             val doc = app.get(data).document
@@ -362,6 +362,8 @@ suspend fun loadSourceNameExtractor(
 
 fun fixHostsLinks(url: String): String {
     return url
+        .replaceFirst("https://doodstream.com", "https://dood.la")
+        .replaceFirst("https://streamtape.com", "https://streamtape.cc")
         .replaceFirst("https://hglink.to", "https://streamwish.to")
         .replaceFirst("https://swdyu.com", "https://streamwish.to")
         .replaceFirst("https://cybervynx.com", "https://streamwish.to")
