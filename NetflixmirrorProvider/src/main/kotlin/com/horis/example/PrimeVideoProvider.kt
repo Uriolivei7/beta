@@ -330,8 +330,9 @@ class PrimeVideoProvider : MainAPI() {
                 }
 
                 if (url.contains("subs.nfmirrorcdn.top")) {
-                    Log.i(TAG, "Applying Referer for Subtitle request: $refererUrl")
+                    Log.i(TAG, "Applying Referer and Cookie 'hd=on' for Subtitle request: $refererUrl")
                     newRequest.header("Referer", refererUrl)
+                    newRequest.header("Cookie", "hd=on")
                 }
 
                 return chain.proceed(newRequest.build())
