@@ -1,5 +1,6 @@
-package com.example
+package com.stormunblessed
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -8,8 +9,10 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody
+import org.json.JSONObject
 import java.util.Calendar
-import android.util.Log // Importar la clase Log
 
 class PelisplusicuProvider : MainAPI() {
     override var mainUrl = "https://v4.pelis-plus.icu"
@@ -19,20 +22,157 @@ class PelisplusicuProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.Movie,
         TvType.TvSeries,
+        TvType.Movie,
     )
 
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        val items = ArrayList<HomePageList>()
+        val year = Calendar.getInstance().get(Calendar.YEAR)
+        val urls = listOf(
+            Pair("Series de Estreno", "$mainUrl/series#Series de Estreno"),
+            Pair("Series Actualizadas", "$mainUrl/series#Series Actualizadas"),
+//            Pair("Series Recomendadas", "$mainUrl/series#Series Recomendadas"),
+            Pair("Animes Actualizados", "$mainUrl/animes#Animes Actualizados"),
+            Pair("Animes Recomendados", "$mainUrl/animes#Animes Recomendados"),
+            Pair("Películas de Estreno", "$mainUrl/peliculas#Películas de Estreno"),
+            Pair("Películas Actualizadas", "$mainUrl/peliculas#Películas Actualizadas"),
+//            Pair("Películas Recomendadas", "$mainUrl/peliculas#Películas Recomendadas"),
+            //Pair("Doramas de Estreno", "$mainUrl/doramas#Doramas de Estreno"),
+            Pair("Doramas Actualizadas", "$mainUrl/doramas#Doramas Actualizadas"),
+//            Pair("Doramas Recomendadas", "$mainUrl/doramas#Doramas Recomendadas"),
+        )
+
+        urls.amap { (name, url) ->
+            val doc = app.get(url, referer = "$mainUrl/").document
+            val home =
+                doc.selectXpath("//*[@id=\"$name\"]")?.select("a")?.map {
+                    val title = it.selectFirst("span.overflow-hidden")?.text()
+                    val link = it.attr("href")
+                    val img =
+                        it.selectFirst("div.w-full img.w-full")?.attr("src")
+                    val year = it.selectFirst("div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(1) > span:nth-child(1)")?.text()
+                        ?.toIntOrNull()
+                    newTvSeriesSearchResponse(title!!, link!!, TvType.TvSeries){
+                        this.posterUrl = fixUrl(img!!)
+                        this.year = year
+                    }
+                }
+            if(!home.isNullOrEmpty()){
+                items.add(HomePageList(name, home))
+            }
+        }
+        return newHomePageResponse(items)
+    }
+
+
     data class ApiResponse(
-        val videos: List<Video>?,
+        val videos: List<Video>,
     )
     data class Video(
+        val id: Int,
         val slug: String,
         val titulo: String,
+        val original: String,
         val modo: Int,
+        val tipo: Int,
+        val score: Int,
+        val votes: String,
+        val calidad: String,
+        val descripcion: String,
         val imagen: String,
-        val release_date: String?,
+        val portada: String,
+        val tmdb_id: String,
+        val trailer: String,
+        val release_date: String,
+        val duracion: String,
+        val status: String,
+        val created_at: String,
+        val updated_at: String
     )
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(name, "SEARCH LOGS --- Inicio de búsqueda para query='$query'")
+
+        val bodyMap = mapOf(
+            "query" to query,
+            "genre" to "",
+            "year" to "",
+            "format" to "",
+            "page" to 1,
+            "pageSize" to 42
+        )
+
+        val jsonBody = JSONObject(bodyMap).toString()
+        val requestBodyString = "[$jsonBody]"
+        Log.d(name, "SEARCH LOGS --- Request Body JSON: $requestBodyString")
+
+        val mediaType = "text/plain; charset=UTF-8".toMediaType()
+
+        val headers = mapOf(
+            "Referer" to "$mainUrl/directorio?search=$query",
+            "Next-Action" to "8c9b580858b66ac9488313744447683fd72f2644",
+            "Next-Router-State-Tree" to "%5B%22%22%2C%7B%22children%22%3A%5B%22directorio%22%2C%7B%22children%22%3A%5B%5B%22options%22%2C%22%22%2C%22oc%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%3F%7B%5C%22search%5C%22%3A%5C%22calamar%5C%22%7D%22%2C%7B%7D%2C%22%2Fdirectorio%3Fsearch%3Dcalamar%22%2C%22refresh%22%5D%7D%5D%7D%5D%7D%2Cnull%2Cnull%2Ctrue%5D",
+        )
+
+        val requestUrl = "$mainUrl/directorio?search=${query}r"
+        Log.d(name, "SEARCH LOGS --- Request URL: $requestUrl")
+
+        val requestBody = RequestBody.create(mediaType, requestBodyString)
+
+        try {
+            val response = app.post(
+                url = requestUrl,
+                headers = headers,
+                requestBody = requestBody
+            )
+
+            val responseText = response.body.string()
+
+            Log.d(name, "SEARCH LOGS --- Response Status Code: ${response.code}")
+
+            if (response.code != 200) {
+                Log.e(name, "SEARCH LOGS --- Petición fallida. Revisar headers o URL.")
+                return emptyList()
+            }
+
+            Log.d(name, "SEARCH LOGS --- Response Length: ${responseText.length}")
+
+            val jsonToParse = responseText.substringAfter("1:")
+
+            if (jsonToParse.length < 5) {
+                Log.e(name, "SEARCH LOGS --- Fallo: El JSON extraído es demasiado corto o inválido.")
+                Log.d(name, "SEARCH LOGS --- Respuesta completa (Inicio): ${responseText.take(200)}")
+                return emptyList()
+            }
+
+            Log.d(name, "SEARCH LOGS --- JSON a parsear (Inicio): ${jsonToParse.take(200)}")
+
+            val result = AppUtils.tryParseJson<ApiResponse>(jsonToParse)
+
+            if (result == null) {
+                Log.e(name, "SEARCH LOGS --- Fallo: AppUtils.tryParseJson devolvió NULL. Revisar estructura de ApiResponse.")
+                return emptyList()
+            }
+
+            Log.d(name, "SEARCH LOGS --- Videos encontrados: ${result.videos.size}")
+
+            return result.videos.amap {
+                val title = it.titulo
+                val typeName = if(it.modo == 1) "pelicula" else "serie"
+                val link = "$mainUrl/$typeName/${it.slug}"
+                val img = "https://image.tmdb.org/t/p/w185/${it.imagen}.jpg"
+                val year = it.release_date.substringBefore("-").toIntOrNull()
+                newTvSeriesSearchResponse(title!!, link!!, TvType.TvSeries){
+                    this.posterUrl = fixUrl(img!!)
+                    this.year = year
+                }
+            }.orEmpty()
+        } catch (e: Exception) {
+            Log.e(name, "SEARCH LOGS --- Excepción crítica: ${e.message}", e)
+            return emptyList()
+        }
+    }
 
     data class Capitulo(
         val titulo: String? = null,
@@ -42,189 +182,74 @@ class PelisplusicuProvider : MainAPI() {
         val imagen: String? = null,
     )
 
-    data class Link(
-        val lang: String?,
-        val url: String?
-    )
-
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(name, "getMainPage: Iniciando carga de página principal.")
-        val items = ArrayList<HomePageList>()
-
-        val urls = listOf(
-            Pair("Series de Estreno", "/series"),
-            Pair("Animes Actualizados", "/animes"),
-            Pair("Películas de Estreno", "/peliculas"),
-            Pair("Doramas de Estreno", "/doramas"),
-            Pair("Directorio (General)", "/directorio"),
-        )
-
-        urls.amap { (name, path) ->
-            try {
-                val url = "$mainUrl$path"
-                val doc = app.get(url, timeout = 15L).document
-
-                val home = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
-                    val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
-                    val link = element.attr("href")
-                    val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
-
-                    val year = element.select("div:not([class]) span")
-                        .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
-                        ?.text()?.toIntOrNull()
-
-                    if (title.isNullOrBlank() || link.isNullOrBlank() || img.isNullOrBlank()) {
-                        null
-                    } else {
-                        val type = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-                        newTvSeriesSearchResponse(title, fixUrl(link), type){
-                            this.posterUrl = fixUrl(img)
-                            this.year = year
-                        }
-                    }
-                }
-                if(!home.isNullOrEmpty()){
-                    items.add(HomePageList(name, home.distinctBy { it.url })) // Usamos distinctBy para evitar duplicados
-                    Log.d(this.name, "getMainPage: Lista '$name' cargada con ${home.size} ítems.")
-                } else {
-                    Log.w(this.name, "getMainPage: Lista '$name' vacía o selectores fallaron para URL: $url")
-                }
-            } catch (e: Exception) {
-                Log.e(this.name, "getMainPage: Error al procesar la lista '$name': ${e.message}", e)
-            }
-        }
-        if (items.isEmpty()) {
-            Log.e(this.name, "getMainPage: No se pudo cargar ninguna lista.")
-        }
-
-        return newHomePageResponse(items, hasNext = false)
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(name, "search: Buscando query '$query' mediante HTML de Directorio.")
-        val searchUrl = "$mainUrl/directorio?search=$query"
-
-        val headers = mapOf(
-            "Referer" to "$mainUrl/",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        )
-
-        try {
-            val doc = app.get(searchUrl, headers = headers, timeout = 15L).document
-
-            val results = doc.select("a[href*='/pelicula/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']").mapNotNull { element ->
-                val title = element.selectFirst("span.overflow-hidden")?.text()?.trim()
-                val link = element.attr("href")
-                val img = element.selectFirst("div.w-full img.w-full")?.attr("src")
-
-                val year = element.select("div:not([class]) span")
-                    .firstOrNull { span -> span.text().trim().matches(Regex("""\d{4}""")) }
-                    ?.text()?.toIntOrNull()
-
-                if (title.isNullOrBlank() || link.isNullOrBlank() || img.isNullOrBlank()) {
-                    null
-                } else {
-                    val type = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-                    newTvSeriesSearchResponse(title, fixUrl(link), type){
-                        this.posterUrl = fixUrl(img)
-                        this.year = year
-                    }
-                }
-            }.distinctBy { it.url }
-
-            Log.d(name, "search: Búsqueda HTML completada. ${results.size} resultados encontrados.")
-            return results
-
-        } catch (e: Exception) {
-            Log.e(name, "search: Error crítico en la búsqueda HTML: ${e.message}", e)
-            return emptyList()
-        }
-    }
-
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(name, "load: Cargando URL de información: $url")
-        try {
-            val doc = app.get(url).document
-            val tvType = if (url.contains("pelicula")) TvType.Movie else TvType.TvSeries
-            Log.d(name, "load: Tipo detectado: $tvType")
-
-            if(tvType == TvType.Movie){
-                val title = doc.selectFirst("h1.text-3xl")?.text()?.trim() ?: doc.selectFirst("meta[property='og:title']")?.attr("content") ?: ""
-                val yearMatch = Regex("""\((\d{4})\)""").find(title)
-                val year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-                Log.d(name, "load(Movie): Título='$title', Año=$year")
-
-                val poster = doc.selectFirst("div.w-full.h-full.relative img")?.attr("src")
-                val backimage = doc.selectFirst("div.w-full.h-full.absolute img")?.attr("src")
-                val description = doc.selectFirst("span.w-full.text-textsec.text-sm")?.text() ?: doc.selectFirst("meta[name='description']")?.attr("content") ?: ""
-                val tags = doc.select("div.flex-wrap.gap-3.mt-4 a").map{ it.text().trim()}
-
-                return newMovieLoadResponse(title, url, tvType, url) {
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = backimage ?: poster
-                    this.plot = description
-                    this.tags = tags
-                    this.year = year
-                }
+        val doc = app.get(url).document
+        val tvType = if (url.contains("pelicula")) TvType.Movie else TvType.TvSeries
+        if(tvType.equals(TvType.Movie)){
+            val info = doc.select("div.flex.w-full.h-fit.flex-col")
+            val title = info.select("div div.flex div.flex span.font-semibold").first()?.text() ?: ""
+            val year = title.substringAfter("(").substringBefore(")").toIntOrNull()
+            val poster = info.select("div div.object-cover img").first()?.attr("src")
+            val backimage = doc.selectXpath("/html/body/div/div/main/div[1]/div[1]/div/div[2]/div[1]/img").attr("src")
+            val description = info.select("span.w-full.text-textsec.text-sm").first()?.text() ?: ""
+            val tags = info.select("div.flex-wrap.gap-3.mt-4.hidden a").map{ it?.text().orEmpty()}
+            return newMovieLoadResponse(title, url, tvType, url) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backimage ?: poster
+                this.plot = description
+                this.tags = tags
+                this.year = year
             }
-
-            else{
-                val title = doc.selectFirst("h1.text-3xl")?.text()?.trim() ?: doc.selectFirst("meta[property='og:title']")?.attr("content") ?: ""
-                val yearMatch = Regex("""\((\d{4})\)""").find(title)
-                val year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-                Log.d(name, "load(Series): Título='$title', Año=$year")
-
-                val poster = doc.selectFirst("div.w-full.h-full.relative img")?.attr("src")
-                val backimage = doc.selectFirst("div.w-full.h-full.absolute img")?.attr("src")
-                val description = doc.selectFirst("span.w-full.text-textsec.text-sm")?.text() ?: doc.selectFirst("meta[name='description']")?.attr("content") ?: ""
-                val tags = doc.select("div.flex-wrap.gap-3.mt-4 a").map{ it.text().trim()}
-
-                val jsonScript = doc.select("script").firstOrNull {
-                    it.html().contains("capitulos") && it.html().contains("__NEXT_DATA__")
-                }?.html()
-
-                val capitulosJson = Regex(""""capitulos":(\\[[^\\]]*?\\])""").find(jsonScript ?: "")?.groupValues?.getOrNull(1)
-                    ?.replace("\\\"", "\"")
-
-                Log.d(name, "load(Series): JSON de capítulos extraído (Longitud: ${capitulosJson?.length})")
-
-                val capitulos = AppUtils.tryParseJson<List<Capitulo?>>(capitulosJson ?: "[]")
-
-                val episodes = if (!capitulos.isNullOrEmpty()) {
-                    Log.d(name, "load(Series): ${capitulos.size} elementos parseados (incluyendo nulos).")
-
-                    capitulos.filterNotNull().amap { capitulo ->
-                        val temporada = capitulo.temporada ?: 1
-                        val episodio = capitulo.capitulo ?: 1
-
-                        val episodeUrl = "$url/$temporada-$episodio"
-                        newEpisode(episodeUrl){
-                            this.name = capitulo.titulo?.replace(title.substringBefore(" ("), "")?.trim()
-                            this.season = temporada
-                            this.episode = episodio
-                            this.posterUrl = capitulo.imagen?.let { "https://image.tmdb.org/t/p/w185/$it.jpg" } ?: poster
-                        }
+        }else{
+            val title = doc.select(".detailsTop_title___bVic").first()?.text() ?: ""
+            val year = title.substringAfter("(").substringBefore(")").toIntOrNull()
+            val poster = doc.selectFirst(".detailsTop_detailsimage__oA30g")?.attr("src")
+            val backimage = doc.selectFirst(".detailsTop_detailsbgimage__Yhf6Y")?.attr("style")?.substringAfter("url(")?.substringBefore(")")
+            val description = doc.selectFirst(".detailsBottom_descriptioncontent__eOros > p:nth-child(1)")?.text() ?: ""
+            val tags = doc.select("div.detailsBottom_singlecontent__vAIRR:nth-child(4) > span:nth-child(2) span").map{ it?.text().orEmpty().replace(",", "")}
+            val json = doc.select("script").firstOrNull {
+                it.html().startsWith("self.__next_f.push(") && it.html().contains("\\\"capitulos\\\":[")
+            }?.html()?.substringAfter("\\\"capitulos\\\":")?.substringBefore("}],")
+                ?.replace("\\\"", "\"")
+            val capitulos = AppUtils.tryParseJson<List<Capitulo>>(json)
+            var episodes = if (!capitulos.isNullOrEmpty()) {
+                capitulos.amap {
+                    val titulo = it.titulo?.replace("$title ", "")
+                    val epurl = "$url/$titulo"
+                    newEpisode(epurl){
+                        this.name = titulo
+                        this.season = it.temporada
+                        this.episode = it.capitulo
+                        this.posterUrl = "https://image.tmdb.org/t/p/w185/${it.imagen}.jpg"
                     }
-                } else {
-                    Log.w(name, "load(Series): No se pudieron extraer episodios (JSON vacío o nulo).")
-                    listOf()
                 }
-
-                return newTvSeriesLoadResponse(
-                    title,
-                    url, tvType, episodes,
-                ) {
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = backimage ?: poster
-                    this.plot = description
-                    this.tags = tags
-                    this.year = year
-                }
+            } else listOf()
+            return newTvSeriesLoadResponse(
+                title,
+                url, tvType, episodes,
+            ) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backimage ?: poster
+                this.plot = description
+                this.tags = tags
+                this.year = year
             }
-        } catch (e: Exception) {
-            Log.e(name, "load: Error crítico al cargar la información: ${e.message}", e)
-            return null
         }
+    }
+
+    suspend fun customLoadExtractor(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit)
+    {
+        loadExtractor(url
+            .replaceFirst("https://hglink.to", "https://streamwish.to")
+            .replaceFirst("https://swdyu.com","https://streamwish.to")
+            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+            .replaceFirst("https://sblona.com", "https://watchsb.com")
+            , referer, subtitleCallback, callback)
     }
 
     override suspend fun loadLinks(
@@ -233,65 +258,31 @@ class PelisplusicuProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(name, "loadLinks: Iniciando extracción para URL: $data")
-        try {
-            val doc = app.get(data).document
-
-            val text = doc.select("script").firstOrNull {
-                it.html().contains("enlace") && it.html().contains("__NEXT_DATA__")
-            }?.html()
-
-            if (text.isNullOrEmpty()) {
-                Log.e(name, "loadLinks: ERROR. No se encontró el script de datos principal (Next.js).")
-                return false
-            }
-
-            val linksJson = text.substringAfter("\"links\":[")?.substringBefore("],\"")?.replace("\\\"", "\"")
-
-            val finalLinkData = if (linksJson.isNullOrBlank()) {
-                Log.w(name, "loadLinks: Links no encontrados con el método principal. Usando fallback.")
-                doc.select("script").filter {
-                    it.html().trim().startsWith("self.__next_f.push([1")
-                }.joinToString("") {
-                    it.html().replaceFirst("self.__next_f.push([1,\"", "")
-                        .replace(""""]\)$""".toRegex(), "")
-                }
-            } else linksJson
-
-            Log.d(name, "loadLinks: JSON de enlaces extraído (Longitud: ${finalLinkData.length})")
-
-            val extractedLinks = fetchLinks(finalLinkData)
-
-            if (extractedLinks.isEmpty()) {
-                Log.e(name, "loadLinks: ERROR. fetchLinks devolvió 0 enlaces.")
-                return false
-            }
-
-            Log.d(name, "loadLinks: ${extractedLinks.size} enlaces parseados. Iniciando extracción de host.")
-
-            extractedLinks.amap { link ->
-                val fixedUrl = fixHostsLinks(link.url!!)
-                Log.d(name, "loadLinks: Procesando ${link.lang} | URL original: ${link.url} | URL corregida: $fixedUrl")
-                loadSourceNameExtractor(link.lang!!, fixedUrl, data, subtitleCallback, callback)
-            }
-            return true
-        } catch (e: Exception) {
-            Log.e(name, "loadLinks: Error crítico durante la extracción de enlaces: ${e.message}", e)
-            return false
+        val doc = app.get(data).document
+        val text = doc.select("script").filter {
+            it.html().trim().startsWith("self.__next_f.push([1")
+        }.joinToString("") {
+            it.html().replaceFirst("self.__next_f.push([1,\"", "")
+                .replace(""""]\)$""".toRegex(), "")
         }
+        fetchLinks(text.replace("\\\"", "\"")).amap {
+            loadSourceNameExtractor(it.lang!!, fixHostsLinks(it.url!!), data, subtitleCallback, callback)
+        }
+        return true
     }
+
+    data class Link(
+        val lang: String?,
+        val url: String?
+    )
 
     fun fetchLinks(text: String?): List<Link> {
         if (text.isNullOrEmpty()) {
             return listOf()
         }
-
         val linkRegex =
-            Regex(""""enlace":"(https?://[^"]+)","tipo":\d+,"idioma":(\d+)""")
-
-        return linkRegex.findAll(text).map { match ->
-            Link(getLang(match.groupValues[2]), match.groupValues[1].replace("\\/", "/"))
-        }.toList()
+            Regex(""""enlace":"(https?://(www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=]*))","tipo":\d,"idioma":(\d)""")
+        return linkRegex.findAll(text).map { Link(getLang(it.groupValues[4]), it.groupValues[1]) }.toList()
     }
 
     fun getLang(str: String): String {
@@ -299,27 +290,10 @@ class PelisplusicuProvider : MainAPI() {
             "1" -> "Latino"
             "2" -> "Español"
             "3" -> "Subtitulado"
-            else -> "Otros"
+            else -> ""
         }
     }
 
-
-    fun fixHostsLinks(url: String): String {
-        return url
-            .replaceFirst("https://hglink.to", "https://streamwish.to")
-            .replaceFirst("https://swdyu.com", "https://streamwish.to")
-            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
-            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
-            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
-            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
-            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
-            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
-            .replaceFirst("https://sblona.com", "https://watchsb.com")
-            .replaceFirst("https://lulu.st", "https://lulustream.com")
-            .replaceFirst("https://uqload.io", "https://uqload.com")
-            .replaceFirst("https://do7go.com", "https://dood.la")
-            .replaceFirst("https://v4.pelis-plus.icu/frame", "$mainUrl/frame")
-    }
 }
 
 suspend fun loadSourceNameExtractor(
@@ -333,12 +307,12 @@ suspend fun loadSourceNameExtractor(
         CoroutineScope(Dispatchers.IO).launch {
             callback.invoke(
                 newExtractorLink(
-                    source = "$source[${link.source}]",
-                    name = "$source[${link.source}]",
-                    url = link.url,
-                    type = link.type,
+                    "$source[${link.source}]",
+                    "$source[${link.source}]",
+                    link.url,
                 ) {
                     this.quality = link.quality
+                    this.type = link.type
                     this.referer = link.referer
                     this.headers = link.headers
                     this.extractorData = link.extractorData
@@ -346,4 +320,20 @@ suspend fun loadSourceNameExtractor(
             )
         }
     }
+}
+
+fun fixHostsLinks(url: String): String {
+    return url
+        .replaceFirst("https://hglink.to", "https://streamwish.to")
+        .replaceFirst("https://swdyu.com", "https://streamwish.to")
+        .replaceFirst("https://cybervynx.com", "https://streamwish.to")
+        .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+        .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+        .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+        .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+        .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+        .replaceFirst("https://sblona.com", "https://watchsb.com")
+        .replaceFirst("https://lulu.st", "https://lulustream.com")
+        .replaceFirst("https://uqload.io", "https://uqload.com")
+        .replaceFirst("https://do7go.com", "https://dood.la")
 }
