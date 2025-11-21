@@ -119,6 +119,52 @@
         "name": "PelisplusicuProvider"
     },
     {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 28455,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "PelisplusProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusProvider.cs3",
+        "name": "PelisplusProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 29845,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "SoloLatinoProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SoloLatinoProvider.cs3",
+        "name": "SoloLatinoProvider"
+    },
+    {
         "iconUrl": "https://www.cablevisionhd.com/imge/cablevisionhd.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
