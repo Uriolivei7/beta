@@ -18,7 +18,7 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class Cubeembed : VidStack() {
-    override var name = "Rpmvid"
+    override var name = "Cubeembed"
     override var mainUrl = "https://cubeembed.rpmvid.com"
 }
 
