@@ -28,6 +28,9 @@ class KrunchyGeoBypasser(
 
     companion object {
         const val PROXY_BASE_URL = "https://us.community-proxy.meganeko.dev"
+        const val LOG_TAG = "Crunchyroll"
+
+        private fun String.toAscii() = this.map { it.code }.joinToString()
 
         val baseHeaders = mapOf(
             "accept" to "*/*",
@@ -39,21 +42,14 @@ class KrunchyGeoBypasser(
 
     val session = CustomSession(client)
 
-
     suspend fun geoBypassRequest(url: String): NiceResponse {
 
-        val finalHeaders: Map<String, String> = KrunchyGeoBypasser.Companion.baseHeaders +
+        val finalHeaders: Map<String, String> = baseHeaders +
                 mapOf("X-Proxy-Host" to "www.crunchyroll.com")
 
-        Log.i("CrunchyrollGeo", "--- INICIANDO GEO BYPASS REQUEST ---")
-        Log.i("CrunchyrollGeo", "Proxy Base Server: ${KrunchyGeoBypasser.Companion.PROXY_BASE_URL}")
-        Log.i("CrunchyrollGeo", "URL de Destino: $url")
-        Log.i("CrunchyrollGeo", "Encabezados Enviados:")
-
-        finalHeaders.forEach { (key, value) ->
-            Log.i("CrunchyrollGeo", "  $key: $value")
-        }
-        Log.i("CrunchyrollGeo", "--------------------------------------")
+        Log.i(LOG_TAG, "--- INICIANDO GEO BYPASS REQUEST ---")
+        Log.i(LOG_TAG, "URL de Destino: $url")
+        Log.i(LOG_TAG, "--------------------------------------")
 
         val response = session.get(
             url = url,
@@ -61,27 +57,27 @@ class KrunchyGeoBypasser(
             cookies = emptyMap()
         )
 
-        Log.i("CrunchyrollGeo", "--- RESPUESTA GEO BYPASS ---")
-        Log.i("CrunchyrollGeo", "Status: ${response.code}")
+        Log.i(LOG_TAG, "--- RESPUESTA GEO BYPASS ---")
+        Log.i(LOG_TAG, "Status: ${response.code}")
 
         if (response.code != 200) {
-            Log.e("CrunchyrollGeo", "ERROR: Geo Bypass falló con código ${response.code}. URL: $url")
-            Log.e("CrunchyrollGeo", "Respuesta Body (Primeras 500 chars): ${response.text.take(500)}")
+            Log.e(LOG_TAG, "ERROR: Geo Bypass falló con código ${response.code}. URL: $url")
+            Log.e(LOG_TAG, "Respuesta Body (Primeras 500 chars): ${response.text.take(500)}")
         } else {
-            Log.i("CrunchyrollGeo", "Respuesta Body (Primeras 200 chars): ${response.text.take(200)}")
+            Log.i(LOG_TAG, "Respuesta OK. Content Type: ${response.headers["Content-Type"]}")
+            Log.i(LOG_TAG, "Respuesta Body (Primeras 200 chars): ${response.text.take(200)}")
         }
-        Log.i("CrunchyrollGeo", "----------------------------------")
+        Log.i(LOG_TAG, "----------------------------------")
 
         return response
     }
-
-
 }
 
 class KrunchyProvider : MainAPI() {
     companion object {
         val crUnblock = KrunchyGeoBypasser(app.baseClient)
         val episodeNumRegex = Regex("""Episode (\d+)""")
+        const val LOG_TAG = "Crunchyroll"
     }
 
     override var mainUrl = "http://www.crunchyroll.com"
@@ -118,12 +114,12 @@ class KrunchyProvider : MainAPI() {
         val crHost = "crunchyroll.com"
 
         if (!url.contains(crHost)) {
-            Log.e("CrunchyrollGeo", "ALERTA: Solicitud externa NO BLOQUEADA: $url")
+            Log.e(LOG_TAG, "ALERTA: Solicitud externa NO BLOQUEADA: $url")
             return crUnblock.session.get(url)
         }
 
         if (!isContentUrl(url)) {
-            Log.e("CrunchyrollGeo", "IGNORADO: URL de Crunchyroll sin ruta de contenido válida (footer/error): $url")
+            Log.i(LOG_TAG, "IGNORADO: URL de Crunchyroll sin ruta de contenido válida (footer/error): $url")
 
             val fakeRequest = Request.Builder().url("http://fakedata.com").build()
             val fakeResponse = Response.Builder()
@@ -136,28 +132,29 @@ class KrunchyProvider : MainAPI() {
             return NiceResponse(fakeResponse, null)
         }
 
-        Log.i("CrunchyrollGeo", "USANDO BYPASS: URL de contenido detectada: $url")
+        Log.i(LOG_TAG, "USANDO BYPASS: URL de contenido detectada: $url")
         return crUnblock.geoBypassRequest(url)
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("GETMAINPAGE ")
-        val categoryData = request.data
+        Log.i(LOG_TAG, "getMainPage INICIADO. Page: $page, Category: ${request.name}")
 
+        val categoryData = request.data
         val paginated = categoryData.endsWith("=")
         val pagedLink = if (paginated) categoryData + page else categoryData
         val items = mutableListOf<HomePageList>()
 
+        Log.i(LOG_TAG, "PAGED LINK: $pagedLink")
+
+
         if (page <= 1 && request.name == "Popular") {
+            Log.i(LOG_TAG, "Fetching featured and now showing content...")
             val doc = Jsoup.parse(myRequestFunction(mainUrl).text)
 
             val featured = doc.select(".js-featured-show-list > li").mapNotNull { anime ->
-                val url =
-                    fixUrlNull(anime?.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
-
+                val url = fixUrlNull(anime?.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
                 val imgEl = anime.selectFirst("img")
                 val name = imgEl?.attr("alt") ?: ""
-
                 val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
                     ?.replace("small", "full")
 
@@ -169,8 +166,7 @@ class KrunchyProvider : MainAPI() {
 
             val recent =
                 doc.select("div.welcome-countdown-day:contains(Now Showing) li").mapNotNull {
-                    val link =
-                        fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+                    val link = fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
                     val name = it.selectFirst("span.welcome-countdown-name")?.text() ?: ""
 
                     val img = (it.selectFirst("img")?.attr("src") ?: it.selectFirst("img")?.attr("data-src"))
@@ -194,6 +190,8 @@ class KrunchyProvider : MainAPI() {
                         this.episodes = episodesMap
                     }
                 }
+
+            Log.i(LOG_TAG, "Found ${recent.size} recent items.")
             if (recent.isNotEmpty()) {
                 items.add(
                     HomePageList(
@@ -202,12 +200,14 @@ class KrunchyProvider : MainAPI() {
                     )
                 )
             }
+            Log.i(LOG_TAG, "Found ${featured.size} featured items.")
             if (featured.isNotEmpty()) {
                 items.add(HomePageList("Featured", featured))
             }
         }
 
         if (paginated || !paginated && page <= 1) {
+            Log.i(LOG_TAG, "Fetching paginated content from: $pagedLink")
             myRequestFunction(pagedLink).let { respText ->
                 val soup = Jsoup.parse(respText.text)
 
@@ -220,6 +220,7 @@ class KrunchyProvider : MainAPI() {
                         this.dubStatus = EnumSet.of(DubStatus.Subbed)
                     }
                 }
+                Log.i(LOG_TAG, "Found ${episodes.size} items for list: ${request.name}")
                 if (episodes.isNotEmpty()) {
                     items.add(
                         HomePageList(
@@ -232,43 +233,23 @@ class KrunchyProvider : MainAPI() {
         }
 
         if (items.isNotEmpty()) {
+            Log.i(LOG_TAG, "getMainPage FINALIZADO. Lists generated: ${items.size}")
             return newHomePageResponse(items)
         }
+
+        Log.e(LOG_TAG, "getMainPage FALLÓ. No items were generated.")
         throw ErrorLoadingException()
     }
 
-    private fun getCloseMatches(sequence: String, items: Collection<String>): List<String> {
-        val a = sequence.trim().lowercase()
-
-        return items.mapNotNull { item ->
-            val b = item.trim().lowercase()
-            if (b.contains(a))
-                item
-            else if (a.contains(b))
-                item
-            else null
-        }
-    }
-
-
-    private data class CrunchyAnimeData(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("img") var img: String,
-        @JsonProperty("link") var link: String
-    )
-
-    private data class CrunchyJson(
-        @JsonProperty("data") val data: List<CrunchyAnimeData>,
-    )
-
 
     override suspend fun search(query: String): ArrayList<SearchResponse> {
+        Log.i(LOG_TAG, "search INICIADO. Query: $query")
         val url = "$mainUrl/search?q=$query"
 
         val response = myRequestFunction(url)
 
         if (response.code != 200) {
-            Log.e("Crunchyroll", "La búsqueda falló con código ${response.code} para la query: $query")
+            Log.e(LOG_TAG, "search FALLÓ. Código: ${response.code} para la query: $query")
             return ArrayList()
         }
 
@@ -276,6 +257,8 @@ class KrunchyProvider : MainAPI() {
         val searchResults = ArrayList<SearchResponse>()
 
         val items = doc.select(".group-item")
+
+        Log.i(LOG_TAG, "Found ${items.size} potential search results.")
 
         for (item in items) {
             val link = fixUrlNull(item.selectFirst("a")?.attr("href")) ?: continue
@@ -299,13 +282,20 @@ class KrunchyProvider : MainAPI() {
             }
         }
 
+        Log.i(LOG_TAG, "search FINALIZADO. Results found: ${searchResults.size}")
         return searchResults
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.i(LOG_TAG, "load INICIADO. URL: $url")
         val soup = Jsoup.parse(myRequestFunction(url).text)
 
         val title = soup.selectFirst("#showview-content-header .ellipsis")?.text()?.trim()
+
+        if (title.isNullOrEmpty()) {
+            Log.e(LOG_TAG, "load FALLÓ. No se pudo obtener el título de la página de carga.")
+            throw ErrorLoadingException()
+        }
 
         val posterEl = soup.selectFirst(".poster")
         val posterU = (posterEl?.attr("src") ?: posterEl?.attr("data-src"))
@@ -316,10 +306,14 @@ class KrunchyProvider : MainAPI() {
             description = p?.selectFirst("span")?.text()?.trim()
         }
 
+        Log.i(LOG_TAG, "Load Info: Title='$title', PosterUrl='$posterU'")
+
         val genres = soup.select(".large-margin-bottom > ul:nth-child(2) li:nth-child(2) a")
             .map { it.text().capitalize() }
         val year = genres.filter { it.toIntOrNull() != null }.map { it.toInt() }.sortedBy { it }
             .getOrNull(0)
+
+        Log.i(LOG_TAG, "Found ${genres.size} genres and Year: $year")
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
@@ -382,6 +376,8 @@ class KrunchyProvider : MainAPI() {
             }
         }
 
+        Log.i(LOG_TAG, "Episodes found: Sub: ${subEpisodes.size}, Dub: ${dubEpisodes.size}, Premium Sub: ${premiumSubEpisodes.size}, Premium Dub: ${premiumDubEpisodes.size}")
+
         val recommendations =
             soup.select(".other-series > ul li")?.mapNotNull { element ->
                 val recTitle =
@@ -398,6 +394,10 @@ class KrunchyProvider : MainAPI() {
                 }
             }
 
+        Log.i(LOG_TAG, "Found ${recommendations?.size} recommendations.")
+
+
+        Log.i(LOG_TAG, "load FINALIZADO.")
         return newAnimeLoadResponse(title.toString(), url, TvType.Anime) {
             this.posterUrl = posterU
             this.engName = title
@@ -472,25 +472,23 @@ class KrunchyProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.i(LOG_TAG, "loadLinks INICIADO. Data URL: $data")
+
         val contentRegex = Regex("""vilos\.config\.media = (\{.+\})""")
 
-        Log.i("Crunchyroll", "LOADLINKS: Data URL received: $data")
-        // LLAMADA CORREGIDA
         val response = myRequestFunction(data)
-        Log.i("Crunchyroll", "LOADLINKS: Geo bypass response status: ${response.code}")
 
-        // Si la respuesta fue el 404 que generamos para las URLs ignoradas, salimos.
+        Log.i(LOG_TAG, "loadLinks: Geo bypass response status: ${response.code}")
+
         if (response.code == 404 && response.text.isEmpty()) {
-            Log.e("Crunchyroll", "LOADLINKS: URL de pie de página/error ignorada.")
+            Log.e(LOG_TAG, "loadLinks: URL de pie de página/error ignorada.")
             return false
         }
-
-        val hlsHelper = M3u8Helper()
 
         val dat = contentRegex.find(response.text)?.destructured?.component1()
 
         if (!dat.isNullOrEmpty()) {
-            Log.i("Crunchyroll", "LOADLINKS: Found Vilos config data. Length: ${dat.length}")
+            Log.i(LOG_TAG, "loadLinks: Found Vilos config data. Length: ${dat.length}")
             val json = parseJson<KrunchyVideo>(dat)
             val streams = ArrayList<Streams>()
 
@@ -515,12 +513,10 @@ class KrunchyProvider : MainAPI() {
                             "enUS",
                             null
                         ).contains(stream.hardsubLang))
-//                        && URI(stream.url).path.endsWith(".m3u")
                     ) {
                         stream.title = stream.title()
                         streams.add(stream)
                     }
-                    // Premium eps
                     else if (stream.format == "trailer_hls" && listOf(
                             "jaJP",
                             "esLA",
@@ -535,9 +531,8 @@ class KrunchyProvider : MainAPI() {
                 }
             }
 
-            Log.i("Crunchyroll", "LOADLINKS: Found ${streams.size} streams after filtering")
+            Log.i(LOG_TAG, "loadLinks: Found ${streams.size} streams after filtering")
 
-            // CORRECCIÓN: Usando forEach para la extracción
             streams.forEach { stream ->
                 if (stream.url.contains("m3u8") && stream.format!!.contains("adaptive")) {
                     callback(
@@ -570,7 +565,7 @@ class KrunchyProvider : MainAPI() {
                 }
             }
 
-            Log.i("Crunchyroll", "LOADLINKS: Processed ${json.subtitles.size} subtitles")
+            Log.i(LOG_TAG, "loadLinks: Processed ${json.subtitles.size} subtitles")
             json.subtitles.forEach {
                 val langclean = it.language.replace("esLA", "Spanish")
                     .replace("enUS", "English")
@@ -580,9 +575,10 @@ class KrunchyProvider : MainAPI() {
                 )
             }
 
+            Log.i(LOG_TAG, "loadLinks FINALIZADO con éxito.")
             return true
         }
-        Log.e("Crunchyroll", "LOADLINKS: Failed to find Vilos config for URL: $data. Response length: ${response.text.length}")
+        Log.e(LOG_TAG, "loadLinks FALLÓ. No Vilos config found for URL: $data. Response length: ${response.text.length}")
         return false
     }
 }
