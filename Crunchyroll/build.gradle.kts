@@ -1,13 +1,12 @@
 // use an integer for version numbers
-version = 5
-
+version = 2
 
 cloudstream {
-    language = "en"
     // All of these properties are optional, you can safely remove them
 
-    description = "The Crunchyroll provider allows you to watch all the shows that are on Crunchyroll."
-    authors = listOf("Sir Aguacata (KillerDogeEmpire)")
+    description = "Anime subtitulado y con multiples doblajes"
+    language = "en"
+    authors = listOf("Ranita")
 
     /**
      * Status int as the following:
@@ -16,7 +15,11 @@ cloudstream {
      * 2: Slow
      * 3: Beta only
      * */
-    status = 0 // will be 3 if unspecified
-    tvTypes = listOf("AnimeMovie", "Anime", "OVA")
-    iconUrl = "https://www.google.com/s2/favicons?domain=crunchyroll.com&sz=%size%"
+    status = 1
+
+    tvTypes = listOf("Anime")
+
+
+    // random cc logo i found : me too, how cool
+    //iconUrl = "https://avatarfiles.alphacoders.com/292/thumb-1920-292030.png"
 }

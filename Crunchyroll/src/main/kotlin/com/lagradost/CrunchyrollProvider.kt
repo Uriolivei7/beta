@@ -298,12 +298,15 @@ class KrunchyProvider : MainAPI() {
                         "Russian"
                     ) || seasonName.contains("Spanish"))
 
-                val epi = Episode(
-                    data = fixUrl(ep.attr("href")),
-                    name = "$epTitle",
-                    posterUrl = poster?.replace("widestar", "full")?.replace("wide", "full"),
-                    description = epDesc,
-                    season = if (isPremium) -1 else 1
+                val epi = newEpisode(
+                    url = fixUrl(ep.attr("href")),
+                    initializer = {
+                        this.name = "$epTitle"
+                        this.runTime = 0
+                        this.posterUrl = poster?.replace("widestar", "full")?.replace("wide", "full")
+                        this.description = epDesc
+                        this.season = if (isPremium) -1 else 1
+                    }
                 )
 
                 if (isPremiumDubbed) {
@@ -464,7 +467,7 @@ class KrunchyProvider : MainAPI() {
             }
 
             Log.i("Crunchyroll", "LOADLINKS: Found ${streams.size} streams after filtering")
-            streams.apmap { stream ->
+            streams.amap { stream ->
                 if (stream.url.contains("m3u8") && stream.format!!.contains("adaptive")) {
                     callback(
                         newExtractorLink(
