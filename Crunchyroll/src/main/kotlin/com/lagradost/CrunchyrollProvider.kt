@@ -1,6 +1,7 @@
 package com.lagradost
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.core.type.TypeReference
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.APIHolder.capitalize
@@ -247,7 +248,8 @@ class KrunchyProvider : MainAPI() {
 
     override suspend fun search(query: String): ArrayList<SearchResponse> {
         Log.i(LOG_TAG, "search INICIADO. Query: $query")
-        val url = "$mainUrl/search?q=$query"
+
+        val url = "$mainUrl/videos/anime/search/ajax_page?q=$query"
 
         val response = myRequestFunction(url)
 
@@ -259,35 +261,39 @@ class KrunchyProvider : MainAPI() {
         val doc = Jsoup.parse(response.text)
         val searchResults = ArrayList<SearchResponse>()
 
-        val items = doc.select("[data-t=\"search-series-card\"]")
+        val items = doc.select(".group-item")
 
-        Log.i(LOG_TAG, "Found ${items.size} potential search results (using 'data-t=\"search-series-card\"').")
+        if (items.isEmpty()) {
+            val modernItems = doc.select("li.d-block")
+            Log.i(LOG_TAG, "Reintentando selector. Found ${modernItems.size} potential results.")
 
-        for (item in items) {
-            val linkEl = item.selectFirst("a[href*=/series/], a[href*=/watch/]") ?: continue
-            val link = fixUrlNull(linkEl.attr("href")) ?: continue
+            for (item in modernItems) {
+                val linkEl = item.selectFirst("a[href*=/series/], a[href*=/watch/]") ?: continue
+                val link = fixUrlNull(linkEl.attr("href")) ?: continue
 
-            val title = item.selectFirst("h2.search-show-card__title--kGOEF")?.text()?.trim()
-                ?: item.selectFirst("[data-t=\"title\"]")?.text()?.trim()
-                ?: continue
+                val title = item.selectFirst("div.text-bold")?.text()?.trim()
+                    ?: item.selectFirst("span.series-title")?.text()?.trim()
+                    ?: continue
 
-            val imgEl = item.selectFirst("div.search-show-card__poster-wrapper--OeXaS img[data-t=\"search-card-poster-tall\"]")
-            val posterUrl = imgEl?.attr("src")
-                ?.replace("width=60,height=90", "width=225,height=350")
+                val imgEl = item.selectFirst("img")
+                val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
+                    ?.replace("small", "full")
 
-            val dubstat =
-                if (title.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
-                    EnumSet.of(DubStatus.Subbed)
+                val dubstat =
+                    if (title.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
+                        EnumSet.of(DubStatus.Subbed)
 
-            if (link.contains("/series/") || link.contains("/watch/")) {
-                searchResults.add(
-                    newAnimeSearchResponse(title, link, TvType.Anime) {
-                        this.posterUrl = posterUrl
-                        this.dubStatus = dubstat
-                    }
-                )
+                if (link.contains("/series/") || link.contains("/watch/")) {
+                    searchResults.add(
+                        newAnimeSearchResponse(title, link, TvType.Anime) {
+                            this.posterUrl = posterUrl
+                            this.dubStatus = dubstat
+                        }
+                    )
+                }
             }
         }
+
 
         Log.i(LOG_TAG, "search FINALIZADO. Results found: ${searchResults.size}")
         return searchResults
@@ -309,148 +315,137 @@ class KrunchyProvider : MainAPI() {
 
         val soup = Jsoup.parse(response.text)
 
-        val title = soup.selectFirst("h1.heading")?.text()?.trim()
-            ?: soup.selectFirst("title")?.text()?.replace(" - Crunchyroll", "")?.trim()
-        //soup.selectFirst("#showview-content-header .ellipsis")?.text()?.trim()
+        val metadataScript = soup.selectFirst("script[type=\"application/ld+json\"]")?.html()
 
-        if (title.isNullOrEmpty()) {
-            Log.e(LOG_TAG, "load FALLÓ. No se pudo obtener el título de la página de carga.")
-            throw ErrorLoadingException()
+        var title: String? = null
+        var description: String? = null
+        var posterU: String? = null
+        var genres: List<String> = emptyList()
+        var year: Int? = null
+
+        if (metadataScript != null) {
+            try {
+                val json = mapper.readValue<Map<String, Any>>(
+                    metadataScript,
+                    object : TypeReference<Map<String, Any>>() {}
+                )
+
+                title = json["name"] as? String
+                description = json["description"] as? String
+                posterU = json["image"] as? String
+
+                val genreData = json["genre"]
+                genres = when (genreData) {
+                    is String -> listOf(genreData)
+                    is List<*> -> genreData.filterIsInstance<String>()
+                    else -> emptyList()
+                }
+
+                Log.i(LOG_TAG, "Metadata JSON success. Title: $title")
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Error parsing JSON-LD metadata: ${e.message}")
+            }
         }
 
-        val posterEl = soup.selectFirst(".poster")
-        val posterU = (posterEl?.attr("src") ?: posterEl?.attr("data-src"))
+        if (title.isNullOrEmpty()) {
+            title = soup.selectFirst("h1.text--is-xl--Q7c9n")?.text()?.trim()
+                ?: soup.selectFirst("title")?.text()?.replace(" - Crunchyroll", "")?.trim()
 
-        val p = soup.selectFirst(".description")
-        var description = p?.selectFirst(".more")?.text()?.trim()
-        if (description.isNullOrBlank()) {
-            description = p?.selectFirst("span")?.text()?.trim()
+            description = soup.selectFirst("div[data-t=\"show-description-text\"]")?.text()?.trim()
+
+            posterU = soup.selectFirst("img[data-t=\"show-header-poster\"]")?.attr("src")
+                ?.replace("medium", "full")
+        }
+
+        if (title.isNullOrEmpty()) {
+            Log.e(LOG_TAG, "load FALLÓ. No se pudo obtener el título de la página de carga (ni JSON ni Fallback).")
+            throw ErrorLoadingException()
         }
 
         Log.i(LOG_TAG, "Load Info: Title='$title', PosterUrl='$posterU'")
 
-        val genres = soup.select(".large-margin-bottom > ul:nth-child(2) li:nth-child(2) a")
-            .map { it.text().capitalize() }
-        val year = genres.filter { it.toIntOrNull() != null }.map { it.toInt() }.sortedBy { it }
-            .getOrNull(0)
-
-        Log.i(LOG_TAG, "Found ${genres.size} genres and Year: $year")
-
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
-        val premiumSubEpisodes = mutableListOf<Episode>()
-        val premiumDubEpisodes = mutableListOf<Episode>()
 
-        soup.select(".season").forEach {
-            val seasonName = it.selectFirst("a.season-dropdown")?.text()?.trim()
-            it.select(".episode").forEach { ep ->
-                val epTitle = ep.selectFirst(".short-desc")?.text()
+        val seasonContainer = soup.selectFirst("div.erc-series-season-selector")
 
-                val epNum = episodeNumRegex.find(
-                    ep.selectFirst("span.ellipsis")?.text().toString()
-                )?.destructured?.component1()
+        val episodeItems = soup.select("div[data-t=\"episode-card\"]")
 
-                var poster = ep.selectFirst("img.landscape")?.attr("data-thumbnailurl")
-                val poster2 = ep.selectFirst("img")?.attr("src")
+        Log.i(LOG_TAG, "Found ${episodeItems.size} potential episode items using modern selector.")
 
-                if (poster.isNullOrBlank()) {
-                    poster = poster2
+
+        for (ep in episodeItems) {
+            val linkEl = ep.selectFirst("a[href*=/watch/]") ?: continue
+            val epLink = fixUrl(linkEl.attr("href"))
+
+            val epTitle = ep.selectFirst("h4.text--is-l--iccTo")?.text()?.trim()
+
+            val epNumText = ep.selectFirst("span.text--is-xs--UyvXH")?.text()
+
+            val epNum = epNumText?.let {
+                episodeNumRegex.find(it)?.destructured?.component1()?.toIntOrNull()
+            } ?: 1
+
+            val poster = ep.selectFirst("img[data-t=\"episode-card-poster\"]")?.attr("src")
+                ?.replace("medium", "full")
+
+            val languageTag = ep.selectFirst("div[data-t=\"episode-card-meta-tags\"] span")?.text() ?: ""
+
+            val isDubbed = languageTag.contains("Dob", ignoreCase = true)
+            val isPremium = ep.selectFirst("div[data-t=\"premium-badge\"]") != null
+
+            val epi = newEpisode(
+                url = epLink,
+                initializer = {
+                    this.name = epTitle ?: "Episodio $epNum"
+                    this.posterUrl = poster
+                    this.description = epTitle ?: ""
+                    this.season = if (isPremium) -1 else 1
+                    this.episode = epNum
                 }
+            )
 
-                if (poster.isNullOrBlank()) {
-                    poster = ep.selectFirst("img")?.attr("data-src")
-                }
-
-
-                var epDesc =
-                    (if (epNum == null) "" else "Episode $epNum") + (if (!seasonName.isNullOrEmpty()) " - $seasonName" else "")
-                val isPremium = poster?.contains("widestar", ignoreCase = true) ?: false
-                if (isPremium) {
-                    epDesc = "★ $epDesc ★"
-                }
-
-                val isPremiumDubbed =
-                    isPremium && seasonName != null && (seasonName.contains("Dub") || seasonName.contains(
-                        "Russian"
-                    ) || seasonName.contains("Spanish"))
-
-                val epi = newEpisode(
-                    url = fixUrl(ep.attr("href")),
-                    initializer = {
-                        this.name = "$epTitle"
-                        this.runTime = 0
-                        this.posterUrl = poster?.replace("widestar", "full")?.replace("wide", "full")
-                        this.description = epDesc
-                        this.season = if (isPremium) -1 else 1
-                    }
-                )
-
-                if (isPremiumDubbed) {
-                    premiumDubEpisodes.add(epi)
-                } else if (isPremium) {
-                    premiumSubEpisodes.add(epi)
-                } else if (seasonName != null && (seasonName.contains("Dub"))) {
-                    dubEpisodes.add(epi)
-                } else {
-                    subEpisodes.add(epi)
-                }
+            if (isDubbed) {
+                dubEpisodes.add(epi)
+            } else {
+                subEpisodes.add(epi)
             }
         }
 
-        Log.i(LOG_TAG, "Episodes found: Sub: ${subEpisodes.size}, Dub: ${dubEpisodes.size}, Premium Sub: ${premiumSubEpisodes.size}, Premium Dub: ${premiumDubEpisodes.size}")
+        Log.i(LOG_TAG, "Episodes found: Sub: ${subEpisodes.size}, Dub: ${dubEpisodes.size}")
 
-        val recommendations =
-            soup.select(".other-series > ul li")?.mapNotNull { element ->
-                val recTitle =
-                    element.select("span.ellipsis[dir=auto]").text() ?: return@mapNotNull null
-                val image = element.select("img")?.attr("src")
-                val recUrl = fixUrl(element.select("a").attr("href"))
+        val recommendations = soup.select("[data-t=\"carousel-item\"]").mapNotNull { element ->
+            val recLink = element.selectFirst("a") ?: return@mapNotNull null
+            val recUrl = fixUrl(recLink.attr("href"))
+            val recTitle = element.selectFirst("h4")?.text() ?: return@mapNotNull null
+            val image = element.selectFirst("img")?.attr("src")
 
-                newAnimeSearchResponse(recTitle, fixUrl(recUrl), TvType.Anime) {
-                    this.posterUrl = fixUrl(image!!)
-                    this.dubStatus =
-                        if (recTitle.contains("(DUB)") || recTitle.contains("Dub")) EnumSet.of(
-                            DubStatus.Dubbed
-                        ) else EnumSet.of(DubStatus.Subbed)
-                }
+            newAnimeSearchResponse(recTitle, recUrl, TvType.Anime) {
+                this.posterUrl = image
+                this.dubStatus =
+                    if (recTitle.contains("DUB", ignoreCase = true)) EnumSet.of(DubStatus.Dubbed) else EnumSet.of(DubStatus.Subbed)
             }
+        }
 
-        Log.i(LOG_TAG, "Found ${recommendations?.size} recommendations.")
-
+        Log.i(LOG_TAG, "Found ${recommendations.size} recommendations.")
 
         Log.i(LOG_TAG, "load FINALIZADO.")
         return newAnimeLoadResponse(title.toString(), url, TvType.Anime) {
             this.posterUrl = posterU
             this.engName = title
-            if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes.reversed())
-            if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes.reversed())
-
-            if (premiumDubEpisodes.isNotEmpty()) addEpisodes(
-                DubStatus.Dubbed,
-                premiumDubEpisodes.reversed()
-            )
-            if (premiumSubEpisodes.isNotEmpty()) addEpisodes(
-                DubStatus.Subbed,
-                premiumSubEpisodes.reversed()
-            )
-
             this.plot = description
             this.tags = genres
             this.year = year
 
-            this.recommendations = recommendations
+            if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes.reversed())
+            if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes.reversed())
+
             this.seasonNames = listOf(
-                SeasonData(
-                    1,
-                    "Free",
-                    null
-                ),
-                SeasonData(
-                    -1,
-                    "Premium",
-                    null
-                ),
+                SeasonData(1, "Subbed Episodes", null),
+                SeasonData(2, "Dubbed Episodes", null)
             )
+
+            this.recommendations = recommendations
         }
     }
 
