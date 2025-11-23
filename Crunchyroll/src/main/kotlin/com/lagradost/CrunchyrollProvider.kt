@@ -22,7 +22,6 @@ private fun String.toAscii() = this.map { it.code }.joinToString()
 class KrunchyGeoBypasser(
     client: OkHttpClient
 ) {
-
     companion object {
         const val PROXY_BASE_URL = "https://us.community-proxy.meganeko.dev"
 
@@ -71,6 +70,8 @@ class KrunchyGeoBypasser(
 
         return response
     }
+
+
 }
 
 class KrunchyProvider : MainAPI() {
@@ -96,6 +97,18 @@ class KrunchyProvider : MainAPI() {
         "$mainUrl/videos/anime/simulcasts/ajax_page" to "Simulcasts"
     )
 
+    suspend fun myRequestFunction(url: String): NiceResponse {
+        val crUrl = "crunchyroll.com"
+
+        if (url.contains(crUrl)) {
+            return crUnblock.geoBypassRequest(url)
+        } else {
+            Log.e("CrunchyrollGeo", "ALERTA: Solicitud externa NO BLOQUEADA: $url")
+            return crUnblock.session.get(url)
+        }
+    }
+
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("GETMAINPAGE ")
         val categoryData = request.data
@@ -104,9 +117,9 @@ class KrunchyProvider : MainAPI() {
         val pagedLink = if (paginated) categoryData + page else categoryData
         val items = mutableListOf<HomePageList>()
 
-        // Only fetch page at first-time load of homepage
         if (page <= 1 && request.name == "Popular") {
-            val doc = Jsoup.parse(crUnblock.geoBypassRequest(mainUrl).text)
+            val doc = Jsoup.parse(myRequestFunction(mainUrl).text)
+
             val featured = doc.select(".js-featured-show-list > li").mapNotNull { anime ->
                 val url =
                     fixUrlNull(anime?.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
@@ -114,7 +127,6 @@ class KrunchyProvider : MainAPI() {
                 val name = imgEl?.attr("alt") ?: ""
                 val posterUrl = imgEl?.attr("src")?.replace("small", "full")
 
-                // CAMBIO 1: AnimeSearchResponse -> newAnimeSearchResponse
                 newAnimeSearchResponse(name, url, TvType.Anime) {
                     this.posterUrl = posterUrl
                     this.dubStatus = EnumSet.of(DubStatus.Subbed)
@@ -138,7 +150,6 @@ class KrunchyProvider : MainAPI() {
                     episodesMap[DubStatus.Subbed] = epnum?.toIntOrNull() ?: 0
                     episodesMap[DubStatus.Dubbed] = epnum?.toIntOrNull() ?: 0
 
-                    // CAMBIO 2: AnimeSearchResponse -> newAnimeSearchResponse
                     newAnimeSearchResponse("★ $name ★", link.replace(Regex("(\\/episode.*)"), ""), TvType.Anime) {
                         this.posterUrl = fixUrlNull(img)
                         this.dubStatus = dubstat
@@ -159,14 +170,13 @@ class KrunchyProvider : MainAPI() {
         }
 
         if (paginated || !paginated && page <= 1) {
-            crUnblock.geoBypassRequest(pagedLink).let { respText ->
+            myRequestFunction(pagedLink).let { respText ->
                 val soup = Jsoup.parse(respText.text)
 
                 val episodes = soup.select("li").mapNotNull {
                     val innerA = it.selectFirst("a") ?: return@mapNotNull null
                     val urlEps = fixUrlNull(innerA.attr("href")) ?: return@mapNotNull null
 
-                    // CAMBIO 3: AnimeSearchResponse -> newAnimeSearchResponse
                     newAnimeSearchResponse(innerA.attr("title"), urlEps, TvType.Anime) {
                         this.posterUrl = it.selectFirst("img")?.attr("src")
                         this.dubStatus = EnumSet.of(DubStatus.Subbed)
@@ -189,7 +199,6 @@ class KrunchyProvider : MainAPI() {
         throw ErrorLoadingException()
     }
 
-    // Maybe fuzzy match in the future
     private fun getCloseMatches(sequence: String, items: Collection<String>): List<String> {
         val a = sequence.trim().lowercase()
 
@@ -202,6 +211,7 @@ class KrunchyProvider : MainAPI() {
             else null
         }
     }
+
 
     private data class CrunchyAnimeData(
         @JsonProperty("name") val name: String,
@@ -216,7 +226,7 @@ class KrunchyProvider : MainAPI() {
 
     override suspend fun search(query: String): ArrayList<SearchResponse> {
         val json =
-            crUnblock.geoBypassRequest("http://www.crunchyroll.com/ajax/?req=RpcApiSearch_GetSearchCandidates").text.split(
+            myRequestFunction("http://www.crunchyroll.com/ajax/?req=RpcApiSearch_GetSearchCandidates").text.split(
                 "*/"
             )[0].replace("\\/", "/")
         val data = parseJson<CrunchyJson>(
@@ -239,7 +249,6 @@ class KrunchyProvider : MainAPI() {
                 anime.link = fixUrl(anime.link)
                 anime.img = anime.img.replace("small", "full")
 
-                // CAMBIO 4: AnimeSearchResponse -> newAnimeSearchResponse
                 searchResutls.add(
                     newAnimeSearchResponse(anime.name, anime.link, TvType.Anime) {
                         this.posterUrl = anime.img
@@ -254,7 +263,8 @@ class KrunchyProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val soup = Jsoup.parse(crUnblock.geoBypassRequest(url).text)
+        val soup = Jsoup.parse(myRequestFunction(url).text)
+
         val title = soup.selectFirst("#showview-content-header .ellipsis")?.text()?.trim()
         val posterU = soup.selectFirst(".poster")?.attr("src")
 
@@ -328,7 +338,6 @@ class KrunchyProvider : MainAPI() {
                 val image = element.select("img")?.attr("src")
                 val recUrl = fixUrl(element.select("a").attr("href"))
 
-                // CAMBIO 5: AnimeSearchResponse -> newAnimeSearchResponse
                 newAnimeSearchResponse(recTitle, fixUrl(recUrl), TvType.Anime) {
                     this.posterUrl = fixUrl(image!!)
                     this.dubStatus =
@@ -414,7 +423,7 @@ class KrunchyProvider : MainAPI() {
         val contentRegex = Regex("""vilos\.config\.media = (\{.+\})""")
 
         Log.i("Crunchyroll", "LOADLINKS: Data URL received: $data")
-        val response = crUnblock.geoBypassRequest(data)
+        val response = myRequestFunction(data)
         Log.i("Crunchyroll", "LOADLINKS: Geo bypass response status: ${response.code}")
 
         val hlsHelper = M3u8Helper()
@@ -447,12 +456,10 @@ class KrunchyProvider : MainAPI() {
                             "enUS",
                             null
                         ).contains(stream.hardsubLang))
-//                        && URI(stream.url).path.endsWith(".m3u")
                     ) {
                         stream.title = stream.title()
                         streams.add(stream)
                     }
-                    // Premium eps
                     else if (stream.format == "trailer_hls" && listOf(
                             "jaJP",
                             "esLA",
@@ -468,7 +475,8 @@ class KrunchyProvider : MainAPI() {
             }
 
             Log.i("Crunchyroll", "LOADLINKS: Found ${streams.size} streams after filtering")
-            streams.amap { stream ->
+
+            streams.forEach { stream ->
                 if (stream.url.contains("m3u8") && stream.format!!.contains("adaptive")) {
                     callback(
                         newExtractorLink(
@@ -497,8 +505,9 @@ class KrunchyProvider : MainAPI() {
                             this.quality = Qualities.Unknown.value
                         }
                     )
-                } else null
+                }
             }
+
             Log.i("Crunchyroll", "LOADLINKS: Processed ${json.subtitles.size} subtitles")
             json.subtitles.forEach {
                 val langclean = it.language.replace("esLA", "Spanish")
