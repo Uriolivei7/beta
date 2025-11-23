@@ -102,6 +102,12 @@ class KrunchyProvider : MainAPI() {
     )
 
     private fun isContentUrl(url: String): Boolean {
+        val crHost = "crunchyroll.com"
+
+        if (url.endsWith("$crHost/") || url.endsWith(crHost) || url.endsWith(crHost)) {
+            return true
+        }
+
         return url.contains("/watch/") ||
                 url.contains("/series/") ||
                 url.contains("/videos/anime/") ||
