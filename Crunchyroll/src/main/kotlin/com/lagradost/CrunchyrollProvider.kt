@@ -154,21 +154,28 @@ class KrunchyProvider : MainAPI() {
             val featured = doc.select(".js-featured-show-list > li").mapNotNull { anime ->
                 val url =
                     fixUrlNull(anime?.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+
                 val imgEl = anime.selectFirst("img")
                 val name = imgEl?.attr("alt") ?: ""
-                val posterUrl = imgEl?.attr("src")?.replace("small", "full")
+
+                val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
+                    ?.replace("small", "full")
 
                 newAnimeSearchResponse(name, url, TvType.Anime) {
                     this.posterUrl = posterUrl
                     this.dubStatus = EnumSet.of(DubStatus.Subbed)
                 }
             }
+
             val recent =
                 doc.select("div.welcome-countdown-day:contains(Now Showing) li").mapNotNull {
                     val link =
                         fixUrlNull(it.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
                     val name = it.selectFirst("span.welcome-countdown-name")?.text() ?: ""
-                    val img = it.selectFirst("img")?.attr("src")?.replace("medium", "full")
+
+                    val img = (it.selectFirst("img")?.attr("src") ?: it.selectFirst("img")?.attr("data-src"))
+                        ?.replace("medium", "full")
+
                     val dubstat = if (name.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
                         EnumSet.of(DubStatus.Subbed)
                     val details = it.selectFirst("span.welcome-countdown-details")?.text()
@@ -256,48 +263,52 @@ class KrunchyProvider : MainAPI() {
 
 
     override suspend fun search(query: String): ArrayList<SearchResponse> {
-        val json =
-            myRequestFunction("http://www.crunchyroll.com/ajax/?req=RpcApiSearch_GetSearchCandidates").text.split(
-                "*/"
-            )[0].replace("\\/", "/")
-        val data = parseJson<CrunchyJson>(
-            json.split("\n").mapNotNull { if (!it.startsWith("/")) it else null }.joinToString("\n")
-        ).data
+        val url = "$mainUrl/search?q=$query"
 
-        val results = getCloseMatches(query, data.map { it.name })
-        if (results.isEmpty()) return ArrayList()
-        val searchResutls = ArrayList<SearchResponse>()
+        val response = myRequestFunction(url)
 
-        var count = 0
-        for (anime in data) {
-            if (count == results.size) {
-                break
-            }
-            if (anime.name == results[count]) {
-                val dubstat =
-                    if (anime.name.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
-                        EnumSet.of(DubStatus.Subbed)
-                anime.link = fixUrl(anime.link)
-                anime.img = anime.img.replace("small", "full")
+        if (response.code != 200) {
+            Log.e("Crunchyroll", "La búsqueda falló con código ${response.code} para la query: $query")
+            return ArrayList()
+        }
 
-                searchResutls.add(
-                    newAnimeSearchResponse(anime.name, anime.link, TvType.Anime) {
-                        this.posterUrl = anime.img
+        val doc = Jsoup.parse(response.text)
+        val searchResults = ArrayList<SearchResponse>()
+
+        val items = doc.select(".group-item")
+
+        for (item in items) {
+            val link = fixUrlNull(item.selectFirst("a")?.attr("href")) ?: continue
+            val title = item.selectFirst("span.series-title")?.text()?.trim() ?: continue
+
+            val imgEl = item.selectFirst("img")
+            val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
+                ?.replace("small", "full")
+
+            val dubstat =
+                if (title.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
+                    EnumSet.of(DubStatus.Subbed)
+
+            if (link.contains("/series/") || link.contains("/watch/")) {
+                searchResults.add(
+                    newAnimeSearchResponse(title, link, TvType.Anime) {
+                        this.posterUrl = posterUrl
                         this.dubStatus = dubstat
                     }
                 )
-                ++count
             }
         }
 
-        return searchResutls
+        return searchResults
     }
 
     override suspend fun load(url: String): LoadResponse {
         val soup = Jsoup.parse(myRequestFunction(url).text)
 
         val title = soup.selectFirst("#showview-content-header .ellipsis")?.text()?.trim()
-        val posterU = soup.selectFirst(".poster")?.attr("src")
+
+        val posterEl = soup.selectFirst(".poster")
+        val posterU = (posterEl?.attr("src") ?: posterEl?.attr("data-src"))
 
         val p = soup.selectFirst(".description")
         var description = p?.selectFirst(".more")?.text()?.trim()
@@ -314,6 +325,7 @@ class KrunchyProvider : MainAPI() {
         val dubEpisodes = mutableListOf<Episode>()
         val premiumSubEpisodes = mutableListOf<Episode>()
         val premiumDubEpisodes = mutableListOf<Episode>()
+
         soup.select(".season").forEach {
             val seasonName = it.selectFirst("a.season-dropdown")?.text()?.trim()
             it.select(".episode").forEach { ep ->
@@ -322,11 +334,18 @@ class KrunchyProvider : MainAPI() {
                 val epNum = episodeNumRegex.find(
                     ep.selectFirst("span.ellipsis")?.text().toString()
                 )?.destructured?.component1()
+
                 var poster = ep.selectFirst("img.landscape")?.attr("data-thumbnailurl")
                 val poster2 = ep.selectFirst("img")?.attr("src")
+
                 if (poster.isNullOrBlank()) {
                     poster = poster2
                 }
+
+                if (poster.isNullOrBlank()) {
+                    poster = ep.selectFirst("img")?.attr("data-src")
+                }
+
 
                 var epDesc =
                     (if (epNum == null) "" else "Episode $epNum") + (if (!seasonName.isNullOrEmpty()) " - $seasonName" else "")
@@ -362,6 +381,7 @@ class KrunchyProvider : MainAPI() {
                 }
             }
         }
+
         val recommendations =
             soup.select(".other-series > ul li")?.mapNotNull { element ->
                 val recTitle =
@@ -377,6 +397,7 @@ class KrunchyProvider : MainAPI() {
                         ) else EnumSet.of(DubStatus.Subbed)
                 }
             }
+
         return newAnimeLoadResponse(title.toString(), url, TvType.Anime) {
             this.posterUrl = posterU
             this.engName = title
