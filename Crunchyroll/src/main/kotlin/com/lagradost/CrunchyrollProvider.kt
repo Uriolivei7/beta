@@ -13,71 +13,72 @@ import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.nicehttp.NiceResponse
 import kotlinx.coroutines.delay
+import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
 import java.util.*
 
 private fun String.toAscii() = this.map { it.code }.joinToString()
 
-class KrunchyGeoBypasser {
+class KrunchyGeoBypasser(
+    client: OkHttpClient
+) {
+
     companion object {
-        const val BYPASS_SERVER = "https://us.community-proxy.meganeko.dev/start_session"
-        val headers = mapOf(
+        const val PROXY_BASE_URL = "https://us.community-proxy.meganeko.dev"
+
+        val baseHeaders = mapOf(
             "accept" to "*/*",
-//            "Accept-Encoding" to "gzip, deflate",
             "connection" to "keep-alive",
-//            "Referer" to "https://google.com/",
+            "Host" to "www.crunchyroll.com",
             "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36".toAscii()
         )
-        var sessionId: String? = null
-
-        //        val interceptor = CookieInterceptor()
-        val session = CustomSession(app.baseClient)
     }
 
-    data class KrunchySession(
-        @JsonProperty("data") var data: DataInfo? = DataInfo(),
-        @JsonProperty("error") var error: Boolean? = null,
-        @JsonProperty("code") var code: String? = null
-    )
+    val session = CustomSession(client)
 
-    data class DataInfo(
-        @JsonProperty("session_id") var sessionId: String? = null,
-        @JsonProperty("country_code") var countryCode: String? = null,
-    )
-
-    private suspend fun getSessionId(): Boolean {
-        return try {
-            val response = app.get(BYPASS_SERVER, params = mapOf("version" to "1.1")).text
-            val json = parseJson<KrunchySession>(response)
-            sessionId = json.data?.sessionId
-            true
-        } catch (e: Exception) {
-            sessionId = null
-            false
-        }
-    }
-
-    private suspend fun autoLoadSession(): Boolean {
-        if (sessionId != null) return true
-        getSessionId()
-        // Do not spam the api!
-        delay(3000)
-        return autoLoadSession()
-    }
 
     suspend fun geoBypassRequest(url: String): NiceResponse {
-        autoLoadSession()
-        return session.get(url, headers = headers, cookies = mapOf("session_id" to sessionId!!))
+
+        val finalHeaders: Map<String, String> = KrunchyGeoBypasser.Companion.baseHeaders +
+                mapOf("X-Proxy-Host" to "www.crunchyroll.com")
+
+        Log.i("CrunchyrollGeo", "--- INICIANDO GEO BYPASS REQUEST ---")
+        Log.i("CrunchyrollGeo", "Proxy Base Server: ${KrunchyGeoBypasser.Companion.PROXY_BASE_URL}")
+        Log.i("CrunchyrollGeo", "URL de Destino: $url")
+        Log.i("CrunchyrollGeo", "Encabezados Enviados:")
+
+        finalHeaders.forEach { (key, value) ->
+            Log.i("CrunchyrollGeo", "  $key: $value")
+        }
+        Log.i("CrunchyrollGeo", "--------------------------------------")
+
+        val response = session.get(
+            url = url,
+            headers = finalHeaders,
+            cookies = emptyMap()
+        )
+
+        Log.i("CrunchyrollGeo", "--- RESPUESTA GEO BYPASS ---")
+        Log.i("CrunchyrollGeo", "Status: ${response.code}")
+
+        if (response.code != 200) {
+            Log.e("CrunchyrollGeo", "ERROR: Geo Bypass falló con código ${response.code}. URL: $url")
+            Log.e("CrunchyrollGeo", "Respuesta Body (Primeras 500 chars): ${response.text.take(500)}")
+        } else {
+            Log.i("CrunchyrollGeo", "Respuesta Body (Primeras 200 chars): ${response.text.take(200)}")
+        }
+        Log.i("CrunchyrollGeo", "----------------------------------")
+
+        return response
     }
 }
 
 class KrunchyProvider : MainAPI() {
     companion object {
-        val crUnblock = KrunchyGeoBypasser()
+        val crUnblock = KrunchyGeoBypasser(app.baseClient)
         val episodeNumRegex = Regex("""Episode (\d+)""")
     }
 
-    // Do not make https! It will fail!
     override var mainUrl = "http://www.crunchyroll.com"
     override var name: String = "Crunchyroll"
     override var lang = "en"
