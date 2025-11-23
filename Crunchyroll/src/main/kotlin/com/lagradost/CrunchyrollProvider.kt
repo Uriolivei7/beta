@@ -14,6 +14,9 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.nicehttp.NiceResponse
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.Request
 import org.jsoup.Jsoup
 import java.util.*
 
@@ -22,6 +25,7 @@ private fun String.toAscii() = this.map { it.code }.joinToString()
 class KrunchyGeoBypasser(
     client: OkHttpClient
 ) {
+
     companion object {
         const val PROXY_BASE_URL = "https://us.community-proxy.meganeko.dev"
 
@@ -97,17 +101,38 @@ class KrunchyProvider : MainAPI() {
         "$mainUrl/videos/anime/simulcasts/ajax_page" to "Simulcasts"
     )
 
-    suspend fun myRequestFunction(url: String): NiceResponse {
-        val crUrl = "crunchyroll.com"
+    private fun isContentUrl(url: String): Boolean {
+        return url.contains("/watch/") ||
+                url.contains("/series/") ||
+                url.contains("/videos/anime/") ||
+                url.contains("/ajax/")
+    }
 
-        if (url.contains(crUrl)) {
-            return crUnblock.geoBypassRequest(url)
-        } else {
+    suspend fun myRequestFunction(url: String): NiceResponse {
+        val crHost = "crunchyroll.com"
+
+        if (!url.contains(crHost)) {
             Log.e("CrunchyrollGeo", "ALERTA: Solicitud externa NO BLOQUEADA: $url")
             return crUnblock.session.get(url)
         }
-    }
 
+        if (!isContentUrl(url)) {
+            Log.e("CrunchyrollGeo", "IGNORADO: URL de Crunchyroll sin ruta de contenido válida (footer/error): $url")
+
+            val fakeRequest = Request.Builder().url("http://fakedata.com").build()
+            val fakeResponse = Response.Builder()
+                .request(fakeRequest)
+                .protocol(Protocol.HTTP_1_1)
+                .code(404)
+                .message("Ignored Content")
+                .build()
+
+            return NiceResponse(fakeResponse, null)
+        }
+
+        Log.i("CrunchyrollGeo", "USANDO BYPASS: URL de contenido detectada: $url")
+        return crUnblock.geoBypassRequest(url)
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("GETMAINPAGE ")
@@ -423,8 +448,15 @@ class KrunchyProvider : MainAPI() {
         val contentRegex = Regex("""vilos\.config\.media = (\{.+\})""")
 
         Log.i("Crunchyroll", "LOADLINKS: Data URL received: $data")
+        // LLAMADA CORREGIDA
         val response = myRequestFunction(data)
         Log.i("Crunchyroll", "LOADLINKS: Geo bypass response status: ${response.code}")
+
+        // Si la respuesta fue el 404 que generamos para las URLs ignoradas, salimos.
+        if (response.code == 404 && response.text.isEmpty()) {
+            Log.e("Crunchyroll", "LOADLINKS: URL de pie de página/error ignorada.")
+            return false
+        }
 
         val hlsHelper = M3u8Helper()
 
@@ -456,10 +488,12 @@ class KrunchyProvider : MainAPI() {
                             "enUS",
                             null
                         ).contains(stream.hardsubLang))
+//                        && URI(stream.url).path.endsWith(".m3u")
                     ) {
                         stream.title = stream.title()
                         streams.add(stream)
                     }
+                    // Premium eps
                     else if (stream.format == "trailer_hls" && listOf(
                             "jaJP",
                             "esLA",
@@ -476,6 +510,7 @@ class KrunchyProvider : MainAPI() {
 
             Log.i("Crunchyroll", "LOADLINKS: Found ${streams.size} streams after filtering")
 
+            // CORRECCIÓN: Usando forEach para la extracción
             streams.forEach { stream ->
                 if (stream.url.contains("m3u8") && stream.format!!.contains("adaptive")) {
                     callback(
