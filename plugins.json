@@ -18,6 +18,24 @@
         "name": "AnizoneProvider"
     },
     {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 31712,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 2,
+        "internalName": "Crunchyroll",
+        "description": "Anime subtitulado y con multiples doblajes",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Crunchyroll.cs3",
+        "name": "Crunchyroll"
+    },
+    {
         "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
