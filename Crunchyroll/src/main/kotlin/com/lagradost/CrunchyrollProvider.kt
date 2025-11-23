@@ -213,15 +213,18 @@ class KrunchyProvider : MainAPI() {
         if (paginated || !paginated && page <= 1) {
             Log.i(LOG_TAG, "Fetching paginated content from: $pagedLink")
             myRequestFunction(pagedLink).let { respText ->
+
+                Log.i(LOG_TAG, "RESPUESTA COMPLETA DEL AJAX:")
+                Log.i(LOG_TAG, respText.text.substring(0, minOf(respText.text.length, 5000))) // Muestra hasta 5000 caracteres
+
                 val soup = Jsoup.parse(respText.text)
 
-                val episodes = soup.select(".group-item, .series-card-wrapper").mapNotNull { item ->
-                    val innerA = item.selectFirst("a") ?: return@mapNotNull null
-
+                val episodes = soup.select(".group-item a, .grid-item a, a[title][href*=/series/]").mapNotNull { innerA ->
                     val urlEps = fixUrlNull(innerA.attr("href")) ?: return@mapNotNull null
 
                     if (!urlEps.contains("/series/") && !urlEps.contains("/watch/")) return@mapNotNull null
 
+                    val item = innerA.parent() ?: innerA
 
                     val title = item.selectFirst(".series-title, .series-card-title, a[title]")?.text()
                         ?: innerA.attr("title")
@@ -256,7 +259,6 @@ class KrunchyProvider : MainAPI() {
         throw ErrorLoadingException()
     }
 
-
     override suspend fun search(query: String): ArrayList<SearchResponse> {
         Log.i(LOG_TAG, "search INICIADO. Query: $query")
 
@@ -272,39 +274,34 @@ class KrunchyProvider : MainAPI() {
         val doc = Jsoup.parse(response.text)
         val searchResults = ArrayList<SearchResponse>()
 
-        val items = doc.select(".group-item")
+        val items = doc.select(".group-item, .series-card-wrapper, .search-result-item, .list-block > li")
 
-        if (items.isEmpty()) {
-            val modernItems = doc.select("li.d-block")
-            Log.i(LOG_TAG, "Reintentando selector. Found ${modernItems.size} potential results.")
+        Log.i(LOG_TAG, "Found ${items.size} potential results with common selectors.")
 
-            for (item in modernItems) {
-                val linkEl = item.selectFirst("a[href*=/series/], a[href*=/watch/]") ?: continue
-                val link = fixUrlNull(linkEl.attr("href")) ?: continue
+        for (item in items) {
+            val linkEl = item.selectFirst("a[href*=/series/], a[href*=/watch/]") ?: continue
+            val link = fixUrlNull(linkEl.attr("href")) ?: continue
 
-                val title = item.selectFirst("div.text-bold")?.text()?.trim()
-                    ?: item.selectFirst("span.series-title")?.text()?.trim()
-                    ?: continue
+            val title = item.selectFirst(".series-title, .text-bold")?.text()?.trim()
+                ?: item.selectFirst("span.series-title")?.text()?.trim()
+                ?: linkEl.attr("title")
+                ?: continue
 
-                val imgEl = item.selectFirst("img")
-                val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
-                    ?.replace("small", "full")
+            val imgEl = item.selectFirst("img")
+            val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
+                ?.replace("small", "full")
 
-                val dubstat =
-                    if (title.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
-                        EnumSet.of(DubStatus.Subbed)
+            val dubstat =
+                if (title.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
+                    EnumSet.of(DubStatus.Subbed)
 
-                if (link.contains("/series/") || link.contains("/watch/")) {
-                    searchResults.add(
-                        newAnimeSearchResponse(title, link, TvType.Anime) {
-                            this.posterUrl = posterUrl
-                            this.dubStatus = dubstat
-                        }
-                    )
+            searchResults.add(
+                newAnimeSearchResponse(title, link, TvType.Anime) {
+                    this.posterUrl = posterUrl
+                    this.dubStatus = dubstat
                 }
-            }
+            )
         }
-
 
         Log.i(LOG_TAG, "search FINALIZADO. Results found: ${searchResults.size}")
         return searchResults
