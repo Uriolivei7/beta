@@ -153,6 +153,8 @@ class KrunchyProvider : MainAPI() {
 
             val featured = doc.select(".js-featured-show-list > li").mapNotNull { anime ->
                 val url = fixUrlNull(anime?.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+
+                if (!url.contains("/series/") && !url.contains("/watch/")) return@mapNotNull null
                 val imgEl = anime.selectFirst("img")
                 val name = imgEl?.attr("alt") ?: ""
                 val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
@@ -288,9 +290,23 @@ class KrunchyProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         Log.i(LOG_TAG, "load INICIADO. URL: $url")
-        val soup = Jsoup.parse(myRequestFunction(url).text)
 
-        val title = soup.selectFirst("#showview-content-header .ellipsis")?.text()?.trim()
+        if (!isContentUrl(url)) {
+            Log.e(LOG_TAG, "load FALLÓ. URL: $url no es una ruta de contenido válida.")
+            throw ErrorLoadingException()
+        }
+
+        val response = myRequestFunction(url)
+        if (response.code != 200) {
+            Log.e(LOG_TAG, "load FALLÓ. Geo Bypass falló o la URL fue ignorada (Code: ${response.code}). URL: $url")
+            throw ErrorLoadingException()
+        }
+
+        val soup = Jsoup.parse(response.text)
+
+        val title = soup.selectFirst("h1.heading")?.text()?.trim()
+            ?: soup.selectFirst("title")?.text()?.replace(" - Crunchyroll", "")?.trim()
+        //soup.selectFirst("#showview-content-header .ellipsis")?.text()?.trim()
 
         if (title.isNullOrEmpty()) {
             Log.e(LOG_TAG, "load FALLÓ. No se pudo obtener el título de la página de carga.")
@@ -474,7 +490,7 @@ class KrunchyProvider : MainAPI() {
     ): Boolean {
         Log.i(LOG_TAG, "loadLinks INICIADO. Data URL: $data")
 
-        val contentRegex = Regex("""vilos\.config\.media = (\{.+\})""")
+        val contentRegex = Regex("""(?s)vilos\.config\.media = (\s*\{.+\}\s*)""")
 
         val response = myRequestFunction(data)
 
@@ -485,46 +501,25 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        val dat = contentRegex.find(response.text)?.destructured?.component1()
+        val dat = contentRegex.find(response.text)?.groupValues?.get(1)
 
         if (!dat.isNullOrEmpty()) {
             Log.i(LOG_TAG, "loadLinks: Found Vilos config data. Length: ${dat.length}")
             val json = parseJson<KrunchyVideo>(dat)
             val streams = ArrayList<Streams>()
 
+            val validFormats = listOf(
+                "adaptive_hls", "adaptive_dash",
+                "multitrack_adaptive_hls_v2",
+                "vo_adaptive_dash", "vo_adaptive_hls",
+                "trailer_hls",
+            )
+
+            val validAudioLangs = listOf("jaJP", "esLA", "esES", "enUS")
+
             for (stream in json.streams) {
-                if (
-                    listOf(
-                        "adaptive_hls", "adaptive_dash",
-                        "multitrack_adaptive_hls_v2",
-                        "vo_adaptive_dash", "vo_adaptive_hls",
-                        "trailer_hls",
-                    ).contains(stream.format)
-                ) {
-                    if (stream.format!!.contains("adaptive") && listOf(
-                            "jaJP",
-                            "esLA",
-                            "esES",
-                            "enUS"
-                        )
-                            .contains(stream.audioLang) && (listOf(
-                            "esLA",
-                            "esES",
-                            "enUS",
-                            null
-                        ).contains(stream.hardsubLang))
-                    ) {
-                        stream.title = stream.title()
-                        streams.add(stream)
-                    }
-                    else if (stream.format == "trailer_hls" && listOf(
-                            "jaJP",
-                            "esLA",
-                            "esES",
-                            "enUS"
-                        ).contains(stream.audioLang) &&
-                        (listOf("esLA", "esES", "enUS", null).contains(stream.hardsubLang))
-                    ) {
+                if (stream.format in validFormats) {
+                    if (stream.audioLang in validAudioLangs || stream.format == "trailer_hls") {
                         stream.title = stream.title()
                         streams.add(stream)
                     }
