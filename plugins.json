@@ -69,7 +69,8 @@
     "description": "Plugin para series",
     "tvTypes": [
       "TvSeries",
-      "Movie"
+      "Movie",
+      "Cartoon"
     ],
     "iconUrl": "https://v4.pelis-plus.icu/favicon.ico",
     "language": "mx",
@@ -89,7 +90,6 @@
     "tvTypes": [
       "TvSeries",
       "Movie",
-      "Anime",
       "Cartoon"
     ],
     "iconUrl": "https://sololatino.net/wp-content/uploads/2022/11/logo-final.png",
@@ -110,7 +110,6 @@
     "tvTypes": [
       "TvSeries",
       "Movie",
-      "Anime",
       "Cartoon"
     ],
     "iconUrl": "https://ww3.pelisplus.to/images/faviconhd.png",
