@@ -215,12 +215,23 @@ class KrunchyProvider : MainAPI() {
             myRequestFunction(pagedLink).let { respText ->
                 val soup = Jsoup.parse(respText.text)
 
-                val episodes = soup.select("li").mapNotNull {
-                    val innerA = it.selectFirst("a") ?: return@mapNotNull null
+                val episodes = soup.select(".group-item, .series-card-wrapper").mapNotNull { item ->
+                    val innerA = item.selectFirst("a") ?: return@mapNotNull null
+
                     val urlEps = fixUrlNull(innerA.attr("href")) ?: return@mapNotNull null
 
-                    newAnimeSearchResponse(innerA.attr("title"), urlEps, TvType.Anime) {
-                        this.posterUrl = it.selectFirst("img")?.attr("src")
+                    if (!urlEps.contains("/series/") && !urlEps.contains("/watch/")) return@mapNotNull null
+
+
+                    val title = item.selectFirst(".series-title, .series-card-title, a[title]")?.text()
+                        ?: innerA.attr("title")
+                        ?: return@mapNotNull null
+
+                    val posterUrl = item.selectFirst("img")?.attr("data-src")
+                        ?: item.selectFirst("img")?.attr("src")
+
+                    newAnimeSearchResponse(title, urlEps, TvType.Anime) {
+                        this.posterUrl = posterUrl
                         this.dubStatus = EnumSet.of(DubStatus.Subbed)
                     }
                 }
