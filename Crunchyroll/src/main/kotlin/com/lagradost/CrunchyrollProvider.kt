@@ -100,12 +100,13 @@ class KrunchyProvider : MainAPI() {
     private fun isContentUrl(url: String): Boolean {
         val crHost = "crunchyroll.com"
 
-        if (url.endsWith("$crHost/") || url.endsWith(crHost) || url.endsWith(crHost)) {
+        if (url.endsWith("$crHost/") || url.endsWith(crHost)) {
             return true
         }
 
         return url.contains("/watch/") ||
                 url.contains("/series/") ||
+                url.contains("/search") ||
                 url.contains("/videos/anime/") ||
                 url.contains("/ajax/")
     }
@@ -119,7 +120,7 @@ class KrunchyProvider : MainAPI() {
         }
 
         if (!isContentUrl(url)) {
-            Log.i(LOG_TAG, "IGNORADO: URL de Crunchyroll sin ruta de contenido válida (footer/error): $url")
+            Log.i(LOG_TAG, "IGNORADO: URL de Crunchyroll sin ruta de contenido válida (ej. footer/error): $url")
 
             val fakeRequest = Request.Builder().url("http://fakedata.com").build()
             val fakeResponse = Response.Builder()
