@@ -259,17 +259,21 @@ class KrunchyProvider : MainAPI() {
         val doc = Jsoup.parse(response.text)
         val searchResults = ArrayList<SearchResponse>()
 
-        val items = doc.select(".group-item")
+        val items = doc.select("[data-t=\"search-series-card\"]")
 
-        Log.i(LOG_TAG, "Found ${items.size} potential search results.")
+        Log.i(LOG_TAG, "Found ${items.size} potential search results (using 'data-t=\"search-series-card\"').")
 
         for (item in items) {
-            val link = fixUrlNull(item.selectFirst("a")?.attr("href")) ?: continue
-            val title = item.selectFirst("span.series-title")?.text()?.trim() ?: continue
+            val linkEl = item.selectFirst("a[href*=/series/], a[href*=/watch/]") ?: continue
+            val link = fixUrlNull(linkEl.attr("href")) ?: continue
 
-            val imgEl = item.selectFirst("img")
-            val posterUrl = (imgEl?.attr("src") ?: imgEl?.attr("data-src"))
-                ?.replace("small", "full")
+            val title = item.selectFirst("h2.search-show-card__title--kGOEF")?.text()?.trim()
+                ?: item.selectFirst("[data-t=\"title\"]")?.text()?.trim()
+                ?: continue
+
+            val imgEl = item.selectFirst("div.search-show-card__poster-wrapper--OeXaS img[data-t=\"search-card-poster-tall\"]")
+            val posterUrl = imgEl?.attr("src")
+                ?.replace("width=60,height=90", "width=225,height=350")
 
             val dubstat =
                 if (title.contains("Dub)", true)) EnumSet.of(DubStatus.Dubbed) else
