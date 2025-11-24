@@ -455,7 +455,7 @@ data class ApiSeriesItem(
     @JsonProperty("id") val id: String,
     @JsonProperty("title") val title: String,
     @JsonProperty("description") val description: String?,
-    @JsonProperty("images") val images: ApiImages?, // Usamos la clase explícita
+    @JsonProperty("images") val images: ApiImages?,
     @JsonProperty("type") val type: String?,
     @JsonProperty("slug_title") val slugTitle: String,
     @JsonProperty("genres") val genres: List<String>?,
