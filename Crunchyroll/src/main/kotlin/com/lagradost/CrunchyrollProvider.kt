@@ -275,7 +275,7 @@ class KrunchyProvider : MainAPI() {
 
             var seasonCounter = 1
 
-            for (season in seasonsData.items) {
+            for (season in seasonsData.items.orEmpty()) {
                 val currentSeasonNumber = seasonCounter++
                 seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
 
@@ -467,8 +467,8 @@ data class ApiSeason(
 )
 
 data class ApiSeasonsResponse(
-    @JsonProperty("total") val total: Int,
-    @JsonProperty("items") val items: List<ApiSeason>
+    @JsonProperty("total") val total: Int?,
+    @JsonProperty("data") val items: List<ApiSeason>
 )
 
 data class ApiEpisodeItem(
