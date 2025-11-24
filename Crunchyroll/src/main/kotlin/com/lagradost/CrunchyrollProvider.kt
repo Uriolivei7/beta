@@ -237,7 +237,7 @@ class KrunchyProvider : MainAPI() {
             searchResults
 
         } catch (e: Exception) {
-            Log.e(LOG_TAG, "Error parseando JSON de búsqueda: ${e.message}")
+            Log.e(LOG_TAG, "Error parseando JSON de búsqueda: ${e.message}. Body: ${response.text.take(500)}")
             ArrayList()
         }
     }
@@ -398,7 +398,6 @@ class KrunchyProvider : MainAPI() {
                             url = stream.url,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // Referer vacío para evitar problemas CORS
                             this.referer = ""
                             this.quality = getQualityFromName(stream.resolution)
                         }
@@ -441,9 +440,9 @@ data class ApiImage(
 )
 
 data class ApiImages(
+    @JsonProperty("poster_tall") val posterTall: List<ApiImage>?,
     @JsonProperty("poster_wide") val posterWide: List<ApiImage>?,
-    @JsonProperty("thumbnail") val thumbnail: ApiImage?,
-    @JsonProperty("poster_tall") val posterTall: List<ApiImage>?
+    @JsonProperty("thumbnail") val thumbnail: List<ApiImage>?
 )
 
 data class ApiSeriesResponseWrapper(
