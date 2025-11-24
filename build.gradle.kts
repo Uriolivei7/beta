@@ -64,6 +64,7 @@ subprojects {
     dependencies {
         val cloudstream by configurations
         val implementation by configurations
+        val testImplementation by configurations
 
         cloudstream("com.lagradost:cloudstream3:pre-release")
 
@@ -84,6 +85,10 @@ subprojects {
         implementation("androidx.annotation:annotation:1.9.1")
 
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+        
+        // Test dependencies
+        testImplementation("junit:junit:4.13.2")
+        testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.20.1")
     }
 }
 
