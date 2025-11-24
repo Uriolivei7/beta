@@ -113,6 +113,7 @@ class KrunchyProvider : MainAPI() {
         private const val mainUrl = "https://www.crunchyroll.com"
 
         private const val CONTENT_BASE_URL = "https://www.crunchyroll.com/"
+        private const val CRUNCHYROLL_ASSET_KEY = "e206b12a-3532-4e0d-85e7-37b51e06d69e"
 
         private const val LOCALE = "es-419"
     }
@@ -131,9 +132,8 @@ class KrunchyProvider : MainAPI() {
     )
     override var lang = "mx"
 
-
-    suspend fun myRequestFunction(url: String): NiceResponse {
-        return crUnblock.geoBypassRequest(url)
+    suspend fun myRequestFunction(url: String, headers: Map<String, String> = emptyMap()): NiceResponse {
+        return crUnblock.geoBypassRequest(url, headers)
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -372,7 +372,7 @@ class KrunchyProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
-        Log.i(LOG_TAG, "loadLinks INICIADO (Vilos API). Data: $data")
+        Log.i(LOG_TAG, "loadLinks INICIADO (Playback V3). Data: $data")
 
         val parts = data.split("|")
         if (parts.size < 3) {
@@ -397,13 +397,18 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        //val vilosApiUrl = "${CONTENT_BASE_URL}content/v2/cms/videos/$streamGuid/streams"
         val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play"
 
-        val response = myRequestFunction(vilosApiUrl)
+        val playbackHeaders = mapOf(
+            "Accept-Language" to LOCALE,
+            "Referer" to "https://www.crunchyroll.com/",
+            "X-Crunchyroll-Asset-Key" to CRUNCHYROLL_ASSET_KEY
+        )
+
+        val response = myRequestFunction(vilosApiUrl, headers = playbackHeaders)
 
         if (response.code != 200) {
-            Log.e(LOG_TAG, "loadLinks FALLÓ. API de Vilos falló (Code: ${response.code}). URL: $vilosApiUrl")
+            Log.e(LOG_TAG, "loadLinks FALLÓ. API de Playback v3 falló (Code: ${response.code}). URL: $vilosApiUrl")
             return false
         }
 
@@ -413,7 +418,7 @@ class KrunchyProvider : MainAPI() {
             val json = try {
                 parseJson<KrunchyVideo>(dat)
             } catch (e: Exception) {
-                Log.e(LOG_TAG, "Error parseando JSON de KrunchyVideo (Vilos API): ${e.message}")
+                Log.e(LOG_TAG, "Error parseando JSON de KrunchyVideo (Playback V3): ${e.message}")
                 return false
             }
 
@@ -465,7 +470,7 @@ class KrunchyProvider : MainAPI() {
                 }
             }
 
-            Log.i(LOG_TAG, "loadLinks FINALIZADO con éxito (Vilos API).")
+            Log.i(LOG_TAG, "loadLinks FINALIZADO con éxito (Playback V3).")
             return true
         }
 
