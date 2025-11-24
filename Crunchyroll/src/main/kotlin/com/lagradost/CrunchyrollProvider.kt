@@ -44,43 +44,40 @@ class KrunchyGeoBypasser(
         return currentBearerToken == null || (System.currentTimeMillis() / 1000) >= (tokenExpiryTime - 60)
     }
 
-    private suspend fun fetchAccountId() {
-        if (currentBearerToken == null) {
-            currentAccountId = null
-            return
+    // Función auxiliar para decodificar la parte del payload del JWT (Base64url)
+    private fun String.decodeBase64(): String {
+        // Remplazamos caracteres Base64url (-, _) por Base64 (+, /) y agregamos padding (=)
+        val base64String = this.replace('-', '+').replace('_', '/')
+        val padding = when (base64String.length % 4) {
+            0 -> ""
+            2 -> "=="
+            3 -> "="
+            else -> throw IllegalArgumentException("Cadena Base64url mal formada")
         }
+        return String(Base64.getUrlDecoder().decode(base64String + padding))
+    }
 
-        val meUrl = "https://www.crunchyroll.com/accounts/v1/me"
+    // REMOVIDO fetchAccountId: Obtendremos el ID directamente del token
 
-        val headersWithAuth = baseHeaders + mapOf(
-            "authorization" to "Bearer $currentBearerToken",
-            "accept" to "application/json"
-        )
-
-        val response = session.get(
-            url = meUrl,
-            headers = headersWithAuth
-        )
-
-        if (response.code == 200) {
-            try {
-                val meData = parseJson<ApiAccountMeResponse>(response.text)
-                currentAccountId = meData.id
-                Log.i(LOG_TAG, "Account ID obtenido de /accounts/v1/me: $currentAccountId")
-            } catch (e: Exception) {
-                Log.e(LOG_TAG, "ERROR al parsear JSON de /accounts/v1/me: ${e.message}. Body: ${response.text.take(500)}")
-                currentAccountId = null
-            }
-        } else {
-            Log.e(LOG_TAG, "ERROR al obtener Account ID de /accounts/v1/me. Código: ${response.code}")
-            currentAccountId = null
+    private suspend fun getAccountIdFromToken(token: String): String? {
+        return try {
+            val payload = token.split(".")[1].decodeBase64()
+            val json = parseJson<JwtPayload>(payload)
+            // El ID que Vilos requiere es el ETP User ID (etp_user_id) o el acc_id.
+            json.etpUserId.takeUnless { it.isNullOrBlank() }
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "ERROR al parsear JWT para obtener Account ID: ${e.message}")
+            null
         }
     }
 
     suspend fun authenticateAnonymously() {
         if (!isTokenExpired()) {
             Log.i(LOG_TAG, "Token todavía es válido. No se requiere renovación.")
-            if (currentAccountId == null) fetchAccountId()
+            // Asegurar que si el token es válido, tengamos el ID de la sesión anónima
+            if (currentAccountId == null && currentBearerToken != null) {
+                currentAccountId = getAccountIdFromToken(currentBearerToken!!)
+            }
             return
         }
 
@@ -110,7 +107,9 @@ class KrunchyGeoBypasser(
 
                 Log.i(LOG_TAG, "¡Nuevo Token obtenido con éxito! Expira en ${tokenData.expiresIn} segundos.")
 
-                fetchAccountId()
+                // PASO CLAVE: OBTENER EL ACCOUNT ID DIRECTAMENTE DEL PAYLOAD DEL TOKEN
+                currentAccountId = getAccountIdFromToken(currentBearerToken!!)
+                Log.i(LOG_TAG, "Account ID extraído del token (etp_user_id): $currentAccountId")
 
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "ERROR al parsear JSON del token: ${e.message}")
@@ -126,10 +125,12 @@ class KrunchyGeoBypasser(
 
     suspend fun geoBypassRequest(url: String, extraHeaders: Map<String, String> = emptyMap()): NiceResponse {
 
+        // 1. Decide si necesita autenticar.
         if (!extraHeaders.containsKey("Authorization")) {
             authenticateAnonymously()
         }
 
+        // 2. Solo inyectamos el Bearer Token si el caller no lo ha proporcionado ya.
         val authHeader = if (currentBearerToken != null && !extraHeaders.containsKey("Authorization")) {
             mapOf("authorization" to "Bearer $currentBearerToken", "accept" to "application/json")
         } else {
@@ -413,16 +414,17 @@ class KrunchyProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
+        // 1. FORZAR AUTENTICACIÓN Y OBTENER TOKEN Y ACCOUNT ID FRESCOS
         crUnblock.authenticateAnonymously()
         val token = crUnblock.currentBearerToken
-        val accountId = crUnblock.currentAccountId
+        val accountId = crUnblock.currentAccountId // <-- ID OBTENIDO DIRECTAMENTE DEL JWT
 
         if (token.isNullOrEmpty() || accountId.isNullOrEmpty()) {
-            Log.e(LOG_TAG, "loadLinks FALLÓ. El token o Account ID es nulo o vacío.")
+            Log.e(LOG_TAG, "loadLinks FALLÓ. El token o Account ID es nulo o vacío. Account ID: $accountId")
             return false
         }
 
-        Log.i(LOG_TAG, "loadLinks INICIADO (Playback V3). Data: $data")
+        Log.i(LOG_TAG, "loadLinks INICIADO (Playback V3). Data: $data. Account ID usado: $accountId")
 
         val parts = data.split("|")
         if (parts.size < 3) {
@@ -443,6 +445,7 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
+        // Usamos el accountId real (obtenido del JWT)
         val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=$accountId&device_id=$CRUNCHYROLL_DEVICE_ID"
 
         val playbackHeaders = mapOf(
@@ -526,9 +529,15 @@ class KrunchyProvider : MainAPI() {
     }
 }
 
-data class ApiAccountMeResponse(
-    @JsonProperty("id") val id: String?,
-    @JsonProperty("username") val username: String?,
+// ==============================================================================
+// DATA CLASSES
+// ==============================================================================
+
+// Data class para el payload del JWT
+data class JwtPayload(
+    @JsonProperty("etp_user_id") val etpUserId: String?,
+    @JsonProperty("profile_id") val profileId: String?,
+    // Solo necesitamos los IDs principales, el resto del token no es relevante aquí.
 )
 
 data class AuthTokenResponse(
@@ -537,6 +546,8 @@ data class AuthTokenResponse(
     @JsonProperty("token_type") val tokenType: String,
     @JsonProperty("refresh_token") val refreshToken: String?
 )
+
+// Las clases ApiAccountMeResponse y ApiProfileResponseV2 ya no son necesarias.
 
 data class ApiImage(
     @JsonProperty("type") val type: String?,
