@@ -68,7 +68,6 @@ class KrunchyGeoBypasser(
 
         if (response.code == 200) {
             try {
-                // AuthTokenResponse está definida al final del archivo
                 val tokenData = parseJson<AuthTokenResponse>(response.text)
                 currentBearerToken = tokenData.accessToken
 
@@ -241,7 +240,7 @@ class KrunchyProvider : MainAPI() {
 
         val seriesId = getSeriesIdFromUrl(url) ?: throw ErrorLoadingException("No se pudo obtener el Series ID de la URL: $url")
 
-        val detailsUrl = "${API_BASE_URL}cms/v2/series/$seriesId?locale=$LOCALE"
+        val detailsUrl = "${API_BASE_URL}cms/v2/objects/$seriesId?locale=$LOCALE"
         val detailsResponse = myRequestFunction(detailsUrl)
 
         if (detailsResponse.code != 200) {
