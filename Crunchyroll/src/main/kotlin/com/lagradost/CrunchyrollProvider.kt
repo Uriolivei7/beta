@@ -397,7 +397,7 @@ data class ApiSeriesItem(
 
 data class ApiSearchResponse(
     @JsonProperty("total") val total: Int,
-    @JsonProperty("data") val data: List<ApiSearchData>?
+    @JsonProperty("data") val data: List<ApiSearchData>? 
 )
 
 data class ApiSearchData(
