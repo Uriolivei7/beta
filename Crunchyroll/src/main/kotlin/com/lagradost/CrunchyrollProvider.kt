@@ -406,7 +406,6 @@ class KrunchyProvider : MainAPI() {
                             url = stream.url,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // Referer vacío para evitar problemas CORS
                             this.referer = ""
                             this.quality = getQualityFromName(stream.resolution)
                         }
@@ -451,7 +450,7 @@ data class ApiImage(
 data class ApiImages(
     @JsonProperty("poster_tall") val posterTall: List<List<ApiImage>>?,
     @JsonProperty("poster_wide") val posterWide: List<List<ApiImage>>?,
-    @JsonProperty("thumbnail") val thumbnail: List<List<ApiImage>>?
+    @JsonProperty("thumbnail") val thumbnailRaw: Any?
 )
 
 data class ApiSeriesResponseWrapper(
@@ -472,11 +471,21 @@ data class ApiSeriesItem(
         get() = rawGenres?.filterIsInstance<String>()
 
     fun getPosterUrl(): String? {
-        return images
+        val tallPoster = images
             ?.posterTall
             ?.firstOrNull()
             ?.firstOrNull()
             ?.source
+
+        if (tallPoster != null) return tallPoster
+
+        val thumbnailData = images?.thumbnailRaw
+
+        if (thumbnailData is List<*>) {
+            return (thumbnailData.firstOrNull() as? List<*>)?.filterIsInstance<ApiImage>()?.firstOrNull()?.source
+        }
+
+        return null
     }
 }
 
@@ -505,12 +514,16 @@ data class ApiEpisodeItem(
     @JsonProperty("id") val id: String,
     @JsonProperty("title") val title: String,
     @JsonProperty("episode_number") val episodeNumber: Int?,
-    @JsonProperty("images") val images: Map<String, List<ApiImage>>?,
+    @JsonProperty("images") val images: Map<String, List<List<ApiImage>>>?,
     @JsonProperty("versions") val versions: List<ApiEpisodeVersion>?,
     @JsonProperty("slug_title") val slugTitle: String,
 ) {
     fun getThumbnailUrl(): String? {
-        return images?.get("thumbnail")?.firstOrNull()?.source
+        return images
+            ?.get("thumbnail")
+            ?.firstOrNull()
+            ?.firstOrNull()
+            ?.source
     }
 }
 
