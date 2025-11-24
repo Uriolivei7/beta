@@ -261,7 +261,7 @@ class KrunchyProvider : MainAPI() {
         val title = seriesDetails.title
         val description = seriesDetails.description
         val posterU = seriesDetails.getPosterUrl()
-        val tags = seriesDetails.genres ?: emptyList()
+        val tags = seriesDetails.genres ?: emptyList() // Usa la propiedad calculada 'genres'
 
         Log.i(LOG_TAG, "Load Info: Title='$title', PosterUrl='${posterU}'")
 
@@ -398,6 +398,7 @@ class KrunchyProvider : MainAPI() {
                             url = stream.url,
                             type = ExtractorLinkType.M3U8
                         ) {
+                            // Referer vacío para evitar problemas CORS
                             this.referer = ""
                             this.quality = getQualityFromName(stream.resolution)
                         }
@@ -457,8 +458,11 @@ data class ApiSeriesItem(
     @JsonProperty("images") val images: ApiImages?,
     @JsonProperty("type") val type: String?,
     @JsonProperty("slug_title") val slugTitle: String,
-    @JsonProperty("genres") val genres: List<String>?,
+    @JsonProperty("genres") private val rawGenres: List<Any>?,
 ) {
+    val genres: List<String>?
+        get() = rawGenres?.filterIsInstance<String>()
+
     fun getPosterUrl(): String? {
         return images?.posterTall?.firstOrNull()?.source
     }
