@@ -209,10 +209,13 @@ class KrunchyGeoBypasser(
 
 class KrunchyProvider : MainAPI() {
     companion object {
-        val crUnblock = KrunchyGeoBypasser(app.baseClient)
         const val LOG_TAG = "Crunchyroll"
         const val API_BASE_URL = "https://www.crunchyroll.com/content/v2/"
         const val LOCALE = "es-419"
+
+        val crUnblock by lazy {
+            KrunchyGeoBypasser(app.baseClient)
+        }
     }
 
     override var mainUrl = "http://www.crunchyroll.com"
@@ -237,7 +240,6 @@ class KrunchyProvider : MainAPI() {
         throw ErrorLoadingException("Función de página principal (getMainPage) no implementada con API V2.")
     }
 
-    // --- BÚSQUEDA (API V2) ---
     override suspend fun search(query: String): ArrayList<SearchResponse> {
         Log.i(LOG_TAG, "search INICIADO (API V2). Query: $query")
 
