@@ -37,15 +37,50 @@ class KrunchyGeoBypasser(
     val session = CustomSession(client)
 
     var currentBearerToken: String? = null
+    var currentAccountId: String? = null
     private var tokenExpiryTime: Long = 0
 
     private fun isTokenExpired(): Boolean {
         return currentBearerToken == null || (System.currentTimeMillis() / 1000) >= (tokenExpiryTime - 60)
     }
 
+    private suspend fun fetchAccountId() {
+        if (currentBearerToken == null) {
+            currentAccountId = null
+            return
+        }
+
+        val meUrl = "https://www.crunchyroll.com/accounts/v1/me"
+
+        val headersWithAuth = baseHeaders + mapOf(
+            "authorization" to "Bearer $currentBearerToken",
+            "accept" to "application/json"
+        )
+
+        val response = session.get(
+            url = meUrl,
+            headers = headersWithAuth
+        )
+
+        if (response.code == 200) {
+            try {
+                val meData = parseJson<ApiAccountMeResponse>(response.text)
+                currentAccountId = meData.id
+                Log.i(LOG_TAG, "Account ID obtenido de /accounts/v1/me: $currentAccountId")
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "ERROR al parsear JSON de /accounts/v1/me: ${e.message}. Body: ${response.text.take(500)}")
+                currentAccountId = null
+            }
+        } else {
+            Log.e(LOG_TAG, "ERROR al obtener Account ID de /accounts/v1/me. Código: ${response.code}")
+            currentAccountId = null
+        }
+    }
+
     suspend fun authenticateAnonymously() {
         if (!isTokenExpired()) {
             Log.i(LOG_TAG, "Token todavía es válido. No se requiere renovación.")
+            if (currentAccountId == null) fetchAccountId()
             return
         }
 
@@ -74,13 +109,18 @@ class KrunchyGeoBypasser(
                 tokenExpiryTime = System.currentTimeMillis() / 1000 + tokenData.expiresIn
 
                 Log.i(LOG_TAG, "¡Nuevo Token obtenido con éxito! Expira en ${tokenData.expiresIn} segundos.")
+
+                fetchAccountId()
+
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "ERROR al parsear JSON del token: ${e.message}")
                 currentBearerToken = null
+                currentAccountId = null
             }
         } else {
             Log.e(LOG_TAG, "ERROR al obtener el token. Código: ${response.code}. Body: ${response.text.take(500)}")
             currentBearerToken = null
+            currentAccountId = null
         }
     }
 
@@ -375,9 +415,10 @@ class KrunchyProvider : MainAPI() {
 
         crUnblock.authenticateAnonymously()
         val token = crUnblock.currentBearerToken
+        val accountId = crUnblock.currentAccountId
 
-        if (token.isNullOrEmpty()) {
-            Log.e(LOG_TAG, "loadLinks FALLÓ. El token de autorización es nulo o vacío después de intentar autenticar.")
+        if (token.isNullOrEmpty() || accountId.isNullOrEmpty()) {
+            Log.e(LOG_TAG, "loadLinks FALLÓ. El token o Account ID es nulo o vacío.")
             return false
         }
 
@@ -389,16 +430,12 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        val episodeId = parts[0]
-        val subGuid = parts[1]
-        val dubGuid = parts[2]
-
-        val streamGuid = if (isCasting && dubGuid.isNotEmpty()) {
-            Log.i(LOG_TAG, "Usando GUID Doblado: $dubGuid")
-            dubGuid
+        val streamGuid = if (isCasting && parts[2].isNotEmpty()) {
+            Log.i(LOG_TAG, "Usando GUID Doblado: ${parts[2]}")
+            parts[2]
         } else {
-            Log.i(LOG_TAG, "Usando GUID Subtitulado/Original: $subGuid")
-            subGuid
+            Log.i(LOG_TAG, "Usando GUID Subtitulado/Original: ${parts[1]}")
+            parts[1]
         }
 
         if (streamGuid.isEmpty()) {
@@ -406,7 +443,7 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=0&device_id=$CRUNCHYROLL_DEVICE_ID"
+        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=$accountId&device_id=$CRUNCHYROLL_DEVICE_ID"
 
         val playbackHeaders = mapOf(
             "Authorization" to "Bearer $token",
@@ -488,6 +525,11 @@ class KrunchyProvider : MainAPI() {
         return false
     }
 }
+
+data class ApiAccountMeResponse(
+    @JsonProperty("id") val id: String?,
+    @JsonProperty("username") val username: String?,
+)
 
 data class AuthTokenResponse(
     @JsonProperty("access_token") val accessToken: String,
@@ -626,12 +668,6 @@ data class Streams(
         }
     }
 }
-
-data class LinkData(
-    val episodeId: String,
-    val slugTitle: String,
-    val requestedLangCode: String
-)
 
 data class KrunchyVideo(
     @JsonProperty("streams") val streams: List<Streams>,
