@@ -440,6 +440,12 @@ data class ApiImage(
     @JsonProperty("height") val height: Int?,
 )
 
+data class ApiImages(
+    @JsonProperty("poster_wide") val posterWide: List<ApiImage>?,
+    @JsonProperty("thumbnail") val thumbnail: ApiImage?,
+    @JsonProperty("poster_tall") val posterTall: List<ApiImage>?
+)
+
 data class ApiSeriesResponseWrapper(
     @JsonProperty("total") val total: Int?,
     @JsonProperty("data") val items: List<ApiSeriesItem>
@@ -449,17 +455,13 @@ data class ApiSeriesItem(
     @JsonProperty("id") val id: String,
     @JsonProperty("title") val title: String,
     @JsonProperty("description") val description: String?,
-    @JsonProperty("images") val images: Map<String, List<List<ApiImage>>>?,
+    @JsonProperty("images") val images: ApiImages?, // Usamos la clase explícita
     @JsonProperty("type") val type: String?,
     @JsonProperty("slug_title") val slugTitle: String,
     @JsonProperty("genres") val genres: List<String>?,
 ) {
     fun getPosterUrl(): String? {
-        return images
-            ?.get("poster_tall")
-            ?.firstOrNull()
-            ?.firstOrNull()
-            ?.source
+        return images?.posterTall?.firstOrNull()?.source
     }
 }
 
@@ -540,5 +542,6 @@ data class KrunchyVideo(
 )
 
 fun getSeriesIdFromUrl(url: String): String? {
-    return Regex("""series/([A-Z0-9]{7})""").find(url)?.groupValues?.getOrNull(1)
+    val match = Regex("series/(.*?)/").find(url)
+    return match?.groupValues?.getOrNull(1)
 }
