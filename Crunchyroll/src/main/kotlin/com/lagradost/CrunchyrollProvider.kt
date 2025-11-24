@@ -45,6 +45,7 @@ class KrunchyGeoBypasser(
     private fun isTokenExpired(): Boolean {
         return currentBearerToken == null || (System.currentTimeMillis() / 1000) >= (tokenExpiryTime - 60)
     }
+
     private fun String.decodeBase64(): String {
         val data = try {
             Base64.decode(this, Base64.URL_SAFE)
@@ -60,7 +61,6 @@ class KrunchyGeoBypasser(
             val payload = token.split(".")[1].decodeBase64()
             if (payload.isEmpty()) return null
             val json = parseJson<JwtPayload>(payload)
-            // Solo devolvemos etpUserId si existe (si la cuenta está logeada)
             json.etpUserId.takeUnless { it.isNullOrBlank() }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "ERROR al parsear JWT para obtener Account ID: ${e.message}")
@@ -71,12 +71,8 @@ class KrunchyGeoBypasser(
     suspend fun authenticateAnonymously() {
         if (!isTokenExpired()) {
             Log.i(LOG_TAG, "Token todavía es válido. No se requiere renovación.")
-            // Asegurar que si el token es válido, tengamos el ID de la sesión anónima o el fallback
-            if (currentAccountId == null && currentBearerToken != null) {
-                currentAccountId = getAccountIdFromToken(currentBearerToken!!)
-                if (currentAccountId.isNullOrBlank()) {
-                    currentAccountId = CRUNCHYROLL_DEVICE_ID
-                }
+            if (currentAccountId.isNullOrBlank()) {
+                currentAccountId = CRUNCHYROLL_DEVICE_ID
             }
             return
         }
@@ -107,15 +103,13 @@ class KrunchyGeoBypasser(
 
                 Log.i(LOG_TAG, "¡Nuevo Token obtenido con éxito! Expira en ${tokenData.expiresIn} segundos.")
 
-                // PASO CLAVE: OBTENER EL ACCOUNT ID DIRECTAMENTE DEL PAYLOAD DEL TOKEN
-                currentAccountId = getAccountIdFromToken(currentBearerToken!!)
+                val extractedId = getAccountIdFromToken(currentBearerToken!!)
 
-                // --- LÓGICA DE FALLBACK ---
-                if (currentAccountId.isNullOrBlank()) {
-                    // Si es un token anónimo (client_id), el ID de usuario estará vacío. Usamos el DEVICE ID como fallback.
-                    currentAccountId = CRUNCHYROLL_DEVICE_ID
-                    Log.i(LOG_TAG, "Token anónimo. Usando Device ID como Account ID de fallback: $currentAccountId")
+                if (extractedId.isNullOrBlank()) {
+                    currentAccountId = UUID.randomUUID().toString()
+                    Log.i(LOG_TAG, "Token anónimo. Usando ID dinámico como Account ID de fallback: $currentAccountId")
                 } else {
+                    currentAccountId = extractedId
                     Log.i(LOG_TAG, "Account ID extraído del token (etp_user_id): $currentAccountId")
                 }
 
@@ -133,12 +127,10 @@ class KrunchyGeoBypasser(
 
     suspend fun geoBypassRequest(url: String, extraHeaders: Map<String, String> = emptyMap()): NiceResponse {
 
-        // 1. Decide si necesita autenticar.
         if (!extraHeaders.containsKey("Authorization")) {
             authenticateAnonymously()
         }
 
-        // 2. Solo inyectamos el Bearer Token si el caller no lo ha proporcionado ya.
         val authHeader = if (currentBearerToken != null && !extraHeaders.containsKey("Authorization")) {
             mapOf("authorization" to "Bearer $currentBearerToken", "accept" to "application/json")
         } else {
@@ -422,10 +414,9 @@ class KrunchyProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
-        // 1. FORZAR AUTENTICACIÓN Y OBTENER TOKEN Y ACCOUNT ID FRESCOS
         crUnblock.authenticateAnonymously()
         val token = crUnblock.currentBearerToken
-        val accountId = crUnblock.currentAccountId // <-- ID OBTENIDO DIRECTAMENTE DEL JWT o FALLBACK
+        val accountId = crUnblock.currentAccountId
 
         if (token.isNullOrEmpty() || accountId.isNullOrEmpty()) {
             Log.e(LOG_TAG, "loadLinks FALLÓ. El token o Account ID es nulo o vacío. Account ID: $accountId")
@@ -453,7 +444,7 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        // Usamos el accountId (Device ID si es anónimo)
+        // Usamos el accountId (Vilos ID dinámico) y el CRUNCHYROLL_DEVICE_ID fijo
         val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=$accountId&device_id=$CRUNCHYROLL_DEVICE_ID"
 
         val playbackHeaders = mapOf(
@@ -536,10 +527,6 @@ class KrunchyProvider : MainAPI() {
         return false
     }
 }
-
-// ==============================================================================
-// DATA CLASSES (permanecen iguales)
-// ==============================================================================
 
 data class JwtPayload(
     @JsonProperty("etp_user_id") val etpUserId: String?,
