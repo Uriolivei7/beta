@@ -85,6 +85,7 @@ class KrunchyGeoBypasser(
     }
 
     suspend fun geoBypassRequest(url: String, extraHeaders: Map<String, String> = emptyMap()): NiceResponse {
+
         if (!extraHeaders.containsKey("Authorization")) {
             authenticateAnonymously()
         }
@@ -269,7 +270,7 @@ class KrunchyProvider : MainAPI() {
         val title = seriesDetails.title
         val description = seriesDetails.description
         val posterU = seriesDetails.getPosterUrl()
-        val tags = seriesDetails.genres ?: emptyList() // Usa la propiedad calculada 'genres'
+        val tags = seriesDetails.genres ?: emptyList()
 
         Log.i(LOG_TAG, "Load Info: Title='$title', PosterUrl='${posterU}'")
 
@@ -405,7 +406,7 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play"
+        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=0"
 
         val playbackHeaders = mapOf(
             "Authorization" to "Bearer $token",
@@ -539,7 +540,6 @@ data class ApiSeriesItem(
         if (thumbnailData is List<*>) {
             val firstList = thumbnailData.firstOrNull() as? List<*>
             val firstItem = firstList?.firstOrNull()
-            // When Jackson deserializes Any?, it creates Map objects, not ApiImage objects
             return when (firstItem) {
                 is ApiImage -> firstItem.source
                 is Map<*, *> -> firstItem["source"] as? String
