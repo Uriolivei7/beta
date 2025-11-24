@@ -53,7 +53,9 @@ class KrunchyGeoBypasser(
 
         val headers = mapOf(
             "authorization" to BASIC_AUTH_HEADER,
-            "content-type" to "application/x-www-form-urlencoded"
+            "content-type" to "application/x-www-form-urlencoded",
+            "Accept-Language" to "es-419,es;q=0.9,en;q=0.8",
+            "Client-Request-ID" to UUID.randomUUID().toString()
         )
 
         val body = "grant_type=client_id"
@@ -120,7 +122,7 @@ class KrunchyProvider : MainAPI() {
     override var name: String = "Crunchyroll"
     override var lang = "mx"
     override val hasQuickSearch = false
-    override val hasMainPage = false
+    override val hasMainPage = true
     override val mainPage: List<MainPageData> = listOf()
 
     override val supportedTypes = setOf(
