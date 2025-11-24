@@ -161,7 +161,11 @@ class KrunchyProvider : MainAPI() {
                     for (item in items) {
                         if (item.type != "series" && item.type != "movie_listing") continue
 
-                        val seriesUrl = "$mainUrl/series/${item.id}/${item.slugTitle}"
+                        val seriesUrl = if (item.slugTitle != null) {
+                            "$mainUrl/series/${item.id}/${item.slugTitle}"
+                        } else {
+                            "$mainUrl/series/${item.id}"
+                        }
                         val poster = item.getPosterUrl()
                         val title = item.title
 
@@ -217,7 +221,11 @@ class KrunchyProvider : MainAPI() {
                 for (item in dataItem.items.orEmpty()) {
                     if (item.type != "series" && item.type != "movie_listing") continue
 
-                    val seriesUrl = "$mainUrl/series/${item.id}/${item.slugTitle}"
+                    val seriesUrl = if (item.slugTitle != null) {
+                        "$mainUrl/series/${item.id}/${item.slugTitle}"
+                    } else {
+                        "$mainUrl/series/${item.id}"
+                    }
                     val poster = item.getPosterUrl()
                     val title = item.title
                     val dubstat = EnumSet.of(DubStatus.Subbed)
@@ -441,8 +449,8 @@ data class ApiImage(
 )
 
 data class ApiImages(
-    @JsonProperty("poster_tall") val posterTall: List<ApiImage>?,
-    @JsonProperty("poster_wide") val posterWide: List<ApiImage>?,
+    @JsonProperty("poster_tall") val posterTall: List<List<ApiImage>>?,
+    @JsonProperty("poster_wide") val posterWide: List<List<ApiImage>>?,
     @JsonProperty("thumbnail") val thumbnail: List<ApiImage>?
 )
 
@@ -457,14 +465,18 @@ data class ApiSeriesItem(
     @JsonProperty("description") val description: String?,
     @JsonProperty("images") val images: ApiImages?,
     @JsonProperty("type") val type: String?,
-    @JsonProperty("slug_title") val slugTitle: String,
+    @JsonProperty("slug_title") val slugTitle: String?,
     @JsonProperty("genres") private val rawGenres: List<Any>?,
 ) {
     val genres: List<String>?
         get() = rawGenres?.filterIsInstance<String>()
 
     fun getPosterUrl(): String? {
-        return images?.posterTall?.firstOrNull()?.source
+        return images
+            ?.posterTall
+            ?.firstOrNull()
+            ?.firstOrNull()
+            ?.source
     }
 }
 
