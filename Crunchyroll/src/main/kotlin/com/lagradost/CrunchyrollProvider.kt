@@ -110,8 +110,10 @@ class KrunchyGeoBypasser(
 class KrunchyProvider : MainAPI() {
     companion object {
         const val LOG_TAG = "Crunchyroll"
-        const val API_BASE_URL = "https://www.crunchyroll.com/content/v2/"
+        const val API_BASE_URL = "https://www.crunchyroll.com/content/"
         const val LOCALE = "es-419"
+
+        private const val CONTENT_BASE_URL = "https://www.crunchyroll.com/content/"
     }
 
     val crUnblock by lazy {
@@ -235,12 +237,13 @@ class KrunchyProvider : MainAPI() {
         }
     }
 
+
     override suspend fun load(url: String): LoadResponse {
         Log.i(LOG_TAG, "load INICIADO (API V2). URL: $url")
 
         val seriesId = getSeriesIdFromUrl(url) ?: throw ErrorLoadingException("No se pudo obtener el Series ID de la URL: $url")
 
-        val detailsUrl = "${API_BASE_URL}cms/v2/objects/$seriesId?locale=$LOCALE"
+        val detailsUrl = "${CONTENT_BASE_URL}v2/cms/series/$seriesId?locale=$LOCALE"
         val detailsResponse = myRequestFunction(detailsUrl)
 
         if (detailsResponse.code != 200) {
@@ -262,7 +265,7 @@ class KrunchyProvider : MainAPI() {
         val dubEpisodes = mutableListOf<Episode>()
         val seasonNamesList = mutableListOf<SeasonData>()
 
-        val seasonsUrl = "${API_BASE_URL}cms/series/$seriesId/seasons?force_locale=&locale=$LOCALE"
+        val seasonsUrl = "${CONTENT_BASE_URL}v2/cms/series/$seriesId/seasons?force_locale=&locale=$LOCALE"
         val seasonsResponse = myRequestFunction(seasonsUrl)
 
         if (seasonsResponse.code != 200) {
@@ -283,7 +286,7 @@ class KrunchyProvider : MainAPI() {
                     val currentSeasonNumber = seasonCounter++
                     seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
 
-                    val episodesUrl = "${API_BASE_URL}cms/seasons/${season.id}/episodes?locale=$LOCALE"
+                    val episodesUrl = "${CONTENT_BASE_URL}v2/cms/seasons/${season.id}/episodes?locale=$LOCALE"
                     val episodesResponse = myRequestFunction(episodesUrl)
 
                     val episodesData = try {
