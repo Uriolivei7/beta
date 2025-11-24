@@ -21,7 +21,8 @@ class KrunchyGeoBypasser(
     companion object {
         const val LOG_TAG = "Crunchyroll"
         const val AUTH_URL = "https://www.crunchyroll.com/auth/v1/token"
-        const val BASIC_AUTH_HEADER = "Basic b2VkZHRvcmlvcjZha2xteG5hdHRsNGE6MTQ4MjI5NjAyNTI0NA=="
+
+        const val BASIC_AUTH_HEADER = "Basic Y3Jfd2ViOg=="
 
         private val MEDIA_TYPE_FORM = "application/x-www-form-urlencoded".toMediaType()
 
