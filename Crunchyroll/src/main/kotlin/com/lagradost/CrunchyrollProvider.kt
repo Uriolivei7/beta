@@ -451,7 +451,7 @@ data class ApiImage(
 data class ApiImages(
     @JsonProperty("poster_tall") val posterTall: List<List<ApiImage>>?,
     @JsonProperty("poster_wide") val posterWide: List<List<ApiImage>>?,
-    @JsonProperty("thumbnail") val thumbnail: List<ApiImage>?
+    @JsonProperty("thumbnail") val thumbnail: List<List<ApiImage>>?
 )
 
 data class ApiSeriesResponseWrapper(
