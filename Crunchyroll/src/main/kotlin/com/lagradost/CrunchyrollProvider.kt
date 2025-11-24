@@ -110,10 +110,11 @@ class KrunchyGeoBypasser(
 class KrunchyProvider : MainAPI() {
     companion object {
         const val LOG_TAG = "Crunchyroll"
-        const val API_BASE_URL = "https://www.crunchyroll.com/content/"
-        const val LOCALE = "es-419"
+        private const val mainUrl = "https://www.crunchyroll.com"
 
-        private const val CONTENT_BASE_URL = "https://www.crunchyroll.com/content/"
+        private const val CONTENT_BASE_URL = "https://www.crunchyroll.com/"
+
+        private const val LOCALE = "es-419"
     }
 
     val crUnblock by lazy {
@@ -139,13 +140,12 @@ class KrunchyProvider : MainAPI() {
         if (page > 1) return newHomePageResponse(arrayListOf(), false)
 
         val home = ArrayList<HomePageList>()
-
-        val url = "${API_BASE_URL}content/v2/discover?locale=$LOCALE"
+        val url = "${CONTENT_BASE_URL}content/v2/discover/home?locale=$LOCALE"
 
         val response = myRequestFunction(url)
 
         if (response.code != 200) {
-            Log.e(LOG_TAG, "getMainPage FALLÓ. Código: ${response.code}")
+            Log.e(LOG_TAG, "getMainPage FALLÓ. Código: ${response.code}. URL: $url. Body: ${response.text.take(500)}")
             return newHomePageResponse(arrayListOf(), false)
         }
 
@@ -175,11 +175,15 @@ class KrunchyProvider : MainAPI() {
                         }
                     }
 
-                    val listName = dataItem.type?.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() } ?: "Resultados Destacados"
+                    val listName = dataItem.type?.replaceFirstChar {
+                        if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+                    } ?: "Resultados Destacados"
 
-                    home.add(
-                        HomePageList(listName, searchResponses)
-                    )
+                    if (searchResponses.isNotEmpty()) {
+                        home.add(
+                            HomePageList(listName, searchResponses)
+                        )
+                    }
                 }
             }
 
@@ -187,7 +191,7 @@ class KrunchyProvider : MainAPI() {
             newHomePageResponse(home, false)
 
         } catch (e: Exception) {
-            Log.e(LOG_TAG, "Error parseando JSON de página principal: ${e.message}")
+            Log.e(LOG_TAG, "Error parseando JSON de página principal: ${e.message}. Body: ${response.text.take(500)}")
             newHomePageResponse(arrayListOf(), false)
         }
     }
@@ -195,12 +199,13 @@ class KrunchyProvider : MainAPI() {
     override suspend fun search(query: String): ArrayList<SearchResponse> {
         Log.i(LOG_TAG, "search INICIADO (API V2). Query: $query")
 
-        val url = "${API_BASE_URL}discover/search?q=$query&n=50&type=series,movie_listing&locale=$LOCALE"
+        val searchTypes = "music,series,episode,top_results,movie_listing"
+        val url = "${CONTENT_BASE_URL}content/v2/discover/search?q=$query&n=50&type=$searchTypes&ratings=true&locale=$LOCALE"
 
         val response = myRequestFunction(url)
 
         if (response.code != 200) {
-            Log.e(LOG_TAG, "search FALLÓ. Código: ${response.code}. Body: ${response.text.take(500)}")
+            Log.e(LOG_TAG, "search FALLÓ. Código: ${response.code}. URL: $url. Body: ${response.text.take(500)}")
             return ArrayList()
         }
 
@@ -237,17 +242,16 @@ class KrunchyProvider : MainAPI() {
         }
     }
 
-
     override suspend fun load(url: String): LoadResponse {
         Log.i(LOG_TAG, "load INICIADO (API V2). URL: $url")
 
         val seriesId = getSeriesIdFromUrl(url) ?: throw ErrorLoadingException("No se pudo obtener el Series ID de la URL: $url")
 
-        val detailsUrl = "${CONTENT_BASE_URL}v2/cms/series/$seriesId?locale=$LOCALE"
+        val detailsUrl = "${CONTENT_BASE_URL}content/v2/cms/series/$seriesId?locale=$LOCALE"
         val detailsResponse = myRequestFunction(detailsUrl)
 
         if (detailsResponse.code != 200) {
-            Log.e(LOG_TAG, "load FALLÓ al obtener detalles. Code: ${detailsResponse.code}")
+            Log.e(LOG_TAG, "load FALLÓ al obtener detalles. Code: ${detailsResponse.code}. URL: $detailsUrl")
             throw ErrorLoadingException("Fallo al obtener detalles de la serie.")
         }
 
@@ -265,11 +269,11 @@ class KrunchyProvider : MainAPI() {
         val dubEpisodes = mutableListOf<Episode>()
         val seasonNamesList = mutableListOf<SeasonData>()
 
-        val seasonsUrl = "${CONTENT_BASE_URL}v2/cms/series/$seriesId/seasons?force_locale=&locale=$LOCALE"
+        val seasonsUrl = "${CONTENT_BASE_URL}content/v2/cms/series/$seriesId/seasons?force_locale=&locale=$LOCALE"
         val seasonsResponse = myRequestFunction(seasonsUrl)
 
         if (seasonsResponse.code != 200) {
-            Log.w(LOG_TAG, "load adv: Fallo al obtener temporadas, continuando. Code: ${seasonsResponse.code}")
+            Log.w(LOG_TAG, "load adv: Fallo al obtener temporadas, continuando. Code: ${seasonsResponse.code}. URL: $seasonsUrl")
         } else {
             val seasonsData = try {
                 parseJson<ApiSeasonsResponse>(seasonsResponse.text)
@@ -286,7 +290,7 @@ class KrunchyProvider : MainAPI() {
                     val currentSeasonNumber = seasonCounter++
                     seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
 
-                    val episodesUrl = "${CONTENT_BASE_URL}v2/cms/seasons/${season.id}/episodes?locale=$LOCALE"
+                    val episodesUrl = "${CONTENT_BASE_URL}content/v2/cms/seasons/${season.id}/episodes?locale=$LOCALE"
                     val episodesResponse = myRequestFunction(episodesUrl)
 
                     val episodesData = try {
