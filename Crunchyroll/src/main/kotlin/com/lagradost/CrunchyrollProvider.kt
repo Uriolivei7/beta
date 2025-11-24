@@ -84,15 +84,15 @@ class KrunchyGeoBypasser(
         }
     }
 
-
     suspend fun geoBypassRequest(url: String, extraHeaders: Map<String, String> = emptyMap()): NiceResponse {
-        authenticateAnonymously()
+        if (!extraHeaders.containsKey("Authorization")) {
+            authenticateAnonymously()
+        }
 
-        val authHeader = if (currentBearerToken != null) {
+        val authHeader = if (currentBearerToken != null && !extraHeaders.containsKey("Authorization")) {
             mapOf("authorization" to "Bearer $currentBearerToken", "accept" to "application/json")
         } else {
-            Log.e(LOG_TAG, "No hay token, la solicitud a la API probablemente fallará.")
-            emptyMap()
+            mapOf("accept" to "application/json")
         }
 
         val finalHeaders: Map<String, String> = baseHeaders + authHeader + extraHeaders +
@@ -372,6 +372,14 @@ class KrunchyProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
+        crUnblock.authenticateAnonymously()
+        val token = crUnblock.currentBearerToken
+
+        if (token.isNullOrEmpty()) {
+            Log.e(LOG_TAG, "loadLinks FALLÓ. El token de autorización es nulo o vacío después de intentar autenticar.")
+            return false
+        }
+
         Log.i(LOG_TAG, "loadLinks INICIADO (Playback V3). Data: $data")
 
         val parts = data.split("|")
@@ -400,6 +408,7 @@ class KrunchyProvider : MainAPI() {
         val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play"
 
         val playbackHeaders = mapOf(
+            "Authorization" to "Bearer $token",
             "Accept-Language" to LOCALE,
             "Referer" to "https://www.crunchyroll.com/",
             "X-Crunchyroll-Asset-Key" to CRUNCHYROLL_ASSET_KEY
@@ -408,7 +417,7 @@ class KrunchyProvider : MainAPI() {
         val response = myRequestFunction(vilosApiUrl, headers = playbackHeaders)
 
         if (response.code != 200) {
-            Log.e(LOG_TAG, "loadLinks FALLÓ. API de Playback v3 falló (Code: ${response.code}). URL: $vilosApiUrl")
+            Log.e(LOG_TAG, "loadLinks FALLÓ. API de Playback v3 falló (Code: ${response.code}). URL: $vilosApiUrl. Body: ${response.text.take(500)}")
             return false
         }
 
