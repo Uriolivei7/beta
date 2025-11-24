@@ -241,7 +241,7 @@ class KrunchyProvider : MainAPI() {
 
         val seriesId = getSeriesIdFromUrl(url) ?: throw ErrorLoadingException("No se pudo obtener el Series ID de la URL: $url")
 
-        val detailsUrl = "${API_BASE_URL}cms/series/$seriesId?locale=$LOCALE"
+        val detailsUrl = "${API_BASE_URL}cms/v2/series/$seriesId?locale=$LOCALE"
         val detailsResponse = myRequestFunction(detailsUrl)
 
         if (detailsResponse.code != 200) {
