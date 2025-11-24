@@ -14,109 +14,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import java.util.*
 import okhttp3.RequestBody.Companion.toRequestBody
-
-data class AuthTokenResponse(
-    @JsonProperty("access_token") val accessToken: String,
-    @JsonProperty("expires_in") val expiresIn: Int,
-    @JsonProperty("token_type") val tokenType: String,
-    @JsonProperty("refresh_token") val refreshToken: String?
-)
-
-data class ApiImage(
-    @JsonProperty("type") val type: String?,
-    @JsonProperty("source") val source: String?,
-    @JsonProperty("width") val width: Int?,
-    @JsonProperty("height") val height: Int?,
-)
-
-data class ApiSeriesItem(
-    @JsonProperty("id") val id: String,
-    @JsonProperty("title") val title: String,
-    @JsonProperty("description") val description: String?,
-    @JsonProperty("images") val images: Map<String, List<ApiImage>>?,
-    @JsonProperty("type") val type: String?,
-    @JsonProperty("slug_title") val slugTitle: String,
-    @JsonProperty("genres") val genres: List<String>?,
-) {
-    fun getPosterUrl(): String? {
-        return images?.get("poster_tall")?.firstOrNull()?.source
-    }
-}
-
-data class ApiSearchResponse(
-    @JsonProperty("total") val total: Int,
-    @JsonProperty("items") val items: List<ApiSeriesItem>
-)
-
-data class ApiSeason(
-    @JsonProperty("id") val id: String,
-    @JsonProperty("title") val title: String,
-)
-
-data class ApiSeasonsResponse(
-    @JsonProperty("total") val total: Int,
-    @JsonProperty("items") val items: List<ApiSeason>
-)
-
-data class ApiEpisodeItem(
-    @JsonProperty("id") val id: String,
-    @JsonProperty("title") val title: String,
-    @JsonProperty("episode_number") val episodeNumber: Int?,
-    @JsonProperty("images") val images: Map<String, List<ApiImage>>?,
-    @JsonProperty("versions") val versions: List<ApiEpisodeVersion>?,
-    @JsonProperty("slug_title") val slugTitle: String,
-) {
-    fun getThumbnailUrl(): String? {
-        return images?.get("thumbnail")?.firstOrNull()?.source
-    }
-}
-
-data class ApiEpisodeVersion(
-    @JsonProperty("audio_locale") val audioLocale: String?,
-)
-
-data class ApiEpisodesResponse(
-    @JsonProperty("total") val total: Int,
-    @JsonProperty("items") val items: List<ApiEpisodeItem>
-)
-
-data class Subtitles(
-    @JsonProperty("language") val language: String,
-    @JsonProperty("url") val url: String,
-    @JsonProperty("title") val title: String?,
-    @JsonProperty("format") val format: String?
-)
-
-data class Streams(
-    @JsonProperty("format") val format: String?,
-    @JsonProperty("audio_lang") val audioLang: String?,
-    @JsonProperty("hardsub_lang") val hardsubLang: String?,
-    @JsonProperty("url") val url: String,
-    @JsonProperty("resolution") val resolution: String?,
-    @JsonProperty("title") var title: String?
-) {
-    fun title(): String {
-        return when {
-            this.hardsubLang == "enUS" && this.audioLang == "jaJP" -> "Hardsub (English)"
-            this.hardsubLang == "esLA" && this.audioLang == "jaJP" -> "Hardsub (Latino)"
-            this.hardsubLang == "esES" && this.audioLang == "jaJP" -> "Hardsub (Español España)"
-            this.audioLang == "esLA" -> "Latino"
-            this.audioLang == "esES" -> "Español España"
-            this.audioLang == "enUS" -> "English (US)"
-            else -> "Subbed (Original)"
-        }
-    }
-}
-
-data class KrunchyVideo(
-    @JsonProperty("streams") val streams: List<Streams>,
-    @JsonProperty("subtitles") val subtitles: List<Subtitles>,
-)
-
-fun getSeriesIdFromUrl(url: String): String? {
-    val match = Regex("/series/(GR[A-Z0-9]+)").find(url)
-    return match?.groupValues?.get(1)
-}
+import com.lagradost.cloudstream3.app
 
 class KrunchyGeoBypasser(
     client: OkHttpClient
@@ -232,7 +130,7 @@ class KrunchyProvider : MainAPI() {
     )
 
     suspend fun myRequestFunction(url: String): NiceResponse {
-        return crUnblock.geoBypassRequest(url)
+        return app.get(url)
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -434,7 +332,6 @@ class KrunchyProvider : MainAPI() {
                         }
                     )
                 } else if (stream.format == "trailer_hls") {
-                    // Lógica para streams de trailers/premium, se simplifica el callback
                 }
             }
 
@@ -453,4 +350,107 @@ class KrunchyProvider : MainAPI() {
         Log.e(LOG_TAG, "loadLinks FALLÓ. No Vilos config found.")
         return false
     }
+}
+
+data class AuthTokenResponse(
+    @JsonProperty("access_token") val accessToken: String,
+    @JsonProperty("expires_in") val expiresIn: Int,
+    @JsonProperty("token_type") val tokenType: String,
+    @JsonProperty("refresh_token") val refreshToken: String?
+)
+
+data class ApiImage(
+    @JsonProperty("type") val type: String?,
+    @JsonProperty("source") val source: String?,
+    @JsonProperty("width") val width: Int?,
+    @JsonProperty("height") val height: Int?,
+)
+
+data class ApiSeriesItem(
+    @JsonProperty("id") val id: String,
+    @JsonProperty("title") val title: String,
+    @JsonProperty("description") val description: String?,
+    @JsonProperty("images") val images: Map<String, List<ApiImage>>?,
+    @JsonProperty("type") val type: String?,
+    @JsonProperty("slug_title") val slugTitle: String,
+    @JsonProperty("genres") val genres: List<String>?,
+) {
+    fun getPosterUrl(): String? {
+        return images?.get("poster_tall")?.firstOrNull()?.source
+    }
+}
+
+data class ApiSearchResponse(
+    @JsonProperty("total") val total: Int,
+    @JsonProperty("items") val items: List<ApiSeriesItem>
+)
+
+data class ApiSeason(
+    @JsonProperty("id") val id: String,
+    @JsonProperty("title") val title: String,
+)
+
+data class ApiSeasonsResponse(
+    @JsonProperty("total") val total: Int,
+    @JsonProperty("items") val items: List<ApiSeason>
+)
+
+data class ApiEpisodeItem(
+    @JsonProperty("id") val id: String,
+    @JsonProperty("title") val title: String,
+    @JsonProperty("episode_number") val episodeNumber: Int?,
+    @JsonProperty("images") val images: Map<String, List<ApiImage>>?,
+    @JsonProperty("versions") val versions: List<ApiEpisodeVersion>?,
+    @JsonProperty("slug_title") val slugTitle: String,
+) {
+    fun getThumbnailUrl(): String? {
+        return images?.get("thumbnail")?.firstOrNull()?.source
+    }
+}
+
+data class ApiEpisodeVersion(
+    @JsonProperty("audio_locale") val audioLocale: String?,
+)
+
+data class ApiEpisodesResponse(
+    @JsonProperty("total") val total: Int,
+    @JsonProperty("items") val items: List<ApiEpisodeItem>
+)
+
+data class Subtitles(
+    @JsonProperty("language") val language: String,
+    @JsonProperty("url") val url: String,
+    @JsonProperty("title") val title: String?,
+    @JsonProperty("format") val format: String?
+)
+
+data class Streams(
+    @JsonProperty("format") val format: String?,
+    @JsonProperty("audio_lang") val audioLang: String?,
+    @JsonProperty("hardsub_lang") val hardsubLang: String?,
+    @JsonProperty("url") val url: String,
+    @JsonProperty("resolution") val resolution: String?,
+    @JsonProperty("title") var title: String?
+) {
+    fun title(): String {
+        return when {
+            this.hardsubLang == "enUS" && this.audioLang == "jaJP" -> "Hardsub (English)"
+            this.hardsubLang == "esLA" && this.audioLang == "jaJP" -> "Hardsub (Latino)"
+            this.hardsubLang == "esES" && this.audioLang == "jaJP" -> "Hardsub (Español España)"
+            this.audioLang == "esLA" -> "Latino"
+            this.audioLang == "esES" -> "Español España"
+            this.audioLang == "enUS" -> "English (US)"
+            else -> "Subbed (Original)"
+        }
+    }
+}
+
+data class KrunchyVideo(
+    @JsonProperty("streams") val streams: List<Streams>,
+    @JsonProperty("subtitles") val subtitles: List<Subtitles>,
+)
+
+fun getSeriesIdFromUrl(url: String): String? {
+    val match = Regex("/series/(GR[A-Z0-9]+)").find(url)
+    return match?.groupValues?.get(1)
 }
