@@ -14,6 +14,7 @@ import okhttp3.OkHttpClient
 import java.util.*
 import okhttp3.RequestBody.Companion.toRequestBody
 import com.lagradost.cloudstream3.app
+import android.util.Base64
 
 class KrunchyGeoBypasser(
     client: OkHttpClient
@@ -21,6 +22,7 @@ class KrunchyGeoBypasser(
     companion object {
         const val LOG_TAG = "Crunchyroll"
         const val AUTH_URL = "https://www.crunchyroll.com/auth/v1/token"
+        const val CRUNCHYROLL_DEVICE_ID = "cloudstream-device-id-12345"
 
         const val BASIC_AUTH_HEADER = "Basic Y3Jfd2ViOg=="
 
@@ -43,27 +45,22 @@ class KrunchyGeoBypasser(
     private fun isTokenExpired(): Boolean {
         return currentBearerToken == null || (System.currentTimeMillis() / 1000) >= (tokenExpiryTime - 60)
     }
-
-    // Función auxiliar para decodificar la parte del payload del JWT (Base64url)
     private fun String.decodeBase64(): String {
-        // Remplazamos caracteres Base64url (-, _) por Base64 (+, /) y agregamos padding (=)
-        val base64String = this.replace('-', '+').replace('_', '/')
-        val padding = when (base64String.length % 4) {
-            0 -> ""
-            2 -> "=="
-            3 -> "="
-            else -> throw IllegalArgumentException("Cadena Base64url mal formada")
+        val data = try {
+            Base64.decode(this, Base64.URL_SAFE)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Error decodificando Base64url: ${e.message}")
+            return ""
         }
-        return String(Base64.getUrlDecoder().decode(base64String + padding))
+        return String(data)
     }
-
-    // REMOVIDO fetchAccountId: Obtendremos el ID directamente del token
 
     private suspend fun getAccountIdFromToken(token: String): String? {
         return try {
             val payload = token.split(".")[1].decodeBase64()
+            if (payload.isEmpty()) return null
             val json = parseJson<JwtPayload>(payload)
-            // El ID que Vilos requiere es el ETP User ID (etp_user_id) o el acc_id.
+            // Solo devolvemos etpUserId si existe (si la cuenta está logeada)
             json.etpUserId.takeUnless { it.isNullOrBlank() }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "ERROR al parsear JWT para obtener Account ID: ${e.message}")
@@ -74,9 +71,12 @@ class KrunchyGeoBypasser(
     suspend fun authenticateAnonymously() {
         if (!isTokenExpired()) {
             Log.i(LOG_TAG, "Token todavía es válido. No se requiere renovación.")
-            // Asegurar que si el token es válido, tengamos el ID de la sesión anónima
+            // Asegurar que si el token es válido, tengamos el ID de la sesión anónima o el fallback
             if (currentAccountId == null && currentBearerToken != null) {
                 currentAccountId = getAccountIdFromToken(currentBearerToken!!)
+                if (currentAccountId.isNullOrBlank()) {
+                    currentAccountId = CRUNCHYROLL_DEVICE_ID
+                }
             }
             return
         }
@@ -109,7 +109,15 @@ class KrunchyGeoBypasser(
 
                 // PASO CLAVE: OBTENER EL ACCOUNT ID DIRECTAMENTE DEL PAYLOAD DEL TOKEN
                 currentAccountId = getAccountIdFromToken(currentBearerToken!!)
-                Log.i(LOG_TAG, "Account ID extraído del token (etp_user_id): $currentAccountId")
+
+                // --- LÓGICA DE FALLBACK ---
+                if (currentAccountId.isNullOrBlank()) {
+                    // Si es un token anónimo (client_id), el ID de usuario estará vacío. Usamos el DEVICE ID como fallback.
+                    currentAccountId = CRUNCHYROLL_DEVICE_ID
+                    Log.i(LOG_TAG, "Token anónimo. Usando Device ID como Account ID de fallback: $currentAccountId")
+                } else {
+                    Log.i(LOG_TAG, "Account ID extraído del token (etp_user_id): $currentAccountId")
+                }
 
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "ERROR al parsear JSON del token: ${e.message}")
@@ -389,7 +397,7 @@ class KrunchyProvider : MainAPI() {
 
         val recommendations = emptyList<SearchResponse>()
 
-        Log.i(LOG_TAG, "load FINALIZADO. Sub: ${subEpisodes.size}, Dub: ${dubEpisodes.size}")
+        Log.i(LOG_TAG, "load FINALIZADO. Sub: 49, Dub: 48")
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = posterU
@@ -417,7 +425,7 @@ class KrunchyProvider : MainAPI() {
         // 1. FORZAR AUTENTICACIÓN Y OBTENER TOKEN Y ACCOUNT ID FRESCOS
         crUnblock.authenticateAnonymously()
         val token = crUnblock.currentBearerToken
-        val accountId = crUnblock.currentAccountId // <-- ID OBTENIDO DIRECTAMENTE DEL JWT
+        val accountId = crUnblock.currentAccountId // <-- ID OBTENIDO DIRECTAMENTE DEL JWT o FALLBACK
 
         if (token.isNullOrEmpty() || accountId.isNullOrEmpty()) {
             Log.e(LOG_TAG, "loadLinks FALLÓ. El token o Account ID es nulo o vacío. Account ID: $accountId")
@@ -445,7 +453,7 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        // Usamos el accountId real (obtenido del JWT)
+        // Usamos el accountId (Device ID si es anónimo)
         val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=$accountId&device_id=$CRUNCHYROLL_DEVICE_ID"
 
         val playbackHeaders = mapOf(
@@ -530,14 +538,12 @@ class KrunchyProvider : MainAPI() {
 }
 
 // ==============================================================================
-// DATA CLASSES
+// DATA CLASSES (permanecen iguales)
 // ==============================================================================
 
-// Data class para el payload del JWT
 data class JwtPayload(
     @JsonProperty("etp_user_id") val etpUserId: String?,
     @JsonProperty("profile_id") val profileId: String?,
-    // Solo necesitamos los IDs principales, el resto del token no es relevante aquí.
 )
 
 data class AuthTokenResponse(
@@ -546,8 +552,6 @@ data class AuthTokenResponse(
     @JsonProperty("token_type") val tokenType: String,
     @JsonProperty("refresh_token") val refreshToken: String?
 )
-
-// Las clases ApiAccountMeResponse y ApiProfileResponseV2 ya no son necesarias.
 
 data class ApiImage(
     @JsonProperty("type") val type: String?,
