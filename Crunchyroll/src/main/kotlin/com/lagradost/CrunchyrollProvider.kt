@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.nicehttp.NiceResponse
@@ -22,7 +21,7 @@ class KrunchyGeoBypasser(
     companion object {
         const val LOG_TAG = "Crunchyroll"
         const val AUTH_URL = "https://www.crunchyroll.com/auth/v1/token"
-        const val BASIC_AUTH_HEADER = "Basic Y3Jfd2ViOg=="
+        const val BASIC_AUTH_HEADER = "Basic b2VkZHRvcmlvcjZha2xteG5hdHRsNGE6MTQ4MjI5NjAyNTI0NA=="
 
         private val MEDIA_TYPE_FORM = "application/x-www-form-urlencoded".toMediaType()
 
@@ -68,6 +67,7 @@ class KrunchyGeoBypasser(
 
         if (response.code == 200) {
             try {
+                // AuthTokenResponse está definida al final del archivo
                 val tokenData = parseJson<AuthTokenResponse>(response.text)
                 currentBearerToken = tokenData.accessToken
 
@@ -79,7 +79,7 @@ class KrunchyGeoBypasser(
                 currentBearerToken = null
             }
         } else {
-            Log.e(LOG_TAG, "ERROR al obtener el token. Código: ${response.code}. Body: ${response.text.take(200)}")
+            Log.e(LOG_TAG, "ERROR al obtener el token. Código: ${response.code}. Body: ${response.text.take(500)}")
             currentBearerToken = null
         }
     }
@@ -119,25 +119,24 @@ class KrunchyProvider : MainAPI() {
     }
 
     override var mainUrl = "http://www.crunchyroll.com"
-    override var name: String = "Crunchyroll"
-    override var lang = "mx"
-    override val hasQuickSearch = false
-    override val hasMainPage = true
-    override val mainPage: List<MainPageData> = listOf()
-
+    override var name = "Crunchyroll"
+    override val hasMainPage          = true
+    override val hasQuickSearch       = true
     override val supportedTypes = setOf(
-        TvType.AnimeMovie,
         TvType.Anime,
-        TvType.OVA
+        TvType.AnimeMovie,
     )
+    override var lang             = "mx"
+
 
     suspend fun myRequestFunction(url: String): NiceResponse {
-        return app.get(url)
+        return crUnblock.geoBypassRequest(url)
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.e(LOG_TAG, "getMainPage: Se requiere el endpoint de la API para listas principales.")
-        throw ErrorLoadingException("Función de página principal (getMainPage) no implementada con API V2.")
+        Log.w(KrunchyGeoBypasser.LOG_TAG, "getMainPage: Función de página principal (getMainPage) aún no implementada.")
+
+        return newHomePageResponse(arrayListOf(), false)
     }
 
     override suspend fun search(query: String): ArrayList<SearchResponse> {
@@ -148,7 +147,7 @@ class KrunchyProvider : MainAPI() {
         val response = myRequestFunction(url)
 
         if (response.code != 200) {
-            Log.e(LOG_TAG, "search FALLÓ. Código: ${response.code}.")
+            Log.e(LOG_TAG, "search FALLÓ. Código: ${response.code}. Body: ${response.text.take(500)}")
             return ArrayList()
         }
 
@@ -160,17 +159,21 @@ class KrunchyProvider : MainAPI() {
                 if (item.type != "series" && item.type != "movie_listing") continue
 
                 val seriesUrl = "$mainUrl/series/${item.id}/${item.slugTitle}"
+
                 val poster = item.getPosterUrl()
+
                 val title = item.title
 
                 val dubstat = EnumSet.of(DubStatus.Subbed)
 
-                searchResults.add(
-                    newAnimeSearchResponse(title, seriesUrl, TvType.Anime) {
-                        this.posterUrl = poster
-                        this.dubStatus = dubstat
-                    }
-                )
+                if (poster != null) {
+                    searchResults.add(
+                        newAnimeSearchResponse(title, seriesUrl, TvType.Anime) {
+                            this.posterUrl = poster
+                            this.dubStatus = dubstat
+                        }
+                    )
+                }
             }
 
             Log.i(LOG_TAG, "search FINALIZADO. Results found: ${searchResults.size}")
@@ -195,7 +198,8 @@ class KrunchyProvider : MainAPI() {
             throw ErrorLoadingException("Fallo al obtener detalles de la serie.")
         }
 
-        val seriesDetails = parseJson<ApiSeriesItem>(detailsResponse.text)
+        val seriesDetailsList = parseJson<ApiSeriesResponseWrapper>(detailsResponse.text)
+        val seriesDetails = seriesDetailsList.items.firstOrNull() ?: throw ErrorLoadingException("No se encontró información de la serie.")
 
         val title = seriesDetails.title
         val description = seriesDetails.description
@@ -210,51 +214,53 @@ class KrunchyProvider : MainAPI() {
 
         val seasonsUrl = "${API_BASE_URL}cms/series/$seriesId/seasons?force_locale=&locale=$LOCALE"
         val seasonsResponse = myRequestFunction(seasonsUrl)
-        val seasonsData = parseJson<ApiSeasonsResponse>(seasonsResponse.text)
 
-        Log.i(LOG_TAG, "Found ${seasonsData.items.size} seasons.")
+        if (seasonsResponse.code != 200) {
+            Log.e(LOG_TAG, "load FALLÓ al obtener temporadas. Code: ${seasonsResponse.code}")
+        } else {
+            val seasonsData = parseJson<ApiSeasonsResponse>(seasonsResponse.text)
 
-        var seasonCounter = 1
+            Log.i(LOG_TAG, "Found ${seasonsData.items.size} seasons.")
 
-        for (season in seasonsData.items) {
-            val currentSeasonNumber = seasonCounter++
-            seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
+            var seasonCounter = 1
 
-            val episodesUrl = "${API_BASE_URL}cms/seasons/${season.id}/episodes?locale=$LOCALE"
-            val episodesResponse = myRequestFunction(episodesUrl)
+            for (season in seasonsData.items) {
+                val currentSeasonNumber = seasonCounter++
+                seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
 
-            val episodesData = try {
-                parseJson<ApiEpisodesResponse>(episodesResponse.text)
-            } catch (e: Exception) {
-                Log.e(LOG_TAG, "Error parsing episodes for season ${season.title}: ${e.message}")
-                continue
-            }
+                val episodesUrl = "${API_BASE_URL}cms/seasons/${season.id}/episodes?locale=$LOCALE"
+                val episodesResponse = myRequestFunction(episodesUrl)
 
-            for (epItem in episodesData.items.reversed()) {
+                val episodesData = try {
+                    parseJson<ApiEpisodesResponse>(episodesResponse.text)
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "Error parsing episodes for season ${season.title}: ${e.message}")
+                    continue
+                }
 
-                val versions = epItem.versions.orEmpty()
-                val isDubbed = versions.any { it.audioLocale == "es-LA" || it.audioLocale == "es-ES" }
+                for (epItem in episodesData.items.reversed()) {
 
-                val statusEnum = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+                    val versions = epItem.versions.orEmpty()
+                    val isDubbed = versions.any { it.audioLocale == "es-LA" || it.audioLocale == "es-ES" }
 
-                val epLink = "$mainUrl/watch/${epItem.id}/${epItem.slugTitle}"
+                    val epLink = "$mainUrl/watch/${epItem.id}/${epItem.slugTitle}"
 
-                val epi = newEpisode(
-                    url = epLink,
-                    initializer = {
-                        this.name = epItem.title
-                        this.posterUrl = epItem.getThumbnailUrl()
-                        this.description = epItem.title
-                        this.season = currentSeasonNumber
-                        this.episode = epItem.episodeNumber
-                        //this.status = EnumSet.of(statusEnum)
+                    val epi = newEpisode(
+                        url = epLink,
+                        initializer = {
+                            this.name = epItem.title
+                            this.posterUrl = epItem.getThumbnailUrl()
+                            this.description = epItem.title
+                            this.season = currentSeasonNumber
+                            this.episode = epItem.episodeNumber
+                        }
+                    )
+
+                    if (isDubbed) {
+                        dubEpisodes.add(epi)
+                    } else {
+                        subEpisodes.add(epi)
                     }
-                )
-
-                if (isDubbed) {
-                    dubEpisodes.add(epi)
-                } else {
-                    subEpisodes.add(epi)
                 }
             }
         }
@@ -274,7 +280,7 @@ class KrunchyProvider : MainAPI() {
                 if (dubEpisodes.isNotEmpty()) this[DubStatus.Dubbed] = dubEpisodes
             }
 
-            this.seasonNames = seasonNamesList.sortedBy { it.name }
+            this.seasonNames = seasonNamesList.sortedBy { it.season }
             this.recommendations = recommendations
         }
     }
@@ -329,11 +335,11 @@ class KrunchyProvider : MainAPI() {
                             url = stream.url,
                             type = ExtractorLinkType.M3U8
                         ) {
+                            // Referer vacío para evitar problemas CORS
                             this.referer = ""
                             this.quality = getQualityFromName(stream.resolution)
                         }
                     )
-                } else if (stream.format == "trailer_hls") {
                 }
             }
 
@@ -341,9 +347,12 @@ class KrunchyProvider : MainAPI() {
                 val langclean = it.language.replace("esLA", "Spanish")
                     .replace("enUS", "English")
                     .replace("esES", "Spanish (Spain)")
-                subtitleCallback(
-                    SubtitleFile(langclean, it.url)
-                )
+
+                if (it.format == "srt" || it.format == "ass" || it.format == "vtt" || it.format == null) {
+                    subtitleCallback(
+                        SubtitleFile(langclean, it.url)
+                    )
+                }
             }
 
             Log.i(LOG_TAG, "loadLinks FINALIZADO con éxito (Vilos).")
@@ -366,6 +375,10 @@ data class ApiImage(
     @JsonProperty("source") val source: String?,
     @JsonProperty("width") val width: Int?,
     @JsonProperty("height") val height: Int?,
+)
+
+data class ApiSeriesResponseWrapper(
+    @JsonProperty("items") val items: List<ApiSeriesItem>
 )
 
 data class ApiSeriesItem(
