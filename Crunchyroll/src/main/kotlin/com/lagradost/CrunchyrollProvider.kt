@@ -156,24 +156,23 @@ class KrunchyProvider : MainAPI() {
             val apiResponse = parseJson<ApiSearchResponse>(response.text)
             val searchResults = ArrayList<SearchResponse>()
 
-            for (item in apiResponse.items) {
-                if (item.type != "series" && item.type != "movie_listing") continue
+            for (dataItem in apiResponse.data.orEmpty()) {
+                for (item in dataItem.items.orEmpty()) {
+                    if (item.type != "series" && item.type != "movie_listing") continue
 
-                val seriesUrl = "$mainUrl/series/${item.id}/${item.slugTitle}"
+                    val seriesUrl = "$mainUrl/series/${item.id}/${item.slugTitle}"
+                    val poster = item.getPosterUrl()
+                    val title = item.title
+                    val dubstat = EnumSet.of(DubStatus.Subbed)
 
-                val poster = item.getPosterUrl()
-
-                val title = item.title
-
-                val dubstat = EnumSet.of(DubStatus.Subbed)
-
-                if (poster != null) {
-                    searchResults.add(
-                        newAnimeSearchResponse(title, seriesUrl, TvType.Anime) {
-                            this.posterUrl = poster
-                            this.dubStatus = dubstat
-                        }
-                    )
+                    if (poster != null) {
+                        searchResults.add(
+                            newAnimeSearchResponse(title, seriesUrl, TvType.Anime) {
+                                this.posterUrl = poster
+                                this.dubStatus = dubstat
+                            }
+                        )
+                    }
                 }
             }
 
@@ -398,7 +397,13 @@ data class ApiSeriesItem(
 
 data class ApiSearchResponse(
     @JsonProperty("total") val total: Int,
-    @JsonProperty("items") val items: List<ApiSeriesItem>
+    @JsonProperty("data") val data: List<ApiSearchData>?
+)
+
+data class ApiSearchData(
+    @JsonProperty("type") val type: String?,
+    @JsonProperty("count") val count: Int?,
+    @JsonProperty("items") val items: List<ApiSeriesItem>?
 )
 
 data class ApiSeason(
