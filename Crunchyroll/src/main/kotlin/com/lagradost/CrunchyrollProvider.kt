@@ -385,19 +385,23 @@ data class ApiSeriesItem(
     @JsonProperty("id") val id: String,
     @JsonProperty("title") val title: String,
     @JsonProperty("description") val description: String?,
-    @JsonProperty("images") val images: Map<String, List<ApiImage>>?,
+    @JsonProperty("images") val images: Map<String, List<List<ApiImage>>>?,
     @JsonProperty("type") val type: String?,
     @JsonProperty("slug_title") val slugTitle: String,
     @JsonProperty("genres") val genres: List<String>?,
 ) {
     fun getPosterUrl(): String? {
-        return images?.get("poster_tall")?.firstOrNull()?.source
+        return images
+            ?.get("poster_tall")
+            ?.firstOrNull()
+            ?.firstOrNull()
+            ?.source
     }
 }
 
 data class ApiSearchResponse(
     @JsonProperty("total") val total: Int,
-    @JsonProperty("data") val data: List<ApiSearchData>? 
+    @JsonProperty("data") val data: List<ApiSearchData>?
 )
 
 data class ApiSearchData(
