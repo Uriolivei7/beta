@@ -397,7 +397,8 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        val vilosApiUrl = "${CONTENT_BASE_URL}content/v2/cms/videos/$streamGuid/streams"
+        //val vilosApiUrl = "${CONTENT_BASE_URL}content/v2/cms/videos/$streamGuid/streams"
+        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play"
 
         val response = myRequestFunction(vilosApiUrl)
 
