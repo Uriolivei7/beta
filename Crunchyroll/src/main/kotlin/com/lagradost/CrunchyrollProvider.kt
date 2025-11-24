@@ -257,7 +257,7 @@ class KrunchyProvider : MainAPI() {
         val posterU = seriesDetails.getPosterUrl()
         val tags = seriesDetails.genres ?: emptyList()
 
-        Log.i(LOG_TAG, "Load Info: Title='$title', PosterUrl='$posterU'")
+        Log.i(LOG_TAG, "Load Info: Title='$title', PosterUrl='${posterU}'")
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
@@ -267,50 +267,56 @@ class KrunchyProvider : MainAPI() {
         val seasonsResponse = myRequestFunction(seasonsUrl)
 
         if (seasonsResponse.code != 200) {
-            Log.e(LOG_TAG, "load FALLÓ al obtener temporadas. Code: ${seasonsResponse.code}")
+            Log.w(LOG_TAG, "load adv: Fallo al obtener temporadas, continuando. Code: ${seasonsResponse.code}")
         } else {
-            val seasonsData = parseJson<ApiSeasonsResponse>(seasonsResponse.text)
+            val seasonsData = try {
+                parseJson<ApiSeasonsResponse>(seasonsResponse.text)
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Error parseando la lista de temporadas: ${e.message}")
+                null
+            }
 
-            Log.i(LOG_TAG, "Found ${seasonsData.items.size} seasons.")
+            if (seasonsData?.items != null) {
+                Log.i(LOG_TAG, "Found ${seasonsData.items.size} seasons.")
+                var seasonCounter = 1
 
-            var seasonCounter = 1
+                for (season in seasonsData.items.orEmpty()) {
+                    val currentSeasonNumber = seasonCounter++
+                    seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
 
-            for (season in seasonsData.items.orEmpty()) {
-                val currentSeasonNumber = seasonCounter++
-                seasonNamesList.add(SeasonData(currentSeasonNumber, season.title, null))
+                    val episodesUrl = "${API_BASE_URL}cms/seasons/${season.id}/episodes?locale=$LOCALE"
+                    val episodesResponse = myRequestFunction(episodesUrl)
 
-                val episodesUrl = "${API_BASE_URL}cms/seasons/${season.id}/episodes?locale=$LOCALE"
-                val episodesResponse = myRequestFunction(episodesUrl)
+                    val episodesData = try {
+                        parseJson<ApiEpisodesResponse>(episodesResponse.text)
+                    } catch (e: Exception) {
+                        Log.e(LOG_TAG, "Error parsing episodes for season ${season.title}: ${e.message}")
+                        continue
+                    }
 
-                val episodesData = try {
-                    parseJson<ApiEpisodesResponse>(episodesResponse.text)
-                } catch (e: Exception) {
-                    Log.e(LOG_TAG, "Error parsing episodes for season ${season.title}: ${e.message}")
-                    continue
-                }
+                    for (epItem in episodesData.items.orEmpty().reversed()) {
 
-                for (epItem in episodesData.items.reversed()) {
+                        val versions = epItem.versions.orEmpty()
+                        val isDubbed = versions.any { it.audioLocale == "es-LA" || it.audioLocale == "es-ES" }
 
-                    val versions = epItem.versions.orEmpty()
-                    val isDubbed = versions.any { it.audioLocale == "es-LA" || it.audioLocale == "es-ES" }
+                        val epLink = "$mainUrl/watch/${epItem.id}/${epItem.slugTitle}"
 
-                    val epLink = "$mainUrl/watch/${epItem.id}/${epItem.slugTitle}"
+                        val epi = newEpisode(
+                            url = epLink,
+                            initializer = {
+                                this.name = epItem.title
+                                this.posterUrl = epItem.getThumbnailUrl()
+                                this.description = epItem.title
+                                this.season = currentSeasonNumber
+                                this.episode = epItem.episodeNumber
+                            }
+                        )
 
-                    val epi = newEpisode(
-                        url = epLink,
-                        initializer = {
-                            this.name = epItem.title
-                            this.posterUrl = epItem.getThumbnailUrl()
-                            this.description = epItem.title
-                            this.season = currentSeasonNumber
-                            this.episode = epItem.episodeNumber
+                        if (isDubbed) {
+                            dubEpisodes.add(epi)
+                        } else {
+                            subEpisodes.add(epi)
                         }
-                    )
-
-                    if (isDubbed) {
-                        dubEpisodes.add(epi)
-                    } else {
-                        subEpisodes.add(epi)
                     }
                 }
             }
@@ -429,6 +435,7 @@ data class ApiImage(
 )
 
 data class ApiSeriesResponseWrapper(
+    @JsonProperty("total") val total: Int?,
     @JsonProperty("data") val items: List<ApiSeriesItem>
 )
 
@@ -489,8 +496,8 @@ data class ApiEpisodeVersion(
 )
 
 data class ApiEpisodesResponse(
-    @JsonProperty("total") val total: Int,
-    @JsonProperty("items") val items: List<ApiEpisodeItem>
+    @JsonProperty("total") val total: Int?,
+    @JsonProperty("data") val items: List<ApiEpisodeItem>
 )
 
 data class Subtitles(
@@ -527,6 +534,5 @@ data class KrunchyVideo(
 )
 
 fun getSeriesIdFromUrl(url: String): String? {
-    val match = Regex("/series/(GR[A-Z0-9]+)").find(url)
-    return match?.groupValues?.get(1)
+    return Regex("""series/([A-Z0-9]{7})""").find(url)?.groupValues?.getOrNull(1)
 }
