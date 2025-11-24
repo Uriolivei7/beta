@@ -482,7 +482,14 @@ data class ApiSeriesItem(
         val thumbnailData = images?.thumbnailRaw
 
         if (thumbnailData is List<*>) {
-            return (thumbnailData.firstOrNull() as? List<*>)?.filterIsInstance<ApiImage>()?.firstOrNull()?.source
+            val firstList = thumbnailData.firstOrNull() as? List<*>
+            val firstItem = firstList?.firstOrNull()
+            // When Jackson deserializes Any?, it creates Map objects, not ApiImage objects
+            return when (firstItem) {
+                is ApiImage -> firstItem.source
+                is Map<*, *> -> firstItem["source"] as? String
+                else -> null
+            }
         }
 
         return null
