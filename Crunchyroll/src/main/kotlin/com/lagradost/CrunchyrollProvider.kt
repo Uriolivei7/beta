@@ -212,15 +212,15 @@ class KrunchyProvider : MainAPI() {
         const val LOG_TAG = "Crunchyroll"
         const val API_BASE_URL = "https://www.crunchyroll.com/content/v2/"
         const val LOCALE = "es-419"
+    }
 
-        val crUnblock by lazy {
-            KrunchyGeoBypasser(app.baseClient)
-        }
+    val crUnblock by lazy {
+        KrunchyGeoBypasser(app.baseClient)
     }
 
     override var mainUrl = "http://www.crunchyroll.com"
     override var name: String = "Crunchyroll"
-    override var lang = "es"
+    override var lang = "mx"
     override val hasQuickSearch = false
     override val hasMainPage = false
     override val mainPage: List<MainPageData> = listOf()
