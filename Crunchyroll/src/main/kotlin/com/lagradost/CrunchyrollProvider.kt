@@ -115,7 +115,7 @@ class KrunchyProvider : MainAPI() {
 
         private const val CONTENT_BASE_URL = "https://www.crunchyroll.com/"
         private const val CRUNCHYROLL_ASSET_KEY = "e206b12a-3532-4e0d-85e7-37b51e06d69e"
-
+        private const val CRUNCHYROLL_DEVICE_ID = "cloudstream-device-id-12345"
         private const val LOCALE = "es-419"
     }
 
@@ -406,7 +406,7 @@ class KrunchyProvider : MainAPI() {
             return false
         }
 
-        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=0"
+        val vilosApiUrl = "${CONTENT_BASE_URL}playback/v3/$streamGuid/web/chrome/play?account_id=0&device_id=$CRUNCHYROLL_DEVICE_ID"
 
         val playbackHeaders = mapOf(
             "Authorization" to "Bearer $token",
