@@ -309,27 +309,36 @@ class KrunchyProvider : MainAPI() {
                     }
 
                     for (epItem in episodesData.items.orEmpty().reversed()) {
-
                         val versions = epItem.versions.orEmpty()
-                        val isDubbed = versions.any { it.audioLocale == "es-LA" || it.audioLocale == "es-ES" }
 
-                        val epLink = "$mainUrl/watch/${epItem.id}/${epItem.slugTitle}"
+                        val subVersion = versions.find { it.audioLocale == "ja-JP" || it.audioLocale == "enUS" }
+                        val dubVersion = versions.find { it.audioLocale == "es-LA" || it.audioLocale == "es-ES" }
 
-                        val epi = newEpisode(
-                            url = epLink,
-                            initializer = {
-                                this.name = epItem.title
-                                this.posterUrl = epItem.getThumbnailUrl()
-                                this.description = epItem.title
-                                this.season = currentSeasonNumber
-                                this.episode = epItem.episodeNumber
+                        val subGuid = subVersion?.guid ?: epItem.id
+                        val dubGuid = dubVersion?.guid ?: ""
+
+                        val epLinkData = "${epItem.id}|$subGuid|$dubGuid"
+
+                        if (subVersion != null || dubVersion != null) {
+
+                            val epi = newEpisode(
+                                url = epLinkData,
+                                initializer = {
+                                    this.name = epItem.title
+                                    this.posterUrl = epItem.getThumbnailUrl()
+                                    this.description = epItem.title
+                                    this.season = currentSeasonNumber
+                                    this.episode = epItem.episodeNumber
+                                }
+                            )
+
+                            if (subVersion != null) {
+                                subEpisodes.add(epi)
                             }
-                        )
 
-                        if (isDubbed) {
-                            dubEpisodes.add(epi)
-                        } else {
-                            subEpisodes.add(epi)
+                            if (dubVersion != null) {
+                                dubEpisodes.add(epi)
+                            }
                         }
                     }
                 }
@@ -363,20 +372,50 @@ class KrunchyProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
 
-        Log.i(LOG_TAG, "loadLinks INICIADO (Vilos Scraper). Data URL: $data")
-        val contentRegex = Regex("""(?s)vilos\.config\.media = (\s*\{.+\}\s*)""")
+        Log.i(LOG_TAG, "loadLinks INICIADO (Vilos API). Data: $data")
 
-        val response = myRequestFunction(data)
-
-        if (response.code != 200) {
-            Log.e(LOG_TAG, "loadLinks FALLÓ. El bypass no pudo obtener la página del episodio (Code: ${response.code}).")
+        val parts = data.split("|")
+        if (parts.size < 3) {
+            Log.e(LOG_TAG, "loadLinks FALLÓ. Data mal formada (esperado ID|SubGUID|DubGUID).")
             return false
         }
 
-        val dat = contentRegex.find(response.text)?.groupValues?.get(1)
+        val episodeId = parts[0]
+        val subGuid = parts[1]
+        val dubGuid = parts[2]
+
+        val streamGuid = if (isCasting && dubGuid.isNotEmpty()) {
+            Log.i(LOG_TAG, "Usando GUID Doblado: $dubGuid")
+            dubGuid
+        } else {
+            Log.i(LOG_TAG, "Usando GUID Subtitulado/Original: $subGuid")
+            subGuid
+        }
+
+        if (streamGuid.isEmpty()) {
+            Log.e(LOG_TAG, "loadLinks FALLÓ. No se encontró GUID para el idioma solicitado.")
+            return false
+        }
+
+        val vilosApiUrl = "${CONTENT_BASE_URL}content/v2/cms/videos/$streamGuid/streams"
+
+        val response = myRequestFunction(vilosApiUrl)
+
+        if (response.code != 200) {
+            Log.e(LOG_TAG, "loadLinks FALLÓ. API de Vilos falló (Code: ${response.code}). URL: $vilosApiUrl")
+            return false
+        }
+
+        val dat = response.text
 
         if (!dat.isNullOrEmpty()) {
-            val json = parseJson<KrunchyVideo>(dat)
+            val json = try {
+                parseJson<KrunchyVideo>(dat)
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Error parseando JSON de KrunchyVideo (Vilos API): ${e.message}")
+                return false
+            }
+
             val streams = ArrayList<Streams>()
 
             val validFormats = listOf(
@@ -425,10 +464,11 @@ class KrunchyProvider : MainAPI() {
                 }
             }
 
-            Log.i(LOG_TAG, "loadLinks FINALIZADO con éxito (Vilos).")
+            Log.i(LOG_TAG, "loadLinks FINALIZADO con éxito (Vilos API).")
             return true
         }
-        Log.e(LOG_TAG, "loadLinks FALLÓ. No Vilos config found.")
+
+        Log.e(LOG_TAG, "loadLinks FALLÓ. La API de Vilos no devolvió streams.")
         return false
     }
 }
@@ -536,6 +576,7 @@ data class ApiEpisodeItem(
 
 data class ApiEpisodeVersion(
     @JsonProperty("audio_locale") val audioLocale: String?,
+    @JsonProperty("guid") val guid: String?
 )
 
 data class ApiEpisodesResponse(
@@ -570,6 +611,12 @@ data class Streams(
         }
     }
 }
+
+data class LinkData(
+    val episodeId: String,
+    val slugTitle: String,
+    val requestedLangCode: String
+)
 
 data class KrunchyVideo(
     @JsonProperty("streams") val streams: List<Streams>,
