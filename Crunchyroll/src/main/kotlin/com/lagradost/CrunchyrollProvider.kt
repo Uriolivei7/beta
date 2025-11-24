@@ -121,13 +121,13 @@ class KrunchyProvider : MainAPI() {
 
     override var mainUrl = "http://www.crunchyroll.com"
     override var name = "Crunchyroll"
-    override val hasMainPage          = true
-    override val hasQuickSearch       = true
+    override val hasMainPage = true
+    override val hasQuickSearch = true
     override val supportedTypes = setOf(
         TvType.Anime,
         TvType.AnimeMovie,
     )
-    override var lang             = "mx"
+    override var lang = "mx"
 
 
     suspend fun myRequestFunction(url: String): NiceResponse {
@@ -135,9 +135,60 @@ class KrunchyProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.w(KrunchyGeoBypasser.LOG_TAG, "getMainPage: Función de página principal (getMainPage) aún no implementada.")
+        if (page > 1) return newHomePageResponse(arrayListOf(), false)
 
-        return newHomePageResponse(arrayListOf(), false)
+        val home = ArrayList<HomePageList>()
+
+        val url = "${API_BASE_URL}content/v2/discover?locale=$LOCALE"
+
+        val response = myRequestFunction(url)
+
+        if (response.code != 200) {
+            Log.e(LOG_TAG, "getMainPage FALLÓ. Código: ${response.code}")
+            return newHomePageResponse(arrayListOf(), false)
+        }
+
+        return try {
+            val apiResponse = parseJson<ApiSearchResponse>(response.text)
+
+            for (dataItem in apiResponse.data.orEmpty()) {
+                val items = dataItem.items.orEmpty()
+
+                if (items.isNotEmpty()) {
+                    val searchResponses = ArrayList<SearchResponse>()
+
+                    for (item in items) {
+                        if (item.type != "series" && item.type != "movie_listing") continue
+
+                        val seriesUrl = "$mainUrl/series/${item.id}/${item.slugTitle}"
+                        val poster = item.getPosterUrl()
+                        val title = item.title
+
+                        if (poster != null) {
+                            searchResponses.add(
+                                newAnimeSearchResponse(title, seriesUrl, TvType.Anime) {
+                                    this.posterUrl = poster
+                                    this.dubStatus = EnumSet.of(DubStatus.Subbed)
+                                }
+                            )
+                        }
+                    }
+
+                    val listName = dataItem.type?.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() } ?: "Resultados Destacados"
+
+                    home.add(
+                        HomePageList(listName, searchResponses)
+                    )
+                }
+            }
+
+            Log.i(LOG_TAG, "getMainPage FINALIZADO. Se encontraron ${home.size} listas.")
+            newHomePageResponse(home, false)
+
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Error parseando JSON de página principal: ${e.message}")
+            newHomePageResponse(arrayListOf(), false)
+        }
     }
 
     override suspend fun search(query: String): ArrayList<SearchResponse> {
@@ -378,7 +429,7 @@ data class ApiImage(
 )
 
 data class ApiSeriesResponseWrapper(
-    @JsonProperty("items") val items: List<ApiSeriesItem>
+    @JsonProperty("data") val items: List<ApiSeriesItem>
 )
 
 data class ApiSeriesItem(
