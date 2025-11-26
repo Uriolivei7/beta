@@ -135,24 +135,6 @@
     "fileSize": 15000
   },
   {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/Crunchyroll.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "Crunchyroll",
-    "internalName": "CrunchyrollProvider",
-    "authors": [
-      "Ranita"
-    ],
-    "description": "Plugin para Crunchyroll",
-    "tvTypes": [
-      "Anime"
-    ],
-    "iconUrl": "https://www.crunchyroll.com/build/assets/img/favicons/favicon-v2-32x32.png",
-    "language": "en",
-    "fileSize": 36000
-  },
-  {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/TwitchProvider.cs3",
     "status": 1,
     "version": 1,
@@ -168,6 +150,6 @@
     ],
     "iconUrl": "https://assets.twitch.tv/assets/favicon-32-e29e246c157142c94346.png",
     "language": "en",
-    "fileSize": 17000
+    "fileSize": 16000
   }
 ]
