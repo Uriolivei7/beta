@@ -35,7 +35,7 @@ class TwitchProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/channels/live" to "Streams",
-        "$mainUrl/channels/live/spanish" to "Streams en Español)",
+        "$mainUrl/channels/live/spanish" to "Streams en Español",
         "$mainUrl/channels/live/english" to "Streams en Inglés",
         "$mainUrl/channels/live/portuguese" to "Streams en Portugués",
         "$mainUrl/games" to gamesName
