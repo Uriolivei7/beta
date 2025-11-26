@@ -163,10 +163,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%",
-        "jarFileSize": 59208,
+        "jarFileSize": 60970,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 15947,
+        "fileSize": 16679,
         "status": 1,
         "authors": [
             "CranberrySoup"
