@@ -33,8 +33,11 @@ class TwitchProvider : MainAPI() {
     private val gamesName = "games"
     private val TAG = "TwitchProvider"
 
+    // *** CAMBIO AQUÍ: Agregando inglés y portugués a la página principal ***
     override val mainPage = mainPageOf(
-        "$mainUrl/channels/live/spanish" to "Canales en vivo",
+        "$mainUrl/channels/live/spanish" to "Canales en vivo (Español)",
+        "$mainUrl/channels/live/english" to "Canales en vivo (Inglés)",
+        "$mainUrl/channels/live/portuguese" to "Canales en vivo (Portugués)",
         "$mainUrl/games" to gamesName
     )
     private val isHorizontal = true
@@ -49,11 +52,13 @@ class TwitchProvider : MainAPI() {
 
                 Log.e(TAG, "getMainPage - Longitud del cuerpo: ${doc.body().html().length}. ¿Contiene Cloudflare? ${doc.body().html().contains("Cloudflare")}")
 
+                // La selección principal sigue siendo "table#channels tr"
                 val channels = doc.select("table#channels tr").map { element ->
                     element.toLiveSearchResponse()
                 }
 
-                val finalChannels = channels
+                // El primer <tr> puede ser una fila vacía o de encabezado, la saltamos por seguridad.
+                val finalChannels = channels.drop(1).filter { !it.name.isNullOrBlank() }
 
                 Log.e(TAG, "getMainPage - Canales encontrados: ${finalChannels.size}")
 
@@ -72,23 +77,33 @@ class TwitchProvider : MainAPI() {
     }
 
     private fun Element.toLiveSearchResponse(): LiveSearchResponse {
+        // *** CAMBIO AQUÍ: Implementando el nuevo selector basado en el HTML proporcionado ***
 
-        val anchor = this.select("td a[href^='/']").first()
-        val linkName = anchor?.attr("href")?.substringAfterLast("/") ?: ""
+        // 1. Obtener la columna del nombre/enlace (tercer <td>)
+        // td(0) es #rank, td(1) es <img>, td(2) es <a>Name
+        val nameColumn = this.select("td").getOrNull(2)
+            ?: return newLiveSearchResponse("", "", TvType.Live, fix = false) { Log.e(TAG, "toLiveSearchResponse - Columna de nombre no encontrada."); }
 
-        val name = this.select("a.item-title").text().ifBlank { anchor?.text() }
+        // 2. Extraer el anchor (el <a> que envuelve el nombre)
+        val anchor = nameColumn.select("a[href^='/']").first()
+            ?: return newLiveSearchResponse("", "", TvType.Live, fix = false) { Log.e(TAG, "toLiveSearchResponse - Anchor de nombre no encontrado."); }
 
-        val image = this.select("img").attr("src")
+        val linkName = anchor.attr("href").substringAfterLast("/")
+        val name = anchor.text()
+
+        // 3. Extraer la imagen del primer <td> que contiene la imagen
+        val imageColumn = this.select("td").getOrNull(1)
+        val image = imageColumn?.select("img")?.attr("src") ?: ""
 
         if (name.isNullOrBlank() || linkName.isBlank()) {
-            Log.e(TAG, "toLiveSearchResponse - FALLO al extraer datos del canal.")
+            Log.e(TAG, "toLiveSearchResponse - FALLO al extraer datos del canal. Element HTML: ${this.html()}")
+            return newLiveSearchResponse("", "", TvType.Live, fix = false)
         } else {
             Log.e(TAG, "toLiveSearchResponse - Extrayendo canal: $name, LinkName: $linkName")
         }
 
-
         return newLiveSearchResponse(
-            name?.trim() ?: "",
+            name.trim(),
             linkName,
             TvType.Live,
             fix = false
