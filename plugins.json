@@ -18,24 +18,6 @@
         "name": "AnizoneProvider"
     },
     {
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 27659,
-        "status": 1,
-        "language": "en",
-        "authors": [
-            "Ranita"
-        ],
-        "tvTypes": [
-            "Anime"
-        ],
-        "version": 2,
-        "internalName": "Crunchyroll",
-        "description": "Anime subtitulado y con multiples doblajes",
-        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Crunchyroll.cs3",
-        "name": "Crunchyroll"
-    },
-    {
         "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
@@ -54,29 +36,6 @@
         "description": "Lorem ipsum",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/ExampleProvider.cs3",
         "name": "ExampleProvider"
-    },
-    {
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 24794,
-        "status": 1,
-        "language": "es",
-        "authors": [
-            "Ranita",
-            "Yeji",
-            "Mina"
-        ],
-        "tvTypes": [
-            "Movie",
-            "TvSeries",
-            "Cartoon",
-            "Anime"
-        ],
-        "version": 21,
-        "internalName": "KatanimeProvider",
-        "description": "Contenido en Latino",
-        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/KatanimeProvider.cs3",
-        "name": "KatanimeProvider"
     },
     {
         "apiVersion": 1,
@@ -120,25 +79,6 @@
         "name": "NetflixmirrorProvider"
     },
     {
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 22553,
-        "status": 1,
-        "language": "mx",
-        "authors": [
-            "Ranita"
-        ],
-        "tvTypes": [
-            "Movie",
-            "TvSeries"
-        ],
-        "version": 1,
-        "internalName": "PelisplushdProvider",
-        "description": "Ranita Repositorio",
-        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplushdProvider.cs3",
-        "name": "PelisplushdProvider"
-    },
-    {
         "iconUrl": "https://pelis-plus.icu/assets/img/ic/favicon-96x96.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
@@ -156,29 +96,6 @@
         "internalName": "PelisplusicuProvider",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusicuProvider.cs3",
         "name": "PelisplusicuProvider"
-    },
-    {
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 28455,
-        "status": 1,
-        "language": "es",
-        "authors": [
-            "Ranita",
-            "Yeji",
-            "Mina"
-        ],
-        "tvTypes": [
-            "Movie",
-            "TvSeries",
-            "Cartoon",
-            "Anime"
-        ],
-        "version": 21,
-        "internalName": "PelisplusProvider",
-        "description": "Contenido en Latino",
-        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusProvider.cs3",
-        "name": "PelisplusProvider"
     },
     {
         "apiVersion": 1,
@@ -243,5 +160,25 @@
         "internalName": "TvporinternetProvider",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvporinternetProvider.cs3",
         "name": "TvporinternetProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%",
+        "jarFileSize": 59208,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 15947,
+        "status": 1,
+        "authors": [
+            "CranberrySoup"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 2,
+        "internalName": "TwitchProvider",
+        "jarUrl": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.jar",
+        "description": "Watch livestreams from Twitch",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.cs3",
+        "name": "TwitchProvider"
     }
 ]
