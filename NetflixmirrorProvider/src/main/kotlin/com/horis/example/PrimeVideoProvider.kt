@@ -251,15 +251,12 @@ class PrimeVideoProvider : MainAPI() {
     ): Boolean {
         Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
-        Log.i(TAG, "Loading links for Episode/Movie ID: $id, Title: $title")
-
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
         val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.i(TAG, "Fetching playlist from: $playlistUrl")
 
         val playlist = app.get(
             playlistUrl,
@@ -267,9 +264,6 @@ class PrimeVideoProvider : MainAPI() {
             referer = "$newUrl/home",
             cookies = cookies
         ).parsed<PlayList>()
-
-        var linkCount = 0
-        var subtitleCount = 0
 
         playlist.forEach { item ->
             item.sources.forEach {
@@ -284,58 +278,37 @@ class PrimeVideoProvider : MainAPI() {
                         this.quality = getQualityFromName(it.file.substringAfter("q=", ""))
                     }
                 )
-                linkCount++
-                Log.i(TAG, "Found Link: ${it.label} (${it.file})")
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val rawSubtitleUrl = track.file.toString()
-                val finalSubtitleUrl = if (rawSubtitleUrl.startsWith("//")) {
-                    "https:$rawSubtitleUrl"
-                } else {
-                    rawSubtitleUrl
-                }
-
                 subtitleCallback.invoke(
                     SubtitleFile(
                         track.label.toString(),
-                        finalSubtitleUrl,
+                        httpsify(track.file.toString())
                     )
                 )
-                subtitleCount++
-                Log.i(TAG, "Found Subtitle: ${track.label} at $finalSubtitleUrl (Kind: ${track.kind})")
             }
         }
-
-        Log.i(TAG, "Finished loadLinks. Total links: $linkCount, Total subtitles: $subtitleCount")
 
         return true
     }
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
-
         val refererUrl = "$newUrl/"
-
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
-                val newRequest = request.newBuilder()
 
                 if (url.contains(".m3u8")) {
-                    Log.i(TAG, "Applying 'hd=on' cookie to M3U8 request.")
-                    newRequest.header("Cookie", "hd=on")
+                    val newRequest = request.newBuilder()
+                        .header("Cookie", "hd=on")
+                        .build()
+                    return chain.proceed(newRequest)
                 }
 
-                if (url.contains("subs.nfmirrorcdn.top")) {
-                    Log.i(TAG, "Applying Referer and Cookie 'hd=on' for Subtitle request: $refererUrl")
-                    newRequest.header("Referer", refererUrl)
-                    newRequest.header("Cookie", "hd=on")
-                }
-
-                return chain.proceed(newRequest.build())
+                return chain.proceed(request)
             }
         }
     }
