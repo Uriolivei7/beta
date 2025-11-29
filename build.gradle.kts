@@ -14,7 +14,7 @@ buildscript {
     dependencies {
         classpath("com.android.tools.build:gradle:8.13.1")
         // Cloudstream gradle plugin which makes everything work and builds plugins
-        classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
+        classpath("com.github.recloudstream:gradle:-SNAPSHOT")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0")
     }
 }
@@ -77,7 +77,7 @@ subprojects {
         implementation("com.fasterxml.jackson.core:jackson-core:2.20.1")
         implementation("com.fasterxml.jackson.core:jackson-annotations:2.20")
 
-        implementation("com.squareup.okhttp3:okhttp:5.3.1")
+        implementation("com.squareup.okhttp3:okhttp:5.3.2")
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
         implementation("org.mozilla:rhino:1.8.0")

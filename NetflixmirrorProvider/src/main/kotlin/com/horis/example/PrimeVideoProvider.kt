@@ -283,86 +283,77 @@ class PrimeVideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
-        Log.i(TAG, "Loading links for Episode/Movie ID: $id, Title: $title")
-
+        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
-        val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.i(TAG, "Fetching playlist from: $playlistUrl")
+        val playlist = app.get(
+            "$newUrl/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
+            headers,
+            referer = "$newUrl/home",
+            cookies = cookies
+        ).parsed<PlayList>()
 
-        val playlist = try {
-            app.get(
-                playlistUrl,
-                headers,
-                referer = "$newUrl/home",
-                cookies = cookies
-            ).parsed<PlayList>()
-        } catch (e: Exception) {
-            Log.e(TAG, "loadLinks FAILED fetching playlist for ID $id: ${e.message}", e)
-            return false
-        }
+        val requiredReferer = "$newUrl/"
 
-
-        playlist.forEachIndexed { index, item ->
-            Log.i(TAG, "Processing playlist item $index (Sources: ${item.sources.size}, Tracks: ${item.tracks?.size ?: 0})")
-
+        playlist.forEach { item ->
             item.sources.forEach {
-                val fileUrl = """$newUrl${it.file.replace("/tv/", "/")}"""
                 callback.invoke(
                     newExtractorLink(
                         name,
                         it.label,
-                        fileUrl,
+                        """$newUrl${it.file.replace("/tv/", "/")}""",
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = "$newUrl/"
+                        this.referer = requiredReferer
                         this.quality = getQualityFromName(it.file.substringAfter("q=", ""))
                     }
                 )
-                Log.d(TAG, "Found Link: Label=${it.label}, Quality=${getQualityFromName(it.file.substringAfter("q=", ""))}, URL=$fileUrl")
             }
 
+            val requiredReferer = "$newUrl/"
+            val subtitleHeaders = mapOf("Referer" to requiredReferer)
+
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val subtitleUrl = httpsify(track.file.toString())
-
-                Log.i(TAG, "Found Subtitle: Label=${track.label}, Kind=${track.kind}, URL=$subtitleUrl")
-
                 subtitleCallback.invoke(
                     SubtitleFile(
-                        track.label.toString(),
-                        subtitleUrl
+                        lang = lang,
+                        url = httpsify(track.file.toString())
                     )
                 )
             }
         }
 
-        Log.i(TAG, "Finished loadLinks for ID $id. Returning true.")
         return true
     }
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
-        val refererUrl = "$newUrl/"
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                val url = request.url.toString()
+                val urlString = request.url.toString()
 
-                if (url.contains(".m3u8")) {
+                val requiredReferer = "$newUrl/"
+
+                if (urlString.contains(".m3u8")) {
                     val newRequest = request.newBuilder()
                         .header("Cookie", "hd=on")
+                        .header("Referer", requiredReferer)
                         .build()
-                    Log.i(TAG, "Interceptor: Applied 'hd=on' cookie to M3U8 request: $url")
                     return chain.proceed(newRequest)
                 }
 
-                Log.d(TAG, "Interceptor: Passing non-M3U8 request (Subtitle/Image) without modification: $url")
+                if (urlString.contains(".vtt") || urlString.contains(".srt") || urlString.contains("nfmirrorcdn.top")) {
+                    val newRequest = request.newBuilder()
+                        .header("Referer", requiredReferer)
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+
                 return chain.proceed(request)
             }
         }
