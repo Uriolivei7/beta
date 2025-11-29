@@ -61,7 +61,7 @@
     {
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 49687,
+        "fileSize": 50517,
         "status": 1,
         "authors": [
             "Ranita"
@@ -72,7 +72,7 @@
             "AsianDrama",
             "Anime"
         ],
-        "version": 35,
+        "version": 1,
         "internalName": "NetflixmirrorProvider",
         "description": "Netflix y PrimeVideo Contenido en M\u00faltiples Lenguajes",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/NetflixmirrorProvider.cs3",
