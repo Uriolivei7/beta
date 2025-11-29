@@ -289,26 +289,12 @@ class PrimeVideoProvider : MainAPI() {
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val rawSubtitleUrl = track.file.toString()
-                val finalSubtitleUrl = if (rawSubtitleUrl.startsWith("//")) {
-                    "https:$rawSubtitleUrl"
-                } else {
-                    rawSubtitleUrl
-                }
-
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        track.label.toString(),
-                        finalSubtitleUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "$newUrl/"
-                    }
+                subtitleCallback.invoke(
+                    SubtitleFile(
+                track.label.toString(),
+                httpsify(track.file.toString())
+                    )
                 )
-
-                subtitleCount++
-                Log.i(TAG, "Found Subtitle (as ExtractorLink): ${track.label} at $finalSubtitleUrl")
             }
         }
 
