@@ -35,10 +35,11 @@ class PrimeVideoProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    private val TAG = "PrimeVideoProvider"
+    private val TAG = "PrimeVideo"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.i(TAG, "Starting getMainPage (Page: $page)")
+
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         Log.i(TAG, "Cookie value after bypass: $cookie_value")
 
@@ -50,24 +51,34 @@ class PrimeVideoProvider : MainAPI() {
         val homeUrl = "$mainUrl/tv/pv/homepage.php"
         Log.i(TAG, "Fetching home page data from: $homeUrl")
 
-        val data = app.get(
-            homeUrl,
-            cookies = cookies,
-            referer = "$mainUrl/home",
-        ).parsed<MainPage>()
+        val data = try {
+            app.get(
+                homeUrl,
+                cookies = cookies,
+                referer = "$mainUrl/home",
+            ).parsed<MainPage>()
+        } catch (e: Exception) {
+            Log.e(TAG, "getMainPage FAILED (Possible Timeout): ${e.message}", e)
+            return null
+        }
+
 
         val items = data.post.map {
             it.toHomePageList()
         }
 
         Log.i(TAG, "Found ${items.size} homepage lists.")
+        Log.i(TAG, "Finished getMainPage.")
 
         return newHomePageResponse(items, false)
     }
 
     private fun PostCategory.toHomePageList(): HomePageList {
         val name = cate
-        val items = ids.split(",").mapNotNull {
+        val idsList = ids.split(",")
+        Log.i(TAG, "Processing list '$name'. Total IDs: ${idsList.size}")
+
+        val items = idsList.mapNotNull {
             toSearchResult(it)
         }
         Log.i(TAG, "List '$name' extracted ${items.size} results.")
@@ -96,7 +107,13 @@ class PrimeVideoProvider : MainAPI() {
         val url = "$mainUrl/pv/search.php?s=$query&t=${APIHolder.unixTime}"
         Log.i(TAG, "Search URL: $url")
 
-        val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
+        val data = try {
+            app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
+        } catch (e: Exception) {
+            Log.e(TAG, "Search FAILED for query '$query': ${e.message}", e)
+            return emptyList()
+        }
+
 
         Log.i(TAG, "Search query '$query' returned ${data.searchResult.size} results.")
 
@@ -112,7 +129,7 @@ class PrimeVideoProvider : MainAPI() {
         Log.i(TAG, "Starting load for URL: $url")
         val id = parseJson<Id>(url).id
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        Log.i(TAG, "Extracted ID: $id")
+        Log.i(TAG, "Extracted ID: $id. Cookie: $cookie_value")
 
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -122,17 +139,23 @@ class PrimeVideoProvider : MainAPI() {
         val postUrl = "$mainUrl/pv/post.php?id=$id&t=${APIHolder.unixTime}"
         Log.i(TAG, "Fetching post data from: $postUrl")
 
-        val data = app.get(
-            postUrl,
-            headers,
-            referer = "$mainUrl/tv/home",
-            cookies = cookies
-        ).parsed<PostData>()
+        val data = try {
+            app.get(
+                postUrl,
+                headers,
+                referer = "$mainUrl/tv/home",
+                cookies = cookies
+            ).parsed<PostData>()
+        } catch (e: Exception) {
+            Log.e(TAG, "Load FAILED for ID $id (Possible Timeout): ${e.message}", e)
+            return null
+        }
 
         val episodes = arrayListOf<Episode>()
 
         val title = data.title
-        Log.i(TAG, "Title loaded: $title, Type check: ${if (data.episodes.first() == null) "Movie" else "Series"}")
+        val typeCheck = if (data.episodes.first() == null) "Movie" else "Series"
+        Log.i(TAG, "Title loaded: $title, Type check: $typeCheck")
 
         val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
         val cast = castList.map {
@@ -167,13 +190,14 @@ class PrimeVideoProvider : MainAPI() {
                     season = it.s.replace("S", "").toIntOrNull()
                     this.posterUrl = "https://imgcdn.kim/pvepimg/150/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
+                    Log.d(TAG, "Initial Episode: ${it.s}${it.ep} - ${it.t}")
                 }
             }
             Log.i(TAG, "Added ${data.episodes.filterNotNull().size} episodes from initial post data.")
 
 
             if (data.nextPageShow == 1) {
-                Log.i(TAG, "Fetching next page episodes for season: ${data.nextPageSeason}")
+                Log.i(TAG, "Next page indicated. Fetching next page episodes for season: ${data.nextPageSeason}")
                 episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
             }
 
@@ -215,14 +239,20 @@ class PrimeVideoProvider : MainAPI() {
         var pg = page
         while (true) {
             val epUrl = "$mainUrl/pv/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg"
-            Log.i(TAG, "Fetching episodes page $pg for SID: $sid")
+            Log.i(TAG, "Fetching episodes page $pg for SID: $sid. URL: $epUrl")
 
-            val data = app.get(
-                epUrl,
-                headers,
-                referer = "$mainUrl/home",
-                cookies = cookies
-            ).parsed<EpisodesData>()
+            val data = try {
+                app.get(
+                    epUrl,
+                    headers,
+                    referer = "$mainUrl/home",
+                    cookies = cookies
+                ).parsed<EpisodesData>()
+            } catch (e: Exception) {
+                Log.e(TAG, "getEpisodes FAILED for page $pg (SID $sid): ${e.message}")
+                break
+            }
+
 
             val newEpsCount = data.episodes?.size ?: 0
             Log.i(TAG, "Fetched $newEpsCount episodes from page $pg.")
@@ -234,9 +264,13 @@ class PrimeVideoProvider : MainAPI() {
                     season = it.s.replace("S", "").toIntOrNull()
                     this.posterUrl = "https://img.nfmirrorcdn.top/pvepimg/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
+                    Log.v(TAG, "Added Ep: ${it.s}${it.ep} - ${it.t}")
                 }
             }
-            if (data.nextPageShow == 0) break
+            if (data.nextPageShow == 0) {
+                Log.i(TAG, "Next page show is 0. Stopping pagination for SID: $sid")
+                break
+            }
             pg++
         }
         Log.i(TAG, "Finished fetching episodes for SID: $sid. Total: ${episodes.size}")
@@ -251,50 +285,69 @@ class PrimeVideoProvider : MainAPI() {
     ): Boolean {
         Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
+        Log.i(TAG, "Loading links for Episode/Movie ID: $id, Title: $title")
+
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
         val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
+        Log.i(TAG, "Fetching playlist from: $playlistUrl")
 
-        val playlist = app.get(
-            playlistUrl,
-            headers,
-            referer = "$newUrl/home",
-            cookies = cookies
-        ).parsed<PlayList>()
+        val playlist = try {
+            app.get(
+                playlistUrl,
+                headers,
+                referer = "$newUrl/home",
+                cookies = cookies
+            ).parsed<PlayList>()
+        } catch (e: Exception) {
+            Log.e(TAG, "loadLinks FAILED fetching playlist for ID $id: ${e.message}", e)
+            return false
+        }
 
-        playlist.forEach { item ->
+
+        playlist.forEachIndexed { index, item ->
+            Log.i(TAG, "Processing playlist item $index (Sources: ${item.sources.size}, Tracks: ${item.tracks?.size ?: 0})")
+
             item.sources.forEach {
+                val fileUrl = """$newUrl${it.file.replace("/tv/", "/")}"""
                 callback.invoke(
                     newExtractorLink(
                         name,
                         it.label,
-                        """$newUrl${it.file.replace("/tv/", "/")}""",
+                        fileUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$newUrl/"
                         this.quality = getQualityFromName(it.file.substringAfter("q=", ""))
                     }
                 )
+                Log.d(TAG, "Found Link: Label=${it.label}, Quality=${getQualityFromName(it.file.substringAfter("q=", ""))}, URL=$fileUrl")
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
+                val subtitleUrl = httpsify(track.file.toString())
+
+                Log.i(TAG, "Found Subtitle: Label=${track.label}, Kind=${track.kind}, URL=$subtitleUrl")
+
                 subtitleCallback.invoke(
                     SubtitleFile(
                         track.label.toString(),
-                        httpsify(track.file.toString())
+                        subtitleUrl
                     )
                 )
             }
         }
 
+        Log.i(TAG, "Finished loadLinks for ID $id. Returning true.")
         return true
     }
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
         val refererUrl = "$newUrl/"
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
@@ -305,9 +358,11 @@ class PrimeVideoProvider : MainAPI() {
                     val newRequest = request.newBuilder()
                         .header("Cookie", "hd=on")
                         .build()
+                    Log.i(TAG, "Interceptor: Applied 'hd=on' cookie to M3U8 request: $url")
                     return chain.proceed(newRequest)
                 }
 
+                Log.d(TAG, "Interceptor: Passing non-M3U8 request (Subtitle/Image) without modification: $url")
                 return chain.proceed(request)
             }
         }
