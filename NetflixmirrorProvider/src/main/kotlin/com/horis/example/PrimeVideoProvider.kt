@@ -315,8 +315,8 @@ class PrimeVideoProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
-
+        // 1. Construir la cadena de cookies completa
+        val fullCookie = "t_hash_t=$cookie_value; ott=pv; hd=on"
         val refererUrl = "$newUrl/home"
 
         return object : Interceptor {
@@ -325,15 +325,14 @@ class PrimeVideoProvider : MainAPI() {
                 val url = request.url.toString()
                 val newRequest = request.newBuilder()
 
-                if (url.contains(".m3u8")) {
-                    Log.i(TAG, "Applying 'hd=on' cookie to M3U8 request.")
-                    newRequest.header("Cookie", "hd=on")
+                // 2. Aplicar las cookies y referer a las URLs de subtítulos y video
+                if (url.contains(".m3u8") || url.contains("subs.nfmirrorcdn.top") || url.contains("pv.subscdn.top")) {
+                    newRequest.header("Cookie", fullCookie)
                 }
 
+                // Aplicar referer solo a los dominios externos (subtítulos)
                 if (url.contains("subs.nfmirrorcdn.top") || url.contains("pv.subscdn.top")) {
-                    Log.i(TAG, "Applying Referer and Full Cookies for Subtitle request: $refererUrl")
                     newRequest.header("Referer", refererUrl)
-                    newRequest.header("Cookie", "t_hash_t=$cookie_value; ott=pv; hd=on")
                 }
 
                 return chain.proceed(newRequest.build())
