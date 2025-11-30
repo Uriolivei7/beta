@@ -36,12 +36,7 @@ class PrimeVideoProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    private val TAG = "PrimeVideoProvider"
-
-    // FUNCIÓN AUXILIAR newSubtitleFile (para seguir la convención de la librería)
-    private fun newSubtitleFile(name: String, url: String): SubtitleFile {
-        return SubtitleFile(name, url)
-    }
+    private val TAG = "PrimeVideo"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.i(TAG, "Starting getMainPage (Page: $page)")
@@ -255,27 +250,18 @@ class PrimeVideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
-        Log.i(TAG, "Loading links for Episode/Movie ID: $id, Title: $title")
-
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
-        val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.i(TAG, "Fetching playlist from: $playlistUrl")
-
         val playlist = app.get(
-            playlistUrl,
+            "$newUrl/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
             headers,
             referer = "$newUrl/home",
             cookies = cookies
         ).parsed<PlayList>()
-
-        var linkCount = 0
-        val subtitleCount = 0
 
         playlist.forEach { item ->
             item.sources.forEach {
@@ -290,36 +276,27 @@ class PrimeVideoProvider : MainAPI() {
                         this.quality = getQualityFromName(it.file.substringAfter("q=", ""))
                     }
                 )
-                linkCount++
-                Log.i(TAG, "Found Link: ${it.label} (${it.file})")
             }
-
-            // LOG: Verificar si se encontraron pistas (tracks) y su tipo
-            if (item.tracks != null && item.tracks.isNotEmpty()) {
-                Log.i(TAG, "Found ${item.tracks.size} total tracks. First track kind: ${item.tracks.first()?.kind}, First track label: ${item.tracks.first()?.label}")
-            } else {
-                Log.i(TAG, "No tracks found in playlist item.")
-            }
-
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val finalSubtitleUrl = httpsify(track.file.toString())
                 subtitleCallback.invoke(
-                    newSubtitleFile(
+                    SubtitleFile(
                         track.label.toString(),
-                        finalSubtitleUrl // <-- URL directa sin codificar
+                        httpsify(track.file.toString())
                     )
                 )
             }
         }
+
         return true
     }
 
+    @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) { // Solo para el video
+                if (request.url.toString().contains(".m3u8")) {
                     val newRequest = request.newBuilder()
                         .header("Cookie", "hd=on")
                         .build()
@@ -330,7 +307,6 @@ class PrimeVideoProvider : MainAPI() {
         }
     }
 
-    // CLASES DE DATOS
     data class Id(
         val id: String
     )
@@ -342,9 +318,4 @@ class PrimeVideoProvider : MainAPI() {
     data class Cookie(
         val cookie: String
     )
-
-    companion object {
-        // Constante para un User-Agent genérico
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36"
-    }
 }
