@@ -303,20 +303,11 @@ class PrimeVideoProvider : MainAPI() {
 
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val rawSubtitleUrl = track.file.toString()
-                val finalSubtitleUrl = httpsify(rawSubtitleUrl)
-
-                val urlAsByteArray = finalSubtitleUrl.toByteArray(Charsets.UTF_8)
-                val encodedUrl = base64Encode(urlAsByteArray)
-
-                // Usar newUrl para el interceptor, ya que es el dominio de la API de playlist.
-                val interceptorUrl = "$newUrl/subs_intercept?url=$encodedUrl"
-                Log.i(TAG, "Subtitle: Adding callback for ${track.label}. Interceptor URL: $interceptorUrl")
-
+                val finalSubtitleUrl = httpsify(track.file.toString())
                 subtitleCallback.invoke(
                     newSubtitleFile(
                         track.label.toString(),
-                        interceptorUrl,
+                        finalSubtitleUrl // <-- URL directa sin codificar
                     )
                 )
             }
@@ -324,55 +315,16 @@ class PrimeVideoProvider : MainAPI() {
         return true
     }
 
-    @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        // Implementación de Interceptor único para manejar tanto subtítulos como video
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                val urlString = request.url.toString()
-
-                // 1. Manejo de Subtítulos (URL codificada)
-                if (urlString.contains("$newUrl/subs_intercept")) {
-                    val encodedUrl = request.url.queryParameter("url")
-
-                    if (encodedUrl.isNullOrEmpty()) return chain.proceed(request)
-
-                    val originalSubtitleUrl = base64Decode(encodedUrl)
-
-                    // DEBUGGING: Registramos la URL decodificada para verificación
-                    Log.i(TAG, "Subtitle Interceptor: URL decodificada: $originalSubtitleUrl")
-
-                    // Construir la nueva solicitud para el subtítulo con las cookies de sesión
+                if (request.url.toString().contains(".m3u8")) { // Solo para el video
                     val newRequest = request.newBuilder()
-                        .url(originalSubtitleUrl)
-                        .header("Referer", "$newUrl/")
-                        // **CRUCIAL:** Incluir la cookie de sesión t_hash_t
-                        .header("Cookie", "hd=on; t_hash_t=$cookie_value")
-                        .header("User-Agent", USER_AGENT)
-                        .build()
-
-                    val response = chain.proceed(newRequest)
-
-                    // DEBUGGING: Registramos el código de respuesta del servidor de subtítulos
-                    Log.i(TAG, "Subtitle Interceptor: Respuesta del servidor: ${response.code} (URL: ${response.request.url})")
-
-                    if (response.code != 200) {
-                        Log.e(TAG, "Subtitle Interceptor FAILED with code: ${response.code}. Check cookies/referer.")
-                    }
-                    return response
-
-                    // 2. Manejo de Enlaces de Video M3U8 (tu lógica base)
-                } else if (urlString.contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        // Mantener solo la cookie hd=on para el video
                         .header("Cookie", "hd=on")
-                        .header("User-Agent", USER_AGENT)
                         .build()
                     return chain.proceed(newRequest)
                 }
-
-                // 3. Comportamiento por defecto para otras peticiones
                 return chain.proceed(request)
             }
         }
