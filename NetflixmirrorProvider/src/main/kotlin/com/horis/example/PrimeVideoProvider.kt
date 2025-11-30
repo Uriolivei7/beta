@@ -259,7 +259,7 @@ class PrimeVideoProvider : MainAPI() {
             "ott" to "pv",
             "hd" to "on"
         )
-        val playlistUrl = "$newUrl/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
+        val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
         Log.i(TAG, "Fetching playlist from: $playlistUrl")
 
         val playlist = app.get(
