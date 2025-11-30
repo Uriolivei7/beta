@@ -1,5 +1,6 @@
 package com.horis.example
 
+import android.content.Context
 import com.horis.example.entities.EpisodesData
 import com.horis.example.entities.PlayList
 import com.horis.example.entities.PostData
@@ -7,15 +8,18 @@ import com.horis.example.entities.SearchData
 import com.horis.example.entities.MainPage
 import com.horis.example.entities.PostCategory
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.SubtitleFile // <-- IMPORTACIÓN NECESARIA
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.httpsify
 import com.lagradost.cloudstream3.utils.getQualityFromName
+import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
-import android.util.Log
+import org.jsoup.nodes.Element
+import com.lagradost.cloudstream3.APIHolder.unixTime
 
 class PrimeVideoProvider : MainAPI() {
     override val supportedTypes = setOf(
@@ -24,7 +28,7 @@ class PrimeVideoProvider : MainAPI() {
         TvType.Anime,
         TvType.AsianDrama
     )
-    override var lang = "en"
+    override var lang = "ta"
 
     override var mainUrl = "https://net20.cc"
     private var newUrl = "https://net51.cc"
@@ -36,23 +40,16 @@ class PrimeVideoProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    private val TAG = "PrimeVideo"
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.i(TAG, "Starting getMainPage (Page: $page)")
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        Log.i(TAG, "Cookie value after bypass: $cookie_value")
 
+        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
-        val homeUrl = "$mainUrl/tv/pv/homepage.php"
-        Log.i(TAG, "Fetching home page data from: $homeUrl")
-
         val data = app.get(
-            homeUrl,
+            "$mainUrl/tv/pv/homepage.php",
             cookies = cookies,
             referer = "$mainUrl/home",
         ).parsed<MainPage>()
@@ -60,8 +57,6 @@ class PrimeVideoProvider : MainAPI() {
         val items = data.post.map {
             it.toHomePageList()
         }
-
-        Log.i(TAG, "Found ${items.size} homepage lists.")
 
         return newHomePageResponse(items, false)
     }
@@ -71,7 +66,6 @@ class PrimeVideoProvider : MainAPI() {
         val items = ids.split(",").mapNotNull {
             toSearchResult(it)
         }
-        Log.i(TAG, "List '$name' extracted ${items.size} results.")
         return HomePageList(
             name,
             items,
@@ -87,7 +81,6 @@ class PrimeVideoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.i(TAG, "Starting search for query: $query")
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -95,11 +88,7 @@ class PrimeVideoProvider : MainAPI() {
             "hd" to "on"
         )
         val url = "$mainUrl/pv/search.php?s=$query&t=${APIHolder.unixTime}"
-        Log.i(TAG, "Search URL: $url")
-
         val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
-
-        Log.i(TAG, "Search query '$query' returned ${data.searchResult.size} results.")
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
@@ -110,21 +99,15 @@ class PrimeVideoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.i(TAG, "Starting load for URL: $url")
         val id = parseJson<Id>(url).id
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        Log.i(TAG, "Extracted ID: $id")
-
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
-        val postUrl = "$mainUrl/pv/post.php?id=$id&t=${APIHolder.unixTime}"
-        Log.i(TAG, "Fetching post data from: $postUrl")
-
         val data = app.get(
-            postUrl,
+            "$mainUrl/pv/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/tv/home",
             cookies = cookies
@@ -133,8 +116,6 @@ class PrimeVideoProvider : MainAPI() {
         val episodes = arrayListOf<Episode>()
 
         val title = data.title
-        Log.i(TAG, "Title loaded: $title, Type check: ${if (data.episodes.first() == null) "Movie" else "Series"}")
-
         val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
         val cast = castList.map {
             ActorData(
@@ -159,7 +140,6 @@ class PrimeVideoProvider : MainAPI() {
             episodes.add(newEpisode(LoadData(title, id)) {
                 name = data.title
             })
-            Log.i(TAG, "Added 1 episode for Movie type.")
         } else {
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(LoadData(title, it.id)) {
@@ -170,24 +150,17 @@ class PrimeVideoProvider : MainAPI() {
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
-            Log.i(TAG, "Added ${data.episodes.filterNotNull().size} episodes from initial post data.")
-
 
             if (data.nextPageShow == 1) {
-                Log.i(TAG, "Fetching next page episodes for season: ${data.nextPageSeason}")
                 episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
             }
 
             data.season?.dropLast(1)?.amap {
-                Log.i(TAG, "Fetching episodes for subsequent season ID: ${it.id}")
                 episodes.addAll(getEpisodes(title, url, it.id, 1))
             }
-            Log.i(TAG, "Total episodes collected: ${episodes.size}")
         }
 
         val type = if (data.episodes.first() == null) TvType.Movie else TvType.TvSeries
-
-        Log.i(TAG, "Final Load Response metadata: Year=${data.year}, Rating=${rating}, Tags=${genre?.size}")
 
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://wsrv.nl/?url=https://imgcdn.kim/pv/v/$id.jpg&w=500"
@@ -197,7 +170,7 @@ class PrimeVideoProvider : MainAPI() {
             year = data.year.toIntOrNull()
             tags = genre
             actors = cast
-            //this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
+            //this.score =  Score.from10(rating)
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
@@ -215,19 +188,12 @@ class PrimeVideoProvider : MainAPI() {
         )
         var pg = page
         while (true) {
-            val epUrl = "$mainUrl/pv/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg"
-            Log.i(TAG, "Fetching episodes page $pg for SID: $sid")
-
             val data = app.get(
-                epUrl,
+                "$mainUrl/pv/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
                 cookies = cookies
             ).parsed<EpisodesData>()
-
-            val newEpsCount = data.episodes?.size ?: 0
-            Log.i(TAG, "Fetched $newEpsCount episodes from page $pg.")
-
             data.episodes?.mapTo(episodes) {
                 newEpisode(LoadData(title, it.id)) {
                     name = it.t
@@ -240,7 +206,6 @@ class PrimeVideoProvider : MainAPI() {
             if (data.nextPageShow == 0) break
             pg++
         }
-        Log.i(TAG, "Finished fetching episodes for SID: $sid. Total: ${episodes.size}")
         return episodes
     }
 
