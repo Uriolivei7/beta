@@ -37,8 +37,12 @@ class PrimeVideoProvider : MainAPI() {
 
     private val TAG = "PrimeVideoProvider"
 
+    // La función bypass debe ser implementada en tu entorno y devolver el hash de la cookie
+    // private suspend fun bypass(url: String): String { ... }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.i(TAG, "Starting getMainPage (Page: $page)")
+        // ASUMO que tienes implementado el bypass y devuelve un String
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         Log.i(TAG, "Cookie value after bypass: $cookie_value")
 
@@ -269,7 +273,7 @@ class PrimeVideoProvider : MainAPI() {
         ).parsed<PlayList>()
 
         var linkCount = 0
-        var subtitleCount = 0
+        val subtitleCount = 0
 
         playlist.forEach { item ->
             item.sources.forEach {
@@ -289,46 +293,68 @@ class PrimeVideoProvider : MainAPI() {
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
+                val rawSubtitleUrl = track.file.toString()
+                val finalSubtitleUrl = httpsify(rawSubtitleUrl)
+
+                // CORRECCIÓN 1: base64Encode exige ByteArray (satisfacer el error de loadLinks)
+                val urlAsByteArray = finalSubtitleUrl.toByteArray(Charsets.UTF_8)
+                val encodedUrl = base64Encode(urlAsByteArray)
+
+                val interceptorUrl = "$mainUrl/subs_intercept?url=$encodedUrl"
+
                 subtitleCallback.invoke(
                     SubtitleFile(
-                track.label.toString(),
-                httpsify(track.file.toString())
+                        track.label.toString(),
+                        interceptorUrl,
                     )
                 )
             }
         }
-
-        Log.i(TAG, "Finished loadLinks. Total links: $linkCount, Total subtitles: $subtitleCount")
-
         return true
     }
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
-
         val refererUrl = "$newUrl/"
+        val url = extractorLink.url
 
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val url = request.url.toString()
-                val newRequest = request.newBuilder()
+        if (url.contains("$mainUrl/subs_intercept")) {
+            return object : Interceptor {
+                override fun intercept(chain: Interceptor.Chain): Response {
+                    val request = chain.request()
 
-                if (url.contains(".m3u8")) {
-                    Log.i(TAG, "Applying 'hd=on' cookie to M3U8 request.")
-                    newRequest.header("Cookie", "hd=on")
+                    val encodedUrl = request.url.queryParameter("url")
+
+                    if (encodedUrl.isNullOrEmpty()) return chain.proceed(request)
+
+                    // CORRECCIÓN 2: base64Decode exige String (satisfacer el error de getVideoInterceptor)
+                    // Y asume que devuelve String para evitar el error de String(...)
+
+                    val originalSubtitleUrl = base64Decode(encodedUrl) // String in, String out
+
+                    val newRequest = request.newBuilder()
+                        .url(originalSubtitleUrl)
+                        .header("Referer", refererUrl)
+                        .header("Cookie", "hd=on")
+                        .build()
+
+                    return chain.proceed(newRequest)
                 }
-
-                if (url.contains("subs.nfmirrorcdn.top")) {
-                    Log.i(TAG, "Applying Referer and Cookie 'hd=on' for Subtitle request: $refererUrl")
-                    newRequest.header("Referer", refererUrl)
-                    newRequest.header("Cookie", "hd=on")
-                }
-
-                return chain.proceed(newRequest.build())
             }
         }
+
+        if (url.contains(".m3u8")) {
+            return object : Interceptor {
+                override fun intercept(chain: Interceptor.Chain): Response {
+                    val request = chain.request()
+                    val newRequest = request.newBuilder()
+                        .header("Cookie", "hd=on")
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+            }
+        }
+        return null
     }
 
     data class Id(
