@@ -294,9 +294,8 @@ class PrimeVideoProvider : MainAPI() {
                 Log.i(TAG, "Found Link: ${it.label} (${it.file})")
             }
 
-            // NUEVO LOG: Verificar si se encontraron pistas (tracks)
+            // LOG: Verificar si se encontraron pistas (tracks) y su tipo
             if (item.tracks != null && item.tracks.isNotEmpty()) {
-                // Si encontramos pistas, logueamos el tipo de la primera para depurar
                 Log.i(TAG, "Found ${item.tracks.size} total tracks. First track kind: ${item.tracks.first()?.kind}, First track label: ${item.tracks.first()?.label}")
             } else {
                 Log.i(TAG, "No tracks found in playlist item.")
@@ -307,15 +306,14 @@ class PrimeVideoProvider : MainAPI() {
                 val rawSubtitleUrl = track.file.toString()
                 val finalSubtitleUrl = httpsify(rawSubtitleUrl)
 
-                // Convertir la URL a ByteArray y luego a Base64 para evitar errores de tipo.
                 val urlAsByteArray = finalSubtitleUrl.toByteArray(Charsets.UTF_8)
                 val encodedUrl = base64Encode(urlAsByteArray)
 
-                // Usamos la URL del interceptor para añadir cabeceras al subtítulo final.
-                val interceptorUrl = "$mainUrl/subs_intercept?url=$encodedUrl"
+                // Usar newUrl para el interceptor, ya que es el dominio de la API de playlist.
+                val interceptorUrl = "$newUrl/subs_intercept?url=$encodedUrl"
+                Log.i(TAG, "Subtitle: Adding callback for ${track.label}. Interceptor URL: $interceptorUrl")
 
                 subtitleCallback.invoke(
-                    // USAMOS LA FUNCIÓN AUXILIAR newSubtitleFile
                     newSubtitleFile(
                         track.label.toString(),
                         interceptorUrl,
@@ -328,30 +326,29 @@ class PrimeVideoProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val url = extractorLink.url
+        // Implementación de Interceptor único para manejar tanto subtítulos como video
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val urlString = request.url.toString()
 
-        if (url.contains("$mainUrl/subs_intercept")) {
-            return object : Interceptor {
-                override fun intercept(chain: Interceptor.Chain): Response {
-                    val request = chain.request()
-
+                // 1. Manejo de Subtítulos (URL codificada)
+                if (urlString.contains("$newUrl/subs_intercept")) {
                     val encodedUrl = request.url.queryParameter("url")
 
                     if (encodedUrl.isNullOrEmpty()) return chain.proceed(request)
 
-                    val originalSubtitleUrl = base64Decode(encodedUrl) // String in, String out
+                    val originalSubtitleUrl = base64Decode(encodedUrl)
 
                     // DEBUGGING: Registramos la URL decodificada para verificación
                     Log.i(TAG, "Subtitle Interceptor: URL decodificada: $originalSubtitleUrl")
 
-                    // Enviamos la solicitud final del subtítulo con cabeceras completas
+                    // Construir la nueva solicitud para el subtítulo con las cookies de sesión
                     val newRequest = request.newBuilder()
                         .url(originalSubtitleUrl)
-                        // Referer general para el dominio principal
                         .header("Referer", "$newUrl/")
-                        // Cabeceras completas: hd=on y el token de sesión
+                        // **CRUCIAL:** Incluir la cookie de sesión t_hash_t
                         .header("Cookie", "hd=on; t_hash_t=$cookie_value")
-                        // User-Agent para simular un navegador
                         .header("User-Agent", USER_AGENT)
                         .build()
 
@@ -360,25 +357,25 @@ class PrimeVideoProvider : MainAPI() {
                     // DEBUGGING: Registramos el código de respuesta del servidor de subtítulos
                     Log.i(TAG, "Subtitle Interceptor: Respuesta del servidor: ${response.code} (URL: ${response.request.url})")
 
+                    if (response.code != 200) {
+                        Log.e(TAG, "Subtitle Interceptor FAILED with code: ${response.code}. Check cookies/referer.")
+                    }
                     return response
-                }
-            }
-        }
 
-        if (url.contains(".m3u8")) {
-            return object : Interceptor {
-                override fun intercept(chain: Interceptor.Chain): Response {
-                    val request = chain.request()
-                    // Aplicar cabeceras para el enlace de video M3U8 si es necesario
+                    // 2. Manejo de Enlaces de Video M3U8 (tu lógica base)
+                } else if (urlString.contains(".m3u8")) {
                     val newRequest = request.newBuilder()
+                        // Mantener solo la cookie hd=on para el video
                         .header("Cookie", "hd=on")
                         .header("User-Agent", USER_AGENT)
                         .build()
                     return chain.proceed(newRequest)
                 }
+
+                // 3. Comportamiento por defecto para otras peticiones
+                return chain.proceed(request)
             }
         }
-        return null
     }
 
     // CLASES DE DATOS
@@ -394,7 +391,6 @@ class PrimeVideoProvider : MainAPI() {
         val cookie: String
     )
 
-    // CORRECCIÓN: La constante debe estar en un 'companion object' para usar 'const val'.
     companion object {
         // Constante para un User-Agent genérico
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36"
