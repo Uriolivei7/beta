@@ -317,7 +317,7 @@ class PrimeVideoProvider : MainAPI() {
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         Log.i(TAG, "Interceptor requested for URL: ${extractorLink.url}")
 
-        val refererUrl = "$newUrl/"
+        val refererUrl = "$newUrl/home"
 
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
@@ -330,10 +330,10 @@ class PrimeVideoProvider : MainAPI() {
                     newRequest.header("Cookie", "hd=on")
                 }
 
-                if (url.contains("subs.nfmirrorcdn.top")) {
-                    Log.i(TAG, "Applying Referer and Cookie 'hd=on' for Subtitle request: $refererUrl")
+                if (url.contains("subs.nfmirrorcdn.top") || url.contains("pv.subscdn.top")) {
+                    Log.i(TAG, "Applying Referer and Full Cookies for Subtitle request: $refererUrl")
                     newRequest.header("Referer", refererUrl)
-                    newRequest.header("Cookie", "hd=on")
+                    newRequest.header("Cookie", "t_hash_t=$cookie_value; ott=pv; hd=on")
                 }
 
                 return chain.proceed(newRequest.build())
