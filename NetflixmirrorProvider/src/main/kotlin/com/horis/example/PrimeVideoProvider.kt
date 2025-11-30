@@ -36,7 +36,7 @@ class PrimeVideoProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    private val TAG = "PrimeVideo"
+    private val TAG = "PrimeVideoProvider"
 
     // FUNCIÓN AUXILIAR newSubtitleFile (para seguir la convención de la librería)
     private fun newSubtitleFile(name: String, url: String): SubtitleFile {
@@ -293,6 +293,15 @@ class PrimeVideoProvider : MainAPI() {
                 linkCount++
                 Log.i(TAG, "Found Link: ${it.label} (${it.file})")
             }
+
+            // NUEVO LOG: Verificar si se encontraron pistas (tracks)
+            if (item.tracks != null && item.tracks.isNotEmpty()) {
+                // Si encontramos pistas, logueamos el tipo de la primera para depurar
+                Log.i(TAG, "Found ${item.tracks.size} total tracks. First track kind: ${item.tracks.first()?.kind}, First track label: ${item.tracks.first()?.label}")
+            } else {
+                Log.i(TAG, "No tracks found in playlist item.")
+            }
+
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
                 val rawSubtitleUrl = track.file.toString()
