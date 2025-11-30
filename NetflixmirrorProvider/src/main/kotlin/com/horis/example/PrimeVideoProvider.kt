@@ -301,21 +301,19 @@ class PrimeVideoProvider : MainAPI() {
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                // 2. Limpiamos la URL del subtítulo y la convertimos a HTTPS
                 val rawSubtitleUrl = httpsify(track.file.toString())
 
-                // 3. Adjuntamos la cadena de encabezados usando el separador '|'
-                // Esto obliga al reproductor a enviar los encabezados correctos.
-                val finalSubtitleUrl = "$rawSubtitleUrl|$headersString" // ¡SOLUCIÓN APLICADA!
+                // Simplemente pasamos la URL limpia y HTTPS.
+                val finalSubtitleUrl = rawSubtitleUrl // ⬅️ ¡URL LIMPIA!
 
                 subtitleCallback.invoke(
                     SubtitleFile(
                         track.label.toString(),
-                        finalSubtitleUrl, // Usamos la URL "hackeada"
+                        finalSubtitleUrl,
                     )
                 )
                 subtitleCount++
-                Log.i(TAG, "Found Subtitle: ${track.label} at $rawSubtitleUrl (FINAL URL: $finalSubtitleUrl) (Kind: ${track.kind})")
+                Log.i(TAG, "Found Subtitle: ${track.label} at $rawSubtitleUrl")
             }
         }
 
@@ -336,14 +334,24 @@ class PrimeVideoProvider : MainAPI() {
                 val url = request.url.toString()
                 val newRequest = request.newBuilder()
 
-                // 2. Aplicar las cookies y referer a las URLs de subtítulos y video
-                if (url.contains(".m3u8") || url.contains("subs.nfmirrorcdn.top") || url.contains("pv.subscdn.top")) {
+                // La clave es que el Interceptor identifique la URL del subtítulo
+
+                // Condición para el VIDEO (M3U8)
+                if (url.contains(".m3u8")) {
+                    // No es necesario el referer si el video es del mismo dominio
                     newRequest.header("Cookie", fullCookie)
                 }
 
-                // Aplicar referer solo a los dominios externos (subtítulos)
-                if (url.contains("subs.nfmirrorcdn.top") || url.contains("pv.subscdn.top")) {
-                    newRequest.header("Referer", refererUrl)
+                // Condición para el SUBTÍTULO
+                // Usamos la terminación .vtt/.srt O los dominios conocidos.
+                if (url.endsWith(".vtt") || url.endsWith(".srt") ||
+                    url.contains("subs.nfmirrorcdn.top") ||
+                    url.contains("pv.subscdn.top") ||
+                    url.contains("imgcdn.kim") // Incluimos el dominio de imágenes/episodios
+                ) {
+                    Log.i(TAG, "Interceptor: Applying Referer and Cookie to Subtitle URL: $url")
+                    newRequest.header("Referer", refererUrl) // ⬅️ ESTO ES LO QUE FALTA
+                    newRequest.header("Cookie", fullCookie)
                 }
 
                 return chain.proceed(newRequest.build())
