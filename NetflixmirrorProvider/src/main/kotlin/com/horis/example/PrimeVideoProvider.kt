@@ -249,6 +249,7 @@ class PrimeVideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        cookie_value = bypass(mainUrl)
         Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
         Log.i(TAG, "Loading links for Episode/Movie ID: $id, Title: $title")
