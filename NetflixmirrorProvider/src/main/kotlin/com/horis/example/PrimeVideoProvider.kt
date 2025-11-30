@@ -272,6 +272,17 @@ class PrimeVideoProvider : MainAPI() {
         var linkCount = 0
         var subtitleCount = 0
 
+        // 🔑 PASO 1: Creamos la cadena de autenticación y referer
+        val fullCookie = "t_hash_t=$cookie_value; ott=pv; hd=on"
+        val refererUrl = "$newUrl/home"
+
+        // Codificamos los encabezados para que puedan ir en la URL
+        val encodedReferer = java.net.URLEncoder.encode(refererUrl, "UTF-8")
+        val encodedCookie = java.net.URLEncoder.encode(fullCookie, "UTF-8")
+
+        // Creamos la cadena de encabezados en el formato "Header1=Value1&Header2=Value2"
+        val headersString = "Referer=$encodedReferer&Cookie=$encodedCookie" // CLAVE
+
         playlist.forEach { item ->
             item.sources.forEach {
                 callback.invoke(
@@ -290,21 +301,21 @@ class PrimeVideoProvider : MainAPI() {
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val rawSubtitleUrl = track.file.toString()
-                val finalSubtitleUrl = if (rawSubtitleUrl.startsWith("//")) {
-                    "https:$rawSubtitleUrl"
-                } else {
-                    rawSubtitleUrl
-                }
+                // 2. Limpiamos la URL del subtítulo y la convertimos a HTTPS
+                val rawSubtitleUrl = httpsify(track.file.toString())
+
+                // 3. Adjuntamos la cadena de encabezados usando el separador '|'
+                // Esto obliga al reproductor a enviar los encabezados correctos.
+                val finalSubtitleUrl = "$rawSubtitleUrl|$headersString" // ¡SOLUCIÓN APLICADA!
 
                 subtitleCallback.invoke(
                     SubtitleFile(
                         track.label.toString(),
-                        finalSubtitleUrl,
+                        finalSubtitleUrl, // Usamos la URL "hackeada"
                     )
                 )
                 subtitleCount++
-                Log.i(TAG, "Found Subtitle: ${track.label} at $finalSubtitleUrl (Kind: ${track.kind})")
+                Log.i(TAG, "Found Subtitle: ${track.label} at $rawSubtitleUrl (FINAL URL: $finalSubtitleUrl) (Kind: ${track.kind})")
             }
         }
 
