@@ -10,7 +10,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.httpsify
+//import com.lagradost.cloudstream3.utils.httpsify
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -18,8 +18,8 @@ import android.util.Log
 
 class PrimeVideoProvider : MainAPI() {
     override val supportedTypes = setOf(
-        TvType.Movie,
         TvType.TvSeries,
+        TvType.Movie,
         TvType.Anime,
         TvType.AsianDrama
     )
@@ -272,16 +272,13 @@ class PrimeVideoProvider : MainAPI() {
         var linkCount = 0
         var subtitleCount = 0
 
-        // 🔑 PASO 1: Creamos la cadena de autenticación y referer
         val fullCookie = "t_hash_t=$cookie_value; ott=pv; hd=on"
         val refererUrl = "$newUrl/home"
 
-        // Codificamos los encabezados para que puedan ir en la URL
         val encodedReferer = java.net.URLEncoder.encode(refererUrl, "UTF-8")
         val encodedCookie = java.net.URLEncoder.encode(fullCookie, "UTF-8")
 
-        // Creamos la cadena de encabezados en el formato "Header1=Value1&Header2=Value2"
-        val headersString = "Referer=$encodedReferer&Cookie=$encodedCookie" // CLAVE
+        val headersString = "Referer=$encodedReferer&Cookie=$encodedCookie"
 
         playlist.forEach { item ->
             item.sources.forEach {
@@ -315,7 +312,6 @@ class PrimeVideoProvider : MainAPI() {
                     )
                 )
                 subtitleCount++
-                // Log para verificar la nueva URL
                 Log.i(TAG, "Found Subtitle: $trackLabel (Manual URL: $manualSubtitleUrl)")
             }
         }
@@ -327,7 +323,6 @@ class PrimeVideoProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        // 1. Construir la cadena de cookies completa
         val fullCookie = "t_hash_t=$cookie_value; ott=pv; hd=on"
         val refererUrl = "$newUrl/home"
 
@@ -337,19 +332,13 @@ class PrimeVideoProvider : MainAPI() {
                 val url = request.url.toString()
                 val newRequest = request.newBuilder()
 
-                // La clave es que el Interceptor identifique la URL del subtítulo
-
-                // Condición para el VIDEO (M3U8)
                 if (url.contains(".m3u8")) {
-                    // No es necesario el referer si el video es del mismo dominio
                     newRequest.header("Cookie", fullCookie)
                 }
 
-                // Condición para el SUBTÍTULO
-                // Usamos la terminación .vtt/.srt O los dominios conocidos.
                 if (url.endsWith(".vtt") || url.endsWith(".srt") ||
                     url.contains("subs.nfmirrorcdn.top") ||
-                    url.contains("pv.subscdn.top") || // <--- ¡ESTO CUBRE LA NUEVA URL!
+                    url.contains("pv.subscdn.top") ||
                     url.contains("imgcdn.kim")
                 ) {
                     Log.i(TAG, "Interceptor: Applying Referer and Cookie to Subtitle URL: $url")
