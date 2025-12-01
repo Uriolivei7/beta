@@ -301,19 +301,18 @@ class PrimeVideoProvider : MainAPI() {
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                val rawSubtitleUrl = httpsify(track.file.toString())
+                var rawSubtitleUrl = httpsify(track.file.toString())
 
-                // Simplemente pasamos la URL limpia y HTTPS.
-                val finalSubtitleUrl = rawSubtitleUrl // ⬅️ ¡URL LIMPIA!
+                rawSubtitleUrl = rawSubtitleUrl.replace(".[CC].", ".")
 
                 subtitleCallback.invoke(
                     SubtitleFile(
                         track.label.toString(),
-                        finalSubtitleUrl,
+                        rawSubtitleUrl, // URL limpia o intacta
                     )
                 )
                 subtitleCount++
-                Log.i(TAG, "Found Subtitle: ${track.label} at $rawSubtitleUrl")
+                Log.i(TAG, "Found Subtitle: ${track.label} at $rawSubtitleUrl (CLEANED)")
             }
         }
 
