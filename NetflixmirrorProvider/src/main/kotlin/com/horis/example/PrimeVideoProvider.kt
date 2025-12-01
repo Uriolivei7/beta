@@ -301,18 +301,22 @@ class PrimeVideoProvider : MainAPI() {
             }
 
             item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                var rawSubtitleUrl = httpsify(track.file.toString())
+                val trackLabel = track.label.toString()
 
-                rawSubtitleUrl = rawSubtitleUrl.replace(".[CC].", ".")
+                val filename = trackLabel.replace(" ", "") + ".srt"
+
+                val manualSubtitleUrl = "https://pv.subscdn.top/subs/$id/$filename"
+
 
                 subtitleCallback.invoke(
                     SubtitleFile(
-                        track.label.toString(),
-                        rawSubtitleUrl, // URL limpia o intacta
+                        trackLabel,
+                        manualSubtitleUrl,
                     )
                 )
                 subtitleCount++
-                Log.i(TAG, "Found Subtitle: ${track.label} at $rawSubtitleUrl (CLEANED)")
+                // Log para verificar la nueva URL
+                Log.i(TAG, "Found Subtitle: $trackLabel (Manual URL: $manualSubtitleUrl)")
             }
         }
 
@@ -345,11 +349,11 @@ class PrimeVideoProvider : MainAPI() {
                 // Usamos la terminación .vtt/.srt O los dominios conocidos.
                 if (url.endsWith(".vtt") || url.endsWith(".srt") ||
                     url.contains("subs.nfmirrorcdn.top") ||
-                    url.contains("pv.subscdn.top") ||
-                    url.contains("imgcdn.kim") // Incluimos el dominio de imágenes/episodios
+                    url.contains("pv.subscdn.top") || // <--- ¡ESTO CUBRE LA NUEVA URL!
+                    url.contains("imgcdn.kim")
                 ) {
                     Log.i(TAG, "Interceptor: Applying Referer and Cookie to Subtitle URL: $url")
-                    newRequest.header("Referer", refererUrl) // ⬅️ ESTO ES LO QUE FALTA
+                    newRequest.header("Referer", refererUrl)
                     newRequest.header("Cookie", fullCookie)
                 }
 
