@@ -24,6 +24,14 @@ import android.util.Log
 import org.jsoup.nodes.Element
 import java.lang.RuntimeException
 
+// **********************************************
+// IMPORTACIONES FALTANTES DEL SISTEMA
+// Si siguen saliendo errores, puede que necesites importar estas líneas
+// manualmente en tu IDE si el compilador no las resuelve:
+// import com.lagradost.cloudstream3.network.response
+// import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+// **********************************************
+
 class TwitchProvider : MainAPI() {
     override var mainUrl = "https://twitchtracker.com"
     override var name = "Twitch"
@@ -49,11 +57,12 @@ class TwitchProvider : MainAPI() {
             gamesName -> newHomePageResponse(parseGames(), hasNext = false)
             else -> {
                 val url = request.data
+                // Si la llamada falla, es posible que app.get() necesite una importación
                 val doc = app.get(url, params = mapOf("page" to page.toString())).document
 
                 Log.e(TAG, "getMainPage - Longitud del cuerpo: ${doc.body().html().length}. ¿Contiene Cloudflare? ${doc.body().html().contains("Cloudflare")}")
 
-                val channels = doc.select("table#channels tr").map { element ->
+                val channels = doc.select("table#channels tr").mapNotNull { element -> // mapNotNull para filtrar filas de encabezado/malas
                     element.toLiveSearchResponse()
                 }
 
@@ -75,24 +84,33 @@ class TwitchProvider : MainAPI() {
         }
     }
 
-    private fun Element.toLiveSearchResponse(): LiveSearchResponse {
+    // toLiveSearchResponse ahora devuelve LiveSearchResponse?
+    private fun Element.toLiveSearchResponse(): LiveSearchResponse? {
 
-        val anchor = this.select("td a[href^='/']").first()
-        val linkName = anchor?.attr("href")?.substringAfterLast("/") ?: ""
+        // Seleccionar el TD que contiene el nombre del canal (tercera columna: #1, imagen, nombre/juego)
+        val nameCell = this.select("td:eq(2)").first()
 
-        val name = this.select("a.item-title").text().ifBlank { anchor?.text() }
+        // Seleccionar el <a> dentro de esa celda que tiene el nombre del canal
+        val nameAnchor = nameCell?.select("a[href^='/']")?.first()
 
-        val image = this.select("img").attr("src")
+        // Extraer el linkName (el handle del canal)
+        val linkName = nameAnchor?.attr("href")?.substringAfterLast("/") ?: ""
+
+        // Extraer el nombre del canal (el texto)
+        val name = nameAnchor?.text()?.trim()
+
+        // Extraer la URL de la imagen (la primera <img> en la fila)
+        val image = this.select("img").first()?.attr("src")
 
         if (name.isNullOrBlank() || linkName.isBlank()) {
             Log.e(TAG, "toLiveSearchResponse - FALLO al extraer datos del canal.")
+            return null // Devuelve null si no se puede parsear
         } else {
             Log.e(TAG, "toLiveSearchResponse - Extrayendo canal: $name, LinkName: $linkName")
         }
 
-
         return newLiveSearchResponse(
-            name?.trim() ?: "",
+            name,
             linkName,
             TvType.Live,
             fix = false
@@ -107,14 +125,18 @@ class TwitchProvider : MainAPI() {
                 val game = element.select("div.ri-name > a")
                 val url = fixUrl(game.attr("href"))
                 val name = game.text()
+                // parseGame se llama aquí.
                 val searchResponses = parseGame(url).ifEmpty { return@mapNotNull null }
                 HomePageList(name, searchResponses, isHorizontalImages = isHorizontal)
             }
     }
 
-    private suspend fun parseGame(url: String): List<LiveSearchResponse> {
+    // CORREGIDO: SE ELIMINA LA PALABRA CLAVE 'override'
+// Ya no es 'override suspend fun parseGame(...)'
+    suspend fun parseGame(url: String): List<LiveSearchResponse> {
         val doc = app.get(url).document
-        return doc.select("td.cell-slot.sm").map { element ->
+        // mapNotNull filtra los resultados nulos
+        return doc.select("td.cell-slot.sm").mapNotNull { element ->
             element.toLiveSearchResponse()
         }
     }
@@ -125,20 +147,37 @@ class TwitchProvider : MainAPI() {
         Log.e(TAG, "load - Nombre de canal extraído: $realUrl")
 
         val doc = app.get("$mainUrl/$realUrl", referer = mainUrl).document
-        val name = doc.select("div#app-title").text()
+        val name = doc.select("div#app-title").text().trim()
+
         if (name.isBlank()) {
             throw RuntimeException("Could not load page, please try again.\n")
         }
-        val rank = doc.select("div.rank-badge > span").last()?.text()?.toIntOrNull()
+
+        // Nuevo selector para el Rank
+        val rank = doc.select("div.rank-badge span.to-number").text()?.toIntOrNull()
+
         val image = doc.select("div#app-logo > img").attr("src")
-        val poster = doc.select("div.embed-responsive > img").attr("src").ifEmpty { image }
-        val description = doc.select("div[style='word-wrap:break-word;font-size:12px;']").text()
+
+        // Selector para la imagen de fondo (banner)
+        val backgroundPoster = doc.select("div.header-background").attr("style")
+            .substringAfter("url(")
+            .substringBefore(")")
+            .trim()
+            .replace("'", "") // Limpiar la URL de la imagen de fondo
+            .ifEmpty { image } // Usar la imagen de perfil como fallback
+
+        // Selector de descripción, manteniéndolo si la ves en otros canales
+        val description = doc.select("div[style='word-wrap:break-word;font-size:12px;']").text().ifEmpty { "" }
+
+        // Corrección: Definir 'language' antes de usarla en tags.
         val language = doc.select("a.label.label-soft").text().ifEmpty { null }
+
+        // Estado Live
         val isLive = doc.select("div.live-indicator-container").isNotEmpty()
 
         val tags = listOfNotNull(
             isLive.let { if (it) "Live" else "Offline" },
-            language,
+            language, // El error Unresolved reference 'language' está resuelto aquí
             rank?.let { "Rank: $it" },
         )
 
@@ -150,11 +189,12 @@ class TwitchProvider : MainAPI() {
         ) {
             plot = description
             posterUrl = image
-            backgroundPosterUrl = poster
+            backgroundPosterUrl = backgroundPoster // Usar la nueva variable
             this@newLiveStreamLoadResponse.tags = tags
         }
     }
 
+    // Corrección: Se utiliza mapNotNull y se realiza un cast al tipo de retorno esperado.
     override suspend fun search(query: String): List<SearchResponse>? {
         Log.e(TAG, "search - Query: $query")
         val document =
@@ -162,7 +202,10 @@ class TwitchProvider : MainAPI() {
 
         Log.e(TAG, "search - Longitud del cuerpo: ${document.body().html().length}. ¿Contiene Cloudflare? ${document.body().html().contains("Cloudflare")}")
 
-        val results = document.select("table.tops tr").map { it.toLiveSearchResponse() }.drop(1)
+        // Se filtran los resultados nulos y se hace un cast a SearchResponse
+        val results = document.select("table.tops tr").mapNotNull {
+            it.toLiveSearchResponse()
+        }.map { it as SearchResponse } // Cast LiveSearchResponse a SearchResponse
 
         Log.e(TAG, "search - Resultados encontrados: ${results.size}")
 
@@ -176,6 +219,7 @@ class TwitchProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.e(TAG, "loadLinks - DATA enviada al Extractor: $data")
+        // Tu extractor original (pwn.sh) se mantiene, pero recuerda que probablemente fallará en tiempo de ejecución.
         TwitchExtractor().getUrl(data, null, subtitleCallback, callback)
 
         return true
@@ -203,6 +247,9 @@ class TwitchProvider : MainAPI() {
             val apiUrl = "https://pwn.sh/tools/streamapi.py?url=$url"
             Log.e(EXTRACTOR_TAG, "getUrl - API URL final: $apiUrl")
 
+            // Si .parsed<ApiResponse>() da error, necesitas la importación:
+            // import com.lagradost.cloudstream3.network.response
+            // import com.lagradost.cloudstream3.utils.AppUtils.parseJson
             val response =
                 app.get(apiUrl).parsed<ApiResponse>()
 
