@@ -11,12 +11,8 @@ import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import android.util.Log
 import java.lang.RuntimeException
-
-// **********************************************
-// RE-AÑADIR IMPORTS DE OKHTTP PARA REQUESTBODY
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-// **********************************************
 
 class TwitchExtractor : ExtractorApi() {
     private val EXTRACTOR_TAG = "TwitchExtractor"
@@ -25,11 +21,8 @@ class TwitchExtractor : ExtractorApi() {
     override val name = "Twitch"
     override val requiresReferer = false
 
-    // ¡CLIENT-ID ACTUALIZADO!
-    // Este ID es necesario para acceder a la API GraphQL de Twitch y obtener el token de reproducción.
     private val CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 
-    // Modelos de datos para el JSON de GraphQL
     data class PlaybackTokenResponse(
         @JsonProperty("data") val data: Data?,
     )
@@ -57,13 +50,8 @@ class TwitchExtractor : ExtractorApi() {
         Log.e(EXTRACTOR_TAG, "getUrl - URL de Stream recibida: $url")
         val channelName = url.substringAfterLast("/")
 
-        // 1. OBTENER EL TOKEN Y SIGNATURE DE TWITCH (GraphQL)
         val twitchApiUrl = "https://gql.twitch.tv/gql"
 
-        // ******************************************************************
-        // QUERY CORREGIDO: Eliminamos 'playerBackend' e incluimos 'playerType'
-        // para satisfacer los nuevos requisitos de la API de Twitch.
-        // ******************************************************************
         val query = """
             query PlaybackAccessToken(${"$"}channelName: String!) {
               streamPlaybackAccessToken(
@@ -84,22 +72,17 @@ class TwitchExtractor : ExtractorApi() {
             "variables" to mapOf("channelName" to channelName)
         )
 
-        // Convertimos el Map en una CADENA JSON (String)
         val jsonBodyString = mapper.writeValueAsString(requestBodyMap)
 
-        // **********************************************
-        // Creamos el objeto RequestBody que la función app.post espera
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBodyObject = jsonBodyString.toRequestBody(mediaType)
-        // **********************************************
 
         Log.e(EXTRACTOR_TAG, "getUrl - Solicitando token de Playback para $channelName")
-        Log.e(EXTRACTOR_TAG, "GraphQL Payload: $jsonBodyString") // Logueamos el payload saliente
+        Log.e(EXTRACTOR_TAG, "GraphQL Payload: $jsonBodyString")
 
         val rawTokenResponse = app.post(
             twitchApiUrl,
-            // Usamos 'requestBody' para la sobrecarga de RequestBody.
-            requestBody = requestBodyObject, // Tipo: RequestBody
+            requestBody = requestBodyObject,
             headers = mapOf(
                 "Client-Id" to CLIENT_ID,
                 "Content-Type" to "application/json"
@@ -107,7 +90,6 @@ class TwitchExtractor : ExtractorApi() {
         )
 
         val rawResponseText = rawTokenResponse.text
-        // La depuración crucial para ver si el nuevo CLIENT_ID funciona
         Log.e(EXTRACTOR_TAG, "GraphQL Raw Response: $rawResponseText")
 
         val tokenResponse = rawTokenResponse.parsed<PlaybackTokenResponse>()
@@ -115,7 +97,6 @@ class TwitchExtractor : ExtractorApi() {
         val accessToken = tokenResponse.data?.streamPlaybackAccessToken
 
         if (accessToken?.value.isNullOrBlank() || accessToken?.signature.isNullOrBlank()) {
-            // La línea de error ha sido modificada para reflejar mejor el diagnóstico
             Log.e(EXTRACTOR_TAG, "getUrl - FALLO: No se pudo obtener el token/signature de Twitch. El canal podría estar offline o la respuesta de GraphQL no contiene los datos esperados.")
             throw RuntimeException("Failed to get Twitch playback token. Channel may be offline.")
         }
@@ -125,9 +106,7 @@ class TwitchExtractor : ExtractorApi() {
         val token = accessToken.value
         val signature = accessToken.signature
 
-        // 2. CONSTRUIR Y SOLICITAR EL MANIFIESTO M3U8 (API de Usher)
         val usherUrl = "https://usher.ttvnw.net/api/channel/hls/$channelName.m3u8"
-        // Usamos app.get directamente
         val m3u8Url = "$usherUrl?sig=$signature&token=$token"
 
         Log.e(EXTRACTOR_TAG, "getUrl - URL del Manifiesto M3U8: $m3u8Url")
@@ -142,7 +121,6 @@ class TwitchExtractor : ExtractorApi() {
                 val prevLineIndex = m3u8Text.lines().indexOf(line) - 1
                 val resolutionLine = if (prevLineIndex >= 0) m3u8Text.lines()[prevLineIndex] else null
 
-                // Buscar la resolución en la línea #EXT-X-STREAM-INF
                 val resolutionMatch = Regex("RESOLUTION=\\d+x(\\d+),?").find(resolutionLine ?: "")
                 val resolution = resolutionMatch?.groupValues?.get(1)?.plus("p") ?: "Source"
 
@@ -152,7 +130,6 @@ class TwitchExtractor : ExtractorApi() {
             }
         }
 
-        // 3. ENVIAR ENLACES A CLOUDSTREAM
         links.forEach { link ->
             val linkUrl = link.url ?: return@forEach
             val name = link.name ?: "Source"

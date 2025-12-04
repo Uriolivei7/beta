@@ -23,8 +23,6 @@ import android.util.Log
 import org.jsoup.nodes.Element
 import java.lang.RuntimeException
 
-// Importación del Extractor para poder llamarlo en loadLinks
-// NO necesita el cuerpo de la clase aquí ya que está en otro archivo.
 
 class TwitchProvider : MainAPI() {
     override var mainUrl = "https://twitchtracker.com"
@@ -178,7 +176,6 @@ class TwitchProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.e(TAG, "loadLinks - DATA enviada al Extractor: $data")
-        // Llamada al extractor externo
         TwitchExtractor().getUrl(data, null, subtitleCallback, callback)
 
         return true
