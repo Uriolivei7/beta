@@ -25,7 +25,9 @@ class TwitchExtractor : ExtractorApi() {
     override val name = "Twitch"
     override val requiresReferer = false
 
-    private val CLIENT_ID = "kd1unb4b3q4t5fhrzpm2pk3dzzs61p"
+    // ¡CLIENT-ID ACTUALIZADO!
+    // Este ID es necesario para acceder a la API GraphQL de Twitch y obtener el token de reproducción.
+    private val CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 
     // Modelos de datos para el JSON de GraphQL
     data class PlaybackTokenResponse(
@@ -81,7 +83,7 @@ class TwitchExtractor : ExtractorApi() {
         val jsonBodyString = mapper.writeValueAsString(requestBodyMap)
 
         // **********************************************
-        // Creamos el objeto RequestBody
+        // Creamos el objeto RequestBody que la función app.post espera
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBodyObject = jsonBodyString.toRequestBody(mediaType)
         // **********************************************
@@ -95,12 +97,13 @@ class TwitchExtractor : ExtractorApi() {
             requestBody = requestBodyObject, // Tipo: RequestBody
             headers = mapOf(
                 "Client-Id" to CLIENT_ID,
-                "Content-Type" to "application/json" // Lo dejamos por seguridad
+                "Content-Type" to "application/json"
             )
         )
 
         val rawResponseText = rawTokenResponse.text
-        Log.e(EXTRACTOR_TAG, "GraphQL Raw Response: $rawResponseText") // <-- Logueamos la respuesta cruda
+        // La depuración crucial para ver si el nuevo CLIENT_ID funciona
+        Log.e(EXTRACTOR_TAG, "GraphQL Raw Response: $rawResponseText")
 
         val tokenResponse = rawTokenResponse.parsed<PlaybackTokenResponse>()
 
