@@ -203,6 +203,11 @@ class PlushdProvider : MainAPI() {
 
         val doc = app.get(data, headers = headers).document
 
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
+            subtitleCallback.invoke(file)
+        }
+
         doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
                 val serverData = serverLi.attr("data-server")
@@ -235,7 +240,7 @@ class PlushdProvider : MainAPI() {
                     loadExtractor(
                         url = fixedLink,
                         referer = extractorReferer,
-                        subtitleCallback = subtitleCallback,
+                        subtitleCallback = loggingSubtitleCallback,
                         callback = callback
                     )
                     linksFound = true
