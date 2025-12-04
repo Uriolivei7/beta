@@ -81,28 +81,33 @@ class TwitchExtractor : ExtractorApi() {
         val jsonBodyString = mapper.writeValueAsString(requestBodyMap)
 
         // **********************************************
-        // SOLUCIÓN AL ERROR: Creamos el objeto RequestBody (tipo esperado)
+        // Creamos el objeto RequestBody
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBodyObject = jsonBodyString.toRequestBody(mediaType)
         // **********************************************
 
         Log.e(EXTRACTOR_TAG, "getUrl - Solicitando token de Playback para $channelName")
+        Log.e(EXTRACTOR_TAG, "GraphQL Payload: $jsonBodyString") // Logueamos el payload saliente
 
-        // CORRECCIÓN FINAL: Usamos requestBodyObject (RequestBody)
-        val tokenResponse = app.post(
+        val rawTokenResponse = app.post(
             twitchApiUrl,
             // Usamos 'requestBody' para la sobrecarga de RequestBody.
             requestBody = requestBodyObject, // Tipo: RequestBody
             headers = mapOf(
                 "Client-Id" to CLIENT_ID,
-                "Content-Type" to "application/json" // Lo dejamos por seguridad aunque RequestBody lo maneje.
+                "Content-Type" to "application/json" // Lo dejamos por seguridad
             )
-        ).parsed<PlaybackTokenResponse>()
+        )
+
+        val rawResponseText = rawTokenResponse.text
+        Log.e(EXTRACTOR_TAG, "GraphQL Raw Response: $rawResponseText") // <-- Logueamos la respuesta cruda
+
+        val tokenResponse = rawTokenResponse.parsed<PlaybackTokenResponse>()
 
         val accessToken = tokenResponse.data?.streamPlaybackAccessToken
 
         if (accessToken?.value.isNullOrBlank() || accessToken?.signature.isNullOrBlank()) {
-            Log.e(EXTRACTOR_TAG, "getUrl - FALLO: No se pudo obtener el token/signature de Twitch. El canal podría estar offline.")
+            Log.e(EXTRACTOR_TAG, "getUrl - FALLO: No se pudo obtener el token/signature de Twitch. El canal podría estar offline o el CLIENT_ID es inválido.")
             throw RuntimeException("Failed to get Twitch playback token. Channel may be offline.")
         }
 
