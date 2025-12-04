@@ -224,7 +224,20 @@ class PlushdProvider : MainAPI() {
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
 
-                    loadExtractor(fixedLink, playerUrl, subtitleCallback, callback)
+                    val extractorReferer = try {
+                        val urlObject = URL(fixedLink)
+                        urlObject.protocol + "://" + urlObject.host + "/"
+                    } catch (e: Exception) {
+                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
+                        playerUrl
+                    }
+
+                    loadExtractor(
+                        url = fixedLink,
+                        referer = extractorReferer,
+                        subtitleCallback = subtitleCallback,
+                        callback = callback
+                    )
                     linksFound = true
                 }
             } catch (e: Exception) {
