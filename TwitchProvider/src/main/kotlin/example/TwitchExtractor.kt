@@ -59,13 +59,18 @@ class TwitchExtractor : ExtractorApi() {
 
         // 1. OBTENER EL TOKEN Y SIGNATURE DE TWITCH (GraphQL)
         val twitchApiUrl = "https://gql.twitch.tv/gql"
+
+        // ******************************************************************
+        // QUERY CORREGIDO: Eliminamos 'playerBackend' e incluimos 'playerType'
+        // para satisfacer los nuevos requisitos de la API de Twitch.
+        // ******************************************************************
         val query = """
             query PlaybackAccessToken(${"$"}channelName: String!) {
               streamPlaybackAccessToken(
                 channelName: ${"$"}channelName
                 params: {
-                  platform: "web"
-                  playerBackend: "mediaplayer"
+                  platform: "web",
+                  playerType: "site" 
                 }
               ) {
                 value
@@ -110,7 +115,8 @@ class TwitchExtractor : ExtractorApi() {
         val accessToken = tokenResponse.data?.streamPlaybackAccessToken
 
         if (accessToken?.value.isNullOrBlank() || accessToken?.signature.isNullOrBlank()) {
-            Log.e(EXTRACTOR_TAG, "getUrl - FALLO: No se pudo obtener el token/signature de Twitch. El canal podría estar offline o el CLIENT_ID es inválido.")
+            // La línea de error ha sido modificada para reflejar mejor el diagnóstico
+            Log.e(EXTRACTOR_TAG, "getUrl - FALLO: No se pudo obtener el token/signature de Twitch. El canal podría estar offline o la respuesta de GraphQL no contiene los datos esperados.")
             throw RuntimeException("Failed to get Twitch playback token. Channel may be offline.")
         }
 
