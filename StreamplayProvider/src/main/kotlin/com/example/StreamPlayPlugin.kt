@@ -32,6 +32,7 @@ class StreamPlayPlugin: Plugin() {
 
         val sharedPref = context.getSharedPreferences("StreamPlay", Context.MODE_PRIVATE)
         val mainApis = listOf(
+            StreamPlay(sharedPref),
             StreamPlayAnime()
         )
         val savedSet = sharedPref.getStringSet("enabled_plugins_saved", null)

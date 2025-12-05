@@ -56,6 +56,7 @@ class ToggleFragment(
         val extensionList = root.findView<LinearLayout>("toggle_list_container")
 
         val apis = listOf(
+            StreamPlay(sharedPref),
             StreamPlayAnime()
         )
 
