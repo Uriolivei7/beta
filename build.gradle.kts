@@ -1,5 +1,6 @@
 import com.android.build.gradle.BaseExtension
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
+import org.gradle.api.tasks.Delete
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
@@ -34,12 +35,16 @@ subprojects {
     }
 
     android {
-        namespace = "com.example"
+        namespace = "com.phisher98"
+
+        buildFeatures.buildConfig = true
 
         defaultConfig {
             minSdk = 21
             compileSdkVersion(35)
             targetSdk = 35
+
+            buildConfigField("String", "DUMMY_VERSION", "\"1.0.0\"")
         }
 
         compileOptions {
@@ -85,7 +90,6 @@ subprojects {
         implementation("androidx.annotation:annotation:1.9.1")
 
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-        
         // Test dependencies
         testImplementation("junit:junit:4.13.2")
         testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.20.1")
