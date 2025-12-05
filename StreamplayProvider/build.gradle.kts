@@ -90,12 +90,7 @@ cloudstream {
      * */
     status = 1 // will be 3 if unspecified
     tvTypes = listOf(
-        "AsianDrama",
-        "TvSeries",
-        "Anime",
-        "Movie",
-        "Cartoon",
-        "AnimeMovie"
+        "Anime"
     )
 
     iconUrl = "https://i3.wp.com/yt3.googleusercontent.com/ytc/AIdro_nCBArSmvOc6o-k2hTYpLtQMPrKqGtAw_nC20rxm70akA=s900-c-k-c0x00ffffff-no-rj?ssl=1"

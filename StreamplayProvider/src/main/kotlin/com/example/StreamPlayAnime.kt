@@ -152,21 +152,18 @@ class StreamPlayAnime : MainAPI() {
                 )
             }
 
-            // 1. Intenta cargar la biblioteca personal
-            // La referencia a 'SyncRepo' requiere un 'import'
-            val syncRepo = syncApi as? SyncRepo
+            // 1. Intentamos obtener la referencia correcta del repositorio.
+            val syncRepo = (syncApi as? SyncRepo) ?: return newHomePageResponse(
+                "Error: Library synchronization not supported by current API configuration.",
+                emptyList(),
+                false
+            )
 
-            if (syncRepo == null) {
-                // Esto significa que la API está autenticada, pero no implementa la interfaz de repositorio.
-                return newHomePageResponse(
-                    "Error: Library synchronization not supported by current API configuration.",
-                    emptyList(),
-                    false
-                )
-            }
-
+            // Ahora usamos el repositorio casteado.
+            // CORRECCIÓN: Usamos 'getPersonalLibrary()' según el stub de SyncRepo.
             val libraryResource = syncRepo.getPersonalLibrary()
 
+            // Verificamos si la carga de la biblioteca falló
             if (libraryResource is Failure) {
                 return newHomePageResponse(
                     "Login required for personal content.",
@@ -175,6 +172,8 @@ class StreamPlayAnime : MainAPI() {
                 )
             }
 
+            // Acceso directo al valor (ya que safeGetOrThrow no está disponible).
+            // NOTA: Se asume que el tipo LibraryMetadata del SyncRepo se mapea a AllLibraryLists.
             val libraryResponse = (libraryResource as Success<*>).value as AllLibraryLists
 
             val homePageList =
