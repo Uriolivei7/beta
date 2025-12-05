@@ -51,7 +51,6 @@ import com.example.StreamPlayExtractor.invokeKickAssAnime
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Calendar
-
 import com.lagradost.cloudstream3.mvvm.Resource
 import com.lagradost.cloudstream3.mvvm.Resource.Success
 import com.lagradost.cloudstream3.mvvm.Resource.Failure
@@ -135,7 +134,6 @@ class StreamPlayAnime : MainAPI() {
 
         val res =
             anilistAPICall(
-                // Reemplazamos $page con $defaultPage
                 "query (\$search: String = \"$query\") { Page(page: $defaultPage, perPage: $mediaLimit) { pageInfo { total perPage currentPage lastPage hasNextPage } media(search: \$search, isAdult: $isAdult, type: ANIME) { id idMal season seasonYear format episodes chapters title { english romaji } coverImage { extraLarge large medium } synonyms nextAiringEpisode { timeUntilAiring episode } } } }"
             )
         return res.data.page?.media?.map { it.toSearchResponse() }
@@ -143,9 +141,31 @@ class StreamPlayAnime : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (request.name.contains("Personal")) {
+            // Acceder al objeto API.
+            val syncApi = AccountManager.aniListApi
+
+            if (syncApi == null) {
+                return newHomePageResponse(
+                    "Login required for personal content.",
+                    emptyList(),
+                    false
+                )
+            }
 
             // 1. Intenta cargar la biblioteca personal
-            val libraryResource = repo.getPersonalLibrary()
+            // La referencia a 'SyncRepo' requiere un 'import'
+            val syncRepo = syncApi as? SyncRepo
+
+            if (syncRepo == null) {
+                // Esto significa que la API está autenticada, pero no implementa la interfaz de repositorio.
+                return newHomePageResponse(
+                    "Error: Library synchronization not supported by current API configuration.",
+                    emptyList(),
+                    false
+                )
+            }
+
+            val libraryResource = syncRepo.getPersonalLibrary()
 
             if (libraryResource is Failure) {
                 return newHomePageResponse(
@@ -155,7 +175,7 @@ class StreamPlayAnime : MainAPI() {
                 )
             }
 
-            val libraryResponse = libraryResource.safeGetOrThrow() as AllLibraryLists
+            val libraryResponse = (libraryResource as Success<*>).value as AllLibraryLists
 
             val homePageList =
                 libraryResponse.allLibraryLists.mapNotNull { libraryList: LibraryList ->

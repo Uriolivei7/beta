@@ -302,9 +302,11 @@ open class StreamPlay(val sharedPref: SharedPreferences? = null) : TmdbProvider(
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query, 1)
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
-    suspend fun search(query: String, page: Int): List<SearchResponse>? {
+    override suspend fun search(query: String): List<SearchResponse>? = tmdbSearch(query, 1)
+
+    suspend fun tmdbSearch(query: String, page: Int): List<SearchResponse>? {
         val tmdbAPI = getApiBase()
         return app.get("$tmdbAPI/search/multi?api_key=$apiKey&language=$langCode&query=$query&page=$page&include_adult=${settingsForProvider.enableAdult}")
             .parsedSafe<Results>()?.results?.mapNotNull { media ->
