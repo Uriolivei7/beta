@@ -4,57 +4,75 @@ import org.jetbrains.kotlin.konan.properties.Properties
 
 version = 486
 
+// 1. Definir la lógica de carga de propiedades al inicio
+val properties = Properties()
+val localPropertiesFile = project.rootProject.file("local.properties")
+
+if (localPropertiesFile.exists()) {
+    // Si el archivo existe (entorno local), cargarlo.
+    properties.load(localPropertiesFile.inputStream())
+} else {
+    // Si no existe (entorno CI), no hay problema, usaremos System.getenv más tarde.
+    println("Advertencia: local.properties no encontrado. Cargando desde variables de entorno de CI.")
+}
+
+// 2. Función de ayuda para obtener la propiedad (prioriza local.properties, luego System.getenv)
+fun getProp(name: String): String {
+    // Busca en las propiedades cargadas, o recurre a System.getenv (variables de entorno de CI), o usa una cadena vacía.
+    return properties.getProperty(name) ?: System.getenv(name) ?: ""
+}
+
 android {
     buildFeatures {
         buildConfig = true
         viewBinding = true
     }
     defaultConfig {
-        val properties = Properties()
-        properties.load(project.rootProject.file("local.properties").inputStream())
-        android.buildFeatures.buildConfig=true
-        buildConfigField("String", "TMDB_API", "\"${properties.getProperty("TMDB_API")}\"")
-        buildConfigField("String", "CINEMATV_API", "\"${properties.getProperty("CINEMATV_API")}\"")
-        buildConfigField("String", "SFMOVIES_API", "\"${properties.getProperty("SFMOVIES_API")}\"")
-        buildConfigField("String", "ZSHOW_API", "\"${properties.getProperty("ZSHOW_API")}\"")
-        buildConfigField("String", "DUMP_API", "\"${properties.getProperty("DUMP_API")}\"")
-        buildConfigField("String", "DUMP_KEY", "\"${properties.getProperty("DUMP_KEY")}\"")
-        buildConfigField("String", "CRUNCHYROLL_BASIC_TOKEN", "\"${properties.getProperty("CRUNCHYROLL_BASIC_TOKEN")}\"")
-        buildConfigField("String", "CRUNCHYROLL_REFRESH_TOKEN", "\"${properties.getProperty("CRUNCHYROLL_REFRESH_TOKEN")}\"")
-        buildConfigField("String", "MOVIE_API", "\"${properties.getProperty("MOVIE_API")}\"")
-        buildConfigField("String", "ANICHI_API", "\"${properties.getProperty("ANICHI_API")}\"")
-        buildConfigField("String", "Whvx_API", "\"${properties.getProperty("Whvx_API")}\"")
-        buildConfigField("String", "CatflixAPI", "\"${properties.getProperty("CatflixAPI")}\"")
-        buildConfigField("String", "ConsumetAPI", "\"${properties.getProperty("ConsumetAPI")}\"")
-        buildConfigField("String", "FlixHQAPI", "\"${properties.getProperty("FlixHQAPI")}\"")
-        buildConfigField("String", "WhvxAPI", "\"${properties.getProperty("WhvxAPI")}\"")
-        buildConfigField("String", "WhvxT", "\"${properties.getProperty("WhvxT")}\"")
-        buildConfigField("String", "SharmaflixApikey", "\"${properties.getProperty("SharmaflixApikey")}\"")
-        buildConfigField("String", "SharmaflixApi", "\"${properties.getProperty("SharmaflixApi")}\"")
-        buildConfigField("String", "Theyallsayflix", "\"${properties.getProperty("Theyallsayflix")}\"")
-        buildConfigField("String", "GojoAPI", "\"${properties.getProperty("GojoAPI")}\"")
-        buildConfigField("String", "HianimeAPI", "\"${properties.getProperty("HianimeAPI")}\"")
-        buildConfigField("String", "Vidsrccc", "\"${properties.getProperty("Vidsrccc")}\"")
-        buildConfigField("String", "WASMAPI", "\"${properties.getProperty("WASMAPI")}\"")
-        buildConfigField("String", "KissKh", "\"${properties.getProperty("KissKh")}\"")
-        buildConfigField("String", "KisskhSub", "\"${properties.getProperty("KisskhSub")}\"")
-        buildConfigField("String", "SUPERSTREAM_THIRD_API", "\"${properties.getProperty("SUPERSTREAM_THIRD_API")}\"")
-        buildConfigField("String", "SUPERSTREAM_FOURTH_API", "\"${properties.getProperty("SUPERSTREAM_FOURTH_API")}\"")
-        buildConfigField("String", "SUPERSTREAM_FIRST_API", "\"${properties.getProperty("SUPERSTREAM_FIRST_API")}\"")
-        buildConfigField("String", "StreamPlayAPI", "\"${properties.getProperty("StreamPlayAPI")}\"")
-        buildConfigField("String", "PROXYAPI", "\"${properties.getProperty("PROXYAPI")}\"")
-        buildConfigField("String", "KAISVA", "\"${properties.getProperty("KAISVA")}\"")
-        buildConfigField("String", "MOVIEBOX_SECRET_KEY_ALT", "\"${properties.getProperty("MOVIEBOX_SECRET_KEY_ALT")}\"")
-        buildConfigField("String", "MOVIEBOX_SECRET_KEY_DEFAULT", "\"${properties.getProperty("MOVIEBOX_SECRET_KEY_DEFAULT")}\"")
-        buildConfigField("String", "KAIMEG", "\"${properties.getProperty("KAIMEG")}\"")
-        buildConfigField("String", "KAIDEC", "\"${properties.getProperty("KAIDEC")}\"")
-        buildConfigField("String", "KAIENC", "\"${properties.getProperty("KAIENC")}\"")
-        buildConfigField("String", "Nuviostreams", "\"${properties.getProperty("Nuviostreams")}\"")
-        buildConfigField("String", "VideasyDEC", "\"${properties.getProperty("VideasyDEC")}\"")
-        buildConfigField("String", "YFXENC", "\"${properties.getProperty("YFXENC")}\"")
-        buildConfigField("String", "YFXDEC", "\"${properties.getProperty("YFXDEC")}\"")
+        // android.buildFeatures.buildConfig=true  // Esto es redundante, ya está en buildFeatures
+
+        buildConfigField("String", "TMDB_API", "\"${getProp("TMDB_API")}\"")
+        buildConfigField("String", "CINEMATV_API", "\"${getProp("CINEMATV_API")}\"")
+        buildConfigField("String", "SFMOVIES_API", "\"${getProp("SFMOVIES_API")}\"")
+        buildConfigField("String", "ZSHOW_API", "\"${getProp("ZSHOW_API")}\"")
+        buildConfigField("String", "DUMP_API", "\"${getProp("DUMP_API")}\"")
+        buildConfigField("String", "DUMP_KEY", "\"${getProp("DUMP_KEY")}\"")
+        buildConfigField("String", "CRUNCHYROLL_BASIC_TOKEN", "\"${getProp("CRUNCHYROLL_BASIC_TOKEN")}\"")
+        buildConfigField("String", "CRUNCHYROLL_REFRESH_TOKEN", "\"${getProp("CRUNCHYROLL_REFRESH_TOKEN")}\"")
+        buildConfigField("String", "MOVIE_API", "\"${getProp("MOVIE_API")}\"")
+        buildConfigField("String", "ANICHI_API", "\"${getProp("ANICHI_API")}\"")
+        buildConfigField("String", "Whvx_API", "\"${getProp("Whvx_API")}\"")
+        buildConfigField("String", "CatflixAPI", "\"${getProp("CatflixAPI")}\"")
+        buildConfigField("String", "ConsumetAPI", "\"${getProp("ConsumetAPI")}\"")
+        buildConfigField("String", "FlixHQAPI", "\"${getProp("FlixHQAPI")}\"")
+        buildConfigField("String", "WhvxAPI", "\"${getProp("WhvxAPI")}\"")
+        buildConfigField("String", "WhvxT", "\"${getProp("WhvxT")}\"")
+        buildConfigField("String", "SharmaflixApikey", "\"${getProp("SharmaflixApikey")}\"")
+        buildConfigField("String", "SharmaflixApi", "\"${getProp("SharmaflixApi")}\"")
+        buildConfigField("String", "Theyallsayflix", "\"${getProp("Theyallsayflix")}\"")
+        buildConfigField("String", "GojoAPI", "\"${getProp("GojoAPI")}\"")
+        buildConfigField("String", "HianimeAPI", "\"${getProp("HianimeAPI")}\"")
+        buildConfigField("String", "Vidsrccc", "\"${getProp("Vidsrccc")}\"")
+        buildConfigField("String", "WASMAPI", "\"${getProp("WASMAPI")}\"")
+        buildConfigField("String", "KissKh", "\"${getProp("KissKh")}\"")
+        buildConfigField("String", "KisskhSub", "\"${getProp("KisskhSub")}\"")
+        buildConfigField("String", "SUPERSTREAM_THIRD_API", "\"${getProp("SUPERSTREAM_THIRD_API")}\"")
+        buildConfigField("String", "SUPERSTREAM_FOURTH_API", "\"${getProp("SUPERSTREAM_FOURTH_API")}\"")
+        buildConfigField("String", "SUPERSTREAM_FIRST_API", "\"${getProp("SUPERSTREAM_FIRST_API")}\"")
+        buildConfigField("String", "StreamPlayAPI", "\"${getProp("StreamPlayAPI")}\"")
+        buildConfigField("String", "PROXYAPI", "\"${getProp("PROXYAPI")}\"")
+        buildConfigField("String", "KAISVA", "\"${getProp("KAISVA")}\"")
+        buildConfigField("String", "MOVIEBOX_SECRET_KEY_ALT", "\"${getProp("MOVIEBOX_SECRET_KEY_ALT")}\"")
+        buildConfigField("String", "MOVIEBOX_SECRET_KEY_DEFAULT", "\"${getProp("MOVIEBOX_SECRET_KEY_DEFAULT")}\"")
+        buildConfigField("String", "KAIMEG", "\"${getProp("KAIMEG")}\"")
+        buildConfigField("String", "KAIDEC", "\"${getProp("KAIDEC")}\"")
+        buildConfigField("String", "KAIENC", "\"${getProp("KAIENC")}\"")
+        buildConfigField("String", "Nuviostreams", "\"${getProp("Nuviostreams")}\"")
+        buildConfigField("String", "VideasyDEC", "\"${getProp("VideasyDEC")}\"")
+        buildConfigField("String", "YFXENC", "\"${getProp("YFXENC")}\"")
+        buildConfigField("String", "YFXDEC", "\"${getProp("YFXDEC")}\"")
     }
 }
+
 
 cloudstream {
     language = "en"

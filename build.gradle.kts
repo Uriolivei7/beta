@@ -35,7 +35,7 @@ subprojects {
     }
 
     android {
-        namespace = "com.phisher98"
+        namespace = "com.example"
 
         buildFeatures.buildConfig = true
 

@@ -1,4 +1,4 @@
-package com.phisher98.settings
+package com.example.settings
 
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
@@ -14,8 +14,8 @@ import androidx.annotation.RequiresApi
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.phisher98.BuildConfig
-import com.phisher98.StreamPlayPlugin
+import com.example.BuildConfig
+import com.example.StreamPlayPlugin
 import com.lagradost.cloudstream3.CommonActivity.showToast
 
 class SettingsFragment(

@@ -1,4 +1,4 @@
-package com.phisher98
+package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.CommonActivity.activity
@@ -38,16 +38,16 @@ import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.nicehttp.RequestBodyTypes
-import com.phisher98.StreamPlay.Companion.anilistAPI
-import com.phisher98.StreamPlay.Companion.malsyncAPI
-import com.phisher98.StreamPlayExtractor.invokeAniXL
-import com.phisher98.StreamPlayExtractor.invokeAnichi
-import com.phisher98.StreamPlayExtractor.invokeAnimeKai
-import com.phisher98.StreamPlayExtractor.invokeAnimepahe
-import com.phisher98.StreamPlayExtractor.invokeAnimetosho
-import com.phisher98.StreamPlayExtractor.invokeAnizone
-import com.phisher98.StreamPlayExtractor.invokeHianime
-import com.phisher98.StreamPlayExtractor.invokeKickAssAnime
+import com.example.StreamPlay.Companion.anilistAPI
+import com.example.StreamPlay.Companion.malsyncAPI
+import com.example.StreamPlayExtractor.invokeAniXL
+import com.example.StreamPlayExtractor.invokeAnichi
+import com.example.StreamPlayExtractor.invokeAnimeKai
+import com.example.StreamPlayExtractor.invokeAnimepahe
+import com.example.StreamPlayExtractor.invokeAnimetosho
+import com.example.StreamPlayExtractor.invokeAnizone
+import com.example.StreamPlayExtractor.invokeHianime
+import com.example.StreamPlayExtractor.invokeKickAssAnime
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Calendar

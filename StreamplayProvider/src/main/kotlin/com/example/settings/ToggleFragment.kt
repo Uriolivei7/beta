@@ -1,4 +1,4 @@
-package com.phisher98.settings
+package com.example.settings
 
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
@@ -10,11 +10,11 @@ import android.os.Bundle
 import android.view.*
 import android.widget.*
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.phisher98.BuildConfig
-import com.phisher98.StreamPlayPlugin
+import com.example.BuildConfig
+import com.example.StreamPlayPlugin
 import androidx.core.content.edit
 import com.lagradost.cloudstream3.CommonActivity.showToast
-import com.phisher98.*
+import com.example.*
 
 class ToggleFragment(
     plugin: StreamPlayPlugin,
@@ -56,7 +56,6 @@ class ToggleFragment(
         val extensionList = root.findView<LinearLayout>("toggle_list_container")
 
         val apis = listOf(
-            StreamPlay(sharedPref),
             StreamPlayAnime()
         )
 

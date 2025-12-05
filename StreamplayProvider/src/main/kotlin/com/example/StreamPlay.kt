@@ -1,4 +1,4 @@
-package com.phisher98
+package com.example
 
 import android.content.SharedPreferences
 import android.os.Build
@@ -37,8 +37,8 @@ import kotlinx.coroutines.sync.withLock
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.phisher98.StreamPlayExtractor.invokeSubtitleAPI
-import com.phisher98.StreamPlayExtractor.invokeWyZIESUBAPI
+import com.example.StreamPlayExtractor.invokeSubtitleAPI
+import com.example.StreamPlayExtractor.invokeWyZIESUBAPI
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex

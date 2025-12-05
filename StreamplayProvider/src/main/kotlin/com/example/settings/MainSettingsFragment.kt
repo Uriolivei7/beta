@@ -1,4 +1,4 @@
-package com.phisher98
+package com.example
 
 import android.content.Intent
 import android.graphics.drawable.Drawable
@@ -8,10 +8,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.appcompat.app.AlertDialog
-import com.Phisher98.LanguageSelectFragment
+import com.example.LanguageSelectFragment
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.phisher98.settings.SettingsFragment
-import com.phisher98.settings.ToggleFragment
+import com.example.settings.SettingsFragment
+import com.example.settings.ToggleFragment
 
 class MainSettingsFragment(
     private val plugin: StreamPlayPlugin,

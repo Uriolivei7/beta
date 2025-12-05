@@ -1,4 +1,4 @@
-package com.phisher98
+package com.example
 
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
