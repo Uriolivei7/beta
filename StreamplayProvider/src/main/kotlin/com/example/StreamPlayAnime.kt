@@ -141,57 +141,20 @@ class StreamPlayAnime : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (request.name.contains("Personal")) {
-            // 1. Obtener la implementación de SyncAPI.
+
             val syncApi = AccountManager.aniListApi
-
-            if (syncApi == null) {
-                return newHomePageResponse(
-                    "Login required for personal content.",
-                    emptyList(),
-                    false
-                )
+            val message = if (syncApi == null) {
+                "Login required for personal content."
+            } else {
+                "Personal library feature temporarily disabled due to build error: 'getPersonalLibrary' unresolved."
             }
 
-            // 2. Crear una instancia de SyncRepo, envolviendo la SyncAPI.
-            // ESTA ES LA CORRECCIÓN: Evitar el casteo incorrecto de SyncAPI a SyncRepo.
-            val syncRepo = SyncRepo(syncApi)
-
-            // 3. Llamar a la función correcta de SyncRepo.
-            val libraryResource = syncRepo.getPersonalLibrary()
-
-            // Verificamos si la carga de la biblioteca falló
-            if (libraryResource is Failure) {
-                return newHomePageResponse(
-                    "Error loading personal library: ${libraryResource.errorString}",
-                    emptyList(),
-                    false
-                )
-            }
-
-            // Verificamos si la carga fue exitosa y obtenemos el valor.
-            val libraryResponse = (libraryResource as? Success<*>)?.value
-                ?: return newHomePageResponse(
-                    "Failed to retrieve library data.",
-                    emptyList(),
-                    false
-                )
-
-            // Cast al tipo esperado (LibraryMetadata que contiene AllLibraryLists)
-            val allLibraryLists = libraryResponse as? AllLibraryLists ?: return newHomePageResponse(
-                "Failed to parse library data structure.",
+            return newHomePageResponse(
+                message,
                 emptyList(),
                 false
             )
-
-            val homePageList =
-                allLibraryLists.allLibraryLists.mapNotNull { libraryList: LibraryList ->
-                    if (libraryList.items.isEmpty()) return@mapNotNull null
-                    val listName = libraryList.name
-                    HomePageList("${request.name}: $listName", libraryList.items)
-                }
-            return newHomePageResponse(homePageList, false)
         } else {
-            // ... (resto de la función)
             val (results, hasNextPage) = request.toSearchResponseList(page)
             return newHomePageResponse(request.name, results, hasNextPage)
         }
