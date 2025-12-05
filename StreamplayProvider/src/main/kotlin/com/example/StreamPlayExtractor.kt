@@ -72,6 +72,9 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.max
 
+const val KAIDEC = "https://your-decoding-api.com/api/decode"
+const val KAIENC = "https://your-encoding-api.com/api/encode"
+const val KAISVA = "https://your-fallback-api.com/api/sva"
 
 val session = Session(Requests().baseClient)
 
@@ -272,7 +275,6 @@ object StreamPlayExtractor : StreamPlay() {
         }
     }
 
-
     suspend fun invokeMoviehubAPI(
         id: Int? = null,
         season: Int? = null,
@@ -371,7 +373,6 @@ object StreamPlayExtractor : StreamPlay() {
             }
         )
     }
-
 
     suspend fun invokeKisskh(
         title: String? = null,
@@ -931,6 +932,41 @@ object StreamPlayExtractor : StreamPlay() {
         }
     }
 
+    data class AnimeKaiSearchResult(
+        val id: String,
+        val title: String,
+        val japaneseTitle: String? = null
+    )
+
+    private fun parseAnimeKaiResults(jsonResponse: String): List<AnimeKaiSearchResult> {
+        val results = mutableListOf<AnimeKaiSearchResult>()
+        val html = try {
+            JSONObject(jsonResponse).optJSONObject("result")?.optString("html")
+        } catch (e: Exception) {
+            null
+        } ?: return results
+        val doc = Jsoup.parse(html)
+
+        for (element in doc.select("a.aitem")) {
+            val href = element.attr("href").substringAfterLast("/")
+            val titleElem = element.selectFirst("h6.title") ?: continue
+            val title = titleElem.text().trim()
+            val jpTitle = titleElem.attr("data-jp").trim().takeIf { it.isNotBlank() }
+
+            results.add(AnimeKaiSearchResult(href, title, jpTitle))
+        }
+        return results
+    }
+
+    private fun similarity(a: String?, b: String?): Double {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return 0.0
+        val tokensA = a.lowercase().split(Regex("\\W+")).toSet()
+        val tokensB = b.lowercase().split(Regex("\\W+")).toSet()
+        if (tokensA.isEmpty() || tokensB.isEmpty()) return 0.0
+        val intersection = tokensA.intersect(tokensB).size
+        return intersection.toDouble() / max(tokensA.size, tokensB.size)
+    }
+
     @SuppressLint("NewApi")
     internal suspend fun invokeAnimeKai(
         jptitle: String? = null,
@@ -943,10 +979,10 @@ object StreamPlayExtractor : StreamPlay() {
 
         suspend fun decode(text: String?): String {
             return try {
-                val res = app.get("${BuildConfig.KAIENC}?text=$text").text
+                val res = app.get("$KAIENC?text=$text").textLarge
                 JSONObject(res).getString("result")
             } catch (_: Exception) {
-                app.get("${BuildConfig.KAISVA}/?f=e&d=$text").text
+                app.get("$KAISVA/?f=e&d=$text").textLarge
             }
         }
 
@@ -957,12 +993,12 @@ object StreamPlayExtractor : StreamPlay() {
 
             return try {
                 val res = app.post(
-                    BuildConfig.KAIDEC,
+                    KAIDEC,
                     requestBody = jsonBody
                 ).textLarge
                 JSONObject(res).getString("result")
             } catch (_: Exception) {
-                app.get("${BuildConfig.KAISVA}/?f=d&d=$text").textLarge
+                app.get("$KAISVA/?f=d&d=$text").textLarge
             }
         }
 
@@ -1026,6 +1062,15 @@ object StreamPlayExtractor : StreamPlay() {
                                     .parsed<AnimeKaiResponse>()
                                     .getDocument()
 
+                            document?.select("source[kind=captions]")?.forEach { sub ->
+                                val subUrl = sub.attr("src")
+                                val label = sub.attr("label")
+                                if (subUrl.isNotBlank()) {
+                                    subtitleCallback(SubtitleFile(label.ifBlank { "Unknown" }, subUrl))
+                                }
+                            }
+
+
                             val types = listOf("sub", "softsub", "dub")
                             val servers = types.flatMap { type ->
                                 document.select("div.server-items[data-id=$type] span.server[data-lid]")
@@ -1069,40 +1114,6 @@ object StreamPlayExtractor : StreamPlay() {
         }
     }
 
-    private fun parseAnimeKaiResults(jsonResponse: String): List<AnimeKaiSearchResult> {
-        val results = mutableListOf<AnimeKaiSearchResult>()
-        val html =
-            JSONObject(jsonResponse).optJSONObject("result")?.optString("html") ?: return results
-        val doc = Jsoup.parse(html)
-
-        for (element in doc.select("a.aitem")) {
-            val href = element.attr("href").substringAfterLast("/")
-            val titleElem = element.selectFirst("h6.title") ?: continue
-            val title = titleElem.text().trim()
-            val jpTitle = titleElem.attr("data-jp").trim().takeIf { it.isNotBlank() }
-
-            results.add(AnimeKaiSearchResult(href, title, jpTitle))
-        }
-
-        return results
-    }
-
-    private fun similarity(a: String?, b: String?): Double {
-        if (a.isNullOrBlank() || b.isNullOrBlank()) return 0.0
-        val tokensA = a.lowercase().split(Regex("\\W+")).toSet()
-        val tokensB = b.lowercase().split(Regex("\\W+")).toSet()
-        if (tokensA.isEmpty() || tokensB.isEmpty()) return 0.0
-        val intersection = tokensA.intersect(tokensB).size
-        return intersection.toDouble() / max(tokensA.size, tokensB.size)
-    }
-
-    data class AnimeKaiSearchResult(
-        val id: String,
-        val title: String,
-        val japaneseTitle: String? = null
-    )
-
-
     internal suspend fun invokeHianime(
         animeIds: List<String?>? = null,
         episode: Int? = null,
@@ -1117,14 +1128,31 @@ object StreamPlayExtractor : StreamPlay() {
             val api = shuffledApis.removeAt(0)
             try {
                 animeIds?.amap { id ->
-                    val episodeId = app.get(
+                    val epListResponse = app.get(
                         "$api/ajax/v2/episode/list/${id ?: return@amap}",
                         headers = headers
                     ).takeIf { it.isSuccessful }
                         ?.parsedSafe<HianimeResponses>()?.html?.let { Jsoup.parse(it) }
+
+                    val epElement = epListResponse
                         ?.select("div.ss-list a")
-                        ?.find { it.attr("data-number") == "${episode ?: 1}" }
-                        ?.attr("data-id") ?: return@amap
+                        ?.find { it.attr("data-number") == "${episode ?: 1}" } ?: return@amap
+
+                    // --- LÓGICA CLAVE PARA SUBTÍTULOS (Debe buscarse aquí en la página de HiAnime) ---
+                    // HiAnime a menudo tiene los datos de subtítulos en atributos del elemento del episodio.
+                    val subUrl = epElement.attr("data-sub-url").ifBlank { epElement.attr("data-subtitle") }
+                    val language = epElement.attr("data-lang").ifBlank { "English" } // Asumimos English si no está
+
+                    if (subUrl.isNotBlank()) {
+                        // Llama al callback de subtítulos inmediatamente
+                        subtitleCallback(SubtitleFile(
+                            language,
+                            subUrl
+                        ))
+                    }
+                    // --- FIN LÓGICA DE SUBTÍTULOS ---
+
+                    val episodeId = epElement.attr("data-id")
 
                     val servers = app.get(
                         "$api/ajax/v2/episode/servers?episodeId=$episodeId",
@@ -1146,7 +1174,7 @@ object StreamPlayExtractor : StreamPlay() {
                                     "⌜ HiAnime ⌟ | ${label.uppercase()} | ${effectiveType.uppercase()}",
                                     sourceUrl,
                                     "",
-                                    subtitleCallback,
+                                    subtitleCallback, // Se pasa el callback para que el extractor del host también pueda añadir subtítulos
                                     callback,
                                 )
                             }
@@ -1158,7 +1186,6 @@ object StreamPlayExtractor : StreamPlay() {
                 println("Failed with domain $api: ${e.message}")
             }
         }
-        println("All hianimeAPI domains failed.")
     }
 
     suspend fun invokeKickAssAnime(

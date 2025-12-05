@@ -72,7 +72,6 @@ class StreamPlayAnime : MainAPI() {
     override val supportedSyncNames = setOf(SyncIdName.Anilist,SyncIdName.MyAnimeList)
     override val hasMainPage = true
     override val hasQuickSearch = false
-    // ELIMINADO: private val repo = SyncRepo(AccountManager.aniListApi) // Esto puede ser problemático si aniListApi es null al inicio
     private val apiUrl = "https://graphql.anilist.co"
     private val mediaLimit = 20
     private val isAdult = false

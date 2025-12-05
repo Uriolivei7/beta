@@ -52,11 +52,6 @@ class StreamPlayPlugin: Plugin() {
         }
 
         sharedPref.edit { remove("enabled_plugins_set") }
-        //=====================MainAPI============================//
-
-        //registerMainAPI(StreamPlayTest(sharedPref))
-
-        //=====================Extractors=========================//
 
         registerExtractorAPI(Animefever())
         registerExtractorAPI(Multimovies())
