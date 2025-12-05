@@ -72,7 +72,7 @@ class StreamPlayAnime : MainAPI() {
     override val supportedSyncNames = setOf(SyncIdName.Anilist,SyncIdName.MyAnimeList)
     override val hasMainPage = true
     override val hasQuickSearch = false
-    private val repo = SyncRepo(AccountManager.aniListApi)
+    // ELIMINADO: private val repo = SyncRepo(AccountManager.aniListApi) // Esto puede ser problemático si aniListApi es null al inicio
     private val apiUrl = "https://graphql.anilist.co"
     private val mediaLimit = 20
     private val isAdult = false
@@ -141,7 +141,7 @@ class StreamPlayAnime : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (request.name.contains("Personal")) {
-            // Acceder al objeto API.
+            // 1. Obtener la implementación de SyncAPI.
             val syncApi = AccountManager.aniListApi
 
             if (syncApi == null) {
@@ -152,32 +152,39 @@ class StreamPlayAnime : MainAPI() {
                 )
             }
 
-            // 1. Intentamos obtener la referencia correcta del repositorio.
-            val syncRepo = (syncApi as? SyncRepo) ?: return newHomePageResponse(
-                "Error: Library synchronization not supported by current API configuration.",
-                emptyList(),
-                false
-            )
+            // 2. Crear una instancia de SyncRepo, envolviendo la SyncAPI.
+            // ESTA ES LA CORRECCIÓN: Evitar el casteo incorrecto de SyncAPI a SyncRepo.
+            val syncRepo = SyncRepo(syncApi)
 
-            // Ahora usamos el repositorio casteado.
-            // CORRECCIÓN: Usamos 'getPersonalLibrary()' según el stub de SyncRepo.
+            // 3. Llamar a la función correcta de SyncRepo.
             val libraryResource = syncRepo.getPersonalLibrary()
 
             // Verificamos si la carga de la biblioteca falló
             if (libraryResource is Failure) {
                 return newHomePageResponse(
-                    "Login required for personal content.",
+                    "Error loading personal library: ${libraryResource.errorString}",
                     emptyList(),
                     false
                 )
             }
 
-            // Acceso directo al valor (ya que safeGetOrThrow no está disponible).
-            // NOTA: Se asume que el tipo LibraryMetadata del SyncRepo se mapea a AllLibraryLists.
-            val libraryResponse = (libraryResource as Success<*>).value as AllLibraryLists
+            // Verificamos si la carga fue exitosa y obtenemos el valor.
+            val libraryResponse = (libraryResource as? Success<*>)?.value
+                ?: return newHomePageResponse(
+                    "Failed to retrieve library data.",
+                    emptyList(),
+                    false
+                )
+
+            // Cast al tipo esperado (LibraryMetadata que contiene AllLibraryLists)
+            val allLibraryLists = libraryResponse as? AllLibraryLists ?: return newHomePageResponse(
+                "Failed to parse library data structure.",
+                emptyList(),
+                false
+            )
 
             val homePageList =
-                libraryResponse.allLibraryLists.mapNotNull { libraryList: LibraryList ->
+                allLibraryLists.allLibraryLists.mapNotNull { libraryList: LibraryList ->
                     if (libraryList.items.isEmpty()) return@mapNotNull null
                     val listName = libraryList.name
                     HomePageList("${request.name}: $listName", libraryList.items)
@@ -193,7 +200,7 @@ class StreamPlayAnime : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val id = url.removeSuffix("/").substringAfterLast("/")
         val data = anilistAPICall(
-            "query (\$id: Int = $id) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } bannerImage episodes format nextAiringEpisode { episode } airingSchedule { nodes { episode } } recommendations { edges { node { id mediaRecommendation { id title { romaji english } coverImage { extraLarge large medium } } } } } } }"
+            "query (\$id: Int = $id) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } bannerImage episodes format nextAiringEpisode { episode } } }"
         ).data.media ?: throw Exception("Unable to fetch media details")
 
         val anititle = data.getTitle()
