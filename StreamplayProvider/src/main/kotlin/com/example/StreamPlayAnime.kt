@@ -55,6 +55,7 @@ import com.lagradost.cloudstream3.mvvm.Resource
 import com.lagradost.cloudstream3.mvvm.Resource.Success
 import com.lagradost.cloudstream3.mvvm.Resource.Failure
 import com.lagradost.cloudstream3.mvvm.Resource.Loading
+import kotlin.io.println
 
 private fun <T> Resource<T>.safeGetOrThrow(): T {
     return when (this) {
@@ -169,10 +170,13 @@ class StreamPlayAnime : MainAPI() {
         val aniyear = data.startDate.year
         val anitype = if (data.format!!.contains("MOVIE", ignoreCase = true)) TvType.AnimeMovie else TvType.TvSeries
         val ids = tmdbToAnimeId(anititle, aniyear, anitype)
+        println("STREAMPLAY_DEBUG: LOAD: AniList ID: ${ids.id}, MAL ID: ${ids.idMal}") // Log 1
+
         val jpTitle = data.title.romaji
 
         val syncMetaData = app.get("https://api.ani.zip/mappings?anilist_id=${ids.id}").toString()
         val animeMetaData = parseAnimeData(syncMetaData)
+        println("STREAMPLAY_DEBUG: LOAD: AniZip Metadata fetched: ${animeMetaData != null}") // Log 2
 
         val href = LinkData(
             malId = ids.idMal,
@@ -182,6 +186,10 @@ class StreamPlayAnime : MainAPI() {
             year = data.startDate.year,
             isAnime = true
         ).toStringData()
+        println("STREAMPLAY_DEBUG: LOAD: LinkData (href) generated: $href") // Log 3
+
+        val totalEpisodes = data.totalEpisodes()
+        println("STREAMPLAY_DEBUG: LOAD: Calculated total episodes: $totalEpisodes") // Log 4
 
         // --- Helper to get best episode title ---
         fun resolveTitle(epData: MetaEpisode?): String {
@@ -209,10 +217,13 @@ class StreamPlayAnime : MainAPI() {
                 isDub = isDub
             ).toStringData()
 
+            val episodeName = resolveTitle(epData)
+            println("STREAMPLAY_DEBUG: LOAD: Creating Episode $i (Dub: $isDub), Name: $episodeName, LinkData length: ${linkData.length}") // Log 5
+
             return newEpisode(linkData) {
                 this.season = 1
                 this.episode = i
-                this.name = resolveTitle(epData)
+                this.name = episodeName
                 this.posterUrl = epData?.image ?: animeMetaData?.images?.firstOrNull()?.url ?: ""
                 this.description = epData?.overview ?: "No summary available"
                 //this.score = Score.from10(epData?.rating)
@@ -221,8 +232,8 @@ class StreamPlayAnime : MainAPI() {
             }
         }
 
-        val episodes = (1..data.totalEpisodes()).map { createEpisode(it, false) }
-        val episodesDub = (1..data.totalEpisodes()).map { createEpisode(it, true) }
+        val episodes = (1..totalEpisodes).map { createEpisode(it, false) }
+        val episodesDub = (1..totalEpisodes).map { createEpisode(it, true) }
 
         return if (data.format.contains("Movie",ignoreCase = true)) {
             newMovieLoadResponse(data.getTitle(), url, TvType.AnimeMovie, href) {
@@ -277,49 +288,97 @@ class StreamPlayAnime : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("STREAMPLAY_DEBUG: loadLinks: Call started with data: $data") // Log A
+
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            file.run {
+                println("STREAMPLAY_DEBUG: SUBTITLE FOUND: Lang: ${lang}, Name: ${name}, URL: ${url.take(50)}...")
+                subtitleCallback(file)
+            }
+        }
+
         val mediaData = AppUtils.parseJson<LinkData>(data)
+        println("STREAMPLAY_DEBUG: loadLinks: Parsed LinkData: $mediaData") // Log B
+
         val malId = mediaData.malId
         val episode = mediaData.episode
         val jpTitle = mediaData.jpTitle
         val anititle = mediaData.title
         val season= jpTitle?.let { extractSeason(it) }
         val year=mediaData.year
+        println("STREAMPLAY_DEBUG: loadLinks: Extractor parameters - malId: $malId, episode: $episode, jpTitle: $jpTitle") // Log C
+
         val malsync = app.get("$malsyncAPI/mal/anime/$malId").parsedSafe<MALSyncResponses>()?.sites
+
+        val siteNames = (malsync as? Map<*, *>)?.keys?.joinToString() ?: "None"
+        println("STREAMPLAY_DEBUG: loadLinks: MALSync fetched. Sites available: $siteNames") // Log D
+
         val zoro = malsync?.zoro
         val zorotitle = zoro?.values?.firstNotNullOfOrNull { it["title"] }?.replace(":", " ")
         val aniXL = malsync?.AniXL?.values?.firstNotNullOfOrNull { it["url"] }
         val kaasSlug = malsync?.KickAssAnime?.values?.firstNotNullOfOrNull { it["identifier"] }
         val dubStatus = if (mediaData.isDub) "DUB" else "SUB"
 
+        println("STREAMPLAY_DEBUG: loadLinks: Extracted site info - zorotitle: $zorotitle, aniXL url: ${aniXL != null}, kaasSlug: $kaasSlug, dubStatus: $dubStatus") // Log E
+
+        println("STREAMPLAY_DEBUG: loadLinks: Starting extractor calls via runAllAsync...") // Log F
+
         runAllAsync(
-            { invokeHianime(zoro?.keys?.toList(), episode, subtitleCallback, callback, dubStatus) },
+            {
+                println("STREAMPLAY_DEBUG: loadLinks: Calling invokeHianime")
+                // Se usa el loggingSubtitleCallback
+                invokeHianime(zoro?.keys?.toList(), episode, loggingSubtitleCallback, callback, dubStatus)
+            },
             {
                 malsync?.animepahe?.values?.firstNotNullOfOrNull { it["url"] }?.let {
-                    invokeAnimepahe(it, episode, subtitleCallback, callback, dubStatus)
+                    println("STREAMPLAY_DEBUG: loadLinks: Calling invokeAnimepahe with URL: $it")
+                    invokeAnimepahe(it, episode, loggingSubtitleCallback, callback, dubStatus)
+                } ?: println("STREAMPLAY_DEBUG: loadLinks: Animepahe URL not found, skipping.")
+            },
+            {
+                println("STREAMPLAY_DEBUG: loadLinks: Calling invokeAnizone")
+                invokeAnizone(jpTitle, episode, callback, dubStatus)
+            },
+            {
+                println("STREAMPLAY_DEBUG: loadLinks: Calling invokeAnichi")
+                invokeAnichi(jpTitle, anititle, year, episode, loggingSubtitleCallback, callback, dubStatus)
+            },
+            {
+                if (kaasSlug != null) {
+                    println("STREAMPLAY_DEBUG: loadLinks: Calling invokeKickAssAnime with slug: $kaasSlug")
+                    invokeKickAssAnime(kaasSlug, episode, loggingSubtitleCallback, callback, dubStatus)
+                } else {
+                    println("STREAMPLAY_DEBUG: loadLinks: KickAssAnime slug not found, skipping.")
                 }
             },
-            { invokeAnizone(jpTitle, episode, callback, dubStatus) },
-            { invokeAnichi(jpTitle, anititle, year, episode, subtitleCallback, callback, dubStatus) },
-            { invokeKickAssAnime(kaasSlug, episode, subtitleCallback, callback, dubStatus) },
-            { invokeAnimeKai(jpTitle, zorotitle, episode, subtitleCallback, callback, dubStatus) },
+            {
+                println("STREAMPLAY_DEBUG: loadLinks: Calling invokeAnimeKai")
+                invokeAnimeKai(jpTitle, zorotitle, episode, loggingSubtitleCallback, callback, dubStatus)
+            },
             {
                 malId?.let {
+                    println("STREAMPLAY_DEBUG: loadLinks: Calling invokeAnimetosho with malId: $it")
+                    // Se usa el loggingSubtitleCallback
                     invokeAnimetosho(
                         it,
                         season,
                         episode,
-                        subtitleCallback,
+                        loggingSubtitleCallback,
                         callback,
                         dubStatus
                     )
-                }
+                } ?: println("STREAMPLAY_DEBUG: loadLinks: MalId is null, skipping invokeAnimetosho.")
             },
             {
                 if (aniXL != null) {
+                    println("STREAMPLAY_DEBUG: loadLinks: Calling invokeAniXL with URL: $aniXL")
                     invokeAniXL(aniXL, episode, callback, dubStatus)
+                } else {
+                    println("STREAMPLAY_DEBUG: loadLinks: AniXL URL not found, skipping.")
                 }
             }
         )
+        println("STREAMPLAY_DEBUG: loadLinks: Extractor calls finished.") // Log G
         return true
     }
 
