@@ -144,6 +144,26 @@
         "name": "SoloLatinoProvider"
     },
     {
+        "iconUrl": "https://i3.wp.com/yt3.googleusercontent.com/ytc/AIdro_nCBArSmvOc6o-k2hTYpLtQMPrKqGtAw_nC20rxm70akA=s900-c-k-c0x00ffffff-no-rj?ssl=1",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 755335,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Phisher98",
+            "Hexated"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 486,
+        "internalName": "StreamplayProvider",
+        "description": "#1 best extention based on MultiAPI",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/StreamplayProvider.cs3",
+        "name": "StreamplayProvider"
+    },
+    {
         "iconUrl": "https://www.cablevisionhd.com/imge/cablevisionhd.png",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
@@ -163,7 +183,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%",
-        "jarFileSize": 74309,
+        "jarFileSize": 75071,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
         "fileSize": 19019,
