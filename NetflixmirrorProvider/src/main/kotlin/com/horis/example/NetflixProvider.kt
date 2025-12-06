@@ -137,7 +137,7 @@ class NetflixProvider : MainAPI() {
         val data = app.get(
             postUrl,
             headers,
-            referer = "$newUrl/",
+            referer = "https://net51.cc",
             cookies = cookies
         ).parsed<PostData>()
 
@@ -161,7 +161,7 @@ class NetflixProvider : MainAPI() {
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
                 this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/tv/home")
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
 
@@ -224,7 +224,7 @@ class NetflixProvider : MainAPI() {
         )
         var pg = page
         while (true) {
-            val epUrl = "$mainUrl/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg"
+            val epUrl = "$newUrl/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg"
             Log.i(TAG, "Fetching episodes page $pg for SID: $sid")
 
             val data = app.get(
