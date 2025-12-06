@@ -116,9 +116,9 @@ class SoloLatinoProvider : MainAPI() {
 
         val homePageLists = urls.map { (name, url) ->
             val tvType = when (name) {
-                "Peliculas" -> TvType.Movie
                 "Series" -> TvType.TvSeries
                 "Animes" -> TvType.Anime
+                "Peliculas" -> TvType.Movie
                 else -> TvType.Others
             }
             val html = safeAppGet(url)
@@ -234,9 +234,50 @@ class SoloLatinoProvider : MainAPI() {
 
         val tvType = if (cleanUrl.contains("peliculas")) TvType.Movie else TvType.TvSeries
         val title = doc.selectFirst("div.data h1")?.text() ?: ""
-        val poster = doc.selectFirst("div.poster img")?.attr("src") ?: ""
         val description = doc.selectFirst("div.wp-content")?.text() ?: ""
         val tags = doc.select("div.sgeneros a").map { it.text() }
+
+        val posterElement = doc.selectFirst("div.poster img")
+        var poster = ""
+
+        if (posterElement != null) {
+            poster = posterElement.attr("data-src")
+            if (poster.isBlank()) {
+                poster = posterElement.attr("data-litespeed-src")
+            }
+            if (poster.isBlank()) {
+                // Prioridad 3: src (el fallback)
+                poster = posterElement.attr("src")
+            }
+
+            if (poster.isNotBlank() && !poster.contains("data:image")) {
+                Log.d("SoloLatino", "load - Póster principal extraído: $poster")
+            } else {
+                Log.e("SoloLatino", "load - ERROR: El póster principal sigue vacío o es el GIF temporal.")
+                poster = ""
+            }
+        } else {
+            Log.e("SoloLatino", "load - ERROR: No se encontró el elemento <img> dentro de 'div.poster'.")
+        }
+
+
+        val backgroundPosterStyle = doc.selectFirst("div.wallpaper")?.attr("style")
+        var backgroundPoster = poster // Valor por defecto: el póster principal
+
+        if (backgroundPosterStyle != null) {
+            // Extrae la URL de la cadena de estilo (e.g., url(URL_AQUI))
+            val urlMatch = Regex("""url\(([^)]+)\)""").find(backgroundPosterStyle)
+            if (urlMatch != null) {
+                backgroundPoster = urlMatch.groupValues[1].removeSuffix(";")
+                Log.d("SoloLatino", "load - Fondo extraído del style: $backgroundPoster")
+            } else {
+                Log.d("SoloLatino", "load - Aviso: Se encontró el div.wallpaper, pero no se pudo extraer la URL del estilo.")
+            }
+        } else {
+            Log.d("SoloLatino", "load - Aviso: No se encontró el elemento 'div.wallpaper'. Usando el póster como fondo.")
+        }
+
+        // ----------------------------------------------------------------
 
         val episodes = if (tvType == TvType.TvSeries) {
             doc.select("div#seasons div.se-c").flatMap { seasonElement ->
@@ -248,14 +289,19 @@ class SoloLatinoProvider : MainAPI() {
                     val seasonNumber = numerandoText?.split("-")?.getOrNull(0)?.trim()?.toIntOrNull()
                     val episodeNumber = numerandoText?.split("-")?.getOrNull(1)?.trim()?.toIntOrNull()
 
-                    val realimg = element.selectFirst("div.imagen img")?.attr("src")
+                    val imgElement = element.selectFirst("div.imagen img")
+                    // 🖼️ Lógica mejorada para el póster del episodio
+                    val epPoster = imgElement?.attr("data-src")
+                        ?: imgElement?.attr("data-litespeed-src")
+                        ?: imgElement?.attr("src")
+                        ?: ""
 
                     if (epurl.isNotBlank() && epTitle.isNotBlank()) {
                         newEpisode(epurl) {
                             this.name = epTitle
                             this.season = seasonNumber
                             this.episode = episodeNumber
-                            this.posterUrl = realimg
+                            this.posterUrl = epPoster
                         }
                     } else null
                 }
@@ -265,7 +311,14 @@ class SoloLatinoProvider : MainAPI() {
         val recommendations = doc.select("div#single_relacionados article").mapNotNull {
             val recLink = it.selectFirst("a")?.attr("href")
             val recImgElement = it.selectFirst("a img.lazyload") ?: it.selectFirst("a img")
-            val recImg = recImgElement?.attr("data-srcset")?.split(",")?.lastOrNull()?.trim()?.split(" ")?.firstOrNull() ?: recImgElement?.attr("src")
+
+            // 🖼️ Lógica mejorada para imágenes de recomendación
+            val recImg = recImgElement?.attr("data-src") // Prioridad 1: data-src
+                ?: recImgElement?.attr("data-litespeed-src") // Prioridad 2: data-litespeed-src
+                ?: recImgElement?.attr("data-srcset")?.split(",")?.lastOrNull()?.trim()?.split(" ")?.firstOrNull() // Prioridad 3: srcset
+                ?: recImgElement?.attr("src") // Prioridad 4: src
+                ?: ""
+
             val recTitle = recImgElement?.attr("alt")
 
             if (recTitle != null && recLink != null) {
@@ -277,6 +330,9 @@ class SoloLatinoProvider : MainAPI() {
                     this.type = if (recLink.contains("/peliculas/")) TvType.Movie else TvType.TvSeries
                 }
             } else {
+                if (recLink == null) {
+                    Log.d("SoloLatino", "load - Aviso: Recomendación omitida (enlace nulo).")
+                }
                 null
             }
         }
@@ -290,7 +346,7 @@ class SoloLatinoProvider : MainAPI() {
                     episodes = episodes,
                 ) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = poster
+                    this.backgroundPosterUrl = backgroundPoster // Usa el fondo extraído
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
@@ -305,7 +361,7 @@ class SoloLatinoProvider : MainAPI() {
                     dataUrl = cleanUrl
                 ) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = poster
+                    this.backgroundPosterUrl = backgroundPoster // Usa el fondo extraído
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
