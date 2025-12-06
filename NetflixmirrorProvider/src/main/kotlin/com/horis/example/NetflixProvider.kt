@@ -131,13 +131,13 @@ class NetflixProvider : MainAPI() {
             "ott" to "nf",
             "hd" to "on"
         )
-        val postUrl = "$mainUrl/post.php?id=$id&t=${APIHolder.unixTime}"
+        val postUrl = "$newUrl/post.php?id=$id&t=${APIHolder.unixTime}"
         Log.i(TAG, "Fetching post data from: $postUrl")
 
         val data = app.get(
             postUrl,
             headers,
-            referer = "$mainUrl/tv/home",
+            referer = "$newUrl/",
             cookies = cookies
         ).parsed<PostData>()
 
@@ -155,12 +155,13 @@ class NetflixProvider : MainAPI() {
         val genre = data.genre?.split(",")
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
+
         val rating = data.match?.replace("IMDb ", "")
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
                 this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                posterHeaders = mapOf("Referer" to "$mainUrl/tv/home")
             }
         }
 
@@ -200,7 +201,7 @@ class NetflixProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
             backgroundPosterUrl ="https://imgcdn.kim/poster/h/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+            posterHeaders = mapOf("Referer" to "$mainUrl/tv/home")
             plot = data.desc
             year = data.year.toIntOrNull()
             tags = genre
@@ -229,7 +230,7 @@ class NetflixProvider : MainAPI() {
             val data = app.get(
                 epUrl,
                 headers,
-                referer = "$mainUrl/tv/home",
+                referer = "$newUrl/tv/home",
                 cookies = cookies
             ).parsed<EpisodesData>()
 
@@ -273,7 +274,7 @@ class NetflixProvider : MainAPI() {
         val playlist = app.get(
             playlistUrl,
             headers,
-            referer = "$mainUrl/home",
+            referer = "$mainUrl/tv/home",
             cookies = cookies
         ).parsed<PlayList>()
 
