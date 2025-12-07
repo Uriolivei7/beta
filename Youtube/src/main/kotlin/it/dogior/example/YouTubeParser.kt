@@ -31,6 +31,8 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 
 class YouTubeParser(override var name: String) : MainAPI() {
 
+    private val TAG_REC = "YT_REC"
+
     fun getTrendingVideoUrls(page: Int): HomePageList? {
         val service = ServiceList.YouTube
         val kiosks = service.kioskList
@@ -209,9 +211,7 @@ class YouTubeParser(override var name: String) : MainAPI() {
     }
 
     suspend fun videoToLoadResponse(videoUrl: String): LoadResponse {
-        val TAG = "YouTubeParser"
-
-        Log.d(TAG, "Carga de LoadResponse iniciada para URL: $videoUrl")
+        Log.d(TAG_REC, "Carga de LoadResponse iniciada para URL: $videoUrl")
 
         val videoInfo = StreamInfo.getInfo(videoUrl)
 
@@ -220,19 +220,19 @@ class YouTubeParser(override var name: String) : MainAPI() {
         val length = videoInfo.duration / 60
 
         val rawRecommendations = videoInfo.relatedStreams
-        Log.d(TAG, "Recomendaciones RAW encontradas por NewPipe: ${rawRecommendations.size} elementos.")
+        Log.d(TAG_REC, "Recomendaciones RAW encontradas por NewPipe: ${rawRecommendations.size} elementos.")
 
         val recommendations = rawRecommendations.mapNotNull { item ->
 
             val video = item as? StreamInfoItem
 
             if (video == null) {
-                Log.d(TAG, "Recomendación saltada: El ítem no es un video (StreamInfoItem). Tipo: ${item::class.simpleName}")
+                Log.d(TAG_REC, "Recomendación saltada: El ítem no es un video. Tipo: ${item::class.simpleName}")
                 return@mapNotNull null
             }
 
             if (video.name.isNullOrBlank() || video.url.isNullOrBlank()) {
-                Log.e(TAG, "ERROR Recomendación: Nombre o URL del video en blanco. Omitiendo.")
+                Log.e(TAG_REC, "ERROR Recomendación: Nombre o URL del video en blanco para URL: ${video.url}")
                 return@mapNotNull null
             }
 
@@ -244,17 +244,17 @@ class YouTubeParser(override var name: String) : MainAPI() {
                 this.posterUrl = video.thumbnails.lastOrNull()?.url
 
                 if (this.posterUrl.isNullOrBlank()) {
-                    Log.w(TAG, "Advertencia: Póster vacío para la recomendación: ${video.name}")
+                    Log.w(TAG_REC, "Advertencia: Póster vacío para la recomendación: ${video.name}")
                 } else {
-                    Log.d(TAG, "Recomendación OK: '${video.name}' | Póster: ${this.posterUrl}")
+                    Log.d(TAG_REC, "Recomendación OK: '${video.name}' | Póster: ${this.posterUrl}")
                 }
             } as SearchResponse
         }
 
         if (recommendations.isEmpty()) {
-            Log.w(TAG, "Advertencia: La lista final de recomendaciones está vacía.")
+            Log.w(TAG_REC, "Advertencia: La lista final de recomendaciones está vacía.")
         } else {
-            Log.d(TAG, "Recomendaciones finales cargadas. Total: ${recommendations.size}")
+            Log.d(TAG_REC, "Recomendaciones finales cargadas. Total: ${recommendations.size}")
         }
 
         return this.newMovieLoadResponse(
