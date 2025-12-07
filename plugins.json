@@ -123,7 +123,7 @@
     {
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "fileSize": 30607,
+        "fileSize": 30597,
         "status": 1,
         "language": "es",
         "authors": [
@@ -180,5 +180,22 @@
         "description": "Watch livestreams from Twitch",
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.cs3",
         "name": "TwitchProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 49710,
+        "status": 1,
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Others"
+        ],
+        "version": 12,
+        "internalName": "Youtube",
+        "description": "Videos, playlists and channels from YouTube",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Youtube.cs3",
+        "name": "Youtube"
     }
 ]
