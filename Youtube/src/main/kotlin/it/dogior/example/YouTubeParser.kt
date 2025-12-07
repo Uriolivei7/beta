@@ -31,7 +31,9 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 
 class YouTubeParser(override var name: String) : MainAPI() {
 
-    private val TAG_REC = "YT_REC"
+    companion object {
+        private const val TAG_REC = "YT_REC"
+    }
 
     fun getTrendingVideoUrls(page: Int): HomePageList? {
         val service = ServiceList.YouTube
@@ -211,6 +213,7 @@ class YouTubeParser(override var name: String) : MainAPI() {
     }
 
     suspend fun videoToLoadResponse(videoUrl: String): LoadResponse {
+
         Log.d(TAG_REC, "Carga de LoadResponse iniciada para URL: $videoUrl")
 
         val videoInfo = StreamInfo.getInfo(videoUrl)
