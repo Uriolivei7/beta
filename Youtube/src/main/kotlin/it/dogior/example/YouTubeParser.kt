@@ -31,10 +31,6 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 
 class YouTubeParser(override var name: String) : MainAPI() {
 
-    companion object {
-        private const val TAG_REC = "YT_REC"
-    }
-
     fun getTrendingVideoUrls(page: Int): HomePageList? {
         val service = ServiceList.YouTube
         val kiosks = service.kioskList
@@ -213,8 +209,11 @@ class YouTubeParser(override var name: String) : MainAPI() {
     }
 
     suspend fun videoToLoadResponse(videoUrl: String): LoadResponse {
+        // Usamos el valor literal del tag de depuración
+        val CURRENT_TAG = "YT_REC"
 
-        Log.d(TAG_REC, "Carga de LoadResponse iniciada para URL: $videoUrl")
+        // Cambiamos a Log.e para asegurar visibilidad
+        Log.e(CURRENT_TAG, "--- INICIO Carga LoadResponse para URL: $videoUrl ---")
 
         val videoInfo = StreamInfo.getInfo(videoUrl)
 
@@ -223,19 +222,22 @@ class YouTubeParser(override var name: String) : MainAPI() {
         val length = videoInfo.duration / 60
 
         val rawRecommendations = videoInfo.relatedStreams
-        Log.d(TAG_REC, "Recomendaciones RAW encontradas por NewPipe: ${rawRecommendations.size} elementos.")
+        // Usamos Log.e
+        Log.e(CURRENT_TAG, "RECOMENDACIONES RAW encontradas por NewPipe: ${rawRecommendations.size} elementos.")
 
         val recommendations = rawRecommendations.mapNotNull { item ->
 
             val video = item as? StreamInfoItem
 
             if (video == null) {
-                Log.d(TAG_REC, "Recomendación saltada: El ítem no es un video. Tipo: ${item::class.simpleName}")
+                // Usamos Log.e
+                Log.e(CURRENT_TAG, "SALTADO: El ítem no es un video. Tipo: ${item::class.simpleName}")
                 return@mapNotNull null
             }
 
             if (video.name.isNullOrBlank() || video.url.isNullOrBlank()) {
-                Log.e(TAG_REC, "ERROR Recomendación: Nombre o URL del video en blanco para URL: ${video.url}")
+                // Usamos Log.e (Ya era E)
+                Log.e(CURRENT_TAG, "ERROR Recomendación: Nombre o URL del video en blanco para URL: ${video.url}")
                 return@mapNotNull null
             }
 
@@ -247,19 +249,24 @@ class YouTubeParser(override var name: String) : MainAPI() {
                 this.posterUrl = video.thumbnails.lastOrNull()?.url
 
                 if (this.posterUrl.isNullOrBlank()) {
-                    Log.w(TAG_REC, "Advertencia: Póster vacío para la recomendación: ${video.name}")
+                    // Usamos Log.e
+                    Log.e(CURRENT_TAG, "ADVERTENCIA: Póster vacío para la recomendación: ${video.name}")
                 } else {
-                    Log.d(TAG_REC, "Recomendación OK: '${video.name}' | Póster: ${this.posterUrl}")
+                    // Usamos Log.e
+                    Log.e(CURRENT_TAG, "RECOMENDACIÓN OK: '${video.name}' | Póster asignado.")
                 }
             } as SearchResponse
         }
 
         if (recommendations.isEmpty()) {
-            Log.w(TAG_REC, "Advertencia: La lista final de recomendaciones está vacía.")
+            // Usamos Log.e
+            Log.e(CURRENT_TAG, "RESULTADO: La lista final de recomendaciones está VACÍA.")
         } else {
-            Log.d(TAG_REC, "Recomendaciones finales cargadas. Total: ${recommendations.size}")
+            // Usamos Log.e
+            Log.e(CURRENT_TAG, "RESULTADO: Recomendaciones finales cargadas. Total: ${recommendations.size}")
         }
 
+        // Asignamos y terminamos la carga
         return this.newMovieLoadResponse(
             name = videoInfo.name,
             url = videoUrl,
