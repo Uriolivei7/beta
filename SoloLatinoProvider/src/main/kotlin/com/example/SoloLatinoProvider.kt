@@ -237,22 +237,15 @@ class SoloLatinoProvider : MainAPI() {
         val description = doc.selectFirst("div.wp-content")?.text() ?: ""
         val tags = doc.select("div.sgeneros a").map { it.text() }
 
-        // ----------------------------------------------------------------
-        // 🖼️ PÓSTER PRINCIPAL (LÓGICA MEJORADA CON LOGS)
-        // ----------------------------------------------------------------
-
         val posterElement = doc.selectFirst("div.poster img")
         var poster = ""
 
         if (posterElement != null) {
-            // Prioridad 1: data-src (la imagen real en Lazy Loading)
             poster = posterElement.attr("data-src")
             if (poster.isBlank()) {
-                // Prioridad 2: data-litespeed-src
                 poster = posterElement.attr("data-litespeed-src")
             }
             if (poster.isBlank()) {
-                // Prioridad 3: src (el fallback)
                 poster = posterElement.attr("src")
             }
 
@@ -266,13 +259,10 @@ class SoloLatinoProvider : MainAPI() {
             Log.e("SoloLatino", "load - ERROR: No se encontró el elemento <img> dentro de 'div.poster'.")
         }
 
-        // 🖼️ FONDO DE PANTALLA (LÓGICA MEJORADA CON LOGS)
-
         val backgroundPosterStyle = doc.selectFirst("div.wallpaper")?.attr("style")
-        var backgroundPoster = poster // Valor por defecto: el póster principal
+        var backgroundPoster = poster
 
         if (backgroundPosterStyle != null) {
-            // Extrae la URL de la cadena de estilo (e.g., url(URL_AQUI))
             val urlMatch = Regex("""url\(([^)]+)\)""").find(backgroundPosterStyle)
             if (urlMatch != null) {
                 backgroundPoster = urlMatch.groupValues[1].removeSuffix(";")
@@ -284,8 +274,6 @@ class SoloLatinoProvider : MainAPI() {
             Log.d("SoloLatino", "load - Aviso: No se encontró el elemento 'div.wallpaper'. Usando el póster como fondo.")
         }
 
-        // ----------------------------------------------------------------
-
         val episodes = if (tvType == TvType.TvSeries) {
             doc.select("div#seasons div.se-c").flatMap { seasonElement ->
                 seasonElement.select("ul.episodios li").mapNotNull { element ->
@@ -296,7 +284,6 @@ class SoloLatinoProvider : MainAPI() {
                     val seasonNumber = numerandoText?.split("-")?.getOrNull(0)?.trim()?.toIntOrNull()
                     val episodeNumber = numerandoText?.split("-")?.getOrNull(1)?.trim()?.toIntOrNull()
 
-                    // Lógica de extracción de póster de episodio (manteniendo el data-src mejorado)
                     val imgElement = element.selectFirst("div.imagen img")
                     val epPoster = imgElement?.attr("data-src")
                         ?: imgElement?.attr("data-litespeed-src")
@@ -315,17 +302,13 @@ class SoloLatinoProvider : MainAPI() {
             }
         } else listOf()
 
-        // ----------------------------------------------------------------
-        // 🖼️ RECOMENDACIONES (LÓGICA ANTIGUA RESTAURADA)
-        // ----------------------------------------------------------------
         val recommendations = doc.select("div#single_relacionados article").mapNotNull {
             val recLink = it.selectFirst("a")?.attr("href")
             val recImgElement = it.selectFirst("a img.lazyload") ?: it.selectFirst("a img")
 
-            // Lógica antigua restaurada: data-srcset o src
             val recImg = recImgElement?.attr("data-srcset")?.split(",")?.lastOrNull()?.trim()?.split(" ")?.firstOrNull()
                 ?: recImgElement?.attr("src")
-                ?: "" // Aseguramos que sea una cadena vacía si no se encuentra nada
+                ?: ""
 
             val recTitle = recImgElement?.attr("alt")
 
@@ -341,7 +324,6 @@ class SoloLatinoProvider : MainAPI() {
                 null
             }
         }
-        // ----------------------------------------------------------------
 
         return when (tvType) {
             TvType.TvSeries -> {
@@ -352,7 +334,7 @@ class SoloLatinoProvider : MainAPI() {
                     episodes = episodes,
                 ) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = backgroundPoster // Usa el fondo extraído
+                    this.backgroundPosterUrl = backgroundPoster
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
@@ -367,7 +349,7 @@ class SoloLatinoProvider : MainAPI() {
                     dataUrl = cleanUrl
                 ) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = backgroundPoster // Usa el fondo extraído
+                    this.backgroundPosterUrl = backgroundPoster
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
