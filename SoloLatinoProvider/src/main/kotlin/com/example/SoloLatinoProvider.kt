@@ -20,6 +20,9 @@ import kotlin.text.RegexOption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 //yeji
 class SoloLatinoProvider : MainAPI() {
@@ -287,6 +290,8 @@ class SoloLatinoProvider : MainAPI() {
         }
 
         val episodes = if (tvType == TvType.TvSeries) {
+            val dateFormatter = SimpleDateFormat("MMM. dd, yyyy", Locale.ENGLISH)
+
             doc.select("div#seasons div.se-c").flatMap { seasonElement ->
                 seasonElement.select("ul.episodios li").mapNotNull { element ->
                     val epurl = fixUrl(element.selectFirst("a")?.attr("href") ?: "")
@@ -295,6 +300,8 @@ class SoloLatinoProvider : MainAPI() {
                     val numerandoText = element.selectFirst("div.episodiotitle div.numerando")?.text()
                     val seasonNumber = numerandoText?.split("-")?.getOrNull(0)?.trim()?.toIntOrNull()
                     val episodeNumber = numerandoText?.split("-")?.getOrNull(1)?.trim()?.toIntOrNull()
+
+                    val dateText = element.selectFirst("div.episodiotitle span.date")?.text()
 
                     val imgElement = element.selectFirst("div.imagen img")
                     val epPoster = imgElement?.attr("data-src")
@@ -308,6 +315,16 @@ class SoloLatinoProvider : MainAPI() {
                             this.season = seasonNumber
                             this.episode = episodeNumber
                             this.posterUrl = epPoster
+
+                            dateText?.let { dateStr ->
+                                try {
+                                    val dateObj = dateFormatter.parse(dateStr)
+                                    addDate(dateObj)
+
+                                } catch (e: Exception) {
+                                    Log.e("SoloLatino", "Error al parsear fecha del episodio '$dateStr': ${e.message}")
+                                }
+                            }
                         }
                     } else null
                 }
