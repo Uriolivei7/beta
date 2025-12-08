@@ -100,14 +100,21 @@ class Animeav1 : MainAPI() {
         val title = document.selectFirst("article h1")?.text() ?: "Unknown"
         val poster = document.select("img.aspect-poster.w-full.rounded-lg").attr("src")
         val description = document.selectFirst("div.entry.text-lead p")?.text()
-        val rawtype = document.select("div.flex.flex-wrap.items-center.gap-2.text-sm > span:nth-child(1)").text()
-        val type = getTvType(rawtype)
-        val tags = document.select("header > div:nth-child(3) a").map { it.text() }
 
         val infoContainer = document.selectFirst("header > div.flex.flex-wrap.items-center.gap-2.text-sm")
+
         val yearText = infoContainer?.select("span:nth-child(3)")?.text()
         val year = yearText?.toIntOrNull()
+        Log.d("Animeav1", "LOAD METADATA: Año extraído: $year")
+
         val statusText = infoContainer?.select("span:nth-child(6)")?.text()
+        Log.d("Animeav1", "LOAD METADATA: Estado de emisión extraído: $statusText")
+
+        val tags = document.select("header > div:nth-child(3) a").map { it.text() }
+        Log.d("Animeav1", "LOAD METADATA: Tags extraídos: $tags")
+
+        val rawtype = document.select("div.flex.flex-wrap.items-center.gap-2.text-sm > span:nth-child(1)").text()
+        val type = getTvType(rawtype)
 
         val recommendations = document.select("section div.gradient-cut > div > div").mapNotNull {
             val recTitle = it.select("h3").text()
@@ -180,6 +187,7 @@ class Animeav1 : MainAPI() {
                 this.plot = description
                 this.tags = tags
                 this.recommendations = recommendations
+                this.year = year
             }
         }
     }
