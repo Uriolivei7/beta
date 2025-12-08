@@ -102,13 +102,14 @@ class Animeav1 : MainAPI() {
         val description = document.selectFirst("div.entry.text-lead p")?.text()
 
         val infoContainer = document.selectFirst("header > div.flex.flex-wrap.items-center.gap-2.text-sm")
+        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (Index 1): ${infoContainer?.outerHtml()}")
 
         val yearText = infoContainer?.select("span:nth-child(3)")?.text()
         val year = yearText?.toIntOrNull()
-        Log.d("Animeav1", "LOAD METADATA: Año extraído: $year")
+        Log.d("Animeav1", "LOAD METADATA: Año extraído (toInt): $year")
 
         val statusText = infoContainer?.select("span:nth-child(6)")?.text()
-        Log.d("Animeav1", "LOAD METADATA: Estado de emisión extraído: $statusText")
+        Log.d("Animeav1", "LOAD METADATA: Estado extraído: $statusText")
 
         val tags = document.select("header > div:nth-child(3) a").map { it.text() }
         Log.d("Animeav1", "LOAD METADATA: Tags extraídos: $tags")
