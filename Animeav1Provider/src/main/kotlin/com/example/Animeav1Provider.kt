@@ -97,6 +97,7 @@ class Animeav1 : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
+
         val title = document.selectFirst("h1")?.text() ?: "Unknown"
         Log.d("Animeav1", "LOAD INICIO: Título extraído: $title")
 
@@ -108,14 +109,14 @@ class Animeav1 : MainAPI() {
 
         val infoContainer = document.selectFirst("header div.flex.flex-wrap.items-center.gap-2.text-sm")
 
-        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (V3): ${infoContainer?.outerHtml()}")
+        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (V4): ${infoContainer?.outerHtml()}")
 
         val yearText = infoContainer?.select("span:nth-child(3)")?.text()
         val year = yearText?.toIntOrNull()
         Log.d("Animeav1", "LOAD METADATA: Año extraído (toInt): $year")
 
-        val statusText = infoContainer?.select("span:nth-child(4)")?.text()
-        Log.d("Animeav1", "LOAD METADATA: Estado extraído: $statusText")
+        val statusText = infoContainer?.select("span:nth-child(7)")?.text()
+        Log.d("Animeav1", "LOAD METADATA: Estado extraído (Corregido): $statusText")
 
         val tags = document.select("header > div.flex.flex-wrap.items-center.gap-2 a").map { it.text() }
         Log.d("Animeav1", "LOAD METADATA: Tags extraídos: $tags")
