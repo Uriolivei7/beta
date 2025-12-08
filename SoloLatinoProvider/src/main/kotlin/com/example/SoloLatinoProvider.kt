@@ -237,6 +237,18 @@ class SoloLatinoProvider : MainAPI() {
         val description = doc.selectFirst("div.wp-content")?.text() ?: ""
         val tags = doc.select("div.sgeneros a").map { it.text() }
 
+        val dateText = doc.selectFirst("div.data span.date")?.text()
+
+        val year = dateText?.let {
+            Regex("""\d{4}""").find(it)?.value?.toIntOrNull()
+        }
+
+        if (year != null) {
+            Log.d("SoloLatino", "load - Año de lanzamiento extraído: $year")
+        } else {
+            Log.d("SoloLatino", "load - Aviso: No se pudo extraer el año de lanzamiento.")
+        }
+
         val posterElement = doc.selectFirst("div.poster img")
         var poster = ""
 
@@ -338,6 +350,7 @@ class SoloLatinoProvider : MainAPI() {
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
+                    this.year = year
                 }
             }
 
@@ -353,9 +366,9 @@ class SoloLatinoProvider : MainAPI() {
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
+                    this.year = year
                 }
             }
-
             else -> null
         }
     }

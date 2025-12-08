@@ -36,7 +36,6 @@ class YoutubeProvider(
     companion object {
         const val MAIN_URL = "https://www.youtube.com"
         const val TAG = "Youtube"
-        const val TAG_REC = "YT_REC"
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -121,9 +120,9 @@ class YoutubeProvider(
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG_REC, "Iniciando carga de LoadResponse para URL: $url")
+        Log.d(TAG, "Iniciando carga de LoadResponse para URL: $url")
         val video = ytParser.videoToLoadResponse(url)
-        Log.d(TAG_REC, "Carga de LoadResponse completada.")
+        Log.d(TAG, "Carga de LoadResponse completada.")
         return video
     }
 
