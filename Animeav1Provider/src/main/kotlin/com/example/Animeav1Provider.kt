@@ -27,6 +27,7 @@ import org.json.JSONObject
 import org.jsoup.nodes.Element
 import android.util.Log
 import com.lagradost.cloudstream3.DubStatus
+import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.addEpisodes
 import com.lagradost.cloudstream3.newAnimeLoadResponse
 import kotlinx.coroutines.Job
@@ -118,6 +119,8 @@ class Animeav1 : MainAPI() {
         val statusText = infoContainer?.select("span:nth-child(7)")?.text()
         Log.d("Animeav1", "LOAD METADATA: Estado extraído (Corregido): $statusText")
 
+        val showStatus = statusText?.let { getStatus(it) }
+
         val tags = document.select("header > div.flex.flex-wrap.items-center.gap-2 a").map { it.text() }
         Log.d("Animeav1", "LOAD METADATA: Tags extraídos: $tags")
 
@@ -181,11 +184,8 @@ class Animeav1 : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
                 this.year = year
-                statusText?.let {
-                    this.tags = tags + it
-                } ?: run {
-                    this.tags = tags
-                }
+                this.showStatus = showStatus
+                this.tags = tags
                 this.recommendations = recommendations
             }
         } else {
@@ -197,6 +197,14 @@ class Animeav1 : MainAPI() {
                 this.recommendations = recommendations
                 this.year = year
             }
+        }
+    }
+
+    fun getStatus(text: String): ShowStatus? {
+        return when (text.lowercase()) {
+            "En emisión", "en emision" -> ShowStatus.Ongoing
+            "Finalizado" -> ShowStatus.Completed
+            else -> null
         }
     }
 
