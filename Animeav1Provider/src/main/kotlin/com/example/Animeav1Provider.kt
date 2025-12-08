@@ -96,13 +96,17 @@ class Animeav1 : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d("Animeav1", "LOAD INICIO: Procesando URL: $url")
         val document = app.get(url).document
         val title = document.selectFirst("article h1")?.text() ?: "Unknown"
+        Log.d("Animeav1", "LOAD INICIO: Título extraído: $title")
         val poster = document.select("img.aspect-poster.w-full.rounded-lg").attr("src")
+        Log.d("Animeav1", "LOAD INICIO: Póster extraído: $poster")
         val description = document.selectFirst("div.entry.text-lead p")?.text()
 
-        val infoContainer = document.selectFirst("header > div.flex.flex-wrap.items-center.gap-2.text-sm")
-        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (Index 1): ${infoContainer?.outerHtml()}")
+        val headerElement = document.selectFirst("header")
+        val infoContainer = headerElement?.selectFirst("div.flex.flex-wrap.items-center.gap-2.text-sm")
+        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (Por Clase): ${infoContainer?.outerHtml()}")
 
         val yearText = infoContainer?.select("span:nth-child(3)")?.text()
         val year = yearText?.toIntOrNull()
