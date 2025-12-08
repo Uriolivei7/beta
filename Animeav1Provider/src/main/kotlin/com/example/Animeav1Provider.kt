@@ -96,29 +96,31 @@ class Animeav1 : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d("Animeav1", "LOAD INICIO: Procesando URL: $url")
         val document = app.get(url).document
-        val title = document.selectFirst("article h1")?.text() ?: "Unknown"
+        val title = document.selectFirst("h1")?.text() ?: "Unknown"
         Log.d("Animeav1", "LOAD INICIO: Título extraído: $title")
-        val poster = document.select("img.aspect-poster.w-full.rounded-lg").attr("src")
-        Log.d("Animeav1", "LOAD INICIO: Póster extraído: $poster")
-        val description = document.selectFirst("div.entry.text-lead p")?.text()
 
-        val headerElement = document.selectFirst("header")
-        val infoContainer = headerElement?.selectFirst("div.flex.flex-wrap.items-center.gap-2.text-sm")
-        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (Por Clase): ${infoContainer?.outerHtml()}")
+        val poster = document.selectFirst("img[alt*='Poster']")?.attr("src")
+            ?: document.selectFirst("img.aspect-poster.w-full.rounded-lg")?.attr("src") ?: ""
+        Log.d("Animeav1", "LOAD INICIO: Póster extraído: $poster")
+
+        val description = document.selectFirst("div.entry.line-clamp-4 p")?.text()
+
+        val infoContainer = document.selectFirst("header div.flex.flex-wrap.items-center.gap-2.text-sm")
+
+        Log.d("Animeav1", "LOAD METADATA: Contenedor HTML (V3): ${infoContainer?.outerHtml()}")
 
         val yearText = infoContainer?.select("span:nth-child(3)")?.text()
         val year = yearText?.toIntOrNull()
         Log.d("Animeav1", "LOAD METADATA: Año extraído (toInt): $year")
 
-        val statusText = infoContainer?.select("span:nth-child(6)")?.text()
+        val statusText = infoContainer?.select("span:nth-child(4)")?.text()
         Log.d("Animeav1", "LOAD METADATA: Estado extraído: $statusText")
 
-        val tags = document.select("header > div:nth-child(3) a").map { it.text() }
+        val tags = document.select("header > div.flex.flex-wrap.items-center.gap-2 a").map { it.text() }
         Log.d("Animeav1", "LOAD METADATA: Tags extraídos: $tags")
 
-        val rawtype = document.select("div.flex.flex-wrap.items-center.gap-2.text-sm > span:nth-child(1)").text()
+        val rawtype = infoContainer?.select("span:nth-child(1)")?.text() ?: ""
         val type = getTvType(rawtype)
 
         val recommendations = document.select("section div.gradient-cut > div > div").mapNotNull {
