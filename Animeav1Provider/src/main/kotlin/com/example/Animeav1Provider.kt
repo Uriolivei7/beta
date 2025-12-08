@@ -96,6 +96,14 @@ class Animeav1 : MainAPI() {
         }
     }
 
+    private fun getStatus(text: String): ShowStatus? {
+        return when (text.lowercase()) {
+            "en emisión", "en emision" -> ShowStatus.Ongoing
+            "finalizado" -> ShowStatus.Completed
+            else -> null
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
@@ -194,17 +202,9 @@ class Animeav1 : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
-                this.recommendations = recommendations
                 this.year = year
+                this.recommendations = recommendations
             }
-        }
-    }
-
-    fun getStatus(text: String): ShowStatus? {
-        return when (text.lowercase()) {
-            "En emisión", "en emision" -> ShowStatus.Ongoing
-            "Finalizado" -> ShowStatus.Completed
-            else -> null
         }
     }
 
