@@ -12,7 +12,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     override var mainUrl = mainUrl
     override var name = name
     override val hasMainPage = true
-    override var lang = "vi"
+    override var lang = "mx"
     override val hasQuickSearch = true
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(
@@ -25,7 +25,11 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     val DEFAULT_POSTER_URL = "https://i.pinimg.com/1200x/1b/de/c6/1bdec6ecad93b562d13d6d9d10e7466a.jpg"
 
     private fun getSafePosterUrl(url: String?): String {
-        return if (url.isNullOrBlank() || url == "null") {
+        val isInvalid = url.isNullOrBlank() ||
+                url == "null" ||
+                !url.startsWith("http", ignoreCase = true)
+
+        return if (isInvalid) {
             DEFAULT_POSTER_URL
         } else {
             url

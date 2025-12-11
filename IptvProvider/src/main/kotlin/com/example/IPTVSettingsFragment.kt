@@ -48,8 +48,8 @@ class IPTVSettingsFragment(private val plugin: IPTVPlugin) : BottomSheetDialogFr
         savedInstanceState: Bundle?
     ): View? {
         val settings = getLayout("settings", inflater, container)
-        settings.findView<TextView>("add_link_text").text = "Agregar url m3u"
-        settings.findView<TextView>("list_link_text").text = "Lista de m3u"
+        settings.findView<TextView>("add_link_text").text = "Agregar Link"
+        settings.findView<TextView>("list_link_text").text = "Lista de Links"
         settings.findView<TextView>("group_text").text = "Hecho por: Uriolivei"
 
         val addLinkButton = settings.findView<ImageView>("button_add_link")
