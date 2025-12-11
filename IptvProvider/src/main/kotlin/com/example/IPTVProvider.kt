@@ -22,6 +22,16 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     val items = mutableMapOf<String, Playlist?>()
     val headers = mapOf("User-Agent" to "Player (Linux; Android 14)")
 
+    val DEFAULT_POSTER_URL = "https://i.pinimg.com/1200x/1b/de/c6/1bdec6ecad93b562d13d6d9d10e7466a.jpg"
+
+    private fun getSafePosterUrl(url: String?): String {
+        return if (url.isNullOrBlank() || url == "null") {
+            DEFAULT_POSTER_URL
+        } else {
+            url
+        }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         items[name] = IptvPlaylistParser().parseM3U(app.get(mainUrl, headers = headers).text)
 
@@ -31,7 +41,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                 val show = group.value.map { item ->
                     val streamurl = item.url.toString()
                     val channelname = item.title.toString()
-                    val posterurl = item.attributes["tvg-logo"].toString()
+                    val posterurl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
                     val chGroup = item.attributes["group-title"].toString()
                     val key = item.attributes["key"].toString()
                     val keyid = item.attributes["keyid"].toString()
@@ -59,7 +69,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
         return items[name]!!.items.filter { it.title.toString().lowercase().contains(query.lowercase()) }.map { item ->
             val streamurl = item.url.toString()
             val channelname = item.title.toString()
-            val posterurl = item.attributes["tvg-logo"].toString()
+            val posterurl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
             val chGroup = item.attributes["group-title"].toString()
             val key = item.attributes["key"].toString()
             val keyid = item.attributes["keyid"].toString()
@@ -89,7 +99,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                 val rcChannelName = item.title.toString()
                 if (rcChannelName == loadData.title) continue
 
-                val rcPosterUrl = item.attributes["tvg-logo"].toString()
+                val rcPosterUrl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
                 val rcChGroup = item.attributes["group-title"].toString()
                 val key = item.attributes["key"].toString()
                 val keyid = item.attributes["keyid"].toString()
