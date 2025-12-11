@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import okhttp3.Interceptor
 import okhttp3.Response
 import java.util.UUID
+import android.util.Log
 
 class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     override var mainUrl = mainUrl
@@ -22,18 +23,26 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     val items = mutableMapOf<String, Playlist?>()
     val headers = mapOf("User-Agent" to "Player (Linux; Android 14)")
 
-    val DEFAULT_POSTER_URL = "https://i.pinimg.com/1200x/1b/de/c6/1bdec6ecad93b562d13d6d9d10e7466a.jpg"
+    companion object {
+        private const val LOG_TAG = "IPTV_POSTER"
+
+        val DEFAULT_POSTER_URL = "https://i.pinimg.com/1200x/1b/de/c6/1bdec6ecad93b562d13d6d9d10e7466a.jpg"
+    }
 
     private fun getSafePosterUrl(url: String?): String {
         val isInvalid = url.isNullOrBlank() ||
                 url == "null" ||
                 !url.startsWith("http", ignoreCase = true)
 
-        return if (isInvalid) {
+        val finalUrl = if (isInvalid) {
+            Log.d(LOG_TAG, "Original URL '$url' es INVÁLIDA o no HTTP. Usando DEFAULT.")
             DEFAULT_POSTER_URL
         } else {
+            Log.d(LOG_TAG, "Original URL '$url' es VÁLIDA. Usando URL original.")
             url
         }
+
+        return finalUrl
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -46,6 +55,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                     val streamurl = item.url.toString()
                     val channelname = item.title.toString()
                     val posterurl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
+                    Log.d(LOG_TAG, "MAIN PAGE | Canal: $channelname | Póster final: $posterurl")
                     val chGroup = item.attributes["group-title"].toString()
                     val key = item.attributes["key"].toString()
                     val keyid = item.attributes["keyid"].toString()
@@ -74,6 +84,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
             val streamurl = item.url.toString()
             val channelname = item.title.toString()
             val posterurl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
+            Log.d(LOG_TAG, "SEARCH | Canal: $channelname | Póster final: $posterurl")
             val chGroup = item.attributes["group-title"].toString()
             val key = item.attributes["key"].toString()
             val keyid = item.attributes["keyid"].toString()
@@ -102,8 +113,8 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                 val rcStreamUrl = item.url.toString()
                 val rcChannelName = item.title.toString()
                 if (rcChannelName == loadData.title) continue
-
                 val rcPosterUrl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
+                Log.d(LOG_TAG, "REC | Canal Rec: $rcChannelName | Póster final: $rcPosterUrl")
                 val rcChGroup = item.attributes["group-title"].toString()
                 val key = item.attributes["key"].toString()
                 val keyid = item.attributes["keyid"].toString()
