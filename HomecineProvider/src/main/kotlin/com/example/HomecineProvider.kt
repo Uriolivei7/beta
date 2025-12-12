@@ -150,7 +150,6 @@ class HomecineProvider: MainAPI() {
             val epi = ArrayList<Episode>()
 
             if (tvType == TvType.TvSeries) {
-                // Lógica de extracción de episodios (sin cambios, ya verificada)
                 doc.select("div#seasons > div.tvseason").forEach { seasonBlock ->
                     val seasonTitleRaw = seasonBlock.selectFirst(".les-title strong")?.text()
                     val seasonTitle = seasonTitleRaw?.replace(Regex("Season\\s*"), "")?.toIntOrNull()
@@ -179,10 +178,8 @@ class HomecineProvider: MainAPI() {
                 }
             }
 
-            // APLICACIÓN DE LA CORRECCIÓN DE RECOMENDACIONES:
             val recs = doc.select("div.movies-list-wrap.mlw-related div.ml-item").mapNotNull { rec ->
                 val recTitle = rec.selectFirst("span.mli-info h2")?.text()
-                // Usamos data-original en lugar de src, ya que son imágenes lazy-loaded
                 val recImg = rec.selectFirst("img")?.attr("data-original")
                 val recLink = rec.selectFirst("a.ml-mask")?.attr("href")
 
@@ -197,6 +194,18 @@ class HomecineProvider: MainAPI() {
                 }
             }
 
+            val movieEpisodeList = if (tvType == TvType.Movie) {
+                listOf(
+                    newEpisode(url) {
+                        this.name = title
+                        this.season = 1
+                        this.episode = 1
+                    }
+                )
+            } else {
+                epi
+            }
+
             return when (tvType) {
                 TvType.TvSeries -> newTvSeriesLoadResponse(title, url, tvType, epi) {
                     this.posterUrl = poster?.let { fixUrl(it) } ?: ""
@@ -204,17 +213,17 @@ class HomecineProvider: MainAPI() {
                     this.plot = plot
                     this.tags = tags
                     this.year = yearrr
-                    this.recommendations = recs // Incluye las recomendaciones
+                    this.recommendations = recs
                     addDuration(duration)
                 }
 
-                TvType.Movie -> newMovieLoadResponse(title, url, tvType, null) {
+                TvType.Movie -> newTvSeriesLoadResponse(title, url, TvType.Movie, movieEpisodeList) {
                     this.posterUrl = poster?.let { fixUrl(it) } ?: ""
                     this.backgroundPosterUrl = backimage?.let { fixUrl(it) } ?: ""
                     this.plot = plot
                     this.tags = tags
                     this.year = yearrr
-                    this.recommendations = recs // Incluye las recomendaciones
+                    this.recommendations = recs
                     addDuration(duration)
                 }
                 else -> null
@@ -237,7 +246,6 @@ class HomecineProvider: MainAPI() {
         try {
             val doc = app.get(data).document
 
-            // Selectores globales (funcionan para series y la mayoría de las películas)
             val options = doc.select("ul.idTabs a")
             val playerContainer = doc.selectFirst("div#player2")
 
