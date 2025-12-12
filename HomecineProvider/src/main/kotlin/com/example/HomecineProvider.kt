@@ -124,91 +124,101 @@ class HomecineProvider: MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d("HomeCineProvider", "DEBUG: Iniciando load para URL: $url")
-        val doc = app.get(url).document
 
-        val tvType = getContentTypeFromUrl(url)
+        try {
+            val doc = app.get(url).document
 
-        val poster = doc.selectFirst(".mvic-thumb img.hidden")?.attr("src")?.replace(Regex("\\/p\\/w\\d+.*\\/"),"/p/original/")
-        val backimage = doc.selectFirst(".bghd img")?.attr("src")?.replace(Regex("\\/p\\/w\\d+.*\\/"),"/p/original/") ?: poster
+            val tvType = getContentTypeFromUrl(url)
 
-        val title = doc.selectFirst("h1.entry-title")?.text() ?: doc.selectFirst("h3[itemprop='name']")?.text()
-        if (title.isNullOrEmpty()) {
-            return null
-        }
+            val poster = doc.selectFirst(".mvic-thumb img.hidden")?.attr("src")?.replace(Regex("\\/p\\/w\\d+.*\\/"),"/p/original/")
+            val backimage = doc.selectFirst(".bghd img")?.attr("src")?.replace(Regex("\\/p\\/w\\d+.*\\/"),"/p/original/") ?: poster
 
-        val plot = doc.selectFirst("div[itemprop=\"description\"] > p.f-desc")?.text() ?: doc.selectFirst(".description > p")?.text()
-        val tags = doc.select("div.mvici-left p:contains(Genre) a").map { it.text() }
-        val yearrr = doc.selectFirst("p:contains(Release) a")?.text()?.toIntOrNull()
-        val duration = doc.selectFirst("p:contains(Duration) span[itemprop=\"duration\"]")?.text()
+            val title = doc.selectFirst("h1.entry-title")?.text() ?: doc.selectFirst("h3[itemprop='name']")?.text()
+            if (title.isNullOrEmpty()) {
+                Log.e("HomeCineProvider", "ERROR: Título no encontrado o vacío para URL: $url")
+                return null
+            }
 
-        val epi = ArrayList<Episode>()
+            val plot = doc.selectFirst("div[itemprop=\"description\"] > p.f-desc")?.text() ?: doc.selectFirst(".description > p")?.text()
+            val tags = doc.select("div.mvici-left p:contains(Genre) a").map { it.text() }
+            val yearrr = doc.selectFirst("p:contains(Release) a")?.text()?.toIntOrNull()
+            val duration = doc.selectFirst("p:contains(Duration) span[itemprop=\"duration\"]")?.text()
 
-        if (tvType == TvType.TvSeries) {
-            doc.select("div#seasons > div.tvseason").forEach { seasonBlock ->
-                val seasonTitleRaw = seasonBlock.selectFirst(".les-title strong")?.text()
-                val seasonTitle = seasonTitleRaw?.replace(Regex("Season\\s*"), "")?.toIntOrNull()
+            val epi = ArrayList<Episode>()
 
-                seasonBlock.select(".les-content a").forEach { episodeLink ->
-                    val href = episodeLink.attr("href")
-                    if (href.isNullOrEmpty()) return@forEach
+            if (tvType == TvType.TvSeries) {
+                // Lógica de extracción de episodios (sin cambios, ya verificada)
+                doc.select("div#seasons > div.tvseason").forEach { seasonBlock ->
+                    val seasonTitleRaw = seasonBlock.selectFirst(".les-title strong")?.text()
+                    val seasonTitle = seasonTitleRaw?.replace(Regex("Season\\s*"), "")?.toIntOrNull()
 
-                    val titleText = episodeLink.text().trim()
+                    seasonBlock.select(".les-content a").forEach { episodeLink ->
+                        val href = episodeLink.attr("href")
+                        if (href.isNullOrEmpty()) return@forEach
 
-                    val seregex = Regex("temporada-(\\d+)-capitulo-(\\d+)")
-                    val match = seregex.find(href)
-                    val season = match?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    val episode = match?.groupValues?.getOrNull(2)?.toIntOrNull()
+                        val titleText = episodeLink.text().trim()
 
-                    val episodeName = if (titleText.startsWith("Episode")) null else titleText
+                        val seregex = Regex("temporada-(\\d+)-capitulo-(\\d+)")
+                        val match = seregex.find(href)
+                        val season = match?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        val episode = match?.groupValues?.getOrNull(2)?.toIntOrNull()
 
-                    epi.add(
-                        newEpisode(href) {
-                            this.name = episodeName
-                            this.season = season ?: seasonTitle
-                            this.episode = episode
-                        }
-                    )
+                        val episodeName = if (titleText.startsWith("Episode")) null else titleText
+
+                        epi.add(
+                            newEpisode(href) {
+                                this.name = episodeName
+                                this.season = season ?: seasonTitle
+                                this.episode = episode
+                            }
+                        )
+                    }
                 }
             }
-        }
 
-        val recs = doc.select("article.movies").mapNotNull { rec ->
-            val recTitle = rec.selectFirst(".entry-title")?.text()
-            val recImg = rec.selectFirst("img")?.attr("src")
-            val recLink = rec.selectFirst("a")?.attr("href")
+            // APLICACIÓN DE LA CORRECCIÓN DE RECOMENDACIONES:
+            val recs = doc.select("div.movies-list-wrap.mlw-related div.ml-item").mapNotNull { rec ->
+                val recTitle = rec.selectFirst("span.mli-info h2")?.text()
+                // Usamos data-original en lugar de src, ya que son imágenes lazy-loaded
+                val recImg = rec.selectFirst("img")?.attr("data-original")
+                val recLink = rec.selectFirst("a.ml-mask")?.attr("href")
 
-            if (recTitle == null || recImg == null || recLink == null) return@mapNotNull null
+                if (recTitle == null || recImg == null || recLink == null) return@mapNotNull null
 
-            val recTvType = getContentTypeFromUrl(recLink)
+                val recTvType = getContentTypeFromUrl(recLink)
 
-            when (recTvType) {
-                TvType.Movie -> newMovieSearchResponse(recTitle, recLink, recTvType) { this.posterUrl = fixUrl(recImg) }
-                TvType.TvSeries -> newTvSeriesSearchResponse(recTitle, recLink, recTvType) { this.posterUrl = fixUrl(recImg) }
+                when (recTvType) {
+                    TvType.Movie -> newMovieSearchResponse(recTitle, recLink, recTvType) { this.posterUrl = fixUrl(recImg) }
+                    TvType.TvSeries -> newTvSeriesSearchResponse(recTitle, recLink, recTvType) { this.posterUrl = fixUrl(recImg) }
+                    else -> null
+                }
+            }
+
+            return when (tvType) {
+                TvType.TvSeries -> newTvSeriesLoadResponse(title, url, tvType, epi) {
+                    this.posterUrl = poster?.let { fixUrl(it) } ?: ""
+                    this.backgroundPosterUrl = backimage?.let { fixUrl(it) } ?: ""
+                    this.plot = plot
+                    this.tags = tags
+                    this.year = yearrr
+                    this.recommendations = recs // Incluye las recomendaciones
+                    addDuration(duration)
+                }
+
+                TvType.Movie -> newMovieLoadResponse(title, url, tvType, null) {
+                    this.posterUrl = poster?.let { fixUrl(it) } ?: ""
+                    this.backgroundPosterUrl = backimage?.let { fixUrl(it) } ?: ""
+                    this.plot = plot
+                    this.tags = tags
+                    this.year = yearrr
+                    this.recommendations = recs // Incluye las recomendaciones
+                    addDuration(duration)
+                }
                 else -> null
             }
-        }
-
-        return when (tvType) {
-            TvType.TvSeries -> newTvSeriesLoadResponse(title, url, tvType, epi) {
-                this.posterUrl = poster?.let { fixUrl(it) } ?: ""
-                this.backgroundPosterUrl = backimage?.let { fixUrl(it) } ?: ""
-                this.plot = plot
-                this.tags = tags
-                this.year = yearrr
-                this.recommendations = recs
-                addDuration(duration)
-            }
-            // ¡CORRECCIÓN APLICADA AQUÍ! Se pasa 'null' como defaultUrl
-            TvType.Movie -> newMovieLoadResponse(title, url, tvType, null) {
-                this.posterUrl = poster?.let { fixUrl(it) } ?: ""
-                this.backgroundPosterUrl = backimage?.let { fixUrl(it) } ?: ""
-                this.plot = plot
-                this.tags = tags
-                this.year = yearrr
-                this.recommendations = recs
-                addDuration(duration)
-            }
-            else -> null
+        } catch (e: Exception) {
+            Log.e("HomeCineProvider", "ERROR CRÍTICO en load para URL: $url. Excepción: ${e.message}", e)
+            return null
         }
     }
 
@@ -224,61 +234,50 @@ class HomecineProvider: MainAPI() {
         try {
             val doc = app.get(data).document
 
-            val options = doc.select(".video-options ul.aa-tbs-video li a")
-            val playerAside = doc.selectFirst("aside#aa-options")
+            // 1. Selector de las pestañas de servidor (Ej: CAM - LATINO)
+            val options = doc.select("ul.idTabs a")
 
-            if (options.isEmpty() || playerAside == null) {
-                Log.e("HomeCineProvider", "ERROR: No se encontraron opciones de servidor o contenedor de reproductor.")
+            // 2. Contenedor principal de los reproductores
+            val playerContainer = doc.selectFirst("div#player2")
+
+            if (options.isEmpty() || playerContainer == null) {
+                Log.e("HomeCineProvider", "ERROR: No se encontraron pestañas de servidor (ul.idTabs) o contenedor de reproductor (div#player2).")
                 return false
             }
 
             coroutineScope {
                 options.mapNotNull { option ->
                     async(Dispatchers.IO) {
-                        val href = option.attr("href")
-                        val languageText = option.selectFirst("span.server")?.text()?.trim()
-
-                        val optionNumber = option.selectFirst("span")?.text() ?: ""
-                        val serverName = "OPCIÓN $optionNumber ${languageText ?: ""}".trim()
+                        val href = option.attr("href") // Ej: #tab1
+                        val serverName = option.text().trim() // Ej: CAM - LATINO
 
                         if (href.startsWith("#")) {
-                            val targetId = href.substring(1)
-                            val iframeDiv = playerAside.selectFirst("div#$targetId iframe")
-                            val embedlink = iframeDiv?.attr("data-src") ?: iframeDiv?.attr("src")
+                            val targetId = href.substring(1) // Ej: tab1
+
+                            // Busca el iframe dentro del div de la pestaña (ej: div#tab1)
+                            val iframe = playerContainer.selectFirst("div#$targetId iframe")
+
+                            // El enlace de reproducción está directamente en el SRC del IFRAME
+                            val embedlink = iframe?.attr("src")
 
                             if (embedlink.isNullOrEmpty()) {
+                                Log.w("HomeCineProvider", "WARN: Enlace de iframe nulo/vacío para $serverName, saltando.")
                                 return@async null
                             }
 
+                            // Ya que el embedlink es directamente fastream.to, lo pasamos directamente
+                            // ya que fastream.to es un extractor compatible.
                             try {
-                                // 1. Intentar el redireccionamiento (Trembed/Fastream)
-                                val tremrequest = app.get(embedlink).document
-                                val link = tremrequest.selectFirst("div.Video iframe")?.attr("src")
-
-                                if (link != null && link.isNotEmpty()) {
-                                    loadCustomExtractor(
-                                        name = serverName,
-                                        url = link,
-                                        referer = data,
-                                        subtitleCallback = subtitleCallback,
-                                        callback = {
-                                            callback.invoke(it)
-                                            linksFound = true
-                                        }
-                                    )
-                                } else {
-                                    // 2. Si no hay redirección, intentar el link original directamente como extractor
-                                    loadCustomExtractor(
-                                        name = serverName,
-                                        url = embedlink,
-                                        referer = data,
-                                        subtitleCallback = subtitleCallback,
-                                        callback = {
-                                            callback.invoke(it)
-                                            linksFound = true
-                                        }
-                                    )
-                                }
+                                loadCustomExtractor(
+                                    name = serverName,
+                                    url = embedlink,
+                                    referer = data,
+                                    subtitleCallback = subtitleCallback,
+                                    callback = {
+                                        callback.invoke(it)
+                                        linksFound = true
+                                    }
+                                )
                             } catch (e: Exception) {
                                 Log.e("HomeCineProvider", "ERROR al procesar $serverName ($embedlink): ${e.message}")
                             }
