@@ -285,7 +285,7 @@ class PelispediaProvider:MainAPI() {
                 val languageText = option.selectFirst("span.server")?.text()?.trim()
 
                 val optionNumber = option.selectFirst("span")?.text() ?: ""
-                val serverName = "Opción $optionNumber ${languageText ?: ""}".trim()
+                val serverName = "OPCIÓN $optionNumber ${languageText ?: ""}".trim()
 
                 if (href.startsWith("#") && playerAside != null) {
                     val targetId = href.substring(1)
