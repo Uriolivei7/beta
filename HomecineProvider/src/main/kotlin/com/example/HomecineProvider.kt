@@ -133,7 +133,10 @@ class HomecineProvider: MainAPI() {
             val poster = doc.selectFirst(".mvic-thumb img.hidden")?.attr("src")?.replace(Regex("\\/p\\/w\\d+.*\\/"),"/p/original/")
             val backimage = doc.selectFirst(".bghd img")?.attr("src")?.replace(Regex("\\/p\\/w\\d+.*\\/"),"/p/original/") ?: poster
 
-            val title = doc.selectFirst("h1.entry-title")?.text() ?: doc.selectFirst("h3[itemprop='name']")?.text()
+            val title = doc.selectFirst("h1[itemprop='name']")?.text()
+                ?: doc.selectFirst("h1.entry-title")?.text()
+                ?: doc.selectFirst("h3[itemprop='name']")?.text()
+
             if (title.isNullOrEmpty()) {
                 Log.e("HomeCineProvider", "ERROR: Título no encontrado o vacío para URL: $url")
                 return null
