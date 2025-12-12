@@ -16,7 +16,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import com.lagradost.cloudstream3.ErrorLoadingException
 
 class HomecineProvider: MainAPI() {
-    // ¡Asegúrate de que este dominio sea funcional! (ej: www3.homecine.to o www4.homecine.to)
     override var mainUrl = "https://www3.homecine.to"
     override var name = "HomeCine"
     override var lang = "mx"
@@ -41,8 +40,8 @@ class HomecineProvider: MainAPI() {
         val items = ArrayList<HomePageList>()
 
         val urls = listOf(
+            Pair("Todas las Series", "$mainUrl/series"),
             Pair("Estrenos 2025", "$mainUrl/release-year/2025"),
-            Pair("Series Disponibles", "$mainUrl/series"),
             Pair("Películas Nuevas", "$mainUrl/peliculas-nuevas"),
         )
 
@@ -51,7 +50,6 @@ class HomecineProvider: MainAPI() {
                 Log.d("HomeCineProvider", "DEBUG: Obteniendo datos para la lista: $name de $url")
                 val doc = app.get(url).document
 
-                // Selector principal de items
                 val home = doc.select("div.ml-item").mapNotNull { article ->
                     val title = article.selectFirst("span.mli-info > h2")?.text()
                     val img = article.selectFirst("img")?.attr("data-original")
@@ -61,7 +59,6 @@ class HomecineProvider: MainAPI() {
                         return@mapNotNull null
                     }
 
-                    // Usando la lógica de detección de tipo corregida
                     val contentType = getContentTypeFromUrl(link)
 
                     when (contentType) {
@@ -97,9 +94,7 @@ class HomecineProvider: MainAPI() {
         Log.d("HomeCineProvider", "DEBUG: Iniciando search para query: $query")
         val url = "$mainUrl/?s=$query"
         val doc = app.get(url).document
-        Log.d("HomeCineProvider", "DEBUG: Documento de búsqueda obtenido para query: $query")
 
-        // Selectores verificados: div.ml-item, span.mli-info > h2, data-original
         return doc.select("div.ml-item").mapNotNull { article ->
             val title = article.selectFirst("span.mli-info > h2")?.text()
             val img = article.selectFirst("img")?.attr("data-original")
@@ -109,7 +104,6 @@ class HomecineProvider: MainAPI() {
                 return@mapNotNull null
             }
 
-            // USANDO LA LÓGICA DE DETECCIÓN DE TIPO CORREGIDA
             val contentType = getContentTypeFromUrl(link)
 
             when (contentType) {
@@ -150,7 +144,6 @@ class HomecineProvider: MainAPI() {
         val epi = ArrayList<Episode>()
 
         if (tvType == TvType.TvSeries) {
-            // Extracción directa de episodios desde div#seasons
             doc.select("div#seasons > div.tvseason").forEach { seasonBlock ->
                 val seasonTitleRaw = seasonBlock.selectFirst(".les-title strong")?.text()
                 val seasonTitle = seasonTitleRaw?.replace(Regex("Season\\s*"), "")?.toIntOrNull()
@@ -205,7 +198,8 @@ class HomecineProvider: MainAPI() {
                 this.recommendations = recs
                 addDuration(duration)
             }
-            TvType.Movie -> newMovieLoadResponse(title, url, tvType, url) {
+            // ¡CORRECCIÓN APLICADA AQUÍ! Se pasa 'null' como defaultUrl
+            TvType.Movie -> newMovieLoadResponse(title, url, tvType, null) {
                 this.posterUrl = poster?.let { fixUrl(it) } ?: ""
                 this.backgroundPosterUrl = backimage?.let { fixUrl(it) } ?: ""
                 this.plot = plot
@@ -224,66 +218,82 @@ class HomecineProvider: MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // ... (loadLinks se mantiene igual que en la versión anterior, ya que está verificada)
         Log.d("HomeCineProvider", "DEBUG: Iniciando loadLinks para data: $data")
+        var linksFound = false
+
         try {
             val doc = app.get(data).document
 
             val options = doc.select(".video-options ul.aa-tbs-video li a")
             val playerAside = doc.selectFirst("aside#aa-options")
 
-            options.forEach { option ->
-                val href = option.attr("href")
-                val languageText = option.selectFirst("span.server")?.text()?.trim()
-
-                val optionNumber = option.selectFirst("span")?.text() ?: ""
-                val serverName = "OPCIÓN $optionNumber ${languageText ?: ""}".trim()
-
-                if (href.startsWith("#") && playerAside != null) {
-                    val targetId = href.substring(1)
-                    val iframeDiv = playerAside.selectFirst("div#$targetId iframe")
-                    val embedlink = iframeDiv?.attr("data-src") ?: iframeDiv?.attr("src")
-
-                    if (embedlink.isNullOrEmpty()) {
-                        return@forEach
-                    }
-
-                    try {
-                        val tremrequest = app.get(embedlink).document
-                        val link = tremrequest.selectFirst("div.Video iframe")?.attr("src")
-
-                        if (link != null && link.isNotEmpty()) {
-                            loadCustomExtractor(
-                                name = serverName,
-                                url = link,
-                                referer = data,
-                                subtitleCallback = subtitleCallback,
-                                callback = callback,
-                                quality = null
-                            )
-                        } else {
-                            loadCustomExtractor(
-                                name = serverName,
-                                url = embedlink,
-                                referer = data,
-                                subtitleCallback = subtitleCallback,
-                                callback = callback,
-                                quality = null
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Log.e("HomeCineProvider", "ERROR al procesar embedlink $embedlink: ${e.message}", e)
-                    }
-                }
+            if (options.isEmpty() || playerAside == null) {
+                Log.e("HomeCineProvider", "ERROR: No se encontraron opciones de servidor o contenedor de reproductor.")
+                return false
             }
-            return true
+
+            coroutineScope {
+                options.mapNotNull { option ->
+                    async(Dispatchers.IO) {
+                        val href = option.attr("href")
+                        val languageText = option.selectFirst("span.server")?.text()?.trim()
+
+                        val optionNumber = option.selectFirst("span")?.text() ?: ""
+                        val serverName = "OPCIÓN $optionNumber ${languageText ?: ""}".trim()
+
+                        if (href.startsWith("#")) {
+                            val targetId = href.substring(1)
+                            val iframeDiv = playerAside.selectFirst("div#$targetId iframe")
+                            val embedlink = iframeDiv?.attr("data-src") ?: iframeDiv?.attr("src")
+
+                            if (embedlink.isNullOrEmpty()) {
+                                return@async null
+                            }
+
+                            try {
+                                // 1. Intentar el redireccionamiento (Trembed/Fastream)
+                                val tremrequest = app.get(embedlink).document
+                                val link = tremrequest.selectFirst("div.Video iframe")?.attr("src")
+
+                                if (link != null && link.isNotEmpty()) {
+                                    loadCustomExtractor(
+                                        name = serverName,
+                                        url = link,
+                                        referer = data,
+                                        subtitleCallback = subtitleCallback,
+                                        callback = {
+                                            callback.invoke(it)
+                                            linksFound = true
+                                        }
+                                    )
+                                } else {
+                                    // 2. Si no hay redirección, intentar el link original directamente como extractor
+                                    loadCustomExtractor(
+                                        name = serverName,
+                                        url = embedlink,
+                                        referer = data,
+                                        subtitleCallback = subtitleCallback,
+                                        callback = {
+                                            callback.invoke(it)
+                                            linksFound = true
+                                        }
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                Log.e("HomeCineProvider", "ERROR al procesar $serverName ($embedlink): ${e.message}")
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            return linksFound
         } catch (e: Exception) {
             Log.e("HomeCineProvider", "ERROR GENERAL en loadLinks para data '$data': ${e.message}", e)
             return false
         }
     }
 
-    // Función helper mantenida sin cambios
     suspend fun loadCustomExtractor(
         name: String? = null,
         url: String,
