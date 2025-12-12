@@ -237,16 +237,9 @@ class HomecineProvider: MainAPI() {
         try {
             val doc = app.get(data).document
 
-            // Paso 1: Buscar el contenedor principal del reproductor. Esto da contexto a los selectores.
-            val embedContainer = doc.selectFirst("div#content-embed")
-            if (embedContainer == null) {
-                Log.e("HomeCineProvider", "ERROR: No se encontró el contenedor principal #content-embed.")
-                return false
-            }
-
-            // Paso 2: Ahora buscamos las pestañas y el contenedor de los IFRAMEs dentro de embedContainer
-            val options = embedContainer.select("ul.idTabs a")
-            val playerContainer = embedContainer.selectFirst("div#player2")
+            // Selectores globales (funcionan para series y la mayoría de las películas)
+            val options = doc.select("ul.idTabs a")
+            val playerContainer = doc.selectFirst("div#player2")
 
             if (options.isEmpty() || playerContainer == null) {
                 Log.e(
@@ -259,13 +252,12 @@ class HomecineProvider: MainAPI() {
             coroutineScope {
                 options.mapNotNull { option ->
                     async(Dispatchers.IO) {
-                        val href = option.attr("href") // Ej: #tab1
+                        val href = option.attr("href")
                         val serverName = option.text().trim()
 
                         if (href.startsWith("#")) {
                             val targetId = href.substring(1)
 
-                            // Busca el iframe dentro del playerContainer y la pestaña específica
                             val iframe = playerContainer.selectFirst("div#$targetId iframe")
                             val embedlink = iframe?.attr("src")
 
