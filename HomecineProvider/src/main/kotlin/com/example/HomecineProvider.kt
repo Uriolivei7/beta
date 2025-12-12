@@ -237,14 +237,22 @@ class HomecineProvider: MainAPI() {
         try {
             val doc = app.get(data).document
 
-            // 1. Selector de las pestañas de servidor (Ej: CAM - LATINO)
-            val options = doc.select("ul.idTabs a")
+            // Paso 1: Buscar el contenedor principal del reproductor. Esto da contexto a los selectores.
+            val embedContainer = doc.selectFirst("div#content-embed")
+            if (embedContainer == null) {
+                Log.e("HomeCineProvider", "ERROR: No se encontró el contenedor principal #content-embed.")
+                return false
+            }
 
-            // 2. Contenedor principal de los reproductores
-            val playerContainer = doc.selectFirst("div#player2")
+            // Paso 2: Ahora buscamos las pestañas y el contenedor de los IFRAMEs dentro de embedContainer
+            val options = embedContainer.select("ul.idTabs a")
+            val playerContainer = embedContainer.selectFirst("div#player2")
 
             if (options.isEmpty() || playerContainer == null) {
-                Log.e("HomeCineProvider", "ERROR: No se encontraron pestañas de servidor (ul.idTabs) o contenedor de reproductor (div#player2).")
+                Log.e(
+                    "HomeCineProvider",
+                    "DIAGNÓSTICO loadLinks FALLIDO: Pestañas (ul.idTabs): ${options.size}, Contenedor (div#player2): ${playerContainer != null}. URL: $data"
+                )
                 return false
             }
 
@@ -252,15 +260,13 @@ class HomecineProvider: MainAPI() {
                 options.mapNotNull { option ->
                     async(Dispatchers.IO) {
                         val href = option.attr("href") // Ej: #tab1
-                        val serverName = option.text().trim() // Ej: CAM - LATINO
+                        val serverName = option.text().trim()
 
                         if (href.startsWith("#")) {
-                            val targetId = href.substring(1) // Ej: tab1
+                            val targetId = href.substring(1)
 
-                            // Busca el iframe dentro del div de la pestaña (ej: div#tab1)
+                            // Busca el iframe dentro del playerContainer y la pestaña específica
                             val iframe = playerContainer.selectFirst("div#$targetId iframe")
-
-                            // El enlace de reproducción está directamente en el SRC del IFRAME
                             val embedlink = iframe?.attr("src")
 
                             if (embedlink.isNullOrEmpty()) {
@@ -268,8 +274,6 @@ class HomecineProvider: MainAPI() {
                                 return@async null
                             }
 
-                            // Ya que el embedlink es directamente fastream.to, lo pasamos directamente
-                            // ya que fastream.to es un extractor compatible.
                             try {
                                 loadCustomExtractor(
                                     name = serverName,
