@@ -221,10 +221,11 @@
     "description": "Plugin para Latino, Español y Subtitulado",
     "tvTypes": [
       "TvSeries",
+      "Anime",
       "Movie"
     ],
     "iconUrl": "https://pelispedia.is/wp-content/uploads/2022/01/cropped-pelispediafavicon-e1642201982676-32x32.png",
     "language": "mx",
-    "fileSize": 21000
+    "fileSize": 24000
   }
 ]

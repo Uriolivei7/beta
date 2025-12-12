@@ -6,9 +6,12 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class PelispediaProvider:MainAPI() {
     override var mainUrl = "https://pelispedia.is"
@@ -20,8 +23,9 @@ class PelispediaProvider:MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.Movie,
         TvType.TvSeries,
+        TvType.Anime,
+        TvType.Movie,
     )
 
     override suspend fun getMainPage(page: Int, request : MainPageRequest): HomePageResponse? {
@@ -296,9 +300,14 @@ class PelispediaProvider:MainAPI() {
                             if (link != null && link.isNotEmpty()) {
                                 Log.d("PelispediaProvider", "DEBUG: Enlace final para $serverName: $link")
 
-                                loadExtractor(link, data, subtitleCallback) { extLink ->
-                                    callback.invoke(extLink)
-                                }
+                                loadCustomExtractor(
+                                    name = serverName,
+                                    url = link,
+                                    referer = data,
+                                    subtitleCallback = subtitleCallback,
+                                    callback = callback,
+                                    quality = null
+                                )
                             }
                         } catch (e: Exception) {
                             Log.e("PelispediaProvider", "ERROR al procesar trembedlink $trembedlink: ${e.message}", e)
@@ -310,6 +319,48 @@ class PelispediaProvider:MainAPI() {
         } catch (e: Exception) {
             Log.e("PelispediaProvider", "ERROR GENERAL en loadLinks para data '$data': ${e.message}", e)
             return false
+        }
+    }
+
+    suspend fun loadCustomExtractor(
+        name: String? = null,
+        url: String,
+        referer: String? = null,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        quality: Int? = null
+    ) {
+        try {
+            withTimeoutOrNull(10000) {
+                val extractedLinks = mutableListOf<ExtractorLink>()
+                loadExtractor(url, referer, subtitleCallback) { link ->
+                    extractedLinks.add(link)
+                }
+
+                extractedLinks.forEach { link ->
+                    try {
+                        callback.invoke(
+                            withContext(Dispatchers.IO) {
+                                newExtractorLink(
+                                    source = name ?: link.source,
+                                    name = name ?: link.name,
+                                    url = link.url
+                                ) {
+                                    this.quality = quality ?: link.quality
+                                    this.type = link.type
+                                    this.referer = link.referer
+                                    this.headers = link.headers
+                                    this.extractorData = link.extractorData
+                                }
+                            }
+                        )
+                    } catch (e: Exception) {
+                        Log.e("PelispediaProvider", "Error en newExtractorLink para $name: ${e.message}, URL: $url")
+                    }
+                }
+            } ?: Log.e("PelispediaProvider", "Timeout en loadCustomExtractor para $name, URL: $url")
+        } catch (e: Exception) {
+            Log.e("PelispediaProvider", "Error en loadCustomExtractor para $name: ${e.message}, URL: $url")
         }
     }
 }
