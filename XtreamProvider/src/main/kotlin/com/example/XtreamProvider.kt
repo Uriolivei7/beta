@@ -32,7 +32,6 @@ class XtreamProvider(mainUrl: String, name: String, username: String, password: 
             val streamLists = mutableListOf<SearchResponse>()
             items[name]?.map { stream ->
                 if (stream.category_id == it.category_id) {
-                    // CÓDIGO CORREGIDO 1: Usando newLiveSearchResponse
                     streamLists.add(
                         newLiveSearchResponse(
                             name = stream.name,
@@ -70,7 +69,6 @@ class XtreamProvider(mainUrl: String, name: String, username: String, password: 
         }
 
         return items[name]!!.filter { it.name.toString().lowercase().contains(query.lowercase()) }.map { item ->
-            // CÓDIGO CORREGIDO 2: Usando newLiveSearchResponse
             newLiveSearchResponse(
                 name = item.name,
                 url = Data(

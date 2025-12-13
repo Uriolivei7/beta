@@ -15,6 +15,9 @@ import com.lagradost.cloudstream3.AcraApplication.Companion.setKey
 import com.lagradost.cloudstream3.AcraApplication.Companion.getKey
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import kotlinx.coroutines.*
+import android.util.Log // <-- NUEVA IMPORTACIÓN
+
+private const val TAG = "XtreamSettings"
 
 class XtreamSettingsFragment(private val plugin: XtreamPlugin) : BottomSheetDialogFragment() {
     private fun <T : View> View.findView(name: String): T {
@@ -47,12 +50,26 @@ class XtreamSettingsFragment(private val plugin: XtreamPlugin) : BottomSheetDial
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
+        Log.d(TAG, "onCreateView: Iniciando creación de vistas de configuración")
         val settings = getLayout("settings", inflater, container)
+
+        if (settings == null) {
+            Log.e(TAG, "onCreateView: ERROR GRAVE - No se pudo cargar el layout 'settings'")
+            return null
+        }
+
+        Log.d(TAG, "onCreateView: Layout 'settings' cargado con éxito.")
+
         settings.findView<TextView>("add_link_text").text = "Agregar Cuenta"
         settings.findView<TextView>("list_link_text").text = "Lista de Cuentas"
         settings.findView<TextView>("group_text").text = "Hecho por: Uriolivei"
 
         val addLinkButton = settings.findView<ImageView>("button_add_link")
+
+        if (addLinkButton == null) {
+            Log.e(TAG, "onCreateView: ERROR - El botón 'button_add_link' es NULL.")
+        }
+
         addLinkButton.setImageDrawable(getDrawable("edit_icon"))
         addLinkButton.makeTvCompatible()
 
@@ -71,16 +88,16 @@ class XtreamSettingsFragment(private val plugin: XtreamPlugin) : BottomSheetDial
                 }
 
                 AlertDialog.Builder(context ?: throw Exception("Unable to build alert dialog"))
-                    .setTitle("Add link")
+                    .setTitle("Agregar Link")
                     .setView(credsView)
                     .setPositiveButton("Guardar", object : DialogInterface.OnClickListener {
                         override fun onClick(p0: DialogInterface, p1: Int) {
-                            var name = nameInput.text.trim().toString()
-                            var link = linkInput.text.trim().toString().replace(Regex("^(HTTPS|HTTP)", RegexOption.IGNORE_CASE)) {
+                            val name = nameInput.text.trim().toString()
+                            val link = linkInput.text.trim().toString().replace(Regex("^(HTTPS|HTTP)", RegexOption.IGNORE_CASE)) {
                                 it.value.lowercase()
                             }
-                            var username = usernameInput.text.trim().toString()
-                            var password = passwordInput.text.trim().toString()
+                            val username = usernameInput.text.trim().toString()
+                            val password = passwordInput.text.trim().toString()
                             if (name.isNullOrEmpty() || !link.startsWith("http") || username.isNullOrEmpty() || password.isNullOrEmpty()) {
                                 showToast("Por favor, llene todos los campos")
                             } else {
