@@ -257,6 +257,24 @@
         "jarUrl": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.jar"
     },
     {
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/XtreamProvider.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "XtreamProvider",
+        "internalName": "XtreamProvider",
+        "authors": [
+            "anhdaden"
+        ],
+        "description": "C\u1ea7n nh\u1eadp link Xtream IPTV, t\u00e0i kho\u1ea3n v\u00e0 m\u1eadt kh\u1ea9u \u0111\u1ec3 xem",
+        "fileSize": 32830,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "tvTypes": [
+            "Live"
+        ],
+        "iconUrl": "https://play-lh.googleusercontent.com/gMB8Eq9g9Uq6CXiOHcqatXpx-6HTexAzcQibTgpqAE756Fnt1Jyyp0j7S3UDKPztkA=w480-h960-rw",
+        "apiVersion": 1
+    },
+    {
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Youtube.cs3",
         "status": 1,
         "version": 12,
