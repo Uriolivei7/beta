@@ -59,10 +59,10 @@ class XtreamSettingsFragment(private val plugin: XtreamPlugin) : BottomSheetDial
         addLinkButton.setOnClickListener(object : View.OnClickListener {
             override fun onClick(v: View?) {
                 val credsView = getLayout("add_link", inflater, container)
-                val nameInput = credsView.findView<EditText>("Nombre")
-                val linkInput = credsView.findView<EditText>("Link")
-                val usernameInput = credsView.findView<EditText>("Usuario")
-                val passwordInput = credsView.findView<EditText>("Contraseña")
+                val nameInput = credsView.findView<EditText>("nombre")
+                val linkInput = credsView.findView<EditText>("link")
+                val usernameInput = credsView.findView<EditText>("usuario")
+                val passwordInput = credsView.findView<EditText>("clave")
 
                 val clipboardManager = context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clipboardText = clipboardManager?.primaryClip?.getItemAt(0)?.text
@@ -129,8 +129,8 @@ class XtreamSettingsFragment(private val plugin: XtreamPlugin) : BottomSheetDial
                 } else {
                     savedLinks.forEach { link ->
                         val linkItemView = getLayout("list_link", inflater, container)
-                        linkItemView.findView<TextView>("Nombre").text = link.name
-                        linkItemView.findView<TextView>("Link").text = link.mainUrl
+                        linkItemView.findView<TextView>("nombre").text = link.name
+                        linkItemView.findView<TextView>("link").text = link.mainUrl
                         val deleteButton = linkItemView.findView<ImageView>("delete_button")
                         deleteButton.setImageDrawable(getDrawable("delete_icon"))
                         deleteButton.setOnClickListener(object : View.OnClickListener {

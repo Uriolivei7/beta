@@ -59,8 +59,8 @@ class IPTVSettingsFragment(private val plugin: IPTVPlugin) : BottomSheetDialogFr
         addLinkButton.setOnClickListener(object : View.OnClickListener {
             override fun onClick(v: View?) {
                 val credsView = getLayout("add_link", inflater, container)
-                val nameInput = credsView.findView<EditText>("Nombre")
-                val linkInput = credsView.findView<EditText>("Link")
+                val nameInput = credsView.findView<EditText>("nombre")
+                val linkInput = credsView.findView<EditText>("link")
 
                 val clipboardManager = context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clipboardText = clipboardManager?.primaryClip?.getItemAt(0)?.text
@@ -130,8 +130,8 @@ class IPTVSettingsFragment(private val plugin: IPTVPlugin) : BottomSheetDialogFr
                 } else {
                     savedLinks.forEach { link ->
                         val linkItemView = getLayout("list_link", inflater, container)
-                        linkItemView.findView<TextView>("Nombre").text = link.name
-                        linkItemView.findView<TextView>("Link").text = link.link
+                        linkItemView.findView<TextView>("nombre").text = link.name
+                        linkItemView.findView<TextView>("link").text = link.link
                         val deleteButton = linkItemView.findView<ImageView>("delete_button")
                         deleteButton.setImageDrawable(getDrawable("delete_icon"))
                         deleteButton.setOnClickListener(object : View.OnClickListener {
