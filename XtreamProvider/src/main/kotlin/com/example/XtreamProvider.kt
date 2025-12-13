@@ -11,10 +11,13 @@ class XtreamProvider(mainUrl: String, name: String, username: String, password: 
     override var mainUrl = mainUrl
     override var name = name
     override val hasMainPage = true
-    override var lang = "vi"
+    override var lang = "mx"
     override val hasQuickSearch = true
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(
+        TvType.TvSeries,
+        TvType.Movie,
+        TvType.Anime,
         TvType.Live
     )
 
