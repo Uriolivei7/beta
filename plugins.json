@@ -58,7 +58,7 @@
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/PelisplusicuProvider.cs3",
-    "status": 1,
+    "status": 0,
     "version": 1,
     "apiVersion": 1,
     "name": "PelisPlusIcu",
@@ -199,7 +199,7 @@
     "authors": [
       "Ranita"
     ],
-    "description": "Plugin para ingresar tu lista IPTV",
+    "description": "Plugin para listas IPTV",
     "tvTypes": [
       "Live",
       "Other"
@@ -210,7 +210,7 @@
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/PelispediaProvider.cs3",
-    "status": 1,
+    "status": 0,
     "version": 1,
     "apiVersion": 1,
     "name": "Pelispedia",
@@ -247,5 +247,26 @@
     "iconUrl": "https://www3.homecine.to/wp-content/uploads/2018/05/homedark-1-3.png",
     "language": "mx",
     "fileSize": 22000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/PelispediaProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "XtreamIPTV",
+    "internalName": "XtreamProvider",
+    "authors": [
+      "Ranita"
+    ],
+    "description": "Plugin para cuentas IPTV",
+    "tvTypes": [
+      "TvSeries",
+      "Anime",
+      "Movie",
+      "Live"
+    ],
+    "iconUrl": "https://img.icons8.com/?size=96&id=oQQIRt5dU74V&format=png",
+    "language": "mx",
+    "fileSize": 33000
   }
 ]
