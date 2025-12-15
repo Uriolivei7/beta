@@ -281,15 +281,16 @@ class TvporinternetProvider : MainAPI() {
                         )
 
                         callback(
-                            ExtractorLink(
+                            newExtractorLink(
                                 source = this.name,
                                 name = "${this.name} - $qualityName (Opción ${index + 1})",
                                 url = m3u8UrlFinal,
-                                referer = "https://live.saohgdasregions.fun/",
-                                quality = qualityValue,
-                                type = ExtractorLinkType.M3U8,
-                                headers = streamingHeaders
-                            )
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = "https://live.saohgdasregions.fun/"
+                                this.quality = qualityValue
+                                this.headers = streamingHeaders
+                            }
                         )
                         success = true
                     }
