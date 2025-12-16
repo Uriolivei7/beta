@@ -33,7 +33,7 @@ class DoramasytProvider : MainAPI() {
 
         val POSTER_HEADERS = mapOf(
             "Accept" to "image/webp,image/apng,image/*,*/*;q=0.8",
-            "Referer" to "https://www.doramasyt.com/"
+            "Referer" to ""
         )
     }
 

@@ -325,6 +325,8 @@ class KatanimeProvider : MainAPI() {
         return@coroutineScope linksFound
     }
 
+    private val newRawKey = "katanime_player".toByteArray(Charsets.UTF_8)
+
     private fun decryptPlayerUrl(encodedPayload: String): String? {
         Log.d("KatanimeDecrypt", "Iniciando descifrado del payload.")
         return try {
@@ -338,24 +340,37 @@ class KatanimeProvider : MainAPI() {
                 @JsonProperty("tag") val tag: String?
             )
 
-            val pd = tryParseJson<PlayerData>(jsonStr)
-            if (pd == null) {
+            val pd = tryParseJson<PlayerData>(jsonStr) ?: run {
                 Log.e("KatanimeDecrypt", "Error: Fallo al parsear el JSON de PlayerData.")
                 return null
             }
 
-            val rawKey = "katanime".toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
-            val keyBytes = md.digest(rawKey)
+            val keyBytes = md.digest(newRawKey)
             Log.d("KatanimeDecrypt", "Clave Hash (SHA-256): ${keyBytes.toHexString()}")
 
             val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
             val ivBytes = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
-            val tagBytes = AndroidBase64.decode(pd.tag ?: pd.mac!!, AndroidBase64.DEFAULT)
+
+            val tagBytes = when {
+                pd.tag.isNullOrEmpty() && !pd.mac.isNullOrEmpty() -> {
+                    Log.w("KatanimeDecrypt", "Campo 'tag' vacío, usando 'mac' como Hexadecimal.")
+                    pd.mac.customHexToByteArray()
+                }
+                !pd.tag.isNullOrEmpty() -> {
+                    AndroidBase64.decode(pd.tag, AndroidBase64.DEFAULT)
+                }
+                else -> throw Exception("MAC/Tag de autenticación faltante o inválido.")
+            }
 
             Log.d("KatanimeDecrypt", "Tamaño IV: ${ivBytes.size} bytes")
             Log.d("KatanimeDecrypt", "Tamaño CipherText (Value): ${encryptedData.size} bytes")
             Log.d("KatanimeDecrypt", "Tamaño Tag/MAC: ${tagBytes.size} bytes")
+
+            if (tagBytes.size != 16) {
+                Log.e("KatanimeDecrypt", "Error: Tamaño de Tag/MAC incorrecto. Esperado: 16, Obtenido: ${tagBytes.size}")
+                return null
+            }
 
             val fullEncrypted = encryptedData + tagBytes
             Log.d("KatanimeDecrypt", "Tamaño total combinado para descifrado: ${fullEncrypted.size} bytes")
@@ -380,6 +395,13 @@ class KatanimeProvider : MainAPI() {
 
     private fun ByteArray.toHexString(): String = joinToString(separator = "") { "%02x".format(it) }
 
+    private fun String.customHexToByteArray(): ByteArray {
+        check(length % 2 == 0) { "Must have an even length" }
+        return chunked(2)
+            .map { it.toInt(16).toByte() }
+            .toByteArray()
+    }
+
     private fun generateDynamicKey(dataId: String): String {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
 
@@ -392,7 +414,6 @@ class KatanimeProvider : MainAPI() {
 
         return dataId + "_" + formattedTime
     }
-
 
     private fun parseStatus(statusString: String): ShowStatus {
         return when (statusString.lowercase()) {
