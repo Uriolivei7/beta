@@ -369,7 +369,7 @@ class KatanimeProvider : MainAPI() {
 
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
-            val STATIC_KEY_B64 = "N394vYc04E9Jv5N5K21GqNn0r15822Yx"
+            val STATIC_KEY_B64 = "kP529p4sB1M5x58vK2G8y6W9t4W83K3G" // <--- ¡NUEVA CLAVE!
             val keyBytes = AndroidBase64.decode(STATIC_KEY_B64, AndroidBase64.DEFAULT)
 
             // val rawKey = (csrfToken + "/player/i.js").toByteArray(Charsets.UTF_8)
