@@ -361,13 +361,11 @@ class KatanimeProvider : MainAPI() {
 
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         return try {
+            Log.d("KatanimeProvider", "Encoded Payload: $encodedPayload")
+
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
 
-            /*data class PlayerData(
-                @JsonProperty("iv") val iv: String?,
-                @JsonProperty("value") val value: String?
-            )
-             */
+            Log.d("KatanimeProvider", "Decoded JSON: $jsonStr")
 
             data class PlayerData(
                 @JsonProperty("iv") val iv: String?,
