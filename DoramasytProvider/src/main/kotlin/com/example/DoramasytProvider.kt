@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.animeproviders
+package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -30,6 +30,11 @@ class DoramasytProvider : MainAPI() {
 
         var latestCookie: Map<String, String> = emptyMap()
         var latestToken = ""
+
+        val POSTER_HEADERS = mapOf(
+            "Accept" to "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Referer" to "https://doramasyt.com/"
+        )
     }
 
     override var mainUrl = "https://doramasyt.com"
@@ -111,6 +116,7 @@ class DoramasytProvider : MainAPI() {
 
                     newAnimeSearchResponse(title, fixUrl(url)) {
                         this.posterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
+                        this.posterHeaders = POSTER_HEADERS
                         addDubStatus(getDubStatus(title), epNum)
                     }
                 } catch (e: Exception) {
@@ -156,6 +162,7 @@ class DoramasytProvider : MainAPI() {
 
                                 newAnimeSearchResponse(title, animeUrl) {
                                     this.posterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
+                                    this.posterHeaders = POSTER_HEADERS
                                     addDubStatus(getDubStatus(title))
                                 }
                             } catch (e: Exception) {
@@ -167,15 +174,13 @@ class DoramasytProvider : MainAPI() {
                         Log.d("Doramasyt", "Número de elementos procesados en $name: ${homeList.size}")
 
                         if (homeList.isNotEmpty()) {
-                            // La adición a la lista mutable 'items' debe hacerse de forma segura,
-                            // pero para la mayoría de los casos en Cloudstream, se asume safe.
                             items.add(HomePageList(name, homeList))
                         }
                     } catch (e: Exception) {
                         Log.e("Doramasyt", "Error al obtener datos de la URL $url: ${e.message}", e)
                     }
                 }
-            }.awaitAll() // Espera a que todas las peticiones terminen
+            }.awaitAll()
         }
 
         if (items.isEmpty()) {
@@ -193,7 +198,8 @@ class DoramasytProvider : MainAPI() {
             val href = it.selectFirst("a")!!.attr("href")
             val image = it.selectFirst("img")!!.attr("data-src")
             newAnimeSearchResponse(title, href, TvType.TvSeries){
-                this. posterUrl = image
+                this.posterUrl = image
+                this.posterHeaders = POSTER_HEADERS
                 this.dubStatus = if (title.contains("Latino") || title.contains("Castellano")) EnumSet.of(
                     DubStatus.Dubbed
                 ) else EnumSet.of(DubStatus.Subbed)
@@ -274,6 +280,7 @@ class DoramasytProvider : MainAPI() {
 
         return newAnimeLoadResponse(title, url, getType(type)) {
             posterUrl = poster
+            this.posterHeaders = POSTER_HEADERS
             backgroundPosterUrl = backimage
             addEpisodes(DubStatus.Subbed, epList)
             showStatus = status
