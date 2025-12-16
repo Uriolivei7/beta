@@ -31,6 +31,53 @@ import java.util.Locale
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.lagradost.cloudstream3.amap
+import com.lagradost.cloudstream3.newSubtitleFile
+import com.lagradost.cloudstream3.utils.AppUtils
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.fasterxml.jackson.annotation.JsonProperty
+
+data class Subtitle(val url: String, val lang: String)
+data class Subtitles(val subtitles: List<Subtitle>)
+
+object SubtitleHelper {
+
+    suspend fun getOpenSubtitles(
+        imdbId: String,
+        season: Int? = null,
+        episode: Int? = null,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        val subApiUrl = "https://opensubtitles-v3.strem.io"
+
+        val url = if (season != null && episode != null)
+            "$subApiUrl/subtitles/series/$imdbId:$season:$episode.json"
+        else
+            "$subApiUrl/subtitles/movie/$imdbId.json"
+
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept" to "application/json"
+        )
+
+        try {
+            app.get(url, headers = headers, timeout = 100L)
+                .parsedSafe<Subtitles>()?.subtitles?.amap {
+                    val lan = it.lang
+
+                    subtitleCallback(
+                        newSubtitleFile(
+                            lan,
+                            it.url
+                        )
+                    )
+                }
+        } catch (e: Exception) {
+            android.util.Log.e("SubtitleHelper", "Error al buscar OpenSubtitles para IMDB ID $imdbId: ${e.message}")
+        }
+    }
+}
+
 
 class AnizoneProvider : MainAPI() {
 
@@ -244,6 +291,13 @@ class AnizoneProvider : MainAPI() {
         else if (rowLines.getOrNull(1) == "Ongoing") ShowStatus.Ongoing else null
         val genres = doc.select("a[wire:navigate][wire:key]").map { it.text() }
 
+        val imdbId = doc.selectFirst("div[x-data]:has(a[href*='imdb.com'])")
+            ?.selectFirst("a[href*='imdb.com']")
+            ?.attr("href")
+            ?.substringAfter("title/")
+            ?.trimEnd('/')
+            ?: "tt0000000"
+
         var currentDoc = doc
         var attempts = 0
         val maxAttempts = 100
@@ -272,6 +326,7 @@ class AnizoneProvider : MainAPI() {
                     ?.substringAfter(":")?.trim()
                 this.season = 0
                 this.posterUrl = elt.selectFirst("img")?.attr("src")
+                this.data = "${elt.selectFirst("a")?.attr("href")}|||$imdbId"
 
                 this.date = elt.selectFirst("span[title]")
                     ?.selectFirst("span.line-clamp-1")
@@ -310,7 +365,11 @@ class AnizoneProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val web = app.get(data).document
+        val parts = data.split("|||")
+        val episodeUrl = parts[0]
+        val imdbId = parts.getOrNull(1)
+
+        val web = app.get(episodeUrl).document
         val sourceName = web.selectFirst("span.truncate")?.text() ?: ""
         val mediaPlayer = web.selectFirst("media-player")
         val m3U8 = mediaPlayer?.attr("src") ?: ""
@@ -321,6 +380,13 @@ class AnizoneProvider : MainAPI() {
                     it.attr("label"),
                     it.attr("src")
                 )
+            )
+        }
+
+        if (!imdbId.isNullOrBlank()) {
+            SubtitleHelper.getOpenSubtitles(
+                imdbId = imdbId,
+                subtitleCallback = subtitleCallback
             )
         }
 
