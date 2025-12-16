@@ -251,7 +251,7 @@
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/master/plugins/KatanimeProvider.cs3",
-    "status": 0,
+    "status": 1,
     "version": 1,
     "apiVersion": 1,
     "name": "Katanime",
@@ -265,6 +265,6 @@
     ],
     "iconUrl": "https://katanime.net/favicon.ico?v=5.0.65",
     "language": "mx",
-    "fileSize": 33000
+    "fileSize": 25000
   }
 ]
