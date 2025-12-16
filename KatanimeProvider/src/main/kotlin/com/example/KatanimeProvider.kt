@@ -279,44 +279,14 @@ class KatanimeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
         val episodeUrl = tryParseJson<EpisodeLoadData>(data)?.episodeUrl ?: data
-        val response = app.get(episodeUrl)
+
+        val response = app.get(episodeUrl, headers = mapOf("Referer" to mainUrl), timeout = 15_000)
         val doc = response.document
 
-        val tokenCsrf = doc.selectFirst("meta[name='csrf-token']")?.attr("content") ?: ""
-        val dataId = doc.selectFirst("h1.comics-title.ajp")?.attr("data-id")
-
-        val dynamicKey = generateDynamicKey(dataId ?: "")
-
-        if (!tokenCsrf.isNullOrBlank() && !dataId.isNullOrBlank()) {
-            try {
-                app.post(
-                    episodeUrl,
-                    headers = mapOf(
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "Referer" to episodeUrl,
-                        "Origin" to mainUrl,
-                        "Accept" to "application/json",
-                        "Content-Type" to "application/x-www-form-urlencoded"
-                    ),
-                    data = mapOf(
-                        "_token" to tokenCsrf,
-                        "token_plus" to dynamicKey
-                    ),
-                    cookies = response.cookies,
-                    timeout = 20_000
-                )
-                Log.d("KatanimeProvider", "POST de autenticación enviado correctamente.")
-            } catch (e: Exception) {
-                Log.e("KatanimeProvider", "Fallo POST: ${e.message}")
-            }
-        }
-
-        val reloadedResponse = app.get(episodeUrl, headers = mapOf("Referer" to episodeUrl), timeout = 15_000)
-        val reloadedDoc = reloadedResponse.document
-        val players = reloadedDoc.select("ul.ul-drop.dropcaps li a.play-video.cap")
+        val players = doc.select("ul.ul-drop.dropcaps li a.play-video.cap")
 
         if (players.isEmpty()) {
-            Log.d("KatanimeProvider", "No players encontrados después de POST.")
+            Log.d("KatanimeProvider", "No players encontrados.")
             return@coroutineScope false
         }
 
@@ -330,7 +300,7 @@ class KatanimeProvider : MainAPI() {
 
                 if (playerPayload.isNotBlank() && allowedPlayers.any { playerName.contains(it, ignoreCase = true) }) {
                     try {
-                        val iframeUrl = decryptPlayerUrl(playerPayload, tokenCsrf)
+                        val iframeUrl = decryptPlayerUrl(playerPayload)
                         Log.d("KatanimeProvider", "Reproductor: $playerName | URL: $iframeUrl")
 
                         if (!iframeUrl.isNullOrBlank() && iframeUrl.startsWith("http")) {
@@ -355,9 +325,8 @@ class KatanimeProvider : MainAPI() {
         return@coroutineScope linksFound
     }
 
-    private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
+    private fun decryptPlayerUrl(encodedPayload: String): String? {
         return try {
-
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
 
             data class PlayerData(
@@ -369,17 +338,20 @@ class KatanimeProvider : MainAPI() {
 
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
-            val rawKey = (csrfToken + "/player/i.js").toByteArray(Charsets.UTF_8)
+            val rawKey = "katanime_player".toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
             val keyBytes = md.digest(rawKey)
 
-            val macBytes = AndroidBase64.decode(pd.mac!!, AndroidBase64.DEFAULT)
             val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
             val ivBytes = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
 
-            val fullEncrypted = encryptedData + macBytes
+            val tagBytes = AndroidBase64.decode(pd.tag ?: pd.mac!!, AndroidBase64.DEFAULT)
 
-            val parameterSpec = GCMParameterSpec(128, ivBytes)
+            val tagLength = 128
+
+            val fullEncrypted = encryptedData + tagBytes
+
+            val parameterSpec = GCMParameterSpec(tagLength, ivBytes)
 
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), parameterSpec)
