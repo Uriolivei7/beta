@@ -33,9 +33,6 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.newSubtitleFile
-import com.lagradost.cloudstream3.utils.AppUtils
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.fasterxml.jackson.annotation.JsonProperty
 
 data class Subtitle(val url: String, val lang: String)
 data class Subtitles(val subtitles: List<Subtitle>)
@@ -55,25 +52,39 @@ object SubtitleHelper {
         else
             "$subApiUrl/subtitles/movie/$imdbId.json"
 
+        Log.d("SubtitleHelper", "Buscando subs de OpenSubtitles: $url")
+
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept" to "application/json"
         )
 
         try {
-            app.get(url, headers = headers, timeout = 100L)
-                .parsedSafe<Subtitles>()?.subtitles?.amap {
-                    val lan = it.lang
+            val response = app.get(url, headers = headers, timeout = 100L)
 
-                    subtitleCallback(
-                        newSubtitleFile(
-                            lan,
-                            it.url
-                        )
+            if (response.code != 200) {
+                Log.e("SubtitleHelper", "La API respondió con código ${response.code}.")
+                return
+            }
+
+            val subtitlesList = response.parsedSafe<Subtitles>()?.subtitles
+
+            Log.d("SubtitleHelper", "Subtítulos encontrados (Total): ${subtitlesList?.size ?: 0}")
+
+            subtitlesList?.amap {
+                val lan = it.lang
+
+                Log.d("SubtitleHelper", "++ Subtítulo encontrado: $lan -> ${it.url}")
+
+                subtitleCallback(
+                    newSubtitleFile(
+                        lan,
+                        it.url
                     )
-                }
+                )
+            }
         } catch (e: Exception) {
-            android.util.Log.e("SubtitleHelper", "Error al buscar OpenSubtitles para IMDB ID $imdbId: ${e.message}")
+            Log.e("SubtitleHelper", "Error fatal al buscar OpenSubtitles para IMDB ID $imdbId: ${e.message}")
         }
     }
 }
@@ -169,7 +180,7 @@ class AnizoneProvider : MainAPI() {
             )
         )
 
-        val jsonString = payload.toJson()!!
+        val jsonString = payload.toJson()
 
         val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
         val requestBody = jsonString.toRequestBody(mediaType)
@@ -275,7 +286,7 @@ class AnizoneProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val r = Jsoup.connect(url)
             .method(Connection.Method.GET).execute()
-        var doc = Jsoup.parse(r.body())
+        val doc = Jsoup.parse(r.body())
         val cookie = r.cookies()
         val wireData = mutableMapOf(
             "wireSnapshot" to getSnapshot(doc=r.parse()),
@@ -369,25 +380,33 @@ class AnizoneProvider : MainAPI() {
         val episodeUrl = parts[0]
         val imdbId = parts.getOrNull(1)
 
+        Log.d("AniZoneSub", "-> Iniciando loadLinks para: $episodeUrl")
+        Log.d("AniZoneSub", "-> IMDB ID extraído: $imdbId")
+
         val web = app.get(episodeUrl).document
         val sourceName = web.selectFirst("span.truncate")?.text() ?: ""
         val mediaPlayer = web.selectFirst("media-player")
         val m3U8 = mediaPlayer?.attr("src") ?: ""
 
         mediaPlayer?.select("track")?.forEach {
+            Log.d("AniZoneSub", "-> [AniZone] Subtítulo encontrado: ${it.attr("label")}")
             subtitleCallback.invoke(
-                SubtitleFile (
+                newSubtitleFile(
                     it.attr("label"),
                     it.attr("src")
                 )
             )
         }
 
-        if (!imdbId.isNullOrBlank()) {
+        if (!imdbId.isNullOrBlank() && imdbId != "tt0000000") { // Evitamos buscar con el placeholder
+            Log.d("AniZoneSub", "-> Llamando a SubtitleHelper con ID: $imdbId")
             SubtitleHelper.getOpenSubtitles(
                 imdbId = imdbId,
                 subtitleCallback = subtitleCallback
             )
+            Log.d("AniZoneSub", "-> SubtitleHelper terminado.")
+        } else {
+            Log.w("AniZoneSub", "-> IMDB ID es nulo o placeholder ('tt0000000'). Omitiendo OpenSubtitles.")
         }
 
         callback.invoke(
