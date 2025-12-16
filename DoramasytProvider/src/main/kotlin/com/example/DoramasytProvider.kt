@@ -91,54 +91,44 @@ class DoramasytProvider : MainAPI() {
             val response = app.get(mainUrl, timeout = 120)
             val updatedChaptersList: List<AnimeSearchResponse> =
                 response.document.select("div.container section ul.row li.col article").mapNotNull { element ->
-                try {
-                    val title = element.selectFirst("h3")?.text()?.trim()
-                    if (title.isNullOrEmpty()) {
-                        Log.w("Doramasyt", "Título no encontrado, omitiendo elemento")
-                        return@mapNotNull null
-                    }
-
-                    val poster = element.selectFirst("img")?.attr("data-src")?.trim() ?: ""
-                    val linkElement = element.selectFirst("a")
-                    if (linkElement == null) {
-                        Log.w("Doramasyt", "Enlace no encontrado para $title")
-                        return@mapNotNull null
-                    }
-
-                    val epRegex = Regex("episodio-(\\d+)")
-                    val url = linkElement.attr("href")
-                        .replace("ver/", "dorama/")
-                        .replace(epRegex, "sub-espanol")
-
-                    val epNum = title.substringAfter("Capítulo", "")
-                        .trim()
-                        .toIntOrNull()
-
-                    //Log.d("Doramasyt", "Capítulo procesado: Título = $title, URL = $url, Poster = $poster, Episodio = $epNum")
-
-                    val finalPosterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
-
-                    Log.d("Doramasyt_Final", "Poster URL FINAL: $finalPosterUrl")
-                    Log.d("Doramasyt_Final", "Headers POSTER: $POSTER_HEADERS")
-
-                    if (!finalPosterUrl.isNullOrEmpty()) {
-                        try {
-                            app.get(finalPosterUrl, headers = POSTER_HEADERS)
-                            Log.d("Doramasyt_Final", "DIAGNÓSTICO: Imagen descargada con éxito (debería verse)")
-                        } catch (e: Exception) {
-                            Log.e("Doramasyt_Final", "DIAGNÓSTICO: Error al descargar la imagen: ${e.localizedMessage}")
+                    try {
+                        val title = element.selectFirst("h3")?.text()?.trim()
+                        if (title.isNullOrEmpty()) {
+                            Log.w("Doramasyt", "Título no encontrado, omitiendo elemento")
+                            return@mapNotNull null
                         }
+
+                        val poster = element.selectFirst("a > img")?.attr("data-src") ?: ""
+
+                        val linkElement = element.selectFirst("a")
+                        if (linkElement == null) {
+                            Log.w("Doramasyt", "Enlace no encontrado para $title")
+                            return@mapNotNull null
+                        }
+
+                        val epRegex = Regex("episodio-(\\d+)")
+                        val url = linkElement.attr("href")
+                            .replace("ver/", "dorama/")
+                            .replace(epRegex, "sub-espanol")
+
+                        val epNum = title.substringAfter("Capítulo", "")
+                            .trim()
+                            .toIntOrNull()
+
+                        val finalPosterUrl = if (poster.isNotEmpty()) {
+                            val cleanedUrl = poster.substringBefore("?v=")
+                            fixUrl(cleanedUrl)
+                        } else null
+
+                        newAnimeSearchResponse(title, fixUrl(url)) {
+                            this.posterUrl = finalPosterUrl
+                            addDubStatus(getDubStatus(title), epNum)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Doramasyt", "Error al procesar capítulo: ${e.message}", e)
+                        null
                     }
-                    newAnimeSearchResponse(title, fixUrl(url)) {
-                        this.posterUrl = finalPosterUrl
-                        this.posterHeaders = POSTER_HEADERS
-                        addDubStatus(getDubStatus(title), epNum)
-                    }
-                } catch (e: Exception) {
-                    Log.e("Doramasyt", "Error al procesar capítulo: ${e.message}", e)
-                    null
                 }
-            }
 
             Log.d("Doramasyt", "Número de capítulos procesados: ${updatedChaptersList.size}")
 
@@ -164,7 +154,7 @@ class DoramasytProvider : MainAPI() {
                                     return@mapNotNull null
                                 }
 
-                                val poster = element.selectFirst("img")?.attr("data-src")?.trim() ?: ""
+                                val posterWithParams = element.selectFirst("img")?.attr("data-src")?.trim() ?: ""
                                 val linkElement = element.selectFirst("a")
                                 if (linkElement == null) {
                                     Log.w("Doramasyt", "Enlace no encontrado para $title en $name")
@@ -173,11 +163,15 @@ class DoramasytProvider : MainAPI() {
 
                                 val animeUrl = fixUrl(linkElement.attr("href"))
 
-                                Log.d("Doramasyt", "Elemento en $name: Título = $title, Poster = $poster, URL = $animeUrl")
+                                val finalPosterUrl = if (posterWithParams.isNotEmpty()) {
+                                    val cleanedUrl = posterWithParams.substringBefore("?v=")
+                                    fixUrl(cleanedUrl)
+                                } else null
+
+                                Log.d("Doramasyt", "Elemento en $name: Título = $title, Poster = $finalPosterUrl, URL = $animeUrl")
 
                                 newAnimeSearchResponse(title, animeUrl) {
-                                    this.posterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
-                                    this.posterHeaders = POSTER_HEADERS
+                                    this.posterUrl = finalPosterUrl
                                     addDubStatus(getDubStatus(title))
                                 }
                             } catch (e: Exception) {
@@ -211,10 +205,15 @@ class DoramasytProvider : MainAPI() {
         return app.get("$mainUrl/buscar?q=$query", timeout = 120).document.select("li.col").map {
             val title = it.selectFirst("h3")!!.text()
             val href = it.selectFirst("a")!!.attr("href")
-            val image = it.selectFirst("img")!!.attr("data-src")
+
+            val imageWithParams = it.selectFirst("img")!!.attr("data-src")
+
+            val cleanedImageUrl = imageWithParams.substringBefore("?v=")
+            val finalImageUrl = fixUrl(cleanedImageUrl)
+
             newAnimeSearchResponse(title, href, TvType.TvSeries){
-                this.posterUrl = image
-                this.posterHeaders = POSTER_HEADERS
+                this.posterUrl = finalImageUrl
+
                 this.dubStatus = if (title.contains("Latino") || title.contains("Castellano")) EnumSet.of(
                     DubStatus.Dubbed
                 ) else EnumSet.of(DubStatus.Subbed)
@@ -223,18 +222,25 @@ class DoramasytProvider : MainAPI() {
     }
 
     data class CapList(
-            @JsonProperty("eps")val eps: List<Ep>,
+        @JsonProperty("eps")val eps: List<Ep>,
     )
 
     data class Ep(
-            val num: Int?,
+        val num: Int?,
     )
 
     override suspend fun load(url: String): LoadResponse {
         getToken(url)
         val doc = app.get(url, timeout = 120).document
-        val poster = doc.selectFirst("img.rounded-3")?.attr("data-src") ?: ""
-        val backimage = doc.selectFirst("img.w-100")?.attr("data-src") ?: ""
+
+        val posterWithParams = doc.selectFirst("img.rounded-3")?.attr("data-src") ?: ""
+        val cleanedPoster = posterWithParams.substringBefore("?v=")
+        val finalPoster = fixUrl(cleanedPoster)
+
+        val backImageWithParams = doc.selectFirst("img.w-100")?.attr("data-src") ?: ""
+        val cleanedBackImage = backImageWithParams.substringBefore("?v=")
+        val finalBackImage = fixUrl(cleanedBackImage)
+
         val title = doc.selectFirst(".fs-2")?.text() ?: ""
         val type = doc.selectFirst("div.bg-transparent > dl:nth-child(1) > dd")?.text() ?: ""
         val description = doc.selectFirst("div.mb-3")?.text()?.replace("Ver menos", "") ?: ""
@@ -294,9 +300,8 @@ class DoramasytProvider : MainAPI() {
         }
 
         return newAnimeLoadResponse(title, url, getType(type)) {
-            posterUrl = poster
-            this.posterHeaders = POSTER_HEADERS
-            backgroundPosterUrl = backimage
+            posterUrl = finalPoster
+            backgroundPosterUrl = finalBackImage
             addEpisodes(DubStatus.Subbed, epList)
             showStatus = status
             plot = description
