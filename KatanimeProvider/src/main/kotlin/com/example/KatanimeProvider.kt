@@ -350,30 +350,15 @@ class KatanimeProvider : MainAPI() {
             val keyBytes = md.digest(newRawKey)
             Log.d("KatanimeDecrypt", "Clave Hash (SHA-256): ${keyBytes.toHexString()}")
 
-            val fullEncryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
+            val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
             val ivBytes = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
-
-            val tagLengthBytes = 16
-
-            if (fullEncryptedData.size < tagLengthBytes) {
-                Log.e("KatanimeDecrypt", "Error: CipherText (value) es demasiado corto para contener un Tag de 16 bytes.")
-                return null
-            }
-
-            val encryptedData = fullEncryptedData.copyOfRange(0, fullEncryptedData.size - tagLengthBytes)
-            val tagBytes = fullEncryptedData.copyOfRange(fullEncryptedData.size - tagLengthBytes, fullEncryptedData.size)
+            val tagBytes = AndroidBase64.decode(pd.mac!!, AndroidBase64.DEFAULT)
 
             Log.d("KatanimeDecrypt", "Tamaño IV: ${ivBytes.size} bytes")
-            Log.d("KatanimeDecrypt", "Tamaño CipherText (Value sin Tag): ${encryptedData.size} bytes")
-            Log.d("KatanimeDecrypt", "Tamaño Tag GCM extraído: ${tagBytes.size} bytes")
+            Log.d("KatanimeDecrypt", "Tamaño CipherText (Value): ${encryptedData.size} bytes")
+            Log.d("KatanimeDecrypt", "Tamaño Tag GCM (desde mac): ${tagBytes.size} bytes")
 
-            if (tagBytes.size != tagLengthBytes) {
-                Log.e("KatanimeDecrypt", "Error interno en extracción de Tag.")
-                return null
-            }
-
-            val fullEncrypted = encryptedData + tagBytes
-            Log.d("KatanimeDecrypt", "Tamaño total combinado para descifrado: ${fullEncrypted.size} bytes")
+            val fullEncryptedWithTag = encryptedData + tagBytes
 
             val tagLength = 128
             val parameterSpec = GCMParameterSpec(tagLength, ivBytes)
@@ -381,7 +366,7 @@ class KatanimeProvider : MainAPI() {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), parameterSpec)
 
-            val decrypted = cipher.doFinal(fullEncrypted)
+            val decrypted = cipher.doFinal(fullEncryptedWithTag)
 
             Log.d("KatanimeDecrypt", "¡Descifrado exitoso!")
             return String(decrypted, Charsets.UTF_8).trim()
