@@ -302,12 +302,17 @@ class AnizoneProvider : MainAPI() {
         else if (rowLines.getOrNull(1) == "Ongoing") ShowStatus.Ongoing else null
         val genres = doc.select("a[wire:navigate][wire:key]").map { it.text() }
 
-        val imdbId = doc.selectFirst("div[x-data]:has(a[href*='imdb.com'])")
-            ?.selectFirst("a[href*='imdb.com']")
-            ?.attr("href")
+        val imdbLink = doc.selectFirst("a[href*='imdb.com']")
+
+        val imdbId = imdbLink?.attr("href")
             ?.substringAfter("title/")
-            ?.trimEnd('/')
+            ?.trimEnd('/', ' ', '?')
+            ?.let {
+                if (it.startsWith("tt") && it.length > 2) it else "tt0000000"
+            }
             ?: "tt0000000"
+
+        Log.d("AniZoneIMDB", "IMDB ID encontrado en LOAD: $imdbId")
 
         var currentDoc = doc
         var attempts = 0
