@@ -47,7 +47,7 @@
         "authors": [
             "Stormunblessed"
         ],
-        "fileSize": 27526,
+        "fileSize": 27551,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
         "language": "mx",
         "tvTypes": [
@@ -110,29 +110,6 @@
             "Live"
         ],
         "iconUrl": "https://www.shutterstock.com/image-vector/iptv-vector-line-icon-ip-260nw-1841427610.jpg",
-        "apiVersion": 1
-    },
-    {
-        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/KatanimeProvider.cs3",
-        "status": 1,
-        "version": 21,
-        "name": "KatanimeProvider",
-        "internalName": "KatanimeProvider",
-        "authors": [
-            "Ranita",
-            "Yeji",
-            "Mina"
-        ],
-        "description": "Contenido en Latino",
-        "fileSize": 25648,
-        "repositoryUrl": "https://github.com/Uriolivei7/beta",
-        "language": "es",
-        "tvTypes": [
-            "Movie",
-            "TvSeries",
-            "Cartoon",
-            "Anime"
-        ],
         "apiVersion": 1
     },
     {
