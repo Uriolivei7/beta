@@ -30,7 +30,7 @@
             "Ranita"
         ],
         "description": "Anizone.to Anime subtitulado y con multiples doblajes",
-        "fileSize": 17757,
+        "fileSize": 21788,
         "repositoryUrl": "https://github.com/Uriolivei7/beta",
         "language": "en",
         "tvTypes": [
@@ -92,6 +92,29 @@
             "Live"
         ],
         "iconUrl": "https://www.shutterstock.com/image-vector/iptv-vector-line-icon-ip-260nw-1841427610.jpg",
+        "apiVersion": 1
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/KatanimeProvider.cs3",
+        "status": 1,
+        "version": 21,
+        "name": "KatanimeProvider",
+        "internalName": "KatanimeProvider",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "description": "Contenido en Latino",
+        "fileSize": 24806,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "language": "es",
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
         "apiVersion": 1
     },
     {
