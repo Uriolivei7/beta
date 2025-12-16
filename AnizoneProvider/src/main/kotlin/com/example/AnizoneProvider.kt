@@ -31,64 +31,7 @@ import java.util.Locale
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
-import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.newSubtitleFile
-
-data class Subtitle(val url: String, val lang: String)
-data class Subtitles(val subtitles: List<Subtitle>)
-
-object SubtitleHelper {
-
-    suspend fun getOpenSubtitles(
-        imdbId: String,
-        season: Int? = null,
-        episode: Int? = null,
-        subtitleCallback: (SubtitleFile) -> Unit
-    ) {
-        val subApiUrl = "https://opensubtitles-v3.strem.io"
-
-        val url = if (season != null && episode != null)
-            "$subApiUrl/subtitles/series/$imdbId:$season:$episode.json"
-        else
-            "$subApiUrl/subtitles/movie/$imdbId.json"
-
-        Log.d("SubtitleHelper", "Buscando subs de OpenSubtitles: $url")
-
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept" to "application/json"
-        )
-
-        try {
-            val response = app.get(url, headers = headers, timeout = 100L)
-
-            if (response.code != 200) {
-                Log.e("SubtitleHelper", "La API respondió con código ${response.code}.")
-                return
-            }
-
-            val subtitlesList = response.parsedSafe<Subtitles>()?.subtitles
-
-            Log.d("SubtitleHelper", "Subtítulos encontrados (Total): ${subtitlesList?.size ?: 0}")
-
-            subtitlesList?.amap {
-                val lan = it.lang
-
-                Log.d("SubtitleHelper", "++ Subtítulo encontrado: $lan -> ${it.url}")
-
-                subtitleCallback(
-                    newSubtitleFile(
-                        lan,
-                        it.url
-                    )
-                )
-            }
-        } catch (e: Exception) {
-            Log.e("SubtitleHelper", "Error fatal al buscar OpenSubtitles para IMDB ID $imdbId: ${e.message}")
-        }
-    }
-}
-
 
 class AnizoneProvider : MainAPI() {
 
@@ -351,11 +294,11 @@ class AnizoneProvider : MainAPI() {
                     ?.replace(Regex("\\s+"), "")
                     ?.ifEmpty { null }
                     ?.let { dateText ->
-                        Log.e("AniZone", "Fecha encontrada para ${this.name}: $dateText")
+                        Log.d("AniZone", "Fecha encontrada para ${this.name}: $dateText")
 
                         try {
                             val parsedTime = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).parse(dateText)?.time
-                            Log.e("AniZone", "Parseo exitoso para ${this.name}: $parsedTime")
+                            Log.d("AniZone", "Parseo exitoso para ${this.name}: $parsedTime")
                             parsedTime
                         } catch (e: Exception) {
                             Log.e("AniZone", "FALLO de parseo para ${this.name} con texto '$dateText': ${e.message}")
@@ -383,10 +326,8 @@ class AnizoneProvider : MainAPI() {
     ): Boolean {
         val parts = data.split("|||")
         val episodeUrl = parts[0]
-        val imdbId = parts.getOrNull(1)
 
         Log.d("AniZoneSub", "-> Iniciando loadLinks para: $episodeUrl")
-        Log.d("AniZoneSub", "-> IMDB ID extraído: $imdbId")
 
         val web = app.get(episodeUrl).document
         val sourceName = web.selectFirst("span.truncate")?.text() ?: ""
@@ -401,17 +342,6 @@ class AnizoneProvider : MainAPI() {
                     it.attr("src")
                 )
             )
-        }
-
-        if (!imdbId.isNullOrBlank() && imdbId != "tt0000000") { // Evitamos buscar con el placeholder
-            Log.d("AniZoneSub", "-> Llamando a SubtitleHelper con ID: $imdbId")
-            SubtitleHelper.getOpenSubtitles(
-                imdbId = imdbId,
-                subtitleCallback = subtitleCallback
-            )
-            Log.d("AniZoneSub", "-> SubtitleHelper terminado.")
-        } else {
-            Log.w("AniZoneSub", "-> IMDB ID es nulo o placeholder ('tt0000000'). Omitiendo OpenSubtitles.")
         }
 
         callback.invoke(
