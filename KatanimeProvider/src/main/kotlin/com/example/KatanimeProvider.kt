@@ -326,8 +326,10 @@ class KatanimeProvider : MainAPI() {
     }
 
     private fun decryptPlayerUrl(encodedPayload: String): String? {
+        Log.d("KatanimeDecrypt", "Iniciando descifrado del payload.")
         return try {
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
+            Log.d("KatanimeDecrypt", "JSON decodificado (Base64): $jsonStr")
 
             data class PlayerData(
                 @JsonProperty("iv") val iv: String?,
@@ -336,21 +338,29 @@ class KatanimeProvider : MainAPI() {
                 @JsonProperty("tag") val tag: String?
             )
 
-            val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
+            val pd = tryParseJson<PlayerData>(jsonStr)
+            if (pd == null) {
+                Log.e("KatanimeDecrypt", "Error: Fallo al parsear el JSON de PlayerData.")
+                return null
+            }
 
-            val rawKey = "katanime_player".toByteArray(Charsets.UTF_8)
+            val rawKey = "katanime".toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
             val keyBytes = md.digest(rawKey)
+            Log.d("KatanimeDecrypt", "Clave Hash (SHA-256): ${keyBytes.toHexString()}")
 
             val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
             val ivBytes = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
-
             val tagBytes = AndroidBase64.decode(pd.tag ?: pd.mac!!, AndroidBase64.DEFAULT)
 
-            val tagLength = 128
+            Log.d("KatanimeDecrypt", "Tamaño IV: ${ivBytes.size} bytes")
+            Log.d("KatanimeDecrypt", "Tamaño CipherText (Value): ${encryptedData.size} bytes")
+            Log.d("KatanimeDecrypt", "Tamaño Tag/MAC: ${tagBytes.size} bytes")
 
             val fullEncrypted = encryptedData + tagBytes
+            Log.d("KatanimeDecrypt", "Tamaño total combinado para descifrado: ${fullEncrypted.size} bytes")
 
+            val tagLength = 128
             val parameterSpec = GCMParameterSpec(tagLength, ivBytes)
 
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -358,12 +368,17 @@ class KatanimeProvider : MainAPI() {
 
             val decrypted = cipher.doFinal(fullEncrypted)
 
+            Log.d("KatanimeDecrypt", "¡Descifrado exitoso!")
             return String(decrypted, Charsets.UTF_8).trim()
+
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Desencriptación falló: ${e.message}")
+            Log.e("KatanimeDecrypt", "Detalles del error: ${e.stackTraceToString()}")
             null
         }
     }
+
+    private fun ByteArray.toHexString(): String = joinToString(separator = "") { "%02x".format(it) }
 
     private fun generateDynamicKey(dataId: String): String {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
