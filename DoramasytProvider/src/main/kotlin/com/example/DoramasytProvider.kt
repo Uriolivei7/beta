@@ -33,7 +33,7 @@ class DoramasytProvider : MainAPI() {
 
         val POSTER_HEADERS = mapOf(
             "Accept" to "image/webp,image/apng,image/*,*/*;q=0.8",
-            "Referer" to "https://doramasyt.com/"
+            "Referer" to "https://www.doramasyt.com/"
         )
     }
 
@@ -88,7 +88,8 @@ class DoramasytProvider : MainAPI() {
         Log.d("Doramasyt", "Procesando sección de capítulos actualizados")
         try {
             val response = app.get(mainUrl, timeout = 120)
-            val updatedChaptersList: List<AnimeSearchResponse> = response.document.select("div.container section ul.row li.col article").mapNotNull { element ->
+            val updatedChaptersList: List<AnimeSearchResponse> =
+                response.document.select("div.container section ul.row li.col article").mapNotNull { element ->
                 try {
                     val title = element.selectFirst("h3")?.text()?.trim()
                     if (title.isNullOrEmpty()) {
