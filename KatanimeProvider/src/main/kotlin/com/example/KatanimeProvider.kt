@@ -10,7 +10,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import javax.crypto.Cipher.DECRYPT_MODE
 import java.security.MessageDigest
@@ -18,15 +17,12 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import kotlin.collections.ArrayList
 import kotlinx.coroutines.*
-import java.time.ZoneOffset
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.Cipher.DECRYPT_MODE
-import javax.crypto.Cipher.ENCRYPT_MODE
 
 class KatanimeProvider : MainAPI() {
     override var mainUrl = "https://katanime.net"
@@ -361,34 +357,36 @@ class KatanimeProvider : MainAPI() {
 
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         return try {
-            Log.d("KatanimeProvider", "Encoded Payload: $encodedPayload")
 
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
 
-            Log.d("KatanimeProvider", "Decoded JSON: $jsonStr")
-
             data class PlayerData(
                 @JsonProperty("iv") val iv: String?,
-                @JsonProperty("value") val value: String?, // <-- ¡Revertir a "value"!
-                @JsonProperty("mac") val mac: String?, // <-- Nuevo, posiblemente necesario
-                @JsonProperty("tag") val tag: String? // <-- Nuevo
+                @JsonProperty("value") val value: String?,
+                @JsonProperty("mac") val mac: String?,
+                @JsonProperty("tag") val tag: String?
             )
 
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
-
-            val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
-            //val encrypted = AndroidBase64.decode(pd.ct!!, AndroidBase64.DEFAULT)
-            val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
 
             val rawKey = (csrfToken + "/player/i.js").toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
             val keyBytes = md.digest(rawKey)
 
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(iv))
-            val decrypted = cipher.doFinal(encrypted)
+            val macBytes = AndroidBase64.decode(pd.mac!!, AndroidBase64.DEFAULT)
+            val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
+            val ivBytes = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
 
-            String(decrypted, Charsets.UTF_8).trim()
+            val fullEncrypted = encryptedData + macBytes
+
+            val parameterSpec = GCMParameterSpec(128, ivBytes)
+
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), parameterSpec)
+
+            val decrypted = cipher.doFinal(fullEncrypted)
+
+            return String(decrypted, Charsets.UTF_8).trim()
         } catch (e: Exception) {
             Log.e("KatanimeProvider", "Desencriptación falló: ${e.message}")
             null
