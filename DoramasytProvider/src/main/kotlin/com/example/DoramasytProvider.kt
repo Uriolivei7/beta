@@ -81,7 +81,7 @@ class DoramasytProvider : MainAPI() {
             Pair("$mainUrl/doramas?categoria=pelicula", "Peliculas")
         )
         val items = ArrayList<HomePageList>()
-        var isHorizontal = true
+        val isHorizontal = true
 
         Log.d("Doramasyt", "URLs configuradas: ${urls.joinToString { "${it.first} - ${it.second}" }}")
 
@@ -113,10 +113,15 @@ class DoramasytProvider : MainAPI() {
                         .trim()
                         .toIntOrNull()
 
-                    Log.d("Doramasyt", "Capítulo procesado: Título = $title, URL = $url, Poster = $poster, Episodio = $epNum")
+                    //Log.d("Doramasyt", "Capítulo procesado: Título = $title, URL = $url, Poster = $poster, Episodio = $epNum")
+
+                    val finalPosterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
+
+                    Log.d("Doramasyt", "Poster URL FINAL: $finalPosterUrl")
+                    Log.d("Doramasyt", "Headers POSTER: $POSTER_HEADERS")
 
                     newAnimeSearchResponse(title, fixUrl(url)) {
-                        this.posterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
+                        this.posterUrl = finalPosterUrl
                         this.posterHeaders = POSTER_HEADERS
                         addDubStatus(getDubStatus(title), epNum)
                     }

@@ -330,6 +330,7 @@ class KatanimeProvider : MainAPI() {
     private fun decryptPlayerUrl(encodedPayload: String): String? {
         Log.d("KatanimeDecrypt", "Iniciando descifrado del payload.")
         return try {
+
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
             Log.d("KatanimeDecrypt", "JSON decodificado (Base64): $jsonStr")
 
@@ -349,26 +350,25 @@ class KatanimeProvider : MainAPI() {
             val keyBytes = md.digest(newRawKey)
             Log.d("KatanimeDecrypt", "Clave Hash (SHA-256): ${keyBytes.toHexString()}")
 
-            val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
+            val fullEncryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
             val ivBytes = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
 
-            val tagBytes = when {
-                pd.tag.isNullOrEmpty() && !pd.mac.isNullOrEmpty() -> {
-                    Log.w("KatanimeDecrypt", "Campo 'tag' vacío, usando 'mac' como Hexadecimal.")
-                    pd.mac.customHexToByteArray()
-                }
-                !pd.tag.isNullOrEmpty() -> {
-                    AndroidBase64.decode(pd.tag, AndroidBase64.DEFAULT)
-                }
-                else -> throw Exception("MAC/Tag de autenticación faltante o inválido.")
+            val tagLengthBytes = 16
+
+            if (fullEncryptedData.size < tagLengthBytes) {
+                Log.e("KatanimeDecrypt", "Error: CipherText (value) es demasiado corto para contener un Tag de 16 bytes.")
+                return null
             }
 
-            Log.d("KatanimeDecrypt", "Tamaño IV: ${ivBytes.size} bytes")
-            Log.d("KatanimeDecrypt", "Tamaño CipherText (Value): ${encryptedData.size} bytes")
-            Log.d("KatanimeDecrypt", "Tamaño Tag/MAC: ${tagBytes.size} bytes")
+            val encryptedData = fullEncryptedData.copyOfRange(0, fullEncryptedData.size - tagLengthBytes)
+            val tagBytes = fullEncryptedData.copyOfRange(fullEncryptedData.size - tagLengthBytes, fullEncryptedData.size)
 
-            if (tagBytes.size != 16) {
-                Log.e("KatanimeDecrypt", "Error: Tamaño de Tag/MAC incorrecto. Esperado: 16, Obtenido: ${tagBytes.size}")
+            Log.d("KatanimeDecrypt", "Tamaño IV: ${ivBytes.size} bytes")
+            Log.d("KatanimeDecrypt", "Tamaño CipherText (Value sin Tag): ${encryptedData.size} bytes")
+            Log.d("KatanimeDecrypt", "Tamaño Tag GCM extraído: ${tagBytes.size} bytes")
+
+            if (tagBytes.size != tagLengthBytes) {
+                Log.e("KatanimeDecrypt", "Error interno en extracción de Tag.")
                 return null
             }
 
