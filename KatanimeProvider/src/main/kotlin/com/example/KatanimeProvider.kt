@@ -362,16 +362,24 @@ class KatanimeProvider : MainAPI() {
     private fun decryptPlayerUrl(encodedPayload: String, csrfToken: String): String? {
         return try {
             val jsonStr = String(AndroidBase64.decode(encodedPayload, AndroidBase64.DEFAULT), Charsets.UTF_8)
-            data class PlayerData(
+
+            /*data class PlayerData(
                 @JsonProperty("iv") val iv: String?,
                 @JsonProperty("value") val value: String?
             )
+             */
+
+            data class PlayerData(
+                @JsonProperty("iv") val iv: String?,
+                @JsonProperty("ct") val ct: String?
+            )
+
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
             val iv = AndroidBase64.decode(pd.iv!!, AndroidBase64.DEFAULT)
-            val encrypted = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
+            val encrypted = AndroidBase64.decode(pd.ct!!, AndroidBase64.DEFAULT)
 
-            val rawKey = (csrfToken + "https://katanime.net").toByteArray(Charsets.UTF_8)
+            val rawKey = (csrfToken + "/player/i.js").toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
             val keyBytes = md.digest(rawKey)
 
