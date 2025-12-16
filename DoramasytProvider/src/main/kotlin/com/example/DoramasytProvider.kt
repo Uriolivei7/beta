@@ -118,9 +118,17 @@ class DoramasytProvider : MainAPI() {
 
                     val finalPosterUrl = if (poster.isNotEmpty()) fixUrl(poster) else null
 
-                    Log.d("Doramasyt", "Poster URL FINAL: $finalPosterUrl")
-                    Log.d("Doramasyt", "Headers POSTER: $POSTER_HEADERS")
+                    Log.d("Doramasyt_Final", "Poster URL FINAL: $finalPosterUrl")
+                    Log.d("Doramasyt_Final", "Headers POSTER: $POSTER_HEADERS")
 
+                    if (!finalPosterUrl.isNullOrEmpty()) {
+                        try {
+                            app.get(finalPosterUrl, headers = POSTER_HEADERS)
+                            Log.d("Doramasyt_Final", "DIAGNÓSTICO: Imagen descargada con éxito (debería verse)")
+                        } catch (e: Exception) {
+                            Log.e("Doramasyt_Final", "DIAGNÓSTICO: Error al descargar la imagen: ${e.localizedMessage}")
+                        }
+                    }
                     newAnimeSearchResponse(title, fixUrl(url)) {
                         this.posterUrl = finalPosterUrl
                         this.posterHeaders = POSTER_HEADERS
