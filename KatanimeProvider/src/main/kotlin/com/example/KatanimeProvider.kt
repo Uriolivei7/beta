@@ -369,13 +369,9 @@ class KatanimeProvider : MainAPI() {
 
             val pd = tryParseJson<PlayerData>(jsonStr) ?: return null
 
-            val STATIC_SECRET = "/player/i.js"
+            val rawKey = (csrfToken + "/player/i.js").toByteArray(Charsets.UTF_8)
             val md = MessageDigest.getInstance("SHA-256")
-            val keyBytes = md.digest(STATIC_SECRET.toByteArray(Charsets.UTF_8))
-
-            // val rawKey = (csrfToken + "/player/i.js").toByteArray(Charsets.UTF_8)
-            // val md = MessageDigest.getInstance("SHA-256")
-            // val keyBytes = md.digest(rawKey)
+            val keyBytes = md.digest(rawKey)
 
             val macBytes = AndroidBase64.decode(pd.mac!!, AndroidBase64.DEFAULT)
             val encryptedData = AndroidBase64.decode(pd.value!!, AndroidBase64.DEFAULT)
