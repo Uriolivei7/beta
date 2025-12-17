@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import kotlinx.coroutines.*
 import org.jsoup.nodes.Element
-import android.util.Log
+import android.util.Log // Aseguramos la importación
 
 class MonoschinosProvider : MainAPI() {
     override var mainUrl = "https://ww3.monoschinos3.com"
@@ -87,32 +87,46 @@ class MonoschinosProvider : MainAPI() {
 
         return newAnimeSearchResponse(title, seriesHref, type) {
             this.posterUrl = posterUrl
-            // Se asume que no hay "note", "subStatus" o "quality" para evitar errores
         }
     }
 
-    // *** FUNCIÓN getMainPage MODIFICADA (Selectores basados en h2:contains) ***
+    // *** FUNCIÓN getMainPage CON LOGS DE DIAGNÓSTICO ***
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get("$mainUrl/${request.data}?pagina=$page").document
+        val requestUrl = "$mainUrl/${request.data}?pagina=$page"
+        Log.d("Monoschinos3", "Solicitando URL: $requestUrl para ${request.name}")
+
+        val document = app.get(requestUrl).document
+
+        // Log para verificar si el documento fue cargado
+        Log.d("Monoschinos3", "Documento cargado. Tamaño aproximado: ${document.html().length} bytes.")
 
         val list: List<SearchResponse> = when (request.name) {
             "Series recientes ⛩" -> {
-                // Selector más robusto: Busca la sección que contiene el H2 de "Series recientes"
-                document.select("section:has(h2:contains(Series recientes)) article").mapNotNull {
-                    it.toSearchResult()
-                }
+                val selector = "section:has(h2:contains(Series recientes)) article"
+                val selection = document.select(selector)
+                Log.d("Monoschinos3", "Selector Series recientes: '$selector'. Encontrados: ${selection.size} artículos.")
+
+                selection.mapNotNull { it.toSearchResult() }
             }
             "Últimos capítulos 🔥" -> {
-                // Selector más robusto: Busca la sección que contiene el H2 de "Últimos capítulos"
-                document.select("section:has(h2:contains(Últimos capítulos)) article").mapNotNull {
-                    it.toEpisodeSearchResult()
-                }
+                val selector = "section:has(h2:contains(Últimos capítulos)) article"
+                val selection = document.select(selector)
+                Log.d("Monoschinos3", "Selector Últimos capítulos: '$selector'. Encontrados: ${selection.size} artículos.")
+
+                selection.mapNotNull { it.toEpisodeSearchResult() }
             }
             // Fallback para las listas de filtro (ej: animes?type=tv)
             else -> {
-                document.select("ul[role=list] li article").mapNotNull { it.toSearchResult() }
+                val selector = "ul[role=list] li article"
+                val selection = document.select(selector)
+                Log.d("Monoschinos3", "Selector Fallback (Filtro): '$selector'. Encontrados: ${selection.size} artículos.")
+
+                selection.mapNotNull { it.toSearchResult() }
             }
         }
+
+        // Log para verificar el resultado final
+        Log.d("Monoschinos3", "${request.name} retornando ${list.size} elementos.")
 
         return newHomePageResponse(
             list = HomePageList(
@@ -123,9 +137,6 @@ class MonoschinosProvider : MainAPI() {
             hasNext = document.select("a.btn.btn-outline-primary").text().contains("Siguiente")
         )
     }
-
-    // --- Search, Load, and LoadLinks Functions ---
-    // (Sin cambios para evitar introducir nuevos errores)
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
