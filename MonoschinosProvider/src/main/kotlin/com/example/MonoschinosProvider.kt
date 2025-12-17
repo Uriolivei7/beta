@@ -21,11 +21,9 @@ class MonoschinosProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "" to "Series recientes ⛩",    // La ficha del anime
-        "" to "Últimos capítulos 🔥" // El episodio más reciente
+        "" to "Últimos capítulos 🔥",
+        "" to "Series recientes ⛩"
     )
-
-    // --- Helper Functions ---
 
     private fun getTvType(text: String): TvType {
         return when {
@@ -91,7 +89,6 @@ class MonoschinosProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // CORRECCIÓN: Si es la página principal, usamos mainUrl. Si es un filtro, usamos la data.
         val requestUrl = if (page <= 1) mainUrl else "$mainUrl/${request.data}?pagina=$page"
 
         Log.d("Monoschinos3", "Solicitando URL: $requestUrl para ${request.name}")
@@ -107,13 +104,11 @@ class MonoschinosProvider : MainAPI() {
                 }
             }
             "Últimos capítulos 🔥" -> {
-                // Selector basado en el H2 que viste en el HTML
                 document.select("section:has(h2:contains(Últimos capítulos)) article").mapNotNull {
                     it.toEpisodeSearchResult()
                 }
             }
             else -> {
-                // Para búsquedas o filtros paginados
                 document.select("ul[role=list] li article, li.ficha_efecto").mapNotNull { it.toSearchResult() }
             }
         }
