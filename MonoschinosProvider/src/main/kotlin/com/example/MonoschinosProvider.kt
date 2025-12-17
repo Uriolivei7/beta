@@ -3,8 +3,6 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import kotlinx.coroutines.*
 import org.jsoup.nodes.Element
 import android.util.Log
@@ -18,14 +16,13 @@ class MonoschinosProvider : MainAPI() {
     override val hasQuickSearch = true
     override val supportedTypes = setOf(
         TvType.Anime,
+        TvType.AnimeMovie,
         TvType.OVA,
     )
 
     override val mainPage = mainPageOf(
-        "animes?type=tv" to "Animes",
-        "animes?type=pelicula" to "Películas",
-        "animes?type=ova" to "OVAs",
-        "animes?status=en-emision" to "En Emisión",
+        "animes" to "Últimos capítulos",
+        "animes" to "Series recientes"
     )
 
     private fun getTvType(text: String): TvType {
@@ -62,25 +59,58 @@ class MonoschinosProvider : MainAPI() {
 
         val title = a.selectFirst("h3")?.text() ?: a.selectFirst("img")?.attr("alt") ?: ""
 
-        val posterUrl = fixUrlNull(a.selectFirst("div.tarjeta img")?.attr("src"))
+        val posterUrl = fixUrlNull(a.selectFirst("div.tarjeta img")?.attr("src") ?: a.selectFirst("img")?.attr("src"))
 
         val spanText = a.selectFirst("span.text-muted")?.text() ?: ""
         val type = getTvType(spanText)
 
-        return newMovieSearchResponse(title, href, type) {
+        return newAnimeSearchResponse(title, href, type) {
+            this.posterUrl = posterUrl
+        }
+    }
+
+    private fun Element.toEpisodeSearchResult(): SearchResponse? {
+        val a = this.selectFirst("a") ?: return null
+
+        val episodeHref = fixUrl(a.attr("href"))
+
+        val seriesPath = episodeHref.substringBefore("/episodio")
+        val seriesHref = fixUrl(seriesPath.replace("/ver/", "/anime/"))
+
+        val title = a.selectFirst("h3")?.text() ?: a.selectFirst("img")?.attr("alt") ?: ""
+
+        val posterUrl = fixUrlNull(a.selectFirst("img")?.attr("src"))
+
+        val type = TvType.Anime
+
+        return newAnimeSearchResponse(title, seriesHref, type) {
             this.posterUrl = posterUrl
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get("$mainUrl/${request.data}&pagina=$page").document
+        val document = app.get("$mainUrl/${request.data}?pagina=$page").document
 
-        val home = document.select("ul[role=list] li article").mapNotNull { it.toSearchResult() }
+        val list: List<SearchResponse> = when (request.name) {
+            "Series recientes ⛩" -> {
+                document.select("section:has(h2:contains(Series recientes)) ul article").mapNotNull {
+                    it.toSearchResult()
+                }
+            }
+            "Últimos capítulos" -> {
+                document.select("section:has(h2:contains(Últimos capítulos)) ul article").mapNotNull {
+                    it.toEpisodeSearchResult()
+                }
+            }
+            else -> {
+                document.select("ul[role=list] li article").mapNotNull { it.toSearchResult() }
+            }
+        }
 
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name,
-                list = home,
+                list = list,
                 isHorizontalImages = false
             ),
             hasNext = document.select("a.btn.btn-outline-primary").text().contains("Siguiente")
