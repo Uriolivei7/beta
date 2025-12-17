@@ -21,8 +21,8 @@ class MonoschinosProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "animes" to "Series recientes ⛩",    // La ficha del anime
-        "animes" to "Últimos capítulos 🔥" // El episodio más reciente
+        "" to "Series recientes ⛩",    // La ficha del anime
+        "" to "Últimos capítulos 🔥" // El episodio más reciente
     )
 
     // --- Helper Functions ---
@@ -90,43 +90,35 @@ class MonoschinosProvider : MainAPI() {
         }
     }
 
-    // *** FUNCIÓN getMainPage CON LOGS DE DIAGNÓSTICO ***
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val requestUrl = "$mainUrl/${request.data}?pagina=$page"
+        // CORRECCIÓN: Si es la página principal, usamos mainUrl. Si es un filtro, usamos la data.
+        val requestUrl = if (page <= 1) mainUrl else "$mainUrl/${request.data}?pagina=$page"
+
         Log.d("Monoschinos3", "Solicitando URL: $requestUrl para ${request.name}")
 
         val document = app.get(requestUrl).document
-
-        // Log para verificar si el documento fue cargado
-        Log.d("Monoschinos3", "Documento cargado. Tamaño aproximado: ${document.html().length} bytes.")
+        Log.d("Monoschinos3", "Documento cargado. Tamaño: ${document.html().length}")
 
         val list: List<SearchResponse> = when (request.name) {
             "Series recientes ⛩" -> {
-                val selector = "section:has(h2:contains(Series recientes)) article"
-                val selection = document.select(selector)
-                Log.d("Monoschinos3", "Selector Series recientes: '$selector'. Encontrados: ${selection.size} artículos.")
-
-                selection.mapNotNull { it.toSearchResult() }
+                // Selector basado en el H2 que viste en el HTML
+                document.select("section:has(h2:contains(Series recientes)) article").mapNotNull {
+                    it.toSearchResult()
+                }
             }
             "Últimos capítulos 🔥" -> {
-                val selector = "section:has(h2:contains(Últimos capítulos)) article"
-                val selection = document.select(selector)
-                Log.d("Monoschinos3", "Selector Últimos capítulos: '$selector'. Encontrados: ${selection.size} artículos.")
-
-                selection.mapNotNull { it.toEpisodeSearchResult() }
+                // Selector basado en el H2 que viste en el HTML
+                document.select("section:has(h2:contains(Últimos capítulos)) article").mapNotNull {
+                    it.toEpisodeSearchResult()
+                }
             }
-            // Fallback para las listas de filtro (ej: animes?type=tv)
             else -> {
-                val selector = "ul[role=list] li article"
-                val selection = document.select(selector)
-                Log.d("Monoschinos3", "Selector Fallback (Filtro): '$selector'. Encontrados: ${selection.size} artículos.")
-
-                selection.mapNotNull { it.toSearchResult() }
+                // Para búsquedas o filtros paginados
+                document.select("ul[role=list] li article, li.ficha_efecto").mapNotNull { it.toSearchResult() }
             }
         }
 
-        // Log para verificar el resultado final
-        Log.d("Monoschinos3", "${request.name} retornando ${list.size} elementos.")
+        Log.d("Monoschinos3", "${request.name} encontrados: ${list.size}")
 
         return newHomePageResponse(
             list = HomePageList(
