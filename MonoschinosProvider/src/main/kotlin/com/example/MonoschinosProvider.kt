@@ -21,9 +21,11 @@ class MonoschinosProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "animes" to "Últimos capítulos",
-        "animes" to "Series recientes"
+        "animes" to "Series recientes ⛩",    // La ficha del anime
+        "animes" to "Últimos capítulos 🔥" // El episodio más reciente
     )
+
+    // --- Helper Functions ---
 
     private fun getTvType(text: String): TvType {
         return when {
@@ -85,23 +87,28 @@ class MonoschinosProvider : MainAPI() {
 
         return newAnimeSearchResponse(title, seriesHref, type) {
             this.posterUrl = posterUrl
+            // Se asume que no hay "note", "subStatus" o "quality" para evitar errores
         }
     }
 
+    // *** FUNCIÓN getMainPage MODIFICADA (Selectores basados en h2:contains) ***
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get("$mainUrl/${request.data}?pagina=$page").document
 
         val list: List<SearchResponse> = when (request.name) {
             "Series recientes ⛩" -> {
-                document.select("section:has(h2:contains(Series recientes)) ul article").mapNotNull {
+                // Selector más robusto: Busca la sección que contiene el H2 de "Series recientes"
+                document.select("section:has(h2:contains(Series recientes)) article").mapNotNull {
                     it.toSearchResult()
                 }
             }
-            "Últimos capítulos" -> {
-                document.select("section:has(h2:contains(Últimos capítulos)) ul article").mapNotNull {
+            "Últimos capítulos 🔥" -> {
+                // Selector más robusto: Busca la sección que contiene el H2 de "Últimos capítulos"
+                document.select("section:has(h2:contains(Últimos capítulos)) article").mapNotNull {
                     it.toEpisodeSearchResult()
                 }
             }
+            // Fallback para las listas de filtro (ej: animes?type=tv)
             else -> {
                 document.select("ul[role=list] li article").mapNotNull { it.toSearchResult() }
             }
@@ -116,6 +123,9 @@ class MonoschinosProvider : MainAPI() {
             hasNext = document.select("a.btn.btn-outline-primary").text().contains("Siguiente")
         )
     }
+
+    // --- Search, Load, and LoadLinks Functions ---
+    // (Sin cambios para evitar introducir nuevos errores)
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
