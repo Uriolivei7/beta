@@ -81,7 +81,7 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
                     episodes.forEach { ep ->
                         val epData = Data(
                             name = ep.title ?: "T$seasonNum E${ep.episode_num}",
-                            stream_id = ep.id ?: ep.episode_id,
+                            stream_id = ep.id ?: ep.episode_id ?: 0,
                             stream_type = "series",
                             series_id = data.series_id,
                             container_extension = ep.container_extension
@@ -91,7 +91,8 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
                             this.name = ep.title
                             this.season = seasonNum.toIntOrNull()
                             this.episode = ep.episode_num?.toIntOrNull()
-                            this.posterUrl = ep.info?.movie_image ?: finalPoster
+                            val infoMap = ep.info as? Map<*, *>
+                            this.posterUrl = infoMap?.get("movie_image")?.toString() ?: finalPoster
                         })
                     }
                 }

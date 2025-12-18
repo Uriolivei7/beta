@@ -68,7 +68,7 @@ data class EpisodeItem(
     val title: String? = null,
     val episode_num: String? = null,
     val container_extension: String? = null,
-    val info: EpisodeInfo? = null
+    val info: Any? = null
 )
 
 data class EpisodeInfo(
