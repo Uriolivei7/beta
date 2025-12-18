@@ -26,17 +26,18 @@ data class Stream(
     @JsonProperty("is_adult") val is_adult: String? = null,
     @JsonProperty("category_id") val category_id: String,
     @JsonProperty("custom_sid") val custom_sid: String? = null,
-    @JsonProperty("tv_archive") val tv_archive: Int? = null, // Agregado ?
+    @JsonProperty("tv_archive") val tv_archive: Int? = null,
     @JsonProperty("direct_source") val direct_source: String? = null,
-    @JsonProperty("tv_archive_duration") val tv_archive_duration: Int? = null, // Agregado ?
+    @JsonProperty("tv_archive_duration") val tv_archive_duration: Int? = null,
+    @JsonProperty("series_id") val series_id: Int? = null,
+    @JsonProperty("container_extension") val container_extension: String? = null,
 )
 
-// He ajustado Data para que coincida con Stream y sea seguro
 data class Data(
     val num: Int? = null,
     val name: String,
     val stream_type: String? = null,
-    val stream_id: Int,
+    val stream_id: Int? = null,
     val stream_icon: String? = null,
     val epg_channel_id: String? = null,
     val added: String? = null,
@@ -46,4 +47,28 @@ data class Data(
     val tv_archive: Int? = null,
     val direct_source: String? = null,
     val tv_archive_duration: Int? = null,
+    val series_id: Int? = null,
+    val container_extension: String? = null,
+)
+
+data class SeriesInfoResponse(
+    val info: SeriesGeneralInfo? = null,
+    val episodes: Map<String, List<EpisodeItem>>? = null
+)
+
+data class SeriesGeneralInfo(
+    val plot: String? = null,
+    val movie_image: String? = null
+)
+
+data class EpisodeItem(
+    val id: Int,
+    val title: String? = null,
+    val episode_num: String? = null,
+    val container_extension: String? = null,
+    val info: EpisodeInfo? = null
+)
+
+data class EpisodeInfo(
+    val movie_image: String? = null
 )
