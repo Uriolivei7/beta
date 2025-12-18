@@ -70,13 +70,18 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
             "series" -> {
                 val seriesDataRaw = callApi("get_series_info&series_id=${data.series_id}")
                 val seriesInfo = parseJson<SeriesInfoResponse>(seriesDataRaw)
+
+                val finalPoster = seriesInfo.info?.cover
+                    ?: seriesInfo.info?.movie_image
+                    ?: poster
+
                 val episodesList = mutableListOf<Episode>()
 
                 seriesInfo.episodes?.forEach { (seasonNum, episodes) ->
                     episodes.forEach { ep ->
                         val epData = Data(
                             name = ep.title ?: "T$seasonNum E${ep.episode_num}",
-                            stream_id = ep.id,
+                            stream_id = ep.id ?: ep.episode_id,
                             stream_type = "series",
                             series_id = data.series_id,
                             container_extension = ep.container_extension
@@ -86,12 +91,13 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
                             this.name = ep.title
                             this.season = seasonNum.toIntOrNull()
                             this.episode = ep.episode_num?.toIntOrNull()
-                            this.posterUrl = ep.info?.movie_image ?: poster
+                            this.posterUrl = ep.info?.movie_image ?: finalPoster
                         })
                     }
                 }
+
                 newTvSeriesLoadResponse(data.name, url, TvType.TvSeries, episodesList) {
-                    this.posterUrl = poster
+                    this.posterUrl = finalPoster
                     this.plot = seriesInfo.info?.plot
                 }
             }
@@ -131,7 +137,9 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
             container_extension = this.container_extension
         ).toJson(),
         type = type
-    ) { this.posterUrl = this@toSearchResponse.stream_icon }
+    ) {
+        this.posterUrl = this@toSearchResponse.stream_icon
+    }
 
     private inline fun <reified T> safeParse(json: String): T {
         return try {
