@@ -31,6 +31,7 @@ data class Stream(
     @JsonProperty("direct_source") val direct_source: String? = null,
     @JsonProperty("tv_archive_duration") val tv_archive_duration: Int? = null,
     @JsonProperty("container_extension") val container_extension: String? = null,
+    @JsonProperty("cover") val cover: String? = null,
 )
 
 data class Data(

@@ -127,7 +127,7 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
         url = Data(
             name = this.name,
             stream_id = this.stream_id ?: this.series_id,
-            stream_icon = this.stream_icon,
+            stream_icon = this.stream_icon ?: this.cover,
             stream_type = when(type) {
                 TvType.Live -> "live"
                 TvType.TvSeries -> "series"
@@ -139,7 +139,7 @@ class XtreamProvider(val host: String, override var name: String, val user: Stri
         ).toJson(),
         type = type
     ) {
-        this.posterUrl = this@toSearchResponse.stream_icon
+        this.posterUrl = this@toSearchResponse.stream_icon ?: this@toSearchResponse.cover
     }
 
     private inline fun <reified T> safeParse(json: String): T {
