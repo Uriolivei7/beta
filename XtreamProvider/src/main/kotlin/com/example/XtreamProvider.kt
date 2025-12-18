@@ -4,141 +4,101 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import okhttp3.Interceptor
-import okhttp3.Response
 
-class XtreamProvider(mainUrl: String, name: String, username: String, password: String) : MainAPI() {
-    override var mainUrl = mainUrl
-    override var name = name
+class XtreamProvider(val host: String, override var name: String, val user: String, val pass: String) : MainAPI() {
+    override var mainUrl = host
     override val hasMainPage = true
     override var lang = "mx"
     override val hasQuickSearch = true
-    override val hasDownloadSupport = false
-    override val supportedTypes = setOf(
-        TvType.TvSeries,
-        TvType.Movie,
-        TvType.Anime,
-        TvType.Live
-    )
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Live)
 
-    var items = mutableMapOf<String, List<Stream>>()
-    val apiURL = "${mainUrl}/player_api.php?username=${username}&password=${password}"
-    val serverUrlWithData = "${mainUrl}/${username}/${password}/"
+    private val apiURL = "${mainUrl.removeSuffix("/")}/player_api.php?username=$user&password=$pass"
+    private val headers = mapOf("User-Agent" to "IPTVSmarters")
+    private var searchCache = mutableListOf<Stream>()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val home = mutableListOf<HomePageList>()
 
-        val categories = parseJson<List<Category>>(loadLiveCategories())
-        items[name] = parseJson<List<Stream>>(loadLiveStreams())
+        val liveCats = safeParse<List<Category>>(app.get("$apiURL&action=get_live_categories", headers = headers).text)
+        val liveStreams = safeParse<List<Stream>>(app.get("$apiURL&action=get_live_streams", headers = headers).text)
+        val vodCats = safeParse<List<Category>>(app.get("$apiURL&action=get_vod_categories", headers = headers).text)
+        val vodStreams = safeParse<List<Stream>>(app.get("$apiURL&action=get_vod_streams", headers = headers).text)
 
-        categories.map { it ->
-            val streamLists = mutableListOf<SearchResponse>()
-            items[name]?.map { stream ->
-                if (stream.category_id == it.category_id) {
-                    streamLists.add(
-                        newLiveSearchResponse(
-                            name = stream.name,
-                            url = Data(
-                                num = stream.num,
-                                name = stream.name,
-                                stream_type = stream.stream_type,
-                                stream_id = stream.stream_id,
-                                stream_icon = stream.stream_icon,
-                                epg_channel_id = stream.epg_channel_id,
-                                added = stream.added,
-                                is_adult = stream.is_adult,
-                                category_id = stream.category_id,
-                                custom_sid = stream.custom_sid,
-                                tv_archive = stream.tv_archive,
-                                direct_source = stream.direct_source,
-                                tv_archive_duration = stream.tv_archive_duration,
-                            ).toJson(),
-                            type = TvType.Live,
-                        ) {
-                            posterUrl = stream.stream_icon
-                        }
-                    )
-                }
-            }
-            home.add(HomePageList(it.category_name, streamLists, isHorizontalImages = true))
+        searchCache.clear()
+        searchCache.addAll(liveStreams)
+        searchCache.addAll(vodStreams)
+
+        val liveGrouped = liveStreams.groupBy { it.category_id }
+        liveCats.take(15).forEach { cat ->
+            val list = liveGrouped[cat.category_id]?.map { it.toSearchResponse(TvType.Live) }
+            if (!list.isNullOrEmpty()) home.add(HomePageList(cat.category_name, list))
+        }
+
+        val vodGrouped = vodStreams.groupBy { it.category_id }
+        vodCats.take(15).forEach { cat ->
+            val list = vodGrouped[cat.category_id]?.map { it.toSearchResponse(TvType.Movie) }
+            if (!list.isNullOrEmpty()) home.add(HomePageList("Cine: ${cat.category_name}", list))
         }
 
         return newHomePageResponse(home, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (items[name] == null) {
-            items[name] = parseJson<List<Stream>>(loadLiveStreams())
+        if (searchCache.isEmpty()) {
+            searchCache.addAll(safeParse<List<Stream>>(app.get("$apiURL&action=get_live_streams", headers = headers).text))
+            searchCache.addAll(safeParse<List<Stream>>(app.get("$apiURL&action=get_vod_streams", headers = headers).text))
         }
+        return searchCache.filter { it.name.contains(query, ignoreCase = true) }.map {
+            it.toSearchResponse(if (it.stream_type == "live") TvType.Live else TvType.Movie)
+        }
+    }
 
-        return items[name]!!.filter { it.name.toString().lowercase().contains(query.lowercase()) }.map { item ->
-            newLiveSearchResponse(
-                name = item.name,
-                url = Data(
-                    num = item.num,
-                    name = item.name,
-                    stream_type = item.stream_type,
-                    stream_id = item.stream_id,
-                    stream_icon = item.stream_icon,
-                    epg_channel_id = item.epg_channel_id,
-                    added = item.added,
-                    is_adult = item.is_adult,
-                    category_id = item.category_id,
-                    custom_sid = item.custom_sid,
-                    tv_archive = item.tv_archive,
-                    direct_source = item.direct_source,
-                    tv_archive_duration = item.tv_archive_duration,
-                ).toJson(),
-                type = TvType.Live,
-            ) {
-                posterUrl = item.stream_icon
+    override suspend fun load(url: String): LoadResponse {
+        val data = parseJson<Data>(url)
+        val isLive = data.stream_type == "live"
+
+        return if (isLive) {
+            // CORRECCIÓN: name, url, dataUrl (como String)
+            newLiveStreamLoadResponse(data.name, url, url) {
+                this.posterUrl = data.stream_icon
+            }
+        } else {
+            // CORRECCIÓN: name, url, type, dataUrl
+            newMovieLoadResponse(data.name, url, TvType.Movie, url) {
+                this.posterUrl = data.stream_icon
             }
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
-
-    override suspend fun load(url: String): LoadResponse {
-        val data = parseJson<Data>(url)
-        return newMovieLoadResponse(data.name, url, TvType.Live, url) {
-            this.posterUrl = data.stream_icon
-        }
-    }
-
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        val parsedData = parseJson<Data>(data)
-        val response = checkLinkType(serverUrlWithData + parsedData.stream_id.toString())
-        val isM3u8Value = response == "m3u8"
+        val parsed = parseJson<Data>(data)
+        val folder = if (parsed.stream_type == "live") "live" else "movie"
+        val ext = if (parsed.stream_type == "live") "ts" else "mp4"
+        val finalUrl = "${mainUrl.removeSuffix("/")}/$folder/$user/$pass/${parsed.stream_id}.$ext"
 
         callback.invoke(
             newExtractorLink(
-                source = parsedData.name,
-                name = name,
-                url = serverUrlWithData + parsedData.stream_id.toString(),
+                parsed.name,
+                this.name,
+                finalUrl
             ) {
-                referer = ""
-                quality = Qualities.Unknown.value
+                this.referer = ""
             }
         )
         return true
     }
 
-    private suspend fun loadLiveCategories(): String {
-        return app.get("$apiURL&action=get_live_categories").body.string()
-    }
+    private fun Stream.toSearchResponse(type: TvType) = newLiveSearchResponse(
+        name = this.name,
+        url = Data(name=name, stream_id=stream_id, stream_icon=stream_icon, stream_type=stream_type).toJson(),
+        type = type
+    ) { this.posterUrl = this@toSearchResponse.stream_icon }
 
-    private suspend fun loadLiveStreams(): String {
-        return app.get("$apiURL&action=get_live_streams").body.string()
-    }
-
-    @Suppress("ObjectLiteralToLambda")
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-
-                return chain.proceed(request)
-            }
+    private inline fun <reified T> safeParse(json: String): T {
+        return try {
+            if (json.trim().startsWith("[")) parseJson<T>(json) else parseJson<T>("[]")
+        } catch (e: Exception) {
+            parseJson<T>("[]")
         }
     }
 }
