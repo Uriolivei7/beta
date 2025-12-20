@@ -1,5 +1,6 @@
 package com.example
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.serialization.*
@@ -92,7 +93,7 @@ class AnimeonsenProvider : MainAPI() {
 
         val episodesList = epRes.map { (epNum, item) ->
             newEpisode("$contentId/video/$epNum") {
-                this.name = "Episode $epNum: ${item.name}"
+                this.name = item.name ?: "Episode $epNum"
                 this.episode = epNum.toIntOrNull()
             }
         }.sortedBy { it.episode }
@@ -154,7 +155,9 @@ class AnimeonsenProvider : MainAPI() {
     )
     @Serializable
     data class EpisodeDto(
-        @SerialName("contentTitle_episode_en") val name: String
+        @JsonProperty("contentTitle_episode_en")
+        @SerialName("contentTitle_episode_en")
+        val name: String? = null
     )
     @Serializable data class VideoDataDto(
         val metadata: MetaDataDto,
