@@ -36,7 +36,6 @@ class SoloLatinoProvider : MainAPI() {
     )
 
     override var lang = "mx"
-
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
@@ -113,8 +112,17 @@ class SoloLatinoProvider : MainAPI() {
         val items = ArrayList<HomePageList>()
         val urls = listOf(
             Pair("Series", "$mainUrl/series"),
-            Pair("Peliculas", "$mainUrl/peliculas"),
-            Pair("Animes", "$mainUrl/animes")
+            Pair("Series Amazon Prime", "$mainUrl/network/amazon"),
+            Pair("Series AppleTV", "$mainUrl/network/apple-tv"),
+            Pair("Series Disney+", "$mainUrl/network/disney"),
+            Pair("Series HBO", "$mainUrl/network/hbo"),
+            Pair("Series HBO MAX", "$mainUrl/network/hbo-max"),
+            Pair("Series HULU", "$mainUrl/network/hulu"),
+            Pair("Series Netflix", "$mainUrl/network/netflix"),
+            Pair("Cartoons", "$mainUrl/genre_series/toons"),
+            Pair("Animes", "$mainUrl/animes"),
+            Pair("Películas Animes", "$mainUrl/genero/anime"),
+            Pair("Películas", "$mainUrl/peliculas"),
         )
 
         val homePageLists = urls.map { (name, url) ->
