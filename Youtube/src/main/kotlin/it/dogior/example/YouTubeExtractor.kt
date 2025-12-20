@@ -1,5 +1,6 @@
 package it.dogior.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -38,61 +39,30 @@ open class YouTubeExtractor() : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val link =
-            YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(
-                url.replace(schemaStripRegex, "")
-            )
+        val TAG = "YoutubeDebug"
 
-        val extractor = object : YoutubeStreamExtractor(
-            ServiceList.YouTube,
-            link
-        ) {}
-
+        val link = YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(url.replace(schemaStripRegex, ""))
+        val extractor = object : YoutubeStreamExtractor(org.schabi.newpipe.extractor.ServiceList.YouTube, link) {}
         extractor.fetchPage()
 
-        val videoStreams = extractor.videoStreams?.filterNotNull() ?: emptyList()
-        val audioStreams = extractor.audioStreams?.filterNotNull() ?: emptyList()
+        val allVideos = (extractor.videoStreams ?: emptyList()) + (extractor.videoOnlyStreams ?: emptyList())
 
-        videoStreams.forEach { stream ->
+        allVideos.filterNotNull().forEach { stream ->
             val quality = mapResolutionToQuality(stream.resolution)
+            Log.d(TAG, "Detectado: ${stream.resolution}")
 
-            if (quality != Qualities.Unknown) {
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        this.name,
-                        stream.url!!,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = quality.value
-                    }
-                )
-            }
-        }
-
-        audioStreams.forEach { stream ->
             callback.invoke(
                 newExtractorLink(
                     this.name,
-                    this.name,
+                    "${this.name} ${stream.resolution}",
                     stream.url!!,
-                    type = ExtractorLinkType.M3U8
+                    com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
                 ) {
                     this.referer = url
-                    this.quality = Qualities.Unknown.value
+                    this.quality = quality.value
                 }
             )
         }
-
-        val subtitles = try {
-            extractor.subtitlesDefault.filterNotNull()
-        } catch (e: Exception) {
-            logError(e)
-            emptyList()
-        }
-        subtitles.mapNotNull {
-            SubtitleFile(it.languageTag ?: return@mapNotNull null, it.content ?: return@mapNotNull null)
-        }.forEach(subtitleCallback)
     }
+
 }

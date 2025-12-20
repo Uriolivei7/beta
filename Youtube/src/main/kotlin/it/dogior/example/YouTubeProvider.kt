@@ -15,6 +15,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.amap
 import android.util.Log
 import com.lagradost.cloudstream3.MovieSearchResponse
+import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -132,45 +133,38 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
+        val TAG = "YoutubeProviderDebug"
 
-        val info = StreamInfo.getInfo(data)
-        val refererUrl = info.url
+        return try {
+            val info = StreamInfo.getInfo(org.schabi.newpipe.extractor.ServiceList.YouTube, data)
+            val refererUrl = info.url
 
-        info.videoStreams
-            .sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-            .forEach { stream ->
+            val combinedVideos = (info.videoStreams ?: emptyList()) + (info.videoOnlyStreams ?: emptyList())
 
-                val streamUrl = stream.url ?: return@forEach
-                val resolutionName = stream.resolution ?: return@forEach
+            combinedVideos.forEach { stream ->
+                val streamUrl = stream.content ?: stream.url ?: return@forEach
+                val res = stream.resolution ?: return@forEach
+                val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
 
-                if (resolutionName.removeSuffix("p").toIntOrNull() == null) {
-                    return@forEach
-                }
+                Log.d(TAG, "Añadiendo stream: $res - URL Deprecated detectada")
 
                 callback.invoke(
                     newExtractorLink(
-                        source = this.name,
-                        name = "Video - $resolutionName",
-                        url = streamUrl
+                        this.name,
+                        "YouTube $res",
+                        streamUrl,
+                        ExtractorLinkType.VIDEO
                     ) {
                         this.referer = refererUrl
+                        this.quality = qualInt
                     }
                 )
             }
-
-        info.subtitles.forEach { sub ->
-            val subUrl = sub.url ?: return@forEach
-            val subName = sub.languageTag ?: return@forEach
-
-            subtitleCallback.invoke(
-                SubtitleFile(
-                    subName,
-                    subUrl
-                )
-            )
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en loadLinks: ${e.message}")
+            false
         }
-
-        return true
     }
 
 }
