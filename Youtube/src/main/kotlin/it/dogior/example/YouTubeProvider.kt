@@ -136,47 +136,80 @@ class YoutubeProvider(
         val TAG = "YoutubeProviderDebug"
 
         return try {
-            val info = StreamInfo.getInfo(org.schabi.newpipe.extractor.ServiceList.YouTube, data)
-            val refererUrl = info.url
+            val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(org.schabi.newpipe.extractor.ServiceList.YouTube, data)
+            val refererUrl = info.url ?: data
 
-            val muxedStreams = info.videoStreams ?: emptyList()
+            val dashMpd: String? = info.dashMpdUrl
 
-            if (muxedStreams.isEmpty()) {
-                Log.w(TAG, "No se encontraron Muxed Streams (Video+Audio)")
+            if (dashMpd != null && dashMpd.length > 0) {
+                Log.d(TAG, "DASH encontrado satisfactoriamente")
+                callback.invoke(
+                    newExtractorLink(
+                        this.name,
+                        "YouTube Pro (DASH)",
+                        dashMpd,
+                        com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
+                    ) {
+                        this.referer = refererUrl
+                        this.quality = Qualities.P1080.value
+                    }
+                )
             }
 
+            // ESTRATEGIA B: HLS
+            val hlsM3u8: String? = info.hlsUrl
+            if (hlsM3u8 != null && hlsM3u8.length > 0) {
+                callback.invoke(
+                    newExtractorLink(
+                        this.name,
+                        "YouTube Multi-Res (HLS)",
+                        hlsM3u8,
+                        com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = refererUrl
+                    }
+                )
+            }
+
+            val muxed = info.videoStreams ?: emptyList()
             val addedResolutions = mutableSetOf<Int>()
 
-            muxedStreams.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+            muxed.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
                 .forEach { stream ->
-                    val res = stream.resolution ?: return@forEach
-                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
+                    val resStr = stream.resolution ?: return@forEach
+                    val qual = resStr.removeSuffix("p").toIntOrNull() ?: 360
 
-                    if (addedResolutions.contains(qualInt)) return@forEach
+                    if (!addedResolutions.contains(qual)) {
+                        val streamUrl: String? = stream.url
 
-                    Log.d(TAG, "Añadiendo stream garantizado con audio: $res")
-
-                    callback.invoke(
-                        newExtractorLink(
-                            this.name,
-                            "YouTube $res (Audio Incluido)",
-                            stream.content ?: stream.url ?: return@forEach,
-                            ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = refererUrl
-                            this.quality = qualInt
+                        if (streamUrl != null && streamUrl.length > 0) {
+                            callback.invoke(
+                                newExtractorLink(
+                                    this.name,
+                                    "YouTube $resStr",
+                                    streamUrl,
+                                    com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = refererUrl
+                                    this.quality = qual
+                                }
+                            )
+                            addedResolutions.add(qual)
                         }
-                    )
-                    addedResolutions.add(qualInt)
+                    }
                 }
 
+            // Subtítulos
             info.subtitles?.forEach { sub ->
-                subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "En", sub.url ?: return@forEach))
+                val sUrl = sub.url
+                if (sUrl != null) {
+                    subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "en", sUrl))
+                }
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Error en carga v0.24.8: ${e.message}")
             false
         }
     }
