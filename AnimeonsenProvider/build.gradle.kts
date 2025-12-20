@@ -5,9 +5,9 @@ version = 1
 cloudstream {
     // All of these properties are optional, you can safely remove them
 
-    description = "Española (Spanish) Anime Extension"
-    language    = "es"
-    authors = listOf("Phisher98")
+    description = "Animes Subtitulos en varios idiomas"
+    language    = "en"
+    authors = listOf("Ranita")
 
     /**
     * Status int as the following:
@@ -22,7 +22,7 @@ cloudstream {
     // You can find a list of available types here:
     // https://recloudstream.github.io/cloudstream/html/app/com.lagradost.cloudstream3/-tv-type/index.html
     tvTypes = listOf("Movie","Anime","AnimeMovie")
-    iconUrl = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/animeav1.png"
+    //iconUrl = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/animeav1.png"
 
     isCrossPlatform = false
 }

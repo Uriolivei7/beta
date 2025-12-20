@@ -23,11 +23,11 @@ class AnimeonsenProvider : MainAPI() {
 
         return try {
             val bodyString = """
-                {
-                    "client_id": "f296be26-28b5-4358-b5a1-6259575e23b7",
-                    "client_secret": "349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
-                    "grant_type": "client_credentials"
-                }
+            {
+                "client_id": "f296be26-28b5-4358-b5a1-6259575e23b7",
+                "client_secret": "349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
+                "grant_type": "client_credentials"
+            }
             """.trimIndent()
 
             val responseText = app.post(
@@ -36,8 +36,9 @@ class AnimeonsenProvider : MainAPI() {
                 requestBody = bodyString.toRequestBody("application/json".toMediaType())
             ).text
 
-            val jsonResponse = Json.decodeFromString<JsonObject>(responseText)
-            accessToken = jsonResponse["access_token"]?.jsonPrimitive?.content
+            // Usamos parseJson de AppUtils como vimos en tu decompiler
+            val json = AppUtils.parseJson<Map<String, String>>(responseText)
+            accessToken = json["access_token"]
             accessToken
         } catch (e: Exception) {
             null
@@ -121,14 +122,15 @@ class AnimeonsenProvider : MainAPI() {
 
         res.uri.subtitles.forEach { (langPrefix, subUrl) ->
             val langName = res.metadata.subtitles[langPrefix] ?: langPrefix
-            subtitleCallback(newSubtitleFile(langName, subUrl))
+            subtitleCallback(SubtitleFile(langName, subUrl))
         }
 
         callback(
             newExtractorLink(
                 this.name,
                 "AnimeOnsen",
-                res.uri.stream
+                res.uri.stream,
+                type = ExtractorLinkType.M3U8
             ) {
                 this.referer = mainUrl
                 this.quality = Qualities.P720.value
