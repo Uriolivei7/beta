@@ -16,8 +16,6 @@ import com.lagradost.cloudstream3.amap
 import android.util.Log
 import com.lagradost.cloudstream3.MovieSearchResponse
 import com.lagradost.cloudstream3.newSubtitleFile
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import org.schabi.newpipe.extractor.stream.StreamInfo
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 
@@ -45,86 +43,43 @@ class YoutubeProvider(
         val isTrendingEnabled = sharedPrefs?.getBoolean("trending", true) ?: true
         val sections = mutableListOf<HomePageList>()
         if (isTrendingEnabled) {
-            Log.d(TAG, "Obteniendo tendencias...")
             val videos = ytParser.getTrendingVideoUrls(page)
-            if (videos == null) {
-            Log.d(TAG, "Error: No se obtuvieron videos de tendencias en la página $page.")
-        } else {
-            Log.d(TAG, "Tendencias obtenidas. Total: ${videos.list.size} videos.")
-
-        }
             videos?.let { sections.add(it) }
         }
 
         val playlistsData = sharedPrefs?.getStringSet("playlists", emptySet()) ?: emptySet()
         if (playlistsData.isNotEmpty()) {
-            Log.d(TAG, "Cargando playlists y canales personalizados. Total de entradas: ${playlistsData.size}")
             val triples = playlistsData.map { parseJson<Triple<String, String, Long>>(it) }
             val list = triples.amap { data ->
-            val playlistUrl = data.first
-            Log.d(TAG, "Procesando URL: $playlistUrl")
-            val urlPath = playlistUrl.substringAfter("youtu").substringAfter("/")
-            val isPlaylist = urlPath.startsWith("playlist?list=")
-            val isChannel = urlPath.startsWith("@") || urlPath.startsWith("channel")
-            val customSections = if (isPlaylist && !isChannel) {
-            Log.d(TAG, "Llamando a playlistToSearchResponseList para $playlistUrl")
-            ytParser.playlistToSearchResponseList(playlistUrl, page)
-
-        } else if (!isPlaylist && isChannel) {
-            Log.d(TAG, "Llamando a channelToSearchResponseList para $playlistUrl")
-            ytParser.channelToSearchResponseList(playlistUrl, page)
-
-        } else {
-            Log.d(TAG, "URL no reconocida (ni playlist ni canal): $playlistUrl")
-            null
-
-        }
-            customSections to data.third
-
-        }
+                val playlistUrl = data.first
+                val urlPath = playlistUrl.substringAfter("youtu").substringAfter("/")
+                val isPlaylist = urlPath.startsWith("playlist?list=")
+                val isChannel = urlPath.startsWith("@") || urlPath.startsWith("channel")
+                val customSections = if (isPlaylist && !isChannel) {
+                    ytParser.playlistToSearchResponseList(playlistUrl, page)
+                } else if (!isPlaylist && isChannel) {
+                    ytParser.channelToSearchResponseList(playlistUrl, page)
+                } else null
+                customSections to data.third
+            }
             list.sortedBy { it.second }.forEach {
-            val homepageSection = it.first
-            if (homepageSection != null) {
-            sections.add(homepageSection)
-
+                it.first?.let { section -> sections.add(section) }
+            }
         }
 
-        }
-
-
-        }
         if (sections.isEmpty()) {
-            Log.d(TAG, "No hay secciones activas. Se muestra mensaje de error en la UI.")
-            sections.add(
-            HomePageList(
-            "All sections are disabled. Go to the settings to enable them",
-            emptyList()
-            )
-            )
-
+            sections.add(HomePageList("No hay secciones activas", emptyList()))
         }
-        Log.d(TAG, "Finalizando getMainPage. Secciones totales: ${sections.size}")
-        return newHomePageResponse(
-        sections, true
-        )
-
+        return newHomePageResponse(sections, true)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Iniciando búsqueda para: $query")
-
         val allResults = ytParser.parseSearch(query)
-
-        Log.d(TAG, "Búsqueda terminada. Resultados encontrados: ${allResults?.size ?: 0}")
-
         return allResults?.filterIsInstance<MovieSearchResponse>() ?: emptyList()
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "Iniciando carga de LoadResponse para URL: $url")
-        val video = ytParser.videoToLoadResponse(url)
-        Log.d(TAG, "Carga de LoadResponse completada.")
-        return video
+        return ytParser.videoToLoadResponse(url)
     }
 
     override suspend fun loadLinks(
@@ -133,20 +88,25 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val TAG = "YoutubeProviderDebug"
+        val debugTag = "YoutubeProviderDebug"
 
         return try {
-            val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(org.schabi.newpipe.extractor.ServiceList.YouTube, data)
+            // Inicializar el extractor de NewPipe
+            val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(
+                org.schabi.newpipe.extractor.ServiceList.YouTube,
+                data
+            )
             val refererUrl = info.url ?: data
 
-            val dashMpd: String? = info.dashMpdUrl
-
+            // 1. DASH (ALTA CALIDAD 1080p + AUDIO AUTOMÁTICO)
+            // Esta es la mejor opción. Si YouTube lo suelta, tendrás audio y video unidos.
+            val dashMpd: String? = try { info.dashMpdUrl } catch (e: Exception) { null }
             if (dashMpd != null && dashMpd.length > 0) {
-                Log.d(TAG, "DASH encontrado satisfactoriamente")
+                Log.d(debugTag, "DASH detectado para alta calidad con audio")
                 callback.invoke(
                     newExtractorLink(
                         this.name,
-                        "YouTube Pro (DASH)",
+                        "YouTube Alta Calidad (Auto)",
                         dashMpd,
                         com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
                     ) {
@@ -156,62 +116,58 @@ class YoutubeProvider(
                 )
             }
 
-            // ESTRATEGIA B: HLS
-            val hlsM3u8: String? = info.hlsUrl
-            if (hlsM3u8 != null && hlsM3u8.length > 0) {
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "YouTube Multi-Res (HLS)",
-                        hlsM3u8,
-                        com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = refererUrl
+            // 2. STREAMS MUXED (VIDEO + AUDIO INCLUIDO)
+            // Estos siempre funcionan con audio, pero YouTube suele limitarlos a 360p o 720p.
+            val addedMuxedRes = mutableSetOf<Int>()
+            info.videoStreams?.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+                ?.forEach { stream ->
+                    val res = stream.resolution ?: return@forEach
+                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
+
+                    if (!addedMuxedRes.contains(qualInt)) {
+                        val streamUrl = stream.url ?: return@forEach
+                        callback.invoke(
+                            newExtractorLink(this.name, "YouTube $res (Con Audio)", streamUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
+                                this.referer = refererUrl
+                                this.quality = qualInt
+                            }
+                        )
+                        addedMuxedRes.add(qualInt)
                     }
-                )
-            }
+                }
 
-            val muxed = info.videoStreams ?: emptyList()
-            val addedResolutions = mutableSetOf<Int>()
+            // 3. STREAMS VIDEO-ONLY (SÓLO VIDEO, SIN AUDIO)
+            // Los añadimos con una etiqueta clara para que el usuario sepa que NO tendrán sonido
+            // Esto es útil si alguien usa un reproductor externo que los junte.
+            val addedVideoOnlyRes = mutableSetOf<Int>()
+            info.videoOnlyStreams?.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+                ?.forEach { stream ->
+                    val res = stream.resolution ?: return@forEach
+                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
 
-            muxed.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-                .forEach { stream ->
-                    val resStr = stream.resolution ?: return@forEach
-                    val qual = resStr.removeSuffix("p").toIntOrNull() ?: 360
-
-                    if (!addedResolutions.contains(qual)) {
-                        val streamUrl: String? = stream.url
-
-                        if (streamUrl != null && streamUrl.length > 0) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    this.name,
-                                    "YouTube $resStr",
-                                    streamUrl,
-                                    com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = refererUrl
-                                    this.quality = qual
-                                }
-                            )
-                            addedResolutions.add(qual)
-                        }
+                    // Solo lo mostramos si es de mayor calidad que lo que ya tenemos con audio
+                    if (qualInt > (addedMuxedRes.maxOrNull() ?: 0) && !addedVideoOnlyRes.contains(qualInt)) {
+                        val streamUrl = stream.url ?: return@forEach
+                        callback.invoke(
+                            newExtractorLink(this.name, "YouTube $res (Sin Audio)", streamUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
+                                this.referer = refererUrl
+                                this.quality = qualInt
+                            }
+                        )
+                        addedVideoOnlyRes.add(qualInt)
                     }
                 }
 
             // Subtítulos
             info.subtitles?.forEach { sub ->
-                val sUrl = sub.url
-                if (sUrl != null) {
-                    subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "en", sUrl))
-                }
+                val sUrl = sub.url ?: return@forEach
+                subtitleCallback.invoke(SubtitleFile(sub.languageTag ?: "es", sUrl))
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Error en carga v0.24.8: ${e.message}")
+            Log.e(debugTag, "Error en loadLinks: ${e.message}")
             false
         }
     }
-
 }
