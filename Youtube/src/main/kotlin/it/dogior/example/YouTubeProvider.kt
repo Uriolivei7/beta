@@ -91,24 +91,23 @@ class YoutubeProvider(
         val debugTag = "YoutubeProviderDebug"
 
         return try {
-            // 1. OBTENER EL EXTRACTOR Y FORZAR EL "VISITOR DATA"
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
-            val streamExtractor = service.getStreamExtractor(data)
 
-            // Forzamos la carga de la página para que NewPipe intente generar las firmas
-            streamExtractor.fetchPage()
+            val extractor = service.getStreamExtractor(data)
 
-            val refererUrl = streamExtractor.url ?: data
+            extractor.fetchPage()
 
-            val dashMpd = try { streamExtractor.dashMpdUrl } catch (e: Exception) { null }
+            val refererUrl = extractor.url ?: data
 
-            if (dashMpd != null && dashMpd.length > 0) {
-                Log.d(debugTag, "DASH ENCONTRADO: Esto debería darte 1080p")
+            val dashUrl = try { extractor.dashMpdUrl } catch (e: Exception) { null }
+
+            if (dashUrl != null && dashUrl.length > 0) {
+                Log.d(debugTag, "DASH encontrado: Forzando 1080p")
                 callback.invoke(
                     newExtractorLink(
                         this.name,
                         "YouTube Alta Calidad (DASH)",
-                        dashMpd,
+                        dashUrl,
                         com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
                     ) {
                         this.referer = refererUrl
@@ -117,36 +116,32 @@ class YoutubeProvider(
                 )
             }
 
-            // 3. INTENTO DE HLS (Otra vía para calidades altas con audio)
-            val hlsUrl = try { streamExtractor.hlsUrl } catch (e: Exception) { null }
-            if (hlsUrl != null && hlsUrl.length > 0) {
-                callback.invoke(
-                    newExtractorLink(this.name, "YouTube Multi-Res (HLS)", hlsUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8) {
-                        this.referer = refererUrl
-                    }
-                )
-            }
-
-            // 4. FILTRADO DE STREAMS CON AUDIO (Muxed)
-            // Si aquí solo sale 360p, es que YouTube bloqueó el 720p/1080p para esta IP/Sesión
-            val muxed = streamExtractor.videoStreams ?: emptyList()
-            muxed.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-                .forEach { stream ->
+            val addedRes = mutableSetOf<Int>()
+            extractor.videoStreams?.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+                ?.forEach { stream ->
                     val res = stream.resolution ?: return@forEach
                     val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
 
-                    val sUrl = stream.url ?: return@forEach
-                    callback.invoke(
-                        newExtractorLink(this.name, "YouTube $res (Audio OK)", sUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
-                            this.referer = refererUrl
-                            this.quality = qualInt
-                        }
-                    )
+                    if (!addedRes.contains(qualInt)) {
+                        val streamUrl = stream.url ?: return@forEach
+                        callback.invoke(
+                            newExtractorLink(
+                                this.name,
+                                "YouTube $res (Directo)",
+                                streamUrl,
+                                com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = refererUrl
+                                this.quality = qualInt
+                            }
+                        )
+                        addedRes.add(qualInt)
+                    }
                 }
 
             true
         } catch (e: Exception) {
-            Log.e(debugTag, "Error crítico: ${e.message}")
+            Log.e(debugTag, "Error: ${e.message}")
             false
         }
     }
