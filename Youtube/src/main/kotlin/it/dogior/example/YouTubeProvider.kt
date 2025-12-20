@@ -91,21 +91,19 @@ class YoutubeProvider(
         val debugTag = "YoutubeProviderDebug"
 
         return try {
-            // 1. FORZAR CLIENTE (Esto es clave para evitar el bloqueo del 360p)
-            // Intentamos obtener el extractor específico para YouTube
+            // 1. OBTENER EL EXTRACTOR Y FORZAR EL "VISITOR DATA"
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
             val streamExtractor = service.getStreamExtractor(data)
 
-            // Forzamos la obtención de información
+            // Forzamos la carga de la página para que NewPipe intente generar las firmas
             streamExtractor.fetchPage()
 
             val refererUrl = streamExtractor.url ?: data
 
-            // 2. PRIORIDAD: DASH (1080p + Audio)
-            // Si el extractor logra sacar el DashMpdUrl, ExoPlayer hará la mezcla.
             val dashMpd = try { streamExtractor.dashMpdUrl } catch (e: Exception) { null }
+
             if (dashMpd != null && dashMpd.length > 0) {
-                Log.d(debugTag, "¡ÉXITO! DASH encontrado para Alta Calidad")
+                Log.d(debugTag, "DASH ENCONTRADO: Esto debería darte 1080p")
                 callback.invoke(
                     newExtractorLink(
                         this.name,
@@ -119,37 +117,36 @@ class YoutubeProvider(
                 )
             }
 
-            // 3. RECUPERAR STREAMS CON AUDIO (Muxed)
-            // Aquí es donde usualmente solo sale 360p, pero al usar el extractor directo
-            // a veces YouTube suelta el 720p.
-            val muxedStreams = streamExtractor.videoStreams ?: emptyList()
-            val addedRes = mutableSetOf<Int>()
+            // 3. INTENTO DE HLS (Otra vía para calidades altas con audio)
+            val hlsUrl = try { streamExtractor.hlsUrl } catch (e: Exception) { null }
+            if (hlsUrl != null && hlsUrl.length > 0) {
+                callback.invoke(
+                    newExtractorLink(this.name, "YouTube Multi-Res (HLS)", hlsUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8) {
+                        this.referer = refererUrl
+                    }
+                )
+            }
 
-            muxedStreams.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+            // 4. FILTRADO DE STREAMS CON AUDIO (Muxed)
+            // Si aquí solo sale 360p, es que YouTube bloqueó el 720p/1080p para esta IP/Sesión
+            val muxed = streamExtractor.videoStreams ?: emptyList()
+            muxed.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
                 .forEach { stream ->
                     val res = stream.resolution ?: return@forEach
                     val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
 
-                    if (!addedRes.contains(qualInt)) {
-                        val streamUrl = stream.url ?: return@forEach
-                        callback.invoke(
-                            newExtractorLink(
-                                this.name,
-                                "YouTube $res (Directo con Audio)",
-                                streamUrl,
-                                com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = refererUrl
-                                this.quality = qualInt
-                            }
-                        )
-                        addedRes.add(qualInt)
-                    }
+                    val sUrl = stream.url ?: return@forEach
+                    callback.invoke(
+                        newExtractorLink(this.name, "YouTube $res (Audio OK)", sUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
+                            this.referer = refererUrl
+                            this.quality = qualInt
+                        }
+                    )
                 }
 
             true
         } catch (e: Exception) {
-            Log.e(debugTag, "Error en loadLinks: ${e.message}")
+            Log.e(debugTag, "Error crítico: ${e.message}")
             false
         }
     }
