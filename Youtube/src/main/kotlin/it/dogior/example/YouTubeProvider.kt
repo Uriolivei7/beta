@@ -91,26 +91,25 @@ class YoutubeProvider(
         val debugTag = "YoutubeProviderDebug"
 
         return try {
-            // --- CONFIGURACIÓN DE CLIENTE PARA FORZAR AUDIO ---
-            // Esto ayuda a que YouTube no esconda el DASH o los streams con audio
-            val settings = org.schabi.newpipe.extractor.NewPipe.getDownloader()
-            // --------------------------------------------------
+            // 1. FORZAR CLIENTE (Esto es clave para evitar el bloqueo del 360p)
+            // Intentamos obtener el extractor específico para YouTube
+            val service = org.schabi.newpipe.extractor.ServiceList.YouTube
+            val streamExtractor = service.getStreamExtractor(data)
 
-            val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(
-                org.schabi.newpipe.extractor.ServiceList.YouTube,
-                data
-            )
-            val refererUrl = info.url ?: data
+            // Forzamos la obtención de información
+            streamExtractor.fetchPage()
 
-            // 1. DASH (ÚNICA FORMA REAL DE 1080P + AUDIO)
-            // Si esto funciona, el reproductor de Cloudstream unirá el video y audio automáticamente.
-            val dashMpd: String? = try { info.dashMpdUrl } catch (e: Exception) { null }
+            val refererUrl = streamExtractor.url ?: data
+
+            // 2. PRIORIDAD: DASH (1080p + Audio)
+            // Si el extractor logra sacar el DashMpdUrl, ExoPlayer hará la mezcla.
+            val dashMpd = try { streamExtractor.dashMpdUrl } catch (e: Exception) { null }
             if (dashMpd != null && dashMpd.length > 0) {
-                Log.d(debugTag, "DASH detectado: Enviando al reproductor para mezcla automática")
+                Log.d(debugTag, "¡ÉXITO! DASH encontrado para Alta Calidad")
                 callback.invoke(
                     newExtractorLink(
                         this.name,
-                        "YouTube Alta Calidad (Auto)",
+                        "YouTube Alta Calidad (DASH)",
                         dashMpd,
                         com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
                     ) {
@@ -120,30 +119,37 @@ class YoutubeProvider(
                 )
             }
 
-            // 2. BUSCAR EL 720P CON AUDIO (MUXED)
-            // Vamos a intentar filtrar específicamente los que TIENEN audio.
-            info.videoStreams?.forEach { stream ->
-                val res = stream.resolution ?: return@forEach
-                val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
+            // 3. RECUPERAR STREAMS CON AUDIO (Muxed)
+            // Aquí es donde usualmente solo sale 360p, pero al usar el extractor directo
+            // a veces YouTube suelta el 720p.
+            val muxedStreams = streamExtractor.videoStreams ?: emptyList()
+            val addedRes = mutableSetOf<Int>()
 
-                // Si es 720p o superior y está en esta lista, TIENE que tener audio.
-                val streamUrl = stream.url ?: return@forEach
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "YouTube $res (Audio garantizado)",
-                        streamUrl,
-                        com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = refererUrl
-                        this.quality = qualInt
+            muxedStreams.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+                .forEach { stream ->
+                    val res = stream.resolution ?: return@forEach
+                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
+
+                    if (!addedRes.contains(qualInt)) {
+                        val streamUrl = stream.url ?: return@forEach
+                        callback.invoke(
+                            newExtractorLink(
+                                this.name,
+                                "YouTube $res (Directo con Audio)",
+                                streamUrl,
+                                com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = refererUrl
+                                this.quality = qualInt
+                            }
+                        )
+                        addedRes.add(qualInt)
                     }
-                )
-            }
+                }
 
             true
         } catch (e: Exception) {
-            Log.e(debugTag, "Error: ${e.message}")
+            Log.e(debugTag, "Error en loadLinks: ${e.message}")
             false
         }
     }
