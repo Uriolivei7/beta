@@ -76,7 +76,12 @@ class AnimeonsenProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val token = getAuthToken()
-        val contentId = url
+
+        val contentId = if (url.startsWith("http")) {
+            url.split("/").last()
+        } else {
+            url
+        }
 
         val details = app.get(
             "$apiUrl/content/$contentId/extensive",
@@ -97,7 +102,7 @@ class AnimeonsenProvider : MainAPI() {
 
         return newAnimeLoadResponse(
             details.content_title ?: details.content_title_en!!,
-            contentId,
+            url,
             TvType.Anime
         ) {
             this.posterUrl = "$apiUrl/image/210x300/$contentId"
@@ -122,7 +127,7 @@ class AnimeonsenProvider : MainAPI() {
 
         res.uri.subtitles.forEach { (langPrefix, subUrl) ->
             val langName = res.metadata.subtitles[langPrefix] ?: langPrefix
-            subtitleCallback(SubtitleFile(langName, subUrl))
+            subtitleCallback(newSubtitleFile(langName, subUrl))
         }
 
         callback(
