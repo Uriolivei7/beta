@@ -118,17 +118,20 @@ class AnimeonsenProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val TAG = "AnimeOnsen"
-        Log.d(TAG, "Iniciando loadLinks para el ID: $data")
 
-        val token = getAuthToken()
-        if (token == null) {
-            Log.e(TAG, "Error: No se pudo obtener el token de acceso")
-            return false
+        val cleanData = if (data.contains("animeonsen.xyz/")) {
+            data.substringAfter("animeonsen.xyz/")
+        } else {
+            data
         }
 
+        Log.d(TAG, "Iniciando loadLinks para el path limpio: $cleanData")
+
+        val token = getAuthToken() ?: return false
+
         return try {
-            val apiUrlVideo = "$apiUrl/content/$data"
-            Log.d(TAG, "Petición a API de video: $apiUrlVideo")
+            val apiUrlVideo = "$apiUrl/content/$cleanData"
+            Log.d(TAG, "Petición correcta a API: $apiUrlVideo")
 
             val response = app.get(
                 apiUrlVideo,
