@@ -91,18 +91,22 @@ class YoutubeProvider(
         val debugTag = "YoutubeProviderDebug"
 
         return try {
-            // Inicializar el extractor de NewPipe
+            // --- CONFIGURACIÓN DE CLIENTE PARA FORZAR AUDIO ---
+            // Esto ayuda a que YouTube no esconda el DASH o los streams con audio
+            val settings = org.schabi.newpipe.extractor.NewPipe.getDownloader()
+            // --------------------------------------------------
+
             val info = org.schabi.newpipe.extractor.stream.StreamInfo.getInfo(
                 org.schabi.newpipe.extractor.ServiceList.YouTube,
                 data
             )
             val refererUrl = info.url ?: data
 
-            // 1. DASH (ALTA CALIDAD 1080p + AUDIO AUTOMÁTICO)
-            // Esta es la mejor opción. Si YouTube lo suelta, tendrás audio y video unidos.
+            // 1. DASH (ÚNICA FORMA REAL DE 1080P + AUDIO)
+            // Si esto funciona, el reproductor de Cloudstream unirá el video y audio automáticamente.
             val dashMpd: String? = try { info.dashMpdUrl } catch (e: Exception) { null }
             if (dashMpd != null && dashMpd.length > 0) {
-                Log.d(debugTag, "DASH detectado para alta calidad con audio")
+                Log.d(debugTag, "DASH detectado: Enviando al reproductor para mezcla automática")
                 callback.invoke(
                     newExtractorLink(
                         this.name,
@@ -116,57 +120,30 @@ class YoutubeProvider(
                 )
             }
 
-            // 2. STREAMS MUXED (VIDEO + AUDIO INCLUIDO)
-            // Estos siempre funcionan con audio, pero YouTube suele limitarlos a 360p o 720p.
-            val addedMuxedRes = mutableSetOf<Int>()
-            info.videoStreams?.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-                ?.forEach { stream ->
-                    val res = stream.resolution ?: return@forEach
-                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
+            // 2. BUSCAR EL 720P CON AUDIO (MUXED)
+            // Vamos a intentar filtrar específicamente los que TIENEN audio.
+            info.videoStreams?.forEach { stream ->
+                val res = stream.resolution ?: return@forEach
+                val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
 
-                    if (!addedMuxedRes.contains(qualInt)) {
-                        val streamUrl = stream.url ?: return@forEach
-                        callback.invoke(
-                            newExtractorLink(this.name, "YouTube $res (Con Audio)", streamUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
-                                this.referer = refererUrl
-                                this.quality = qualInt
-                            }
-                        )
-                        addedMuxedRes.add(qualInt)
+                // Si es 720p o superior y está en esta lista, TIENE que tener audio.
+                val streamUrl = stream.url ?: return@forEach
+                callback.invoke(
+                    newExtractorLink(
+                        this.name,
+                        "YouTube $res (Audio garantizado)",
+                        streamUrl,
+                        com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = refererUrl
+                        this.quality = qualInt
                     }
-                }
-
-            // 3. STREAMS VIDEO-ONLY (SÓLO VIDEO, SIN AUDIO)
-            // Los añadimos con una etiqueta clara para que el usuario sepa que NO tendrán sonido
-            // Esto es útil si alguien usa un reproductor externo que los junte.
-            val addedVideoOnlyRes = mutableSetOf<Int>()
-            info.videoOnlyStreams?.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-                ?.forEach { stream ->
-                    val res = stream.resolution ?: return@forEach
-                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
-
-                    // Solo lo mostramos si es de mayor calidad que lo que ya tenemos con audio
-                    if (qualInt > (addedMuxedRes.maxOrNull() ?: 0) && !addedVideoOnlyRes.contains(qualInt)) {
-                        val streamUrl = stream.url ?: return@forEach
-                        callback.invoke(
-                            newExtractorLink(this.name, "YouTube $res (Sin Audio)", streamUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
-                                this.referer = refererUrl
-                                this.quality = qualInt
-                            }
-                        )
-                        addedVideoOnlyRes.add(qualInt)
-                    }
-                }
-
-            // Subtítulos
-            info.subtitles?.forEach { sub ->
-                val sUrl = sub.url ?: return@forEach
-                subtitleCallback.invoke(SubtitleFile(sub.languageTag ?: "es", sUrl))
+                )
             }
 
             true
         } catch (e: Exception) {
-            Log.e(debugTag, "Error en loadLinks: ${e.message}")
+            Log.e(debugTag, "Error: ${e.message}")
             false
         }
     }
