@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -116,30 +117,64 @@ class AnimeonsenProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val token = getAuthToken() ?: return false
+        val TAG = "AnimeOnsen"
+        Log.d(TAG, "Iniciando loadLinks para el ID: $data")
 
-        val res = app.get(
-            "$apiUrl/content/$data",
-            headers = mapOf("Authorization" to "Bearer $token", "referer" to mainUrl)
-        ).parsed<VideoDataDto>()
-
-        res.uri.subtitles.forEach { (langPrefix, subUrl) ->
-            val langName = res.metadata.subtitles[langPrefix] ?: langPrefix
-            subtitleCallback(newSubtitleFile(langName, subUrl))
+        val token = getAuthToken()
+        if (token == null) {
+            Log.e(TAG, "Error: No se pudo obtener el token de acceso")
+            return false
         }
 
-        callback(
-            newExtractorLink(
-                this.name,
-                "AnimeOnsen",
-                res.uri.stream,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = mainUrl
-                this.quality = Qualities.P720.value
+        return try {
+            val apiUrlVideo = "$apiUrl/content/$data"
+            Log.d(TAG, "Petición a API de video: $apiUrlVideo")
+
+            val response = app.get(
+                apiUrlVideo,
+                headers = mapOf(
+                    "Authorization" to "Bearer $token",
+                    "Referer" to mainUrl,
+                    "User-Agent" to userAgent
+                )
+            )
+
+            Log.d(TAG, "Respuesta de API recibida. Código: ${response.code}")
+
+            val res = AppUtils.parseJson<VideoDataDto>(response.text)
+            val videoUrl = res.uri.stream
+
+            if (videoUrl.isEmpty()) {
+                Log.e(TAG, "La URL del video está vacía en la respuesta")
+                return false
             }
-        )
-        return true
+
+            Log.d(TAG, "Video URL encontrada: $videoUrl")
+
+            res.uri.subtitles.forEach { (langPrefix, subUrl) ->
+                val langName = res.metadata.subtitles[langPrefix] ?: langPrefix
+                Log.d(TAG, "Cargando subtítulo: $langName ($langPrefix)")
+                subtitleCallback(SubtitleFile(langName, subUrl))
+            }
+
+            callback(
+                newExtractorLink(
+                    source = this.name,
+                    name = "AnimeOnsen",
+                    url = videoUrl
+                ) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.P720.value
+                }
+            )
+
+            Log.d(TAG, "Link enviado exitosamente al reproductor")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Excepción en loadLinks: ${e.message}")
+            e.printStackTrace()
+            false
+        }
     }
 
     @Serializable data class AnimeListResponse(
@@ -159,18 +194,24 @@ class AnimeonsenProvider : MainAPI() {
         @SerialName("contentTitle_episode_en")
         val name: String? = null
     )
-    @Serializable data class VideoDataDto(
+    @Serializable
+    data class VideoDataDto(
         val metadata: MetaDataDto,
         val uri: StreamDataDto
     )
-    @Serializable data class MetaDataDto(
+
+    @Serializable
+    data class MetaDataDto(
         val subtitles: Map<String, String>
     )
-    @Serializable data class StreamDataDto(
+
+    @Serializable
+    data class StreamDataDto(
         val stream: String,
         val subtitles: Map<String, String>
     )
-    @Serializable data class AnimeDetailsDto(
+    @Serializable
+    data class AnimeDetailsDto(
         val content_id: String,
         val content_title: String?,
         val content_title_en: String?,
