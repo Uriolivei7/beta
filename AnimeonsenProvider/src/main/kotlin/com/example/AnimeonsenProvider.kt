@@ -66,16 +66,22 @@ class AnimeonsenProvider : MainAPI() {
                 headers = mapOf("Authorization" to "Bearer $token")
             )
 
-            Log.d(TAG, "Buscando: $query | Código: ${response.code}")
+            Log.d(TAG, "Búsqueda: $query | Código: ${response.code}")
+
+            if (response.code == 404) {
+                Log.d(TAG, "No se encontraron resultados para: $query")
+                return emptyList()
+            }
 
             val res = AppUtils.parseJson<SearchResponseDto>(response.text)
 
-            res.result.map {
+            res.result?.map {
                 val title = it.content_title ?: it.content_title_en ?: "Unknown Anime"
                 newAnimeSearchResponse(title, it.content_id) {
                     this.posterUrl = "$apiUrl/image/210x300/${it.content_id}"
                 }
-            }
+            } ?: emptyList()
+
         } catch (e: Exception) {
             Log.e(TAG, "Error en búsqueda: ${e.message}")
             emptyList()
@@ -161,7 +167,10 @@ class AnimeonsenProvider : MainAPI() {
     }
 
     @Serializable data class AnimeListResponse(val content: List<AnimeListItem>)
-    @Serializable data class SearchResponseDto(val result: List<AnimeListItem>)
+    @Serializable
+    data class SearchResponseDto(
+        val result: List<AnimeListItem>? = null
+    )
     @Serializable data class AnimeListItem(
         val content_id: String,
         val content_title: String? = null,
