@@ -21,6 +21,27 @@
         "apiVersion": 1
     },
     {
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeonsenProvider.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "AnimeonsenProvider",
+        "internalName": "AnimeonsenProvider",
+        "authors": [
+            "Phisher98"
+        ],
+        "description": "Espa\u00f1ola (Spanish) Anime Extension",
+        "fileSize": 18422,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "language": "es",
+        "tvTypes": [
+            "Movie",
+            "Anime",
+            "AnimeMovie"
+        ],
+        "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/animeav1.png",
+        "apiVersion": 1
+    },
+    {
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnizoneProvider.cs3",
         "status": 1,
         "version": 2,
@@ -173,6 +194,28 @@
             "Anime"
         ],
         "apiVersion": 1
+    },
+    {
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/OnetouchtvProvider.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "OnetouchtvProvider",
+        "internalName": "OnetouchtvProvider",
+        "authors": [
+            "Phisher98"
+        ],
+        "description": "Asian Dramas",
+        "fileSize": 35634,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "language": "en",
+        "tvTypes": [
+            "AsianDrama",
+            "TvSeries"
+        ],
+        "iconUrl": "https://www.google.com/s2/favicons?domain=onetouchtv.xyz/&sz=%size%",
+        "apiVersion": 1,
+        "jarFileSize": 167244,
+        "jarUrl": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/OnetouchtvProvider.jar"
     },
     {
         "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelispediaProvider.cs3",
