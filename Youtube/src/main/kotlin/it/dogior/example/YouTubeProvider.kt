@@ -20,7 +20,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 
 class YoutubeProvider(
     language: String = "en",
@@ -134,74 +133,45 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val info = try { StreamInfo.getInfo(data) } catch (e: Exception) { return false }
 
-        // Identidad de App Oficial para evitar bloqueos
-        val appUserAgent = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
-        val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
+        val info = StreamInfo.getInfo(data)
+        val refererUrl = info.url
 
-        // 1. Audio con headers integrados
-        val audioStreams = info.audioStreams ?: emptyList()
-        val bestAudio = audioStreams.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
-            .maxByOrNull { it.bitrate } ?: audioStreams.maxByOrNull { it.bitrate }
+        info.videoStreams
+            .sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+            .forEach { stream ->
 
-        val audioUrl = bestAudio?.url ?: ""
+                val streamUrl = stream.url ?: return@forEach
+                val resolutionName = stream.resolution ?: return@forEach
 
-        // 2. Procesamiento de Video
-        val videoOnly = info.videoOnlyStreams ?: emptyList()
-        val videoWithAudio = info.videoStreams ?: emptyList()
-        val allStreams = (videoOnly + videoWithAudio).filterNotNull()
-
-        allStreams.distinctBy { it.resolution }.forEach { stream ->
-            val streamUrl = stream.url ?: return@forEach
-            val resName = stream.resolution ?: "360p"
-            val isMuteStream = videoOnly.any { it.url == streamUrl }
-
-            callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = "YouTube $resName",
-                    url = streamUrl,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    this.quality = getQualityInt(resName)
-
-                    // Headers compartidos
-                    val currentHeaders = mapOf(
-                        "User-Agent" to appUserAgent,
-                        "Cookie" to cookies,
-                        "Referer" to "https://www.youtube.com/",
-                        "X-YouTube-Client-Name" to "3"
-                    )
-                    this.headers = currentHeaders
-
-                    // SI ES MUDO, FORZAMOS EL AUDIO USANDO EL SISTEMA DE CLOUDSTREAM
-                    if (isMuteStream && audioUrl.isNotBlank()) {
-                        // TRUCO: Si pasar el String directo falló, el reproductor necesita
-                        // que le confirmemos que es una pista de audio secundaria.
-                        this.extractorData = audioUrl
-                    }
+                if (resolutionName.removeSuffix("p").toIntOrNull() == null) {
+                    return@forEach
                 }
+
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "Video - $resolutionName",
+                        url = streamUrl
+                    ) {
+                        this.referer = refererUrl
+                    }
+                )
+            }
+
+        info.subtitles.forEach { sub ->
+            val subUrl = sub.url ?: return@forEach
+            val subName = sub.languageTag ?: return@forEach
+
+            subtitleCallback.invoke(
+                newSubtitleFile(
+                    subName,
+                    subUrl
+                )
             )
         }
 
-        // Subtítulos corregidos
-        info.subtitles?.filter { it.url != null }?.forEach { sub ->
-            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url!!))
-        }
-
         return true
-    }
-
-    private fun getQualityInt(res: String): Int {
-        return when {
-            res.contains("2160") -> Qualities.P2160.value
-            res.contains("1440") -> Qualities.P1440.value
-            res.contains("1080") -> Qualities.P1080.value
-            res.contains("720") -> Qualities.P720.value
-            res.contains("480") -> Qualities.P480.value
-            else -> Qualities.P360.value
-        }
     }
 
 }
