@@ -133,41 +133,50 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-
         val info = StreamInfo.getInfo(data)
         val refererUrl = info.url
 
-        info.videoStreams
-            .sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-            .forEach { stream ->
+        val bestAudio = info.audioStreams?.maxByOrNull { it.bitrate }
+        val audioUrl = bestAudio?.url
 
-                val streamUrl = stream.url ?: return@forEach
-                val resolutionName = stream.resolution ?: return@forEach
+        val allVideoStreams = (info.videoStreams ?: emptyList()) + (info.videoOnlyStreams ?: emptyList())
 
-                if (resolutionName.removeSuffix("p").toIntOrNull() == null) {
-                    return@forEach
-                }
+        allVideoStreams.filterNotNull().forEach { stream ->
+            val streamUrl = stream.url ?: return@forEach
+            val resName = stream.resolution ?: "360p"
 
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "Video - $resolutionName",
-                        url = streamUrl
-                    ) {
-                        this.referer = refererUrl
-                    }
-                )
+            val qualityInt = when {
+                resName.contains("2160") -> Qualities.P2160.value
+                resName.contains("1440") -> Qualities.P1440.value
+                resName.contains("1080") -> Qualities.P1080.value
+                resName.contains("720") -> Qualities.P720.value
+                resName.contains("480") -> Qualities.P480.value
+                resName.contains("360") -> Qualities.P360.value
+                else -> Qualities.P144.value
             }
 
-        info.subtitles.forEach { sub ->
-            val subUrl = sub.url ?: return@forEach
-            val subName = sub.languageTag ?: return@forEach
+            callback.invoke(
+                newExtractorLink(
+                    source = this.name,
+                    name = "${this.name} $resName",
+                    url = streamUrl,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.quality = qualityInt
+                    this.referer = refererUrl
 
+                    if (stream !is org.schabi.newpipe.extractor.stream.VideoStream) {
+                        this.extractorData = audioUrl
+                    }
+                }
+            )
+        }
+
+        // 4. Subtítulos
+        info.subtitles?.forEach { sub ->
+            val subUrl = sub.url ?: return@forEach
             subtitleCallback.invoke(
-                newSubtitleFile(
-                    subName,
-                    subUrl
-                )
+                newSubtitleFile(sub.languageTag ?: "Auto", subUrl)
             )
         }
 
