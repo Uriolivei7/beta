@@ -11,17 +11,15 @@ import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.amap
 import android.util.Log
 import com.lagradost.cloudstream3.MovieSearchResponse
 import com.lagradost.cloudstream3.newSubtitleFile
-import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import org.schabi.newpipe.extractor.stream.StreamInfo
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
 
 class YoutubeProvider(
     language: String = "en",
@@ -29,16 +27,12 @@ class YoutubeProvider(
 ) : MainAPI() {
 
     override var mainUrl = MAIN_URL
-    override var name = "YouTube"  // Nombre del plugin
+    override var name = "YouTube"
     override val supportedTypes = setOf(TvType.Others)
     override val hasMainPage = true
     override var lang = language
 
     private val ytParser = YouTubeParser(this.name)
-
-    // Invidious instance fija (yewtu.be, estable en dic 2025)
-    private val invidiousInstance = "https://inv.nadeko.net"
-    private val client = OkHttpClient()
 
     companion object {
         const val MAIN_URL = "https://www.youtube.com"
@@ -137,91 +131,47 @@ class YoutubeProvider(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        try {
-            val videoId = data.substringAfter("v=").substringBefore("&")
 
-            val url = "$invidiousInstance/api/v1/videos/$videoId"
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
-                .addHeader("Referer", "https://www.youtube.com/")
-                .build()
+        val info = StreamInfo.getInfo(data)
+        val refererUrl = info.url
 
-            val response = client.newCall(request).execute().use {
-                if (!it.isSuccessful) {
-                    Log.e(TAG, "Invidious request failed: ${it.code}")
-                    return false
-                }
-                it.body.string()
-            }
+        info.videoStreams
+            .sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+            .forEach { stream ->
 
-            val json = JSONObject(response)
+                val streamUrl = stream.url ?: return@forEach
+                val resolutionName = stream.resolution ?: return@forEach
 
-            val adaptiveFormats = json.optJSONArray("adaptiveFormats") ?: JSONArray()
-            val formatStreams = json.optJSONArray("formatStreams") ?: JSONArray()
-
-            val allFormats = JSONArray().apply {
-                for (i in 0 until adaptiveFormats.length()) put(adaptiveFormats.opt(i))
-                for (i in 0 until formatStreams.length()) put(formatStreams.opt(i))
-            }
-
-            Log.d(TAG, "Invidious - Formatos encontrados: ${allFormats.length()}")
-
-            for (i in 0 until allFormats.length()) {
-                val format = allFormats.optJSONObject(i) ?: continue
-                val streamUrl = format.optString("url")
-                if (streamUrl.isEmpty()) continue
-
-                val qualityLabel = format.optString("qualityLabel", format.optString("quality", "Unknown"))
-                val type = format.optString("type")
-
-                // Filtrar solo formatos de video (opcional, puedes quitar si quieres audio también)
-                if (!type.contains("video", ignoreCase = true)) continue
-
-                val q = when {
-                    qualityLabel.contains("2160", ignoreCase = true) || qualityLabel.contains("4k") -> Qualities.P2160.value
-                    qualityLabel.contains("1440", ignoreCase = true) -> Qualities.P1440.value
-                    qualityLabel.contains("1080", ignoreCase = true) -> Qualities.P1080.value
-                    qualityLabel.contains("720", ignoreCase = true) -> Qualities.P720.value
-                    qualityLabel.contains("480", ignoreCase = true) -> Qualities.P480.value
-                    qualityLabel.contains("360", ignoreCase = true) -> Qualities.P360.value
-                    else -> Qualities.Unknown.value
+                if (resolutionName.removeSuffix("p").toIntOrNull() == null) {
+                    return@forEach
                 }
 
-                Log.d(TAG, "Calidad agregada: $qualityLabel -> $streamUrl")
-
-                callback(
+                callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = qualityLabel,
+                        name = "Video - $resolutionName",
                         url = streamUrl
                     ) {
-                        this.referer = invidiousInstance
-                        this.quality = q
+                        this.referer = refererUrl
                     }
                 )
             }
 
-            // Subtítulos de Invidious
-            val captions = json.optJSONArray("captions") ?: JSONArray()
-            for (i in 0 until captions.length()) {
-                val cap = captions.optJSONObject(i) ?: continue
-                val label = cap.optString("label", "Unknown")
-                val langCode = cap.optString("language_code")
-                val capUrl = cap.optString("url")
-                if (capUrl.isNotEmpty()) {
-                    subtitleCallback(newSubtitleFile("$label ($langCode)", capUrl))
-                }
-            }
+        info.subtitles.forEach { sub ->
+            val subUrl = sub.url ?: return@forEach
+            val subName = sub.languageTag ?: return@forEach
 
-            return true
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error en loadLinks con Invidious: ${e.message}", e)
-            return false
+            subtitleCallback.invoke(
+                newSubtitleFile(
+                    subName,
+                    subUrl
+                )
+            )
         }
+
+        return true
     }
 
 }
