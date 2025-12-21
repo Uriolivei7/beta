@@ -52,7 +52,8 @@ class NewPipeDownloader(builder: OkHttpClient.Builder): Downloader() {
     }
 
     companion object {
-        private const val USER_AGENT = "com.google.android.youtube.tv/12.05.05 (Linux; U; Android 12; Build/STTE.221215.005)"
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         private var instance: NewPipeDownloader? = null
 
         fun init(builder: OkHttpClient.Builder?): NewPipeDownloader? {
