@@ -8,7 +8,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.NewPipe
 
 class YoutubeProvider(
@@ -85,57 +84,78 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val DTAG = "YT_DEBUG"
+        val DTAG = "YT_AUDIO_DEBUG"
+        Log.d(DTAG, "--- Iniciando extracción para: $data ---")
+
         return try {
-            val service = ServiceList.YouTube
+            val service = org.schabi.newpipe.extractor.ServiceList.YouTube
             val extractor = service.getStreamExtractor(data)
             extractor.fetchPage()
 
             val referer = extractor.url ?: data
 
+            val audioStream = extractor.audioStreams?.maxByOrNull { it.bitrate }
+            val audioUrl = audioStream?.url
+            if (audioUrl != null) {
+                Log.d(DTAG, "AUDIO ENCONTRADO: Bitrate=${audioStream.bitrate}, Formato=${audioStream.content}")
+            } else {
+                Log.e(DTAG, "ERROR: No se encontró ninguna pista de audio en el extractor.")
+            }
+
             val dashUrl = try { extractor.dashMpdUrl } catch (e: Exception) { null }
             if (!dashUrl.isNullOrEmpty()) {
-                Log.d(DTAG, "DASH DESBLOQUEADO EXITOSAMENTE")
+                Log.d(DTAG, "DASH OFICIAL DISPONIBLE. Enviando...")
                 callback.invoke(
-                    newExtractorLink(this.name, "YouTube (Auto HD)", dashUrl!!, ExtractorLinkType.DASH) {
+                    newExtractorLink(this.name, "${this.name} (Auto HD)", dashUrl!!, ExtractorLinkType.DASH) {
                         this.referer = referer
                         this.quality = Qualities.P1080.value
                     }
                 )
             } else {
-                Log.w(DTAG, "DASH vacío. Usando plan B de audio separado.")
-            }
+                Log.w(DTAG, "DASH OFICIAL VACÍO. Intentando inyección manual de audio.")
 
-            val bestAudio = extractor.audioStreams?.maxByOrNull { it.bitrate }?.url
+                extractor.videoOnlyStreams?.distinctBy { it.resolution }?.forEach { video ->
+                    val res = video.resolution ?: return@forEach
+                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 0
+                    val vUrl = video.url ?: return@forEach
 
-            extractor.videoOnlyStreams?.distinctBy { it.resolution }?.forEach { video ->
-                val res = video.resolution ?: return@forEach
-                val qualInt = res.removeSuffix("p").toIntOrNull() ?: 0
-
-                if (qualInt >= 720 && bestAudio != null) {
-                    callback.invoke(
-                        newExtractorLink(this.name, "YouTube $res (HD)", video.url!!, ExtractorLinkType.VIDEO) {
-                            this.referer = referer
-                            this.quality = qualInt
-                            this.headers = mapOf("X-Audio-Url" to bestAudio)
-                        }
-                    )
+                    if (qualInt >= 720) {
+                        Log.d(DTAG, "Procesando $res: Inyectando audio extra...")
+                        callback.invoke(
+                            newExtractorLink(
+                                this.name,
+                                "${this.name} $res (HD + Audio)",
+                                vUrl,
+                                ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = referer
+                                this.quality = qualInt
+                                if (audioUrl != null) {
+                                    this.headers = mapOf(
+                                        "extra_audio_url" to audioUrl,
+                                        "X-Audio-Url" to audioUrl,
+                                        "User-Agent" to "com.google.android.youtube.tv/12.05.05 (Linux; U; Android 12; Build/STTE.221215.005)"
+                                    )
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
             extractor.videoStreams?.forEach { stream ->
-                val res = stream.resolution ?: "360p"
+                Log.d(DTAG, "Cargando Muxed de respaldo: ${stream.resolution}")
                 callback.invoke(
-                    newExtractorLink(this.name, "YouTube $res (Directo)", stream.url!!, ExtractorLinkType.VIDEO) {
+                    newExtractorLink(this.name, "${this.name} ${stream.resolution} (SD)", stream.url!!, ExtractorLinkType.VIDEO) {
                         this.referer = referer
-                        this.quality = res.removeSuffix("p").toIntOrNull() ?: 360
+                        this.quality = 360
                     }
                 )
             }
 
             true
         } catch (e: Exception) {
-            Log.e(DTAG, "Error en loadLinks: ${e.message}")
+            Log.e(DTAG, "CRASH en loadLinks: ${e.message}")
             false
         }
     }
