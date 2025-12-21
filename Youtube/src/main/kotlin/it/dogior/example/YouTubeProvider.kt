@@ -20,6 +20,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
+import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 
 class YoutubeProvider(
     language: String = "en",
@@ -138,10 +139,11 @@ class YoutubeProvider(
 
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
 
+        val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
+
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
-
-        val audioUrl = bestAudio?.url ?: ""
+        val audioUrl = bestAudio?.url
 
         val videoOnlyUrls = info.videoOnlyStreams?.map { it.url }?.toSet() ?: emptySet()
 
@@ -162,24 +164,23 @@ class YoutubeProvider(
                 else -> Qualities.P144.value
             }
 
-            val isDash = videoOnlyUrls.contains(streamUrl)
-
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
-                    name = "${this.name} $resName",
+                    name = "MPEG-4 $resName",
                     url = streamUrl,
-                    type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
+                    type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
                     this.referer = refererUrl
+
                     this.headers = mapOf(
                         "User-Agent" to userAgent,
-                        "Accept" to "*/*",
+                        "Cookie" to cookies,
                         "Referer" to "https://www.youtube.com/"
                     )
 
-                    if (isDash) {
+                    if (videoOnlyUrls.contains(streamUrl)) {
                         this.extractorData = audioUrl
                     }
                 }

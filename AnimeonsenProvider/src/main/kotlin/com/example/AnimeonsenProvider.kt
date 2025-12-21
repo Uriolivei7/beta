@@ -51,13 +51,14 @@ class AnimeonsenProvider : MainAPI() {
         val pages = mutableListOf<HomePageList>()
 
         try {
-            val latestRes = app.get(
+            val response = app.get(
                 "$apiUrl/content/index?start=${(page - 1) * 20}&limit=20",
                 headers = mapOf("Authorization" to "Bearer $token")
-            ).parsedSafe<AnimeListResponse>()
+            ).text
 
-            latestRes?.content?.let {
-                pages.add(HomePageList("Todos los Animes", it.map { item -> item.toSearchResponse() }))
+            val latestRes = AppUtils.parseJson<AnimeListResponse>(response)
+            if (latestRes.content.isNotEmpty()) {
+                pages.add(HomePageList("Todos los Animes", latestRes.content.map { it.toSearchResponse() }))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error en Latest: ${e.message}")
@@ -66,17 +67,19 @@ class AnimeonsenProvider : MainAPI() {
         if (page == 1) {
             homeGenres.forEach { (name, slug) ->
                 try {
-                    val genreRes = app.get(
-                        "$apiUrl/content/genre/$slug?start=0&limit=20",
+                    val genreUrl = "$apiUrl/content/index/genre/$slug?start=0&limit=20"
+                    val genreResponse = app.get(
+                        genreUrl,
                         headers = mapOf("Authorization" to "Bearer $token")
-                    ).parsedSafe<List<AnimeListItem>>()
+                    ).text
 
-                    if (!genreRes.isNullOrEmpty()) {
-                        val genreList = genreRes.map { it.toSearchResponse() }
-                        pages.add(HomePageList(name, genreList))
+                    val genreRes = AppUtils.parseJson<AnimeListResponse>(genreResponse)
+
+                    if (genreRes.content.isNotEmpty()) {
+                        pages.add(HomePageList(name, genreRes.content.map { it.toSearchResponse() }))
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error cargando género $name: ${e.message}")
+                    Log.e(TAG, "Error cargando género $name en la ruta $slug: ${e.message}")
                 }
             }
         }
