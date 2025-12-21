@@ -15,7 +15,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.amap
 import android.util.Log
 import com.lagradost.cloudstream3.MovieSearchResponse
-import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 
@@ -43,43 +42,86 @@ class YoutubeProvider(
         val isTrendingEnabled = sharedPrefs?.getBoolean("trending", true) ?: true
         val sections = mutableListOf<HomePageList>()
         if (isTrendingEnabled) {
+            Log.d(TAG, "Obteniendo tendencias...")
             val videos = ytParser.getTrendingVideoUrls(page)
+            if (videos == null) {
+            Log.d(TAG, "Error: No se obtuvieron videos de tendencias en la página $page.")
+        } else {
+            Log.d(TAG, "Tendencias obtenidas. Total: ${videos.list.size} videos.")
+
+        }
             videos?.let { sections.add(it) }
         }
 
         val playlistsData = sharedPrefs?.getStringSet("playlists", emptySet()) ?: emptySet()
         if (playlistsData.isNotEmpty()) {
+            Log.d(TAG, "Cargando playlists y canales personalizados. Total de entradas: ${playlistsData.size}")
             val triples = playlistsData.map { parseJson<Triple<String, String, Long>>(it) }
             val list = triples.amap { data ->
-                val playlistUrl = data.first
-                val urlPath = playlistUrl.substringAfter("youtu").substringAfter("/")
-                val isPlaylist = urlPath.startsWith("playlist?list=")
-                val isChannel = urlPath.startsWith("@") || urlPath.startsWith("channel")
-                val customSections = if (isPlaylist && !isChannel) {
-                    ytParser.playlistToSearchResponseList(playlistUrl, page)
-                } else if (!isPlaylist && isChannel) {
-                    ytParser.channelToSearchResponseList(playlistUrl, page)
-                } else null
-                customSections to data.third
-            }
+            val playlistUrl = data.first
+            Log.d(TAG, "Procesando URL: $playlistUrl")
+            val urlPath = playlistUrl.substringAfter("youtu").substringAfter("/")
+            val isPlaylist = urlPath.startsWith("playlist?list=")
+            val isChannel = urlPath.startsWith("@") || urlPath.startsWith("channel")
+            val customSections = if (isPlaylist && !isChannel) {
+            Log.d(TAG, "Llamando a playlistToSearchResponseList para $playlistUrl")
+            ytParser.playlistToSearchResponseList(playlistUrl, page)
+
+        } else if (!isPlaylist && isChannel) {
+            Log.d(TAG, "Llamando a channelToSearchResponseList para $playlistUrl")
+            ytParser.channelToSearchResponseList(playlistUrl, page)
+
+        } else {
+            Log.d(TAG, "URL no reconocida (ni playlist ni canal): $playlistUrl")
+            null
+
+        }
+            customSections to data.third
+
+        }
             list.sortedBy { it.second }.forEach {
-                it.first?.let { section -> sections.add(section) }
-            }
+            val homepageSection = it.first
+            if (homepageSection != null) {
+            sections.add(homepageSection)
+
         }
 
-        if (sections.isEmpty()) {
-            sections.add(HomePageList("No hay secciones activas", emptyList()))
         }
-        return newHomePageResponse(sections, true)
+
+
+        }
+        if (sections.isEmpty()) {
+            Log.d(TAG, "No hay secciones activas. Se muestra mensaje de error en la UI.")
+            sections.add(
+            HomePageList(
+            "All sections are disabled. Go to the settings to enable them",
+            emptyList()
+            )
+            )
+
+        }
+        Log.d(TAG, "Finalizando getMainPage. Secciones totales: ${sections.size}")
+        return newHomePageResponse(
+        sections, true
+        )
+
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(TAG, "Iniciando búsqueda para: $query")
+
         val allResults = ytParser.parseSearch(query)
+
+        Log.d(TAG, "Búsqueda terminada. Resultados encontrados: ${allResults?.size ?: 0}")
+
         return allResults?.filterIsInstance<MovieSearchResponse>() ?: emptyList()
     }
 
     override suspend fun load(url: String): LoadResponse {
-        return ytParser.videoToLoadResponse(url)
+        Log.d(TAG, "Iniciando carga de LoadResponse para URL: $url")
+        val video = ytParser.videoToLoadResponse(url)
+        Log.d(TAG, "Carga de LoadResponse completada.")
+        return video
     }
 
     override suspend fun loadLinks(
@@ -88,26 +130,24 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val debugTag = "YoutubeProviderDebug"
+        val debugTag = "YoutubeDirect"
 
         return try {
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
-
             val extractor = service.getStreamExtractor(data)
 
             extractor.fetchPage()
-
             val refererUrl = extractor.url ?: data
 
-            val dashUrl = try { extractor.dashMpdUrl } catch (e: Exception) { null }
+            val dashMpd = try { extractor.dashMpdUrl } catch (e: Exception) { null }
 
-            if (dashUrl != null && dashUrl.length > 0) {
-                Log.d(debugTag, "DASH encontrado: Forzando 1080p")
+            if (!dashMpd.isNullOrEmpty()) {
+                Log.d(debugTag, "DASH Encontrado - Habilitando Multi-calidad con Audio")
                 callback.invoke(
                     newExtractorLink(
                         this.name,
-                        "YouTube Alta Calidad (DASH)",
-                        dashUrl,
+                        "YouTube Directo (DASH 1080p)",
+                        dashMpd,
                         com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
                     ) {
                         this.referer = refererUrl
@@ -116,33 +156,33 @@ class YoutubeProvider(
                 )
             }
 
-            val addedRes = mutableSetOf<Int>()
-            extractor.videoStreams?.sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-                ?.forEach { stream ->
-                    val res = stream.resolution ?: return@forEach
-                    val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
-
-                    if (!addedRes.contains(qualInt)) {
-                        val streamUrl = stream.url ?: return@forEach
-                        callback.invoke(
-                            newExtractorLink(
-                                this.name,
-                                "YouTube $res (Directo)",
-                                streamUrl,
-                                com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = refererUrl
-                                this.quality = qualInt
-                            }
-                        )
-                        addedRes.add(qualInt)
+            val hlsUrl = try { extractor.hlsUrl } catch (e: Exception) { null }
+            if (!hlsUrl.isNullOrEmpty()) {
+                callback.invoke(
+                    newExtractorLink(this.name, "YouTube Directo (HLS)", hlsUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8) {
+                        this.referer = refererUrl
                     }
-                }
+                )
+            }
+
+            extractor.videoStreams?.forEach { stream ->
+                val res = stream.resolution ?: return@forEach
+                val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
+                val sUrl = stream.url ?: return@forEach
+
+                callback.invoke(
+                    newExtractorLink(this.name, "YouTube $res", sUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
+                        this.referer = refererUrl
+                        this.quality = qualInt
+                    }
+                )
+            }
 
             true
         } catch (e: Exception) {
-            Log.e(debugTag, "Error: ${e.message}")
+            Log.e(debugTag, "Error en carga directa: ${e.message}")
             false
         }
     }
+
 }
