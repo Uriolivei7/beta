@@ -134,18 +134,19 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val useHls = sharedPrefs?.getBoolean("hls", true) ?: true
+        // 1. Leer la preferencia del Switch (hls)
+        val useMultiTrack = sharedPrefs?.getBoolean("hls", true) ?: true
 
         val info = StreamInfo.getInfo(data)
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        // 1. Audio de alta calidad
+        // 2. Obtener el mejor audio
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
         val audioUrl = bestAudio?.url ?: ""
 
-        // 2. Streams de Video
+        // 3. Unir y limpiar duplicados por resolución
         val allStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
@@ -169,24 +170,25 @@ class YoutubeProvider(
                     source = this.name,
                     name = "YouTube $resName",
                     url = streamUrl,
-                    // SI EL SWITCH ESTÁ ON, USAMOS DASH PARA QUE HAGA EL MUXING DE AUDIO
-                    type = if (useHls) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
+                    // IMPORTANTE: Mantenemos ExtractorLinkType.VIDEO para evitar el error 3002
+                    type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
                     this.headers = mapOf(
                         "User-Agent" to userAgent,
-                        "Cookie" to cookies
+                        "Cookie" to cookies,
+                        "Referer" to "https://www.youtube.com/"
                     )
 
-                    // Solo inyectamos audio si es un stream que sabemos que viene mudo
-                    if (info.videoOnlyStreams?.any { it.url == streamUrl } == true) {
+                    // Si el usuario activó la opción y el video es mudo, inyectamos el audio
+                    if (useMultiTrack && isDash && audioUrl.isNotEmpty()) {
                         this.extractorData = audioUrl
                     }
                 }
             )
         }
 
-        // Subtítulos
+        // 4. Subtítulos
         info.subtitles?.forEach { sub ->
             subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url ?: return@forEach))
         }
