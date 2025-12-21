@@ -54,11 +54,14 @@ class AnimeonsenProvider : MainAPI() {
             val latestRes = app.get(
                 "$apiUrl/content/index?start=${(page - 1) * 20}&limit=20",
                 headers = mapOf("Authorization" to "Bearer $token")
-            ).parsed<AnimeListResponse>()
+            ).parsedSafe<AnimeListResponse>()
 
-            val latestList = latestRes.content.map { it.toSearchResponse() }
-            pages.add(HomePageList("Latest Anime", latestList))
-        } catch (e: Exception) { Log.e(TAG, "Error loading latest: ${e.message}") }
+            latestRes?.content?.let {
+                pages.add(HomePageList("Todos los Animes", it.map { item -> item.toSearchResponse() }))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en Latest: ${e.message}")
+        }
 
         if (page == 1) {
             homeGenres.forEach { (name, slug) ->
@@ -66,19 +69,19 @@ class AnimeonsenProvider : MainAPI() {
                     val genreRes = app.get(
                         "$apiUrl/content/genre/$slug?start=0&limit=20",
                         headers = mapOf("Authorization" to "Bearer $token")
-                    ).parsed<List<AnimeListItem>>()
+                    ).parsedSafe<List<AnimeListItem>>()
 
-                    val genreList = genreRes.map { it.toSearchResponse() }
-                    if (genreList.isNotEmpty()) {
+                    if (!genreRes.isNullOrEmpty()) {
+                        val genreList = genreRes.map { it.toSearchResponse() }
                         pages.add(HomePageList(name, genreList))
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error loading genre $name: ${e.message}")
+                    Log.e(TAG, "Error cargando género $name: ${e.message}")
                 }
             }
         }
 
-        return newHomePageResponse(pages, true)
+        return newHomePageResponse(pages, pages.isNotEmpty())
     }
 
     override suspend fun search(query: String): List<SearchResponse> {

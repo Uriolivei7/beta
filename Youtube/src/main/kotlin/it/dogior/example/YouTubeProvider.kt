@@ -135,11 +135,13 @@ class YoutubeProvider(
     ): Boolean {
         val info = StreamInfo.getInfo(data)
         val refererUrl = info.url
+
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
 
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
-        val audioUrl = bestAudio?.url
+
+        val audioUrl = bestAudio?.url ?: ""
 
         val videoOnlyUrls = info.videoOnlyStreams?.map { it.url }?.toSet() ?: emptySet()
 
@@ -160,17 +162,24 @@ class YoutubeProvider(
                 else -> Qualities.P144.value
             }
 
+            val isDash = videoOnlyUrls.contains(streamUrl)
+
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
                     name = "${this.name} $resName",
                     url = streamUrl,
-                    type = ExtractorLinkType.VIDEO
+                    type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
                     this.referer = refererUrl
-                    this.headers = mapOf("User-Agent" to userAgent)
-                    if (videoOnlyUrls.contains(streamUrl)) {
+                    this.headers = mapOf(
+                        "User-Agent" to userAgent,
+                        "Accept" to "*/*",
+                        "Referer" to "https://www.youtube.com/"
+                    )
+
+                    if (isDash) {
                         this.extractorData = audioUrl
                     }
                 }
