@@ -136,20 +136,26 @@ class YoutubeProvider(
     ): Boolean {
         val info = StreamInfo.getInfo(data)
         val refererUrl = info.url
-        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+
+        // Usamos un User-Agent de Android para mejorar la compatibilidad de audio
+        val userAgent = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        // 1. Obtener el audio y crear un mapa de headers para él
+        // 1. Obtener el audio m4a (el más compatible para mezclar con mp4)
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
         val audioUrl = bestAudio?.url ?: ""
 
+        // 2. Unir y limpiar duplicados
         val allStreams = (info.videoStreams ?: emptyList()) + (info.videoOnlyStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
         distinctStreams.forEach { stream ->
             val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
+
+            // Verificamos si es DASH (solo video)
+            val isDash = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
 
             val qualityInt = when {
                 resName.contains("2160") -> Qualities.P2160.value
@@ -161,6 +167,7 @@ class YoutubeProvider(
                 else -> Qualities.P144.value
             }
 
+            // 3. Crear el enlace
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
@@ -169,19 +176,15 @@ class YoutubeProvider(
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
-                    this.referer = refererUrl
+                    this.referer = "https://www.youtube.com/"
                     this.headers = mapOf(
                         "User-Agent" to userAgent,
-                        "Cookie" to cookies,
-                        "Referer" to "https://www.youtube.com/"
+                        "Cookie" to cookies
                     )
 
-                    // Verificamos si es un stream DASH (sin audio)
-                    // Comparamos con la lista original de videoOnly
-                    val isDash = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
-
-                    if (isDash) {
-                        // Pasamos el audioUrl. Cloudstream intentará unirlo.
+                    if (isDash && audioUrl.isNotEmpty()) {
+                        // Creamos un mapa de datos para que el motor DASH de Cloudstream
+                        // sepa que debe inyectar esta pista de audio específica.
                         this.extractorData = audioUrl
                     }
                 }
