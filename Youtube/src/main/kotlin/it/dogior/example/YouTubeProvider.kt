@@ -134,25 +134,24 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
+        val useHls = sharedPrefs?.getBoolean("hls", true) ?: true
+
         val info = StreamInfo.getInfo(data)
-        val refererUrl = info.url
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        // 1. Extraer el mejor audio disponible
+        // 1. Audio de alta calidad
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
         val audioUrl = bestAudio?.url ?: ""
 
-        // 2. Filtrar duplicados: Priorizamos videoOnlyStreams para calidad alta
+        // 2. Streams de Video
         val allStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
         distinctStreams.forEach { stream ->
             val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
-
-            // Determinar si es un stream DASH (solo video)
             val isDash = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
 
             val qualityInt = when {
@@ -170,34 +169,26 @@ class YoutubeProvider(
                     source = this.name,
                     name = "YouTube $resName",
                     url = streamUrl,
-                    type = ExtractorLinkType.VIDEO
+                    // SI EL SWITCH ESTÁ ON, USAMOS DASH PARA QUE HAGA EL MUXING DE AUDIO
+                    type = if (useHls) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
-                    this.referer = "https://www.youtube.com/"
                     this.headers = mapOf(
                         "User-Agent" to userAgent,
-                        "Cookie" to cookies,
-                        "Accept" to "*/*"
+                        "Cookie" to cookies
                     )
 
-                    if (isDash && audioUrl.isNotEmpty()) {
-                        // Pasamos el audio para que ExoPlayer haga el muxing
+                    // Solo inyectamos audio si es un stream que sabemos que viene mudo
+                    if (info.videoOnlyStreams?.any { it.url == streamUrl } == true) {
                         this.extractorData = audioUrl
                     }
                 }
             )
         }
 
-        // 3. Cargar Subtítulos (IMPORTANTE)
+        // Subtítulos
         info.subtitles?.forEach { sub ->
-            val subUrl = sub.url ?: return@forEach
-            // Usamos newSubtitleFile para evitar la advertencia de 'deprecated'
-            subtitleCallback.invoke(
-                newSubtitleFile(
-                    lang = sub.languageTag ?: sub.displayLanguageName ?: "Auto",
-                    url = subUrl
-                )
-            )
+            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url ?: return@forEach))
         }
 
         return true
