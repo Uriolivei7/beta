@@ -25,8 +25,6 @@ class YouTubePlugin : Plugin() {
         NewPipe.setupLocalization(Localization(language), ContentCountry(country))
 
         registerMainAPI(YoutubeProvider(language, sharedPref))
-        registerMainAPI(YouTubePlaylistsProvider(language))
-        registerMainAPI(YouTubeChannelProvider(language))
 
         registerExtractorAPI(YouTubeExtractor())
 

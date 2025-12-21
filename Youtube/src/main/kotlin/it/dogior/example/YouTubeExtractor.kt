@@ -38,61 +38,46 @@ open class YouTubeExtractor() : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        val link =
-            YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(
-                url.replace(schemaStripRegex, "")
-            )
-
-        val extractor = object : YoutubeStreamExtractor(
-            ServiceList.YouTube,
-            link
-        ) {}
-
+        val link = YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(url.replace(schemaStripRegex, ""))
+        val extractor = object : YoutubeStreamExtractor(ServiceList.YouTube, link) {}
         extractor.fetchPage()
 
-        val videoStreams = extractor.videoStreams?.filterNotNull() ?: emptyList()
-        val audioStreams = extractor.audioStreams?.filterNotNull() ?: emptyList()
+        val ref = extractor.url ?: url
 
-        videoStreams.forEach { stream ->
-            val quality = mapResolutionToQuality(stream.resolution)
+        val dashUrl = try { extractor.dashMpdUrl } catch (e: Exception) { null }
+        if (!dashUrl.isNullOrEmpty()) {
+            callback.invoke(
+                newExtractorLink(this.name, "YouTube (Multi-Res HD)", dashUrl!!, ExtractorLinkType.DASH) {
+                    this.referer = ref
+                    this.quality = Qualities.P1080.value
+                }
+            )
+        }
 
-            if (quality != Qualities.Unknown) {
+        val bestAudio = extractor.audioStreams?.maxByOrNull { it.bitrate }?.url
+
+        extractor.videoOnlyStreams?.distinctBy { it.resolution }?.forEach { video ->
+            val res = video.resolution ?: return@forEach
+            val qualInt = res.removeSuffix("p").toIntOrNull() ?: 0
+
+            if (qualInt >= 720 && bestAudio != null) {
                 callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        this.name,
-                        stream.url!!,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = quality.value
+                    newExtractorLink(this.name, "YouTube $res (HD)", video.url!!, ExtractorLinkType.VIDEO) {
+                        this.referer = ref
+                        this.quality = qualInt
+                        this.headers = mapOf("X-Audio-Url" to bestAudio)
                     }
                 )
             }
         }
 
-        audioStreams.forEach { stream ->
+        extractor.videoStreams?.forEach { stream ->
             callback.invoke(
-                newExtractorLink(
-                    this.name,
-                    this.name,
-                    stream.url!!,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = url
-                    this.quality = Qualities.Unknown.value
+                newExtractorLink(this.name, "YouTube ${stream.resolution} (SD)", stream.url!!, ExtractorLinkType.VIDEO) {
+                    this.referer = ref
+                    this.quality = 360
                 }
             )
         }
-
-        val subtitles = try {
-            extractor.subtitlesDefault.filterNotNull()
-        } catch (e: Exception) {
-            logError(e)
-            emptyList()
-        }
-        subtitles.mapNotNull {
-            SubtitleFile(it.languageTag ?: return@mapNotNull null, it.content ?: return@mapNotNull null)
-        }.forEach(subtitleCallback)
     }
 }
