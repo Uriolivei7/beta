@@ -130,57 +130,44 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val debugTag = "YoutubeDirect"
-
         return try {
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
             val extractor = service.getStreamExtractor(data)
-
             extractor.fetchPage()
-            val refererUrl = extractor.url ?: data
 
-            val dashMpd = try { extractor.dashMpdUrl } catch (e: Exception) { null }
+            val referer = extractor.url ?: data
 
-            if (!dashMpd.isNullOrEmpty()) {
-                Log.d(debugTag, "DASH Encontrado - Habilitando Multi-calidad con Audio")
+            val dashUrl = extractor.dashMpdUrl
+            if (!dashUrl.isNullOrEmpty()) {
                 callback.invoke(
                     newExtractorLink(
                         this.name,
-                        "YouTube Directo (DASH 1080p)",
-                        dashMpd,
+                        "YouTube (Multi-Calidad + Audio)",
+                        dashUrl!!,
                         com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
                     ) {
-                        this.referer = refererUrl
+                        this.referer = referer
                         this.quality = Qualities.P1080.value
                     }
                 )
             }
 
-            val hlsUrl = try { extractor.hlsUrl } catch (e: Exception) { null }
-            if (!hlsUrl.isNullOrEmpty()) {
+            extractor.videoStreams?.filter { it.resolution == "360p" }?.forEach { stream ->
                 callback.invoke(
-                    newExtractorLink(this.name, "YouTube Directo (HLS)", hlsUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8) {
-                        this.referer = refererUrl
-                    }
-                )
-            }
-
-            extractor.videoStreams?.forEach { stream ->
-                val res = stream.resolution ?: return@forEach
-                val qualInt = res.removeSuffix("p").toIntOrNull() ?: 360
-                val sUrl = stream.url ?: return@forEach
-
-                callback.invoke(
-                    newExtractorLink(this.name, "YouTube $res", sUrl, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
-                        this.referer = refererUrl
-                        this.quality = qualInt
+                    newExtractorLink(
+                        this.name,
+                        "YouTube 360p (Baja Calidad)",
+                        stream.url ?: return@forEach,
+                        com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = referer
+                        this.quality = 360
                     }
                 )
             }
 
             true
         } catch (e: Exception) {
-            Log.e(debugTag, "Error en carga directa: ${e.message}")
             false
         }
     }
