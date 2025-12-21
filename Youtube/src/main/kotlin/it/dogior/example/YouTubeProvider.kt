@@ -37,7 +37,7 @@ class YoutubeProvider(
     private val ytParser = YouTubeParser(this.name)
 
     // Invidious instance fija (yewtu.be, estable en dic 2025)
-    private val invidiousInstance = "https://yewtu.be"
+    private val invidiousInstance = "https://inv.nadeko.net"
     private val client = OkHttpClient()
 
     companion object {
@@ -140,13 +140,22 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            // Extrae videoId de la URL (data es la URL de YouTube)
             val videoId = data.substringAfter("v=").substringBefore("&")
 
-            // Request a Invidious API para formatos (calidades altas)
             val url = "$invidiousInstance/api/v1/videos/$videoId"
-            val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute().use { it.body.string() }
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+                .addHeader("Referer", "https://www.youtube.com/")
+                .build()
+
+            val response = client.newCall(request).execute().use {
+                if (!it.isSuccessful) {
+                    Log.e(TAG, "Invidious request failed: ${it.code}")
+                    return false
+                }
+                it.body.string()
+            }
 
             val json = JSONObject(response)
 
