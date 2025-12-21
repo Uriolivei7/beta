@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.schabi.newpipe.extractor.NewPipe
 
 class YoutubeProvider(
@@ -84,7 +83,9 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val DTAG = "YT_AUDIO_DEBUG"
+        val DTAG = "YT_DASH_DEBUG"
+        Log.d(DTAG, "--- Iniciando extracción para: $data ---")
+
         return try {
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
             val extractor = service.getStreamExtractor(data)
@@ -92,35 +93,50 @@ class YoutubeProvider(
 
             val referer = extractor.url ?: data
 
+            // 1. LOG DE AUDIO
             val audioStream = extractor.audioStreams?.maxByOrNull { it.bitrate }
-            val videoStream = extractor.videoOnlyStreams?.find { it.resolution == "1080p" }
-                ?: extractor.videoOnlyStreams?.maxByOrNull { it.bitrate }
+            val audioUrl = audioStream?.url?.replace("&", "&amp;")
+            Log.d(DTAG, "Audio URL obtenido: ${if (audioUrl != null) "SÍ" else "NO"}")
 
-            if (audioStream != null && videoStream != null) {
-                Log.d(DTAG, "Construyendo DASH Manual para 1080p...")
+            if (audioUrl != null) {
+                val videoVariants = extractor.videoOnlyStreams?.distinctBy { it.resolution } ?: emptyList()
+                Log.d(DTAG, "Variantes de video encontradas: ${videoVariants.size}")
+
+                val videoRepresentations = videoVariants.mapIndexed { index, video ->
+                    val res = video.resolution?.removeSuffix("p") ?: "unknown"
+                    val vUrl = video.url?.replace("&", "&amp;")
+                    Log.d(DTAG, "Añadiendo variante al DASH: $res ($index)")
+
+                    """
+                    <Representation id="video_$res" bandwidth="${video.bitrate}" codecs="avc1.640028" width="1280" height="${if(res == "unknown") 720 else res}">
+                        <BaseURL>$vUrl</BaseURL>
+                    </Representation>
+                    """.trimIndent()
+                }.joinToString("\n")
 
                 val dashTemplate = """
-                    <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static">
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static" minBufferTime="PT1.5S">
                       <Period duration="PT${extractor.length}S">
                         <AdaptationSet mimeType="video/mp4" subsegmentAlignment="true">
-                          <Representation id="video" bandwidth="${videoStream.bitrate}" codecs="avc1.640028" width="1920" height="1080">
-                            <BaseURL>${videoStream.url?.replace("&", "&amp;")}</BaseURL>
-                          </Representation>
+                          $videoRepresentations
                         </AdaptationSet>
                         <AdaptationSet mimeType="audio/mp4" subsegmentAlignment="true">
                           <Representation id="audio" bandwidth="${audioStream.bitrate}" codecs="mp4a.40.2">
-                            <BaseURL>${audioStream.url?.replace("&", "&amp;")}</BaseURL>
+                            <BaseURL>$audioUrl</BaseURL>
                           </Representation>
                         </AdaptationSet>
                       </Period>
                     </MPD>
                 """.trimIndent()
 
+                Log.d(DTAG, "XML DASH GENERADO:\n$dashTemplate")
+
                 val dashData = "data:application/dash+xml;base64," +
                         android.util.Base64.encodeToString(dashTemplate.toByteArray(), android.util.Base64.NO_WRAP)
 
                 callback.invoke(
-                    newExtractorLink(this.name, "YouTube 1080p (HD + Audio)", dashData, ExtractorLinkType.DASH) {
+                    newExtractorLink(this.name, "YouTube Multi-Calidad (HD)", dashData, com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH) {
                         this.referer = referer
                         this.quality = Qualities.P1080.value
                     }
@@ -129,7 +145,8 @@ class YoutubeProvider(
 
             extractor.videoStreams?.forEach { stream ->
                 callback.invoke(
-                    newExtractorLink(this.name, "YouTube ${stream.resolution} (SD)", stream.url!!, ExtractorLinkType.VIDEO) {
+                    newExtractorLink(this.name, "YouTube ${stream.resolution} (Respaldo)",
+                        stream.url!!, com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO) {
                         this.referer = referer
                         this.quality = 360
                     }
@@ -138,7 +155,8 @@ class YoutubeProvider(
 
             true
         } catch (e: Exception) {
-            Log.e(DTAG, "Error: ${e.message}")
+            Log.e(DTAG, "CRASH en loadLinks: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
