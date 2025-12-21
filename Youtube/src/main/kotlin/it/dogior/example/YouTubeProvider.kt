@@ -139,26 +139,17 @@ class YoutubeProvider(
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        // 1. Obtener el mejor audio y añadirle el User Agent a la URL directamente
+        // 1. Obtener el audio y crear un mapa de headers para él
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
+        val audioUrl = bestAudio?.url ?: ""
 
-        // Añadimos el parámetro &uarp=1 o forzamos el UA en la URL si es posible
-        val audioUrl = bestAudio?.url?.let { url ->
-            "$url&user_agent=${userAgent.replace(" ", "%20")}"
-        } ?: ""
-
-        // 2. Identificar streams DASH
-        val videoOnlyUrls = info.videoOnlyStreams?.map { it.url }?.toSet() ?: emptySet()
-
-        // 3. Filtrar y limpiar
-        val allStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
+        val allStreams = (info.videoStreams ?: emptyList()) + (info.videoOnlyStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
         distinctStreams.forEach { stream ->
             val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
-            val isDash = videoOnlyUrls.contains(streamUrl)
 
             val qualityInt = when {
                 resName.contains("2160") -> Qualities.P2160.value
@@ -174,7 +165,7 @@ class YoutubeProvider(
                 newExtractorLink(
                     source = this.name,
                     name = "MPEG-4 $resName",
-                    url = "$streamUrl&user_agent=${userAgent.replace(" ", "%20")}",
+                    url = streamUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
@@ -185,12 +176,20 @@ class YoutubeProvider(
                         "Referer" to "https://www.youtube.com/"
                     )
 
+                    // Verificamos si es un stream DASH (sin audio)
+                    // Comparamos con la lista original de videoOnly
+                    val isDash = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
+
                     if (isDash) {
-                        // Pasamos el audio con el mismo truco del UserAgent en la URL
+                        // Pasamos el audioUrl. Cloudstream intentará unirlo.
                         this.extractorData = audioUrl
                     }
                 }
             )
+        }
+
+        info.subtitles?.forEach { sub ->
+            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url ?: return@forEach))
         }
 
         return true
