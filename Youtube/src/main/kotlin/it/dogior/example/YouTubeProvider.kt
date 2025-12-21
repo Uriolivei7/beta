@@ -130,44 +130,73 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
+        val TAG = "YT_DEBUG"
+        Log.d(TAG, "Iniciando carga de links para ID: $data")
+
         return try {
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
             val extractor = service.getStreamExtractor(data)
+
+            Log.d(TAG, "Llamando a fetchPage()...")
             extractor.fetchPage()
+            Log.d(TAG, "fetchPage() exitoso. URL: ${extractor.url}")
 
             val referer = extractor.url ?: data
 
-            val dashUrl = extractor.dashMpdUrl
-            if (!dashUrl.isNullOrEmpty()) {
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "YouTube (Multi-Calidad + Audio)",
-                        dashUrl!!,
-                        com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
-                    ) {
-                        this.referer = referer
-                        this.quality = Qualities.P1080.value
-                    }
-                )
+            try {
+                val dashUrl = extractor.dashMpdUrl
+                if (dashUrl.isNullOrEmpty()) {
+                    Log.w(TAG, "ALERTA: dashMpdUrl está VACÍO. YouTube ha bloqueado el manifest HD.")
+                } else {
+                    Log.d(TAG, "DASH ENCONTRADO: ${dashUrl.take(100)}...")
+                    callback.invoke(
+                        newExtractorLink(
+                            this.name,
+                            "YouTube (HD Multi-Calidad)",
+                            dashUrl,
+                            com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
+                        ) {
+                            this.referer = referer
+                            this.quality = Qualities.P1080.value
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al intentar obtener DASH: ${e.message}")
             }
 
-            extractor.videoStreams?.filter { it.resolution == "360p" }?.forEach { stream ->
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "YouTube 360p (Baja Calidad)",
-                        stream.url ?: return@forEach,
-                        com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = referer
-                        this.quality = 360
-                    }
-                )
+            val muxedStreams = extractor.videoStreams
+            Log.d(TAG, "Streams Muxed encontrados: ${muxedStreams?.size ?: 0}")
+
+            muxedStreams?.forEach { stream ->
+                val res = stream.resolution ?: "unknown"
+                val sUrl = stream.url
+                Log.d(TAG, "Muxed detectado: Resolución=$res, URL=${if (sUrl != null) "VÁLIDA" else "NULA"}")
+
+                if (sUrl != null) {
+                    callback.invoke(
+                        newExtractorLink(
+                            this.name,
+                            "YouTube $res (Directo)",
+                            sUrl,
+                            com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = referer
+                            this.quality = res.removeSuffix("p").toIntOrNull() ?: 360
+                        }
+                    )
+                }
+            }
+
+            val videoOnly = extractor.videoOnlyStreams
+            Log.d(TAG, "Streams VideoOnly encontrados: ${videoOnly?.size ?: 0}")
+            videoOnly?.forEach { v ->
+                Log.d(TAG, "VideoOnly detectado: Resolución=${v.resolution}")
             }
 
             true
         } catch (e: Exception) {
+            Log.e(TAG, "CRASH en loadLinks: ${e.stackTraceToString()}")
             false
         }
     }
