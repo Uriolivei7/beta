@@ -57,8 +57,10 @@ class AnimeonsenProvider : MainAPI() {
             ).text
 
             val latestRes = AppUtils.parseJson<AnimeListResponse>(response)
-            if (latestRes.content.isNotEmpty()) {
-                pages.add(HomePageList("Todos los Animes", latestRes.content.map { it.toSearchResponse() }))
+            val items = latestRes.content ?: latestRes.result
+
+            if (!items.isNullOrEmpty()) {
+                pages.add(HomePageList("Todos los Animes", items.map { it.toSearchResponse() }))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error en Latest: ${e.message}")
@@ -74,12 +76,13 @@ class AnimeonsenProvider : MainAPI() {
                     ).text
 
                     val genreRes = AppUtils.parseJson<AnimeListResponse>(genreResponse)
+                    val items = genreRes.result ?: genreRes.content
 
-                    if (genreRes.content.isNotEmpty()) {
-                        pages.add(HomePageList(name, genreRes.content.map { it.toSearchResponse() }))
+                    if (!items.isNullOrEmpty()) {
+                        pages.add(HomePageList(name, items.map { it.toSearchResponse() }))
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error cargando género $name en la ruta $slug: ${e.message}")
+                    Log.e(TAG, "Error cargando género $name: ${e.message}")
                 }
             }
         }
@@ -174,10 +177,16 @@ class AnimeonsenProvider : MainAPI() {
             false
         }
     }
-
-    @Serializable data class AnimeListResponse(val content: List<AnimeListItem>)
     @Serializable data class SearchResponseDto(val result: List<AnimeListItem>? = null)
-    @Serializable data class AnimeListItem(
+
+    @Serializable
+    data class AnimeListResponse(
+        val content: List<AnimeListItem>? = null,
+        val result: List<AnimeListItem>? = null
+    )
+
+    @Serializable
+    data class AnimeListItem(
         val content_id: String,
         val content_title: String? = null,
         val content_title_en: String? = null
