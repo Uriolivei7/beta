@@ -136,7 +136,9 @@ class YoutubeProvider(
         val info = StreamInfo.getInfo(data)
         val refererUrl = info.url
 
-        val bestAudio = info.audioStreams?.maxByOrNull { it.bitrate }
+        val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
+            ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
+
         val audioUrl = bestAudio?.url
 
         val allVideoStreams = (info.videoStreams ?: emptyList()) + (info.videoOnlyStreams ?: emptyList())
@@ -164,7 +166,6 @@ class YoutubeProvider(
                 ) {
                     this.quality = qualityInt
                     this.referer = refererUrl
-
                     if (stream !is org.schabi.newpipe.extractor.stream.VideoStream) {
                         this.extractorData = audioUrl
                     }
@@ -172,12 +173,10 @@ class YoutubeProvider(
             )
         }
 
-        // 4. Subtítulos
+        // 3. Subtítulos
         info.subtitles?.forEach { sub ->
             val subUrl = sub.url ?: return@forEach
-            subtitleCallback.invoke(
-                newSubtitleFile(sub.languageTag ?: "Auto", subUrl)
-            )
+            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", subUrl))
         }
 
         return true
