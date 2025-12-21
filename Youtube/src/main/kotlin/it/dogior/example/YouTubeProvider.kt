@@ -134,34 +134,24 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val CURRENT_TAG = "YT_DEBUG"
-        Log.d(CURRENT_TAG, "--- Iniciando carga de links para: $data ---")
-
-        val info = try {
-            StreamInfo.getInfo(data)
-        } catch (e: Exception) {
-            Log.e(CURRENT_TAG, "Error al obtener StreamInfo: ${e.message}")
-            return false
-        }
-
+        val info = StreamInfo.getInfo(data)
         val refererUrl = info.url
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        Log.d(CURRENT_TAG, "Cookies extraídas: ${cookies.take(20)}...")
-
-        // 1. Obtener el mejor audio
+        // 1. Obtener el mejor audio y añadirle el User Agent a la URL directamente
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
 
-        val audioUrl = bestAudio?.url
-        Log.d(CURRENT_TAG, "Audio URL encontrado: ${audioUrl?.take(50)}... Bitrate: ${bestAudio?.bitrate}")
+        // Añadimos el parámetro &uarp=1 o forzamos el UA en la URL si es posible
+        val audioUrl = bestAudio?.url?.let { url ->
+            "$url&user_agent=${userAgent.replace(" ", "%20")}"
+        } ?: ""
 
-        // 2. Identificar URLs de solo video
+        // 2. Identificar streams DASH
         val videoOnlyUrls = info.videoOnlyStreams?.map { it.url }?.toSet() ?: emptySet()
-        Log.d(CURRENT_TAG, "Total streams solo-video (DASH): ${videoOnlyUrls.size}")
 
-        // 3. Unir y limpiar duplicados
+        // 3. Filtrar y limpiar
         val allStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
@@ -180,13 +170,11 @@ class YoutubeProvider(
                 else -> Qualities.P144.value
             }
 
-            Log.d(CURRENT_TAG, "Procesando link: $resName | DASH: $isDash")
-
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
                     name = "MPEG-4 $resName",
-                    url = streamUrl,
+                    url = "$streamUrl&user_agent=${userAgent.replace(" ", "%20")}",
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityInt
@@ -198,10 +186,8 @@ class YoutubeProvider(
                     )
 
                     if (isDash) {
-                        Log.d(CURRENT_TAG, "Inyectando audio extra a la calidad $resName")
+                        // Pasamos el audio con el mismo truco del UserAgent en la URL
                         this.extractorData = audioUrl
-                    } else {
-                        Log.d(CURRENT_TAG, "Calidad $resName ya debería tener audio integrado.")
                     }
                 }
             )
