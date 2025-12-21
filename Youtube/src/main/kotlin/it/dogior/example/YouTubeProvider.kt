@@ -85,8 +85,6 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val DTAG = "YT_LOGICA"
-        Log.d(DTAG, "--- Iniciando Carga de Enlaces (Lista Unificada) ---")
-
         return try {
             val service = org.schabi.newpipe.extractor.ServiceList.YouTube
             val extractor = service.getStreamExtractor(data)
@@ -94,64 +92,65 @@ class YoutubeProvider(
 
             val referer = extractor.url ?: data
 
-            // 1. Obtener el mejor audio para las pistas mudas (DASH/VideoOnly)
+            // 1. Obtener Audio y Videos (Filtramos para no repetir calidades)
             val audioStream = extractor.audioStreams?.maxByOrNull { it.bitrate }
-            val audioUrl = audioStream?.url
-            Log.d(DTAG, "Audio base detectado: ${if (audioUrl != null) "SÍ" else "NO"}")
+            val videoStreams = extractor.videoOnlyStreams?.distinctBy { it.resolution } ?: emptyList()
 
-            // 2. Crear una lista maestra de todos los streams de video
-            val masterVideoList = mutableListOf<ExtractorLink>()
+            if (audioStream != null && videoStreams.isNotEmpty()) {
+                Log.d(DTAG, "Generando DASH unificado para todas las calidades")
 
-            // A. Añadir calidades HD (vienen sin audio, inyectamos el audio detectado)
-            extractor.videoOnlyStreams?.distinctBy { it.resolution }?.forEach { video ->
-                val res = video.resolution ?: "unknown"
-                val vUrl = video.url ?: return@forEach
+                // 2. Construir las representaciones de Video
+                val videoRepresentations = videoStreams.joinToString("\n") { video ->
+                    val res = video.resolution?.removeSuffix("p") ?: "720"
+                    """
+                    <Representation id="video_$res" bandwidth="${video.bitrate}" codecs="avc1.640028" width="${if(res.toIntOrNull() ?: 0 >= 1080) 1920 else 1280}" height="${if(res == "unknown") 720 else res}">
+                        <BaseURL>${video.url?.replace("&", "&amp;")}</BaseURL>
+                    </Representation>
+                    """.trimIndent()
+                }
 
-                Log.d(DTAG, "Añadiendo a lista maestra: $res (Inyectando Audio)")
-                masterVideoList.add(
-                    newExtractorLink(
-                        this.name,
-                        "YouTube $res (HD + Audio)",
-                        vUrl,
-                        ExtractorLinkType.VIDEO
-                    ) {
+                // 3. Manifiesto DASH Maestro (Une Video + Audio)
+                val dashTemplate = """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static">
+                      <Period duration="PT${extractor.length}S">
+                        <AdaptationSet mimeType="video/mp4" subsegmentAlignment="true">
+                          $videoRepresentations
+                        </AdaptationSet>
+                        <AdaptationSet mimeType="audio/mp4" subsegmentAlignment="true">
+                          <Representation id="audio" bandwidth="${audioStream.bitrate}" codecs="mp4a.40.2">
+                            <BaseURL>${audioStream.url?.replace("&", "&amp;")}</BaseURL>
+                          </Representation>
+                        </AdaptationSet>
+                      </Period>
+                    </MPD>
+                """.trimIndent()
+
+                val dashData = "data:application/dash+xml;base64," +
+                        android.util.Base64.encodeToString(dashTemplate.toByteArray(), android.util.Base64.NO_WRAP)
+
+                // Este enlace contendrá 1080p, 720p, 480p, etc. TODOS CON AUDIO
+                callback.invoke(
+                    newExtractorLink(this.name, "YouTube Pro (HD + Audio)", dashData, ExtractorLinkType.DASH) {
                         this.referer = referer
-                        this.quality = res.removeSuffix("p").toIntOrNull() ?: 0
-                        if (audioUrl != null) {
-                            this.headers = mapOf(
-                                "extra_audio_url" to audioUrl,
-                                "User-Agent" to "com.google.android.youtube.tv/12.05.05 (Linux; U; Android 12; Build/STTE.221215.005)"
-                            )
-                        }
+                        this.quality = Qualities.P1080.value
                     }
                 )
             }
 
-            // B. Añadir calidades SD / Muxed (Ya tienen audio, usualmente 360p)
+            // 4. Incluimos el 360p Muxed normal como opción de emergencia
             extractor.videoStreams?.forEach { stream ->
-                val res = stream.resolution ?: "360p"
-                Log.d(DTAG, "Añadiendo a lista maestra: $res (Audio Integrado)")
-                masterVideoList.add(
-                    newExtractorLink(
-                        this.name,
-                        "YouTube $res (SD)",
-                        stream.url!!,
-                        ExtractorLinkType.VIDEO
-                    ) {
+                callback.invoke(
+                    newExtractorLink(this.name, "YouTube ${stream.resolution} (SD)", stream.url!!, ExtractorLinkType.VIDEO) {
                         this.referer = referer
-                        this.quality = res.removeSuffix("p").toIntOrNull() ?: 360
+                        this.quality = 360
                     }
                 )
             }
-
-            // 3. Enviar toda la lista al callback de una sola vez
-            Log.d(DTAG, "Total de enlaces enviados a la lista: ${masterVideoList.size}")
-            masterVideoList.sortByDescending { it.quality } // Ordenar de mayor a menor calidad
-            masterVideoList.forEach { callback.invoke(it) }
 
             true
         } catch (e: Exception) {
-            Log.e(DTAG, "Error crítico en lista unificada: ${e.message}")
+            Log.e(DTAG, "Error: ${e.message}")
             false
         }
     }
