@@ -136,25 +136,23 @@ class YoutubeProvider(
     ): Boolean {
         val info = StreamInfo.getInfo(data)
         val refererUrl = info.url
-
-        // Usamos un User-Agent de Android para mejorar la compatibilidad de audio
-        val userAgent = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
+        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        // 1. Obtener el audio m4a (el más compatible para mezclar con mp4)
+        // 1. Extraer el mejor audio disponible
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
         val audioUrl = bestAudio?.url ?: ""
 
-        // 2. Unir y limpiar duplicados
-        val allStreams = (info.videoStreams ?: emptyList()) + (info.videoOnlyStreams ?: emptyList())
+        // 2. Filtrar duplicados: Priorizamos videoOnlyStreams para calidad alta
+        val allStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
         distinctStreams.forEach { stream ->
             val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
 
-            // Verificamos si es DASH (solo video)
+            // Determinar si es un stream DASH (solo video)
             val isDash = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
 
             val qualityInt = when {
@@ -167,11 +165,10 @@ class YoutubeProvider(
                 else -> Qualities.P144.value
             }
 
-            // 3. Crear el enlace
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
-                    name = "MPEG-4 $resName",
+                    name = "YouTube $resName",
                     url = streamUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
@@ -179,20 +176,28 @@ class YoutubeProvider(
                     this.referer = "https://www.youtube.com/"
                     this.headers = mapOf(
                         "User-Agent" to userAgent,
-                        "Cookie" to cookies
+                        "Cookie" to cookies,
+                        "Accept" to "*/*"
                     )
 
                     if (isDash && audioUrl.isNotEmpty()) {
-                        // Creamos un mapa de datos para que el motor DASH de Cloudstream
-                        // sepa que debe inyectar esta pista de audio específica.
+                        // Pasamos el audio para que ExoPlayer haga el muxing
                         this.extractorData = audioUrl
                     }
                 }
             )
         }
 
+        // 3. Cargar Subtítulos (IMPORTANTE)
         info.subtitles?.forEach { sub ->
-            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url ?: return@forEach))
+            val subUrl = sub.url ?: return@forEach
+            // Usamos newSubtitleFile para evitar la advertencia de 'deprecated'
+            subtitleCallback.invoke(
+                newSubtitleFile(
+                    lang = sub.languageTag ?: sub.displayLanguageName ?: "Auto",
+                    url = subUrl
+                )
+            )
         }
 
         return true
