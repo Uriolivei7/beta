@@ -24,8 +24,20 @@ class AnimeonsenProvider : MainAPI() {
         "Acción" to "action",
         "Reparto Adulto" to "adult-cast",
         "Aventura" to "adventure",
-        "Antropomórfico" to "anthropomorphic",
-        "Vanguardia" to "avant-garde"
+        "Comedia" to "comedy",
+        "Drama" to "drama",
+        "Fantasía" to "fantasy",
+        "Gore" to "gore",
+        "Isekai" to "isekai",
+        "Misterio" to "mystery",
+        "Escolar" to "school",
+        "Ciencia Ficción" to "sci-fi",
+        "Shounen" to "shounen",
+        "Recuentos de la vida" to "slice-of-life",
+        "Super Poderes" to "super-power",
+        "Supernatural" to "supernatural",
+        "Romance" to "romance",
+        "Suspenso" to "suspense",
     )
 
     private suspend fun getAuthToken(): String? {
