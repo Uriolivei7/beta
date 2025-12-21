@@ -134,58 +134,75 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val info = StreamInfo.getInfo(data)
+        if (data.isBlank()) return false
 
-        // Usamos el User-Agent que usa YouTube para navegadores móviles,
-        // que suele ser el más permisivo con los enlaces combinados.
-        val mobileUserAgent = "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
+        val info = try {
+            StreamInfo.getInfo(data)
+        } catch (e: Exception) {
+            return false
+        }
+
+        val appUserAgent = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
+        val useMultiTrack = sharedPrefs?.getBoolean("hls", true) ?: true
 
-        // 1. Obtener audio (prioridad absoluta a m4a para evitar desfases)
-        val audioStream = info.audioStreams?.find { it.format?.name?.contains("m4a") == true }
-            ?: info.audioStreams?.maxByOrNull { it.bitrate }
-        val audioUrl = audioStream?.url ?: ""
+        val audioStreams = info.audioStreams ?: emptyList()
+        val bestAudio = audioStreams.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
+            .maxByOrNull { it.bitrate } ?: audioStreams.maxByOrNull { it.bitrate }
 
-        // 2. Procesar los streams de video
-        val videoStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
+        val audioUrl = bestAudio?.url ?: ""
 
-        videoStreams.filterNotNull().distinctBy { it.resolution }.forEach { stream ->
+        val videoOnly = info.videoOnlyStreams ?: emptyList()
+        val videoWithAudio = info.videoStreams ?: emptyList()
+
+        val allStreams = (videoOnly + videoWithAudio).filterNotNull()
+        if (allStreams.isEmpty()) return false
+
+        allStreams.distinctBy { it.resolution }.forEach { stream ->
+            val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
+
+            val isMuteStream = videoOnly.any { it.url == streamUrl }
 
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
-                    name = "YT $resName",
-                    url = stream.url ?: return@forEach,
+                    name = "YouTube $resName",
+                    url = streamUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
-                    this.quality = getQuality(resName)
+                    this.quality = getQualityInt(resName)
                     this.headers = mapOf(
-                        "User-Agent" to mobileUserAgent,
+                        "User-Agent" to appUserAgent,
                         "Cookie" to cookies,
-                        "Referer" to "https://m.youtube.com/",
-                        "Origin" to "https://m.youtube.com"
+                        "X-YouTube-Client-Name" to "3",
+                        "X-YouTube-Client-Version" to "19.29.37",
+                        "Referer" to "https://www.youtube.com/"
                     )
 
-                    // El truco para el audio sin NewPipe:
-                    // Pasamos el audioUrl pero le pegamos los mismos parámetros de seguridad
-                    if (info.videoOnlyStreams?.any { it.url == stream.url } == true) {
+                    if (useMultiTrack && isMuteStream && audioUrl.isNotBlank()) {
                         this.extractorData = audioUrl
                     }
                 }
             )
         }
 
-        // Subtítulos
-        info.subtitles?.forEach { sub ->
-            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url ?: ""))
+        info.subtitles?.filter { it.url != null }?.forEach { sub ->
+            subtitleCallback.invoke(
+                newSubtitleFile(
+                    sub.languageTag ?: sub.displayLanguageName ?: "Auto",
+                    sub.url!!
+                )
+            )
         }
 
         return true
     }
 
-    private fun getQuality(res: String): Int {
+    private fun getQualityInt(res: String): Int {
         return when {
+            res.contains("2160") -> Qualities.P2160.value
+            res.contains("1440") -> Qualities.P1440.value
             res.contains("1080") -> Qualities.P1080.value
             res.contains("720") -> Qualities.P720.value
             res.contains("480") -> Qualities.P480.value
