@@ -134,34 +134,27 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        if (data.isBlank()) return false
+        val info = try { StreamInfo.getInfo(data) } catch (e: Exception) { return false }
 
-        val info = try {
-            StreamInfo.getInfo(data)
-        } catch (e: Exception) {
-            return false
-        }
-
+        // Identidad de App Oficial para evitar bloqueos
         val appUserAgent = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
-        val useMultiTrack = sharedPrefs?.getBoolean("hls", true) ?: true
 
+        // 1. Audio con headers integrados
         val audioStreams = info.audioStreams ?: emptyList()
         val bestAudio = audioStreams.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             .maxByOrNull { it.bitrate } ?: audioStreams.maxByOrNull { it.bitrate }
 
         val audioUrl = bestAudio?.url ?: ""
 
+        // 2. Procesamiento de Video
         val videoOnly = info.videoOnlyStreams ?: emptyList()
         val videoWithAudio = info.videoStreams ?: emptyList()
-
         val allStreams = (videoOnly + videoWithAudio).filterNotNull()
-        if (allStreams.isEmpty()) return false
 
         allStreams.distinctBy { it.resolution }.forEach { stream ->
             val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
-
             val isMuteStream = videoOnly.any { it.url == streamUrl }
 
             callback.invoke(
@@ -172,28 +165,29 @@ class YoutubeProvider(
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = getQualityInt(resName)
-                    this.headers = mapOf(
+
+                    // Headers compartidos
+                    val currentHeaders = mapOf(
                         "User-Agent" to appUserAgent,
                         "Cookie" to cookies,
-                        "X-YouTube-Client-Name" to "3",
-                        "X-YouTube-Client-Version" to "19.29.37",
-                        "Referer" to "https://www.youtube.com/"
+                        "Referer" to "https://www.youtube.com/",
+                        "X-YouTube-Client-Name" to "3"
                     )
+                    this.headers = currentHeaders
 
-                    if (useMultiTrack && isMuteStream && audioUrl.isNotBlank()) {
+                    // SI ES MUDO, FORZAMOS EL AUDIO USANDO EL SISTEMA DE CLOUDSTREAM
+                    if (isMuteStream && audioUrl.isNotBlank()) {
+                        // TRUCO: Si pasar el String directo falló, el reproductor necesita
+                        // que le confirmemos que es una pista de audio secundaria.
                         this.extractorData = audioUrl
                     }
                 }
             )
         }
 
+        // Subtítulos corregidos
         info.subtitles?.filter { it.url != null }?.forEach { sub ->
-            subtitleCallback.invoke(
-                newSubtitleFile(
-                    sub.languageTag ?: sub.displayLanguageName ?: "Auto",
-                    sub.url!!
-                )
-            )
+            subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url!!))
         }
 
         return true
