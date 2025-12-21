@@ -134,26 +134,25 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        // 1. Leer la preferencia del Switch (hls)
         val useMultiTrack = sharedPrefs?.getBoolean("hls", true) ?: true
-
         val info = StreamInfo.getInfo(data)
+
         val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
         val cookies = YoutubeParsingHelper.getCookieHeader()["Cookie"]?.joinToString("; ") ?: ""
 
-        // 2. Obtener el mejor audio
+        // 1. Buscamos el mejor audio
         val bestAudio = info.audioStreams?.filter { it.format?.name?.contains("m4a", ignoreCase = true) == true }
             ?.maxByOrNull { it.bitrate } ?: info.audioStreams?.maxByOrNull { it.bitrate }
         val audioUrl = bestAudio?.url ?: ""
 
-        // 3. Unir y limpiar duplicados por resolución
+        // 2. Unir y limpiar duplicados
         val allStreams = (info.videoOnlyStreams ?: emptyList()) + (info.videoStreams ?: emptyList())
         val distinctStreams = allStreams.filterNotNull().distinctBy { it.resolution }
 
         distinctStreams.forEach { stream ->
             val streamUrl = stream.url ?: return@forEach
             val resName = stream.resolution ?: "360p"
-            val isDash = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
+            val isVideoOnly = info.videoOnlyStreams?.any { it.url == streamUrl } ?: false
 
             val qualityInt = when {
                 resName.contains("2160") -> Qualities.P2160.value
@@ -170,8 +169,7 @@ class YoutubeProvider(
                     source = this.name,
                     name = "YouTube $resName",
                     url = streamUrl,
-                    // IMPORTANTE: Mantenemos ExtractorLinkType.VIDEO para evitar el error 3002
-                    type = ExtractorLinkType.VIDEO
+                    type = ExtractorLinkType.VIDEO // Mantenemos VIDEO para evitar el error 3002
                 ) {
                     this.quality = qualityInt
                     this.headers = mapOf(
@@ -180,15 +178,17 @@ class YoutubeProvider(
                         "Referer" to "https://www.youtube.com/"
                     )
 
-                    // Si el usuario activó la opción y el video es mudo, inyectamos el audio
-                    if (useMultiTrack && isDash && audioUrl.isNotEmpty()) {
+                    // FORZADO DE AUDIO:
+                    // Si es solo video (mudo), inyectamos el audio.
+                    if (useMultiTrack && isVideoOnly && audioUrl.isNotEmpty()) {
+                        // Pasamos la URL del audio. Cloudstream intentará mezclarla automáticamente.
                         this.extractorData = audioUrl
                     }
                 }
             )
         }
 
-        // 4. Subtítulos
+        // Subtítulos
         info.subtitles?.forEach { sub ->
             subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Auto", sub.url ?: return@forEach))
         }
