@@ -90,7 +90,7 @@ class GnulaProvider : MainAPI() {
         TvType.Cartoon
     )
 
-    private val TAG = "GNULA_LOG"
+    private val TAG = "GNULA"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         Log.d(TAG, "getMainPage: Cargando página principal $page")
@@ -109,23 +109,18 @@ class GnulaProvider : MainAPI() {
 
         for ((url, title) in catalogs) {
             try {
-                Log.d(TAG, "getMainPage: Extrayendo sección $title")
                 val res = app.get(url).text
-                if (!res.contains("{\"props\":{\"pageProps\":")) {
-                    Log.w(TAG, "getMainPage: No se encontró JSON en $url")
-                    continue
-                }
+                val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">")
+                    .substringBefore("</script>")
 
-                val jsonStr = res.substringAfter("{\"props\":{\"pageProps\":").substringBefore("</script>")
-                val data = parseJson<PopularModel>("{\"props\":{\"pageProps\":$jsonStr")
-
+                val data = parseJson<PopularModel>(jsonStr)
                 val results = data.props.pageProps.results.data.map {
                     val isMovie = it.url.slug?.contains("movies") == true
                     val type = if (isMovie) TvType.Movie else TvType.TvSeries
 
                     newMovieSearchResponse(
                         it.titles.name ?: "",
-                        "$mainUrl/${if(isMovie) "movies" else "series"}/${it.slug.name}",
+                        "$mainUrl/${it.url.slug}",
                         type
                     ) {
                         this.posterUrl = it.images.poster
@@ -136,7 +131,7 @@ class GnulaProvider : MainAPI() {
                     items.add(HomePageList(title, results))
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en getMainPage para sección $title: ${e.message}")
+                Log.e(TAG, "Error en getMainPage ($title): ${e.message}")
             }
         }
         return newHomePageResponse(items)
@@ -145,11 +140,16 @@ class GnulaProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "search: Iniciando búsqueda para -> $query")
         return try {
-            val url = "$mainUrl/search?q=$query"
+            val cleanQuery = query.trim().replace(" ", "+")
+            val url = "$mainUrl/search?q=$cleanQuery"
             val res = app.get(url).text
 
-            val jsonStr = res.substringAfter("{\"props\":{\"pageProps\":").substringBefore("</script>")
-            val data = parseJson<PopularModel>("{\"props\":{\"pageProps\":$jsonStr")
+            if (!res.contains("__NEXT_DATA__")) return emptyList()
+
+            val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">")
+                .substringBefore("</script>")
+
+            val data = parseJson<PopularModel>(jsonStr)
 
             data.props.pageProps.results.data.map {
                 val isMovie = it.url.slug?.contains("movies") == true
@@ -157,7 +157,7 @@ class GnulaProvider : MainAPI() {
 
                 newMovieSearchResponse(
                     it.titles.name ?: "",
-                    "$mainUrl/${if(isMovie) "movies" else "series"}/${it.slug.name}",
+                    "$mainUrl/${it.url.slug}",
                     type
                 ) {
                     this.posterUrl = it.images.poster
