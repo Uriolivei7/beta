@@ -86,7 +86,13 @@ class GnulaProvider : MainAPI() {
         val items = mutableListOf<HomePageList>()
         val catalogs = listOf(
             Pair("$mainUrl/archives/series/page/$page", "Series"),
-            Pair("$mainUrl/archives/movies/page/$page", "Películas")
+            Pair("$mainUrl/archives/series/releases/page/$page", "Series: Estrenos"),
+            Pair("$mainUrl/archives/series/top/week/page/$page", "Series: Top Semana"),
+            Pair("$mainUrl/archives/series/top/day/page/$page", "Series: Top Hoy"),
+            Pair("$mainUrl/archives/movies/page/$page", "Películas"),
+            Pair("$mainUrl/archives/movies/releases/page/$page", "Películas: Estrenos"),
+            Pair("$mainUrl/archives/movies/top/week/page/$page", "Películas: Top Semana"),
+            Pair("$mainUrl/archives/movies/top/day/page/$page", "Películas: Top Hoy"),
         )
 
         for ((url, title) in catalogs) {
@@ -192,37 +198,73 @@ class GnulaProvider : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         return try {
             val res = app.get(data).text
+            // Verificamos si el JSON existe en la página
+            if (!res.contains("id=\"__NEXT_DATA__\"")) return false
+
             val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
             val pageProps = parseJson<PopularModel>(jsonStr).props.pageProps
+
+            // Intentamos obtener los players de 'episode' (series) o de 'post' (películas)
             val players = pageProps.episode?.players ?: pageProps.post?.players
-            players?.let {
-                processLinks(it.latino, "Latino", callback)
-                processLinks(it.spanish, "Castellano", callback)
-                processLinks(it.english, "Subtitulado", callback)
+
+            if (players == null) {
+                Log.e(TAG, "loadLinks: No se encontraron reproductores en el JSON")
+                return false
             }
+
+            // Procesamos cada idioma
+            processLinks(players.latino, "Latino", callback)
+            processLinks(players.spanish, "Castellano", callback)
+            processLinks(players.english, "Subtitulado", callback)
+
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "loadLinks Error: ${e.message}")
+            false
+        }
     }
 
-    private suspend fun processLinks(list: List<Region>, lang: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun processLinks(
+        list: List<Region>,
+        lang: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
         list.forEach { region ->
             try {
-                val playerPage = app.get(region.result).text
+                val playerPage = app.get(region.result, referer = mainUrl).text
+
                 if (playerPage.contains("var url = '")) {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
-                    loadExtractor(videoUrl, mainUrl, subtitleCallback = { }, callback = { link ->
+
+                    loadExtractor(videoUrl, mainUrl, subtitleCallback = { }) { link ->
                         runBlocking {
-                            callback.invoke(newExtractorLink(link.source, "${link.name} [$lang]", link.url, if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                            })
+                            callback.invoke(
+                                newExtractorLink(
+                                    link.source,
+                                    "${link.name} [$lang]",
+                                    link.url,
+                                    if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = link.referer
+                                    this.quality = link.quality
+                                    this.headers = link.headers
+                                    this.extractorData = link.extractorData
+                                }
+                            )
                         }
-                    })
+                    }
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en processLinks: ${e.message}")
+            }
         }
     }
 }
