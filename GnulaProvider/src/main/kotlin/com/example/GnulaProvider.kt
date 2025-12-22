@@ -107,32 +107,23 @@ class GnulaProvider : MainAPI() {
         for ((url, title) in catalogs) {
             try {
                 val res = app.get(url).text
-                val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">")
-                    .substringBefore("</script>")
-
+                val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
                 val data = parseJson<PopularModel>(jsonStr)
+
                 val results = data.props.pageProps.results.data.mapNotNull {
                     val slugPath = it.url.slug ?: it.slug.name ?: return@mapNotNull null
                     val cleanPath = slugPath.removePrefix("/")
 
-                    val isMovie = cleanPath.contains("movies")
-                    val type = if (isMovie) TvType.Movie else TvType.TvSeries
+                    val finalUrl = if (cleanPath.contains("/")) "$mainUrl/$cleanPath"
+                    else if (url.contains("series")) "$mainUrl/series/$cleanPath"
+                    else "$mainUrl/movies/$cleanPath"
 
-                    newMovieSearchResponse(
-                        it.titles.name ?: "",
-                        "$mainUrl/$cleanPath",
-                        type
-                    ) {
+                    newMovieSearchResponse(it.titles.name ?: "", finalUrl, if (finalUrl.contains("/series/")) TvType.TvSeries else TvType.Movie) {
                         this.posterUrl = it.images.poster?.replace("/original/", "/w300/")
                     }
                 }
-
-                if (results.isNotEmpty()) {
-                    items.add(HomePageList(title, results))
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error en getMainPage ($title): ${e.message}")
-            }
+                if (results.isNotEmpty()) items.add(HomePageList(title, results))
+            } catch (e: Exception) { Log.e(TAG, "Error en MainPage: ${e.message}") }
         }
         return newHomePageResponse(items)
     }
@@ -148,16 +139,19 @@ class GnulaProvider : MainAPI() {
 
             val data = parseJson<PopularModel>(jsonStr)
 
-            data.props.pageProps.results.data.mapNotNull {
-                val slugPath = it.url.slug ?: it.slug.name ?: return@mapNotNull null
+            data.props.pageProps.results.data.mapNotNull { item ->
+                val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
 
-                val finalUrl = if (slugPath.contains("/")) "$mainUrl/$slugPath"
-                else "$mainUrl/movies/$slugPath" // Fallback a movies
+                val finalUrl = when {
+                    slugPath.contains("/") -> "$mainUrl/${slugPath.removePrefix("/")}"
+                    item.url.slug?.contains("series") == true -> "$mainUrl/series/$slugPath"
+                    else -> "$mainUrl/movies/$slugPath"
+                }
 
-                val type = if (slugPath.contains("series")) TvType.TvSeries else TvType.Movie
+                val type = if (finalUrl.contains("/series/")) TvType.TvSeries else TvType.Movie
 
-                newMovieSearchResponse(it.titles.name ?: "Sin título", finalUrl, type) {
-                    this.posterUrl = it.images.poster?.replace("/original/", "/w300/")
+                newMovieSearchResponse(item.titles.name ?: "Sin título", finalUrl, type) {
+                    this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
                 }
             }
         } catch (e: Exception) {
@@ -168,77 +162,42 @@ class GnulaProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "load: Iniciando carga de URL -> $url")
+        Log.d(TAG, "load: Cargando -> $url")
         val res = app.get(url).text
-
-        val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">", "")
-            .substringBefore("</script>", "")
-
-        if (jsonStr.isEmpty()) {
-            Log.e(TAG, "load: No se encontró el JSON __NEXT_DATA__ en la página")
-            throw ErrorLoadingException("Error de red: JSON no encontrado")
-        }
-
-        val data = try {
-            parseJson<PopularModel>(jsonStr)
-        } catch (e: Exception) {
-            Log.e(TAG, "load: Error al parsear JSON -> ${e.message}")
-            throw ErrorLoadingException("Error al procesar datos del servidor")
-        }
-
+        val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
+        val data = parseJson<PopularModel>(jsonStr)
         val pageProps = data.props.pageProps
-        val isMovie = url.contains("/movies/")
-        val isEpisode = url.contains("/episodes/")
 
-        Log.d(TAG, "load: Tipo detectado -> Película: $isMovie, Episodio: $isEpisode")
-
-        if (isEpisode) {
-            val episodeData = pageProps.episode ?: pageProps.post?.seasons?.flatMap { it.episodes }?.find { url.contains(it.slug.episode ?: "") }
-
+        if (url.contains("/episodes/") || pageProps.episode != null) {
             return newTvSeriesLoadResponse("Episodio", url, TvType.TvSeries, emptyList()) {
-                this.posterUrl = pageProps.post?.images?.poster ?: pageProps.results.data.firstOrNull()?.images?.poster
+                this.posterUrl = pageProps.post?.images?.poster?.replace("/original/", "/w500/")
                 this.plot = pageProps.post?.overview
             }
         }
 
-        if (isMovie) {
-            val post = pageProps.post
-            if (post == null) {
-                Log.e(TAG, "load: Error 'No post data' en Película. JSON: ${jsonStr.take(200)}...")
-                throw ErrorLoadingException("La película no contiene datos de reproducción")
-            }
+        val post = pageProps.post ?: throw ErrorLoadingException("No post data")
+        val title = post.titles.name ?: "Sin título"
 
-            return newMovieLoadResponse(post.titles.name ?: "Película", url, TvType.Movie, url) {
-                this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
-                this.plot = post.overview
-            }
-        }
+        val hasSeasons = post.seasons.isNotEmpty() && post.seasons.any { it.episodes.isNotEmpty() }
 
-        else {
-            val post = pageProps.post
-            if (post == null) {
-                Log.e(TAG, "load: Error 'No post data' en Serie. Verificando PageProps...")
-                throw ErrorLoadingException("No se encontraron temporadas para esta serie")
-            }
-
+        return if (hasSeasons) {
+            Log.d(TAG, "load: Detectada como SERIE (Temporadas: ${post.seasons.size})")
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
-                    val epName = ep.slug.name ?: ""
-                    val epSeason = ep.slug.season ?: ""
-                    val epNumber = ep.slug.episode ?: ""
-                    val epUrl = "$mainUrl/series/$epName/seasons/$epSeason/episodes/$epNumber"
-
-                    newEpisode(epUrl) {
+                    newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
                         this.name = ep.title
                         this.season = season.number?.toInt()
                         this.episode = ep.number?.toInt()
                     }
                 }
             }
-
-            Log.d(TAG, "load: Serie cargada con ${episodes.size} episodios")
-
-            return newTvSeriesLoadResponse(post.titles.name ?: "Serie", url, TvType.TvSeries, episodes.reversed()) {
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
+                this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
+                this.plot = post.overview
+            }
+        } else {
+            Log.d(TAG, "load: Detectada como PELÍCULA")
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
             }
