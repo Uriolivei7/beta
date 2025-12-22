@@ -77,45 +77,91 @@ data class Players(
 @Serializable
 data class Region(val result: String = "")
 
-// --- Clase Principal ---
-
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
-    override var name = "Gnula"
+    override var name = "GNULA"
     override val hasMainPage = true
-    override var lang = "es"
+    override var lang = "mx"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val TAG = "GNULA_LOG"
 
-    // Corregido: Usando MainPageRequest en lugar de HomePageRequest
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.d(TAG, "getMainPage: Cargando página $page")
+        Log.d(TAG, "getMainPage: Cargando página principal $page")
         val items = mutableListOf<HomePageList>()
 
+        // Definimos todas las secciones solicitadas
         val catalogs = listOf(
-            Pair("$mainUrl/archives/movies/page/$page", "Películas"),
-            Pair("$mainUrl/archives/series/page/$page", "Series")
+            Pair("$mainUrl/archives/episodes/page/$page", "Últimos Episodios"),
+            Pair("$mainUrl/archives/series/releases/page/$page", "Series: Estrenos"),
+            Pair("$mainUrl/archives/series/top/week/page/$page", "Series: Top Semana"),
+            Pair("$mainUrl/archives/series/top/day/page/$page", "Series: Top Hoy"),
+            Pair("$mainUrl/archives/movies/releases/page/$page", "Películas: Estrenos"),
+            Pair("$mainUrl/archives/movies/top/week/page/$page", "Películas: Top Semana"),
+            Pair("$mainUrl/archives/movies/top/day/page/$page", "Películas: Top Hoy")
         )
 
         for ((url, title) in catalogs) {
             try {
+                Log.d(TAG, "getMainPage: Extrayendo sección $title")
                 val res = app.get(url).text
+                if (!res.contains("{\"props\":{\"pageProps\":")) {
+                    Log.w(TAG, "getMainPage: No se encontró JSON en $url")
+                    continue
+                }
+
                 val jsonStr = res.substringAfter("{\"props\":{\"pageProps\":").substringBefore("</script>")
                 val data = parseJson<PopularModel>("{\"props\":{\"pageProps\":$jsonStr")
 
                 val results = data.props.pageProps.results.data.map {
+                    // Verificamos si es serie o película basado en la URL del slug
                     val isMovie = it.url.slug?.contains("movies") == true
-                    newMovieSearchResponse(it.titles.name ?: "", "$mainUrl/${if(isMovie) "movies" else "series"}/${it.slug.name}", if (isMovie) TvType.Movie else TvType.TvSeries) {
+                    val type = if (isMovie) TvType.Movie else TvType.TvSeries
+
+                    newMovieSearchResponse(
+                        it.titles.name ?: "",
+                        "$mainUrl/${if(isMovie) "movies" else "series"}/${it.slug.name}",
+                        type
+                    ) {
                         this.posterUrl = it.images.poster
                     }
                 }
-                items.add(HomePageList(title, results))
+
+                if (results.isNotEmpty()) {
+                    items.add(HomePageList(title, results))
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en getMainPage: ${e.message}")
+                Log.e(TAG, "Error en getMainPage para sección $title: ${e.message}")
             }
         }
         return newHomePageResponse(items)
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(TAG, "search: Iniciando búsqueda para -> $query")
+        return try {
+            val url = "$mainUrl/search?q=$query"
+            val res = app.get(url).text
+
+            val jsonStr = res.substringAfter("{\"props\":{\"pageProps\":").substringBefore("</script>")
+            val data = parseJson<PopularModel>("{\"props\":{\"pageProps\":$jsonStr")
+
+            data.props.pageProps.results.data.map {
+                val isMovie = it.url.slug?.contains("movies") == true
+                val type = if (isMovie) TvType.Movie else TvType.TvSeries
+
+                newMovieSearchResponse(
+                    it.titles.name ?: "",
+                    "$mainUrl/${if(isMovie) "movies" else "series"}/${it.slug.name}",
+                    type
+                ) {
+                    this.posterUrl = it.images.poster
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en search: ${e.message}")
+            emptyList()
+        }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -166,9 +212,9 @@ class GnulaProvider : MainAPI() {
         }
 
         players?.let {
-            processLinks(it.latino, "Latino", callback)
-            processLinks(it.spanish, "Castellano", callback)
-            processLinks(it.english, "Sub", callback)
+            processLinks(it.latino, "LATINO", callback)
+            processLinks(it.spanish, "CASTELLANO", callback)
+            processLinks(it.english, "SUBTITULADO", callback)
         }
         return true
     }
@@ -188,7 +234,7 @@ class GnulaProvider : MainAPI() {
                             callback.invoke(
                                 newExtractorLink(
                                     source = link.source,
-                                    name = "${link.name} $lang",
+                                    name = "$lang ${link.name}",
                                     url = link.url,
                                     type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                                 ) {

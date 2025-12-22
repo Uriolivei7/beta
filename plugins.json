@@ -348,7 +348,7 @@
     "status": 1,
     "version": 1,
     "apiVersion": 1,
-    "name": "GnulaLife",
+    "name": "GNULA",
     "internalName": "GnulaProvider",
     "authors": [
       "Ranita"
@@ -362,6 +362,6 @@
     ],
     "iconUrl": "https://gnula.life/favicon.ico",
     "language": "mx",
-    "fileSize": 23000
+    "fileSize": 25000
   }
 ]
