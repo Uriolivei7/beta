@@ -233,7 +233,8 @@ class GnulaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val res = app.get(data).text
+            val cleanData = if (data.endsWith("/")) data else "$data/"
+            val res = app.get(cleanData).text
             val pProps = getNextData(res)
 
             // Búsqueda exhaustiva de reproductores
