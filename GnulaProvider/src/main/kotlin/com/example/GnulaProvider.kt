@@ -7,6 +7,9 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import com.lagradost.cloudstream3.mvvm.launchSafe
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 @Serializable data class PopularModel(val props: Props = Props())
 
@@ -71,7 +74,12 @@ data class SeasonEpisode(
     val english: List<Region> = emptyList()
 )
 
-@Serializable data class Region(val result: String = "")
+@Serializable
+data class Region(
+    val result: String = "",
+    val url: String? = null,
+    val link: String? = null
+)
 
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
@@ -199,23 +207,44 @@ class GnulaProvider : MainAPI() {
     ): Boolean {
         return try {
             val res = app.get(data).text
-            if (!res.contains("id=\"__NEXT_DATA__\"")) return false
-
-            val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
-            val pageProps = parseJson<PopularModel>(jsonStr).props.pageProps
-
-            val players = pageProps.episode?.players ?: pageProps.post?.players
-
-            if (players == null) {
-                Log.e(TAG, "loadLinks: No se encontraron reproductores en el JSON")
+            if (!res.contains("id=\"__NEXT_DATA__\"")) {
+                Log.e(TAG, "loadLinks: No se encontró __NEXT_DATA__ en la página")
                 return false
             }
 
-            processLinks(players.latino, "Latino", callback)
-            processLinks(players.spanish, "Castellano", callback)
-            processLinks(players.english, "Subtitulado", callback)
+            val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
+            val model = parseJson<PopularModel>(jsonStr)
+            val pageProps = model.props.pageProps
 
-            true
+            // Intentamos obtener players de varias fuentes posibles dentro del JSON
+            val players = pageProps.episode?.players ?: pageProps.post?.players
+
+            if (players == null) {
+                // Log informativo para saber qué parte del JSON llegó vacía
+                Log.e(TAG, "loadLinks: Players es NULL. Post tiene datos: ${pageProps.post != null}, Episode tiene datos: ${pageProps.episode != null}")
+                return false
+            }
+
+            var foundLinks = false
+
+            // Procesamos cada lista de idiomas
+            // Usamos una lista de pares para iterar de forma limpia
+            val languages = listOf(
+                players.latino to "Latino",
+                players.spanish to "Castellano",
+                players.english to "Subtitulado"
+            )
+
+            for ((list, lang) in languages) {
+                if (list.isNotEmpty()) {
+                    processLinks(list, lang, callback)
+                    foundLinks = true
+                }
+            }
+
+            if (!foundLinks) Log.e(TAG, "loadLinks: Se encontró el objeto players, pero las listas de idiomas están vacías")
+
+            foundLinks
         } catch (e: Exception) {
             Log.e(TAG, "Error en loadLinks: ${e.message}")
             false
@@ -229,31 +258,35 @@ class GnulaProvider : MainAPI() {
     ) {
         list.forEach { region ->
             try {
-                val playerPage = app.get(region.result, referer = mainUrl).text
+                val urlToFetch = region.result.ifBlank { return@forEach }
+                val playerPage = app.get(urlToFetch, referer = "$mainUrl/").text
 
                 if (playerPage.contains("var url = '")) {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
 
-                    loadExtractor(videoUrl, mainUrl, subtitleCallback = { }) { link ->
-                        runBlocking {
-                            callback.invoke(
-                                newExtractorLink(
-                                    link.source,
-                                    "${link.name} [$lang]",
-                                    link.url,
-                                    if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                    this.headers = link.headers
-                                }
-                            )
+                    if (videoUrl.isNotBlank()) {
+                        loadExtractor(videoUrl, mainUrl, subtitleCallback = { }) { link ->
+                            GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                callback.invoke(
+                                    newExtractorLink(
+                                        link.source,
+                                        "${link.name} [$lang]",
+                                        link.url,
+                                        if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                    ) {
+                                        this.referer = link.referer
+                                        this.quality = link.quality
+                                        this.headers = link.headers
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en processLinks: ${e.message}")
+                Log.e(TAG, "Error en processLinks ($lang): ${e.message}")
             }
         }
     }
+
 }
