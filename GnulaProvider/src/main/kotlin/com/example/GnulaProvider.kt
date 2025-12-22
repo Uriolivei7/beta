@@ -10,13 +10,16 @@ import kotlinx.serialization.SerialName
 
 // --- DATA CLASSES ---
 @Serializable data class PopularModel(val props: Props = Props())
+
 @Serializable data class Props(val pageProps: PageProps = PageProps())
+
 @Serializable data class PageProps(
     val results: Results = Results(),
     val post: SeasonPost? = null,
     val episode: EpisodeData? = null
 )
 @Serializable data class Results(val data: List<Daum> = emptyList())
+
 @Serializable data class Daum(
     val titles: Titles = Titles(),
     val images: Images = Images(),
@@ -24,10 +27,15 @@ import kotlinx.serialization.SerialName
     val url: Url = Url(),
     @SerialName("__typename") val typeName: String? = null
 )
+
 @Serializable data class Titles(val name: String? = null)
+
 @Serializable data class Images(val poster: String? = null)
+
 @Serializable data class Slug(val name: String? = null)
+
 @Serializable data class Url(val slug: String? = null)
+
 @Serializable data class SeasonPost(
     val titles: Titles = Titles(),
     val images: Images = Images(),
@@ -36,14 +44,21 @@ import kotlinx.serialization.SerialName
     val players: Players? = null
 )
 @Serializable data class Season(val number: Long? = null, val episodes: List<SeasonEpisode> = emptyList())
-@Serializable data class SeasonEpisode(
+
+@Serializable
+data class SeasonEpisode(
     val title: String? = null,
     val number: Long? = null,
-    val slug: Slug2 = Slug2()
+    val slug: Slug2 = Slug2(),
+    val images: Images = Images()
 )
+
 @Serializable data class Slug2(val name: String? = null, val season: String? = null, val episode: String? = null)
+
 @Serializable data class EpisodeData(val players: Players? = null)
+
 @Serializable data class Players(val latino: List<Region> = emptyList(), val spanish: List<Region> = emptyList(), val english: List<Region> = emptyList())
+
 @Serializable data class Region(val result: String = "")
 
 // --- PROVIDER ---
@@ -143,6 +158,8 @@ class GnulaProvider : MainAPI() {
                         this.name = ep.title
                         this.season = season.number?.toInt()
                         this.episode = ep.number?.toInt()
+                        this.posterUrl = ep.images.poster?.replace("/original/", "/w300/")
+                            ?: post.images.poster?.replace("/original/", "/w300/")
                     }
                 }
             }
