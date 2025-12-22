@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 
+// --- DATA CLASSES ---
 @Serializable data class PopularModel(val props: Props = Props())
 @Serializable data class Props(val pageProps: PageProps = PageProps())
 @Serializable data class PageProps(
@@ -16,15 +17,13 @@ import kotlinx.serialization.SerialName
     val episode: EpisodeData? = null
 )
 @Serializable data class Results(val data: List<Daum> = emptyList())
-@Serializable
-data class Daum(
+@Serializable data class Daum(
     val titles: Titles = Titles(),
     val images: Images = Images(),
     val slug: Slug = Slug(),
     val url: Url = Url(),
     @SerialName("__typename") val typeName: String? = null
 )
-
 @Serializable data class Titles(val name: String? = null)
 @Serializable data class Images(val poster: String? = null)
 @Serializable data class Slug(val name: String? = null)
@@ -44,13 +43,10 @@ data class Daum(
 )
 @Serializable data class Slug2(val name: String? = null, val season: String? = null, val episode: String? = null)
 @Serializable data class EpisodeData(val players: Players? = null)
-@Serializable data class Players(
-    val latino: List<Region> = emptyList(),
-    val spanish: List<Region> = emptyList(),
-    val english: List<Region> = emptyList()
-)
+@Serializable data class Players(val latino: List<Region> = emptyList(), val spanish: List<Region> = emptyList(), val english: List<Region> = emptyList())
 @Serializable data class Region(val result: String = "")
 
+// --- PROVIDER ---
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
     override var name = "GNULA"
@@ -64,27 +60,23 @@ class GnulaProvider : MainAPI() {
         val items = mutableListOf<HomePageList>()
         val catalogs = listOf(
             Pair("$mainUrl/archives/series/page/$page", "Series"),
-            Pair("$mainUrl/archives/series/releases/page/$page", "Series: Estrenos"),
-            Pair("$mainUrl/archives/movies/page/$page", "Películas"),
-            Pair("$mainUrl/archives/movies/releases/page/$page", "Películas: Estrenos"),
+            Pair("$mainUrl/archives/movies/page/$page", "Películas")
         )
 
         for ((url, title) in catalogs) {
             try {
-                val res = app.get(url).text
+                val res = app.get(url, timeout = 30).text
                 val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
                 val data = parseJson<PopularModel>(jsonStr)
-
                 val results = data.props.pageProps.results.data.mapNotNull { item ->
                     val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
                     val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
-
                     newMovieSearchResponse(item.titles.name ?: "", finalUrl, if (finalUrl.contains("/series/")) TvType.TvSeries else TvType.Movie) {
                         this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
                     }
                 }
                 if (results.isNotEmpty()) items.add(HomePageList(title, results))
-            } catch (e: Exception) { Log.e(TAG, "Error en MainPage: ${e.message}") }
+            } catch (e: Exception) { Log.e(TAG, "MainPage Error: ${e.message}") }
         }
         return newHomePageResponse(items)
     }
@@ -92,64 +84,74 @@ class GnulaProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         return try {
             val url = "$mainUrl/search?q=${query.trim().replace(" ", "+")}"
-            val res = app.get(url, timeout = 20).text
+            val res = app.get(url, timeout = 25).text
             val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
             val data = parseJson<PopularModel>(jsonStr)
 
             data.props.pageProps.results.data.mapNotNull { item ->
+                // Usamos el slug tal cual viene, sin intentar adivinar aquí
                 val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
                 val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
-
                 val type = if (finalUrl.contains("/series/") || item.typeName == "Serie") TvType.TvSeries else TvType.Movie
 
                 newMovieSearchResponse(item.titles.name ?: "Sin título", finalUrl, type) {
                     this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Search error: ${e.message}")
-            emptyList()
-        }
+        } catch (e: Exception) { emptyList() }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "load: Cargando URL -> $url")
-        val res = app.get(url).text
+        Log.d(TAG, "load: Iniciando carga -> $url")
 
-        if (!res.contains("__NEXT_DATA__")) {
-            throw ErrorLoadingException("No se encontró información de video")
+        // --- LÓGICA DE REINTENTO PARA EVITAR 404 ---
+        var response = app.get(url)
+        var finalUrl = url
+
+        if (response.code == 404 || !response.text.contains("__NEXT_DATA__")) {
+            val slug = url.substringAfterLast("/")
+            val cleanSlug = if (url.contains("/series/") || url.contains("/movies/")) slug else slug
+
+            // Probamos las 3 variantes posibles que usa Gnula
+            val trials = listOf("$mainUrl/series/$cleanSlug", "$mainUrl/movies/$cleanSlug", "$mainUrl/$cleanSlug")
+
+            for (trial in trials) {
+                if (trial == url) continue
+                Log.d(TAG, "load: Probando alternativa -> $trial")
+                val nextRes = app.get(trial)
+                if (nextRes.code == 200 && nextRes.text.contains("__NEXT_DATA__")) {
+                    response = nextRes
+                    finalUrl = trial
+                    break
+                }
+            }
         }
 
-        val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
-        val data = parseJson<PopularModel>(jsonStr)
-        val pageProps = data.props.pageProps
+        val resText = response.text
+        if (!resText.contains("__NEXT_DATA__")) throw ErrorLoadingException("Error 404 persistente")
 
-        val post = pageProps.post ?: throw ErrorLoadingException("Contenido no disponible")
-        val title = post.titles.name ?: "Sin título"
+        val jsonStr = resText.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
+        val data = parseJson<PopularModel>(jsonStr)
+        val post = data.props.pageProps.post ?: throw ErrorLoadingException("No post data")
 
         val isSerie = post.seasons.any { it.episodes.isNotEmpty() }
 
         return if (isSerie) {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
-                    val epName = ep.slug.name ?: ""
-                    val epSeason = ep.slug.season ?: "1"
-                    val epNum = ep.slug.episode ?: "1"
-                    val epUrl = "$mainUrl/series/$epName/seasons/$epSeason/episodes/$epNum"
-
-                    newEpisode(epUrl) {
+                    newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
                         this.name = ep.title
                         this.season = season.number?.toInt()
                         this.episode = ep.number?.toInt()
                     }
                 }
             }
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
+            newTvSeriesLoadResponse(post.titles.name ?: "Serie", finalUrl, TvType.TvSeries, episodes.reversed()) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
             }
         } else {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
+            newMovieLoadResponse(post.titles.name ?: "Película", finalUrl, TvType.Movie, finalUrl) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
             }
@@ -179,17 +181,10 @@ class GnulaProvider : MainAPI() {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
                     loadExtractor(videoUrl, mainUrl, subtitleCallback = { }, callback = { link ->
                         runBlocking {
-                            callback.invoke(
-                                newExtractorLink(
-                                    link.source,
-                                    "${link.name} [$lang]",
-                                    link.url,
-                                    if (link.isM3u8) ExtractorLinkType.M3U8
-                                    else ExtractorLinkType.VIDEO) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                }
-                            )
+                            callback.invoke(newExtractorLink(link.source, "${link.name} [$lang]", link.url, if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                            })
                         }
                     })
                 }
