@@ -22,7 +22,10 @@ data class PageProps(
 )
 
 @Serializable
-data class Results(val data: List<Daum> = emptyList())
+data class Results(
+    val data: List<Daum> = emptyList(),
+    @SerialName("__typename") val typename: String? = null
+)
 
 @Serializable
 data class Daum(
@@ -139,31 +142,41 @@ class GnulaProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "search: Iniciando búsqueda para -> $query")
+
         return try {
             val cleanQuery = query.trim().replace(" ", "+")
             val url = "$mainUrl/search?q=$cleanQuery"
-            val res = app.get(url).text
 
-            if (!res.contains("__NEXT_DATA__")) return emptyList()
+            val response = app.get(url, timeout = 15).text
 
-            val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">")
+            if (!response.contains("__NEXT_DATA__")) return emptyList()
+
+            val jsonStr = response.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">")
                 .substringBefore("</script>")
 
             val data = parseJson<PopularModel>(jsonStr)
+            val resultsData = data.props.pageProps.results.data
 
-            data.props.pageProps.results.data.map {
-                val isMovie = it.url.slug?.contains("movies") == true
-                val type = if (isMovie) TvType.Movie else TvType.TvSeries
+            resultsData.mapNotNull { item ->
+                val slugPath = item.url.slug ?: return@mapNotNull null
+
+                val type = when {
+                    slugPath.contains("series") -> TvType.TvSeries
+                    slugPath.contains("movies") -> TvType.Movie
+                    else -> TvType.TvSeries
+                }
 
                 newMovieSearchResponse(
-                    it.titles.name ?: "",
-                    "$mainUrl/${it.url.slug}",
+                    item.titles.name ?: "Sin título",
+                    "$mainUrl/$slugPath",
                     type
                 ) {
-                    this.posterUrl = it.images.poster
+                    this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
             Log.e(TAG, "Error en search: ${e.message}")
             emptyList()
         }
