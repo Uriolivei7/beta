@@ -9,25 +9,20 @@ import kotlinx.serialization.SerialName
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 
-// 1. DATA CLASSES CORREGIDAS PARA NEXT.JS DINÁMICO
 @Serializable
 data class PopularModel(
     val props: Props? = null,
-    // A veces pageProps viene en la raíz del JSON
     val pageProps: PageProps? = null
 )
 
 @Serializable
-data class Props(
-    val pageProps: PageProps? = null
-)
+data class Props(val pageProps: PageProps? = null)
 
 @Serializable
 data class PageProps(
     val results: Results? = null,
     val post: SeasonPost? = null,
     val episode: EpisodeData? = null,
-    // A veces los datos vienen dentro de un objeto "data" en lugar de "post"
     val data: SeasonPost? = null
 )
 
@@ -90,13 +85,10 @@ class GnulaProvider : MainAPI() {
     override var name = "GNULA"
     override val hasMainPage = true
     override var lang = "mx"
-    override val supportedTypes = setOf(
-        TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon
-    )
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
 
     private val TAG = "GNULA"
 
-    // Helper para extraer el JSON de Next.js de forma segura
     private fun getNextData(res: String): PageProps? {
         return try {
             val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
@@ -141,7 +133,6 @@ class GnulaProvider : MainAPI() {
             val url = "$mainUrl/search?q=${query.trim().replace(" ", "+")}"
             val res = app.get(url).text
             val pProps = getNextData(res)
-
             pProps?.results?.data?.mapNotNull { item ->
                 val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
                 val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
@@ -154,50 +145,36 @@ class GnulaProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         Log.d(TAG, "load: Iniciando carga -> $url")
-
         val response = app.get(url)
         var resText = response.text
         var pProps = getNextData(resText)
+        var actualUrl = url // <--- Guardamos la URL que vamos a usar finalmente
 
-        // LÓGICA DE RECUPERACIÓN: Si el JSON no tiene 'post' o 'data', la URL es incorrecta
         if (pProps?.post == null && pProps?.data == null) {
-            Log.d(TAG, "load: Contenido no encontrado en URL original, intentando limpiar slug...")
-
-            // Extraemos el slug real (la última parte de la URL)
+            Log.d(TAG, "load: Limpiando slug...")
             val slugRaw = url.trimEnd('/').substringAfterLast("/")
-
-            // Probamos las rutas que Gnula acepta legalmente
-            val trials = listOf(
-                "$mainUrl/movies/$slugRaw",
-                "$mainUrl/series/$slugRaw",
-                "$mainUrl/$slugRaw"
-            )
+            val trials = listOf("$mainUrl/movies/$slugRaw", "$mainUrl/series/$slugRaw", "$mainUrl/$slugRaw")
 
             for (trial in trials) {
                 if (trial == url) continue
-                Log.d(TAG, "load: Probando ruta alternativa -> $trial")
                 val nextRes = app.get(trial)
                 val nextProps = getNextData(nextRes.text)
-
                 if (nextProps?.post != null || nextProps?.data != null) {
                     pProps = nextProps
                     resText = nextRes.text
+                    actualUrl = trial // <--- Aquí actualizamos a la URL funcional
                     break
                 }
             }
         }
 
-        // Si después de los intentos sigue vacío, lanzamos error
-        val finalProps = pProps ?: throw ErrorLoadingException("JSON __NEXT_DATA__ no encontrado")
-        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Contenido vacío en todas las rutas")
-
+        val finalProps = pProps ?: throw ErrorLoadingException("Contenido no encontrado")
+        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Post vacío")
         val title = post.titles.name ?: "Sin título"
-        val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
 
         return if (post.seasons.isNotEmpty()) {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
-                    // Construcción de URL de episodio para loadLinks
                     newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
                         this.name = ep.title
                         this.season = season.number?.toInt()
@@ -206,25 +183,22 @@ class GnulaProvider : MainAPI() {
                     }
                 }
             }
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
+            newTvSeriesLoadResponse(title, actualUrl, TvType.TvSeries, episodes.reversed()) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
-                this.year = year
-                this.tags = post.genres?.mapNotNull { it.name }
+                this.year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
             }
         } else {
-            // Importante: pasamos la URL final donde SÍ encontramos los datos para loadLinks
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
+            // Usamos actualUrl tanto para la respuesta como para el 'data' de loadLinks
+            newMovieLoadResponse(title, actualUrl, TvType.Movie, actualUrl) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
-                this.year = year
+                this.year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
                 this.duration = post.runtime
                 this.tags = post.genres?.mapNotNull { it.name }
             }
         }
     }
-
-    // ... (Data classes y resto del código igual hasta processLinks)
 
     override suspend fun loadLinks(
         data: String,
@@ -233,85 +207,44 @@ class GnulaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val cleanData = if (data.endsWith("/")) data else "$data/"
-            val res = app.get(cleanData).text
+            val res = app.get(data).text
             val pProps = getNextData(res)
+            val players = pProps?.episode?.players ?: pProps?.post?.players ?: pProps?.data?.players
 
-            // Búsqueda exhaustiva de reproductores
-            val players = pProps?.episode?.players
-                ?: pProps?.post?.players
-                ?: pProps?.data?.players
+            if (players == null) return false
 
-            if (players == null) {
-                Log.e(TAG, "loadLinks: Objeto players no encontrado en $data")
-                return false
-            }
-
-            var foundLinks = false
-            val langs = listOf(
-                players.latino to "Latino",
-                players.spanish to "Castellano",
-                players.english to "Subtitulado"
-            )
-
+            var found = false
+            val langs = listOf(players.latino to "Latino", players.spanish to "Castellano", players.english to "Subtitulado")
             for ((list, lang) in langs) {
-                if (!list.isNullOrEmpty()) {
-                    processLinks(list, lang, data, callback) // Pasamos 'data' como referer
-                    foundLinks = true
+                if (list.isNotEmpty()) {
+                    processLinks(list, lang, data, callback)
+                    found = true
                 }
             }
-            foundLinks
-        } catch (e: Exception) {
-            Log.e(TAG, "Error en loadLinks: ${e.message}")
-            false
-        }
+            found
+        } catch (e: Exception) { false }
     }
 
-    private suspend fun processLinks(
-        list: List<Region>,
-        lang: String,
-        refererUrl: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
+    private suspend fun processLinks(list: List<Region>, lang: String, refererUrl: String, callback: (ExtractorLink) -> Unit) {
         list.forEach { region ->
             try {
-                // Validación robusta del enlace del servidor
-                val targetUrl = if (!region.result.isNullOrBlank()) region.result
-                else if (!region.url.isNullOrBlank()) region.url
-                else region.link ?: ""
-
+                val targetUrl = if (!region.result.isNullOrBlank()) region.result else region.url ?: region.link ?: ""
                 if (targetUrl.isBlank()) return@forEach
 
-                // Usamos la URL de la película como referer
                 val playerPage = app.get(targetUrl, referer = refererUrl).text
-
                 if (playerPage.contains("var url = '")) {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
-
-                    if (videoUrl.isNotBlank()) {
-                        loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
-                            // Solución definitiva al error de Coroutine Body
-                            GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                                callback.invoke(
-                                    newExtractorLink(
-                                        link.source,
-                                        "${link.name} [$lang]",
-                                        link.url,
-                                        if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = link.referer
-                                        this.quality = link.quality
-                                        this.headers = link.headers
-                                    }
-                                )
-                            }
+                    loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
+                        GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            callback.invoke(newExtractorLink(link.source, "${link.name} [$lang]", link.url, if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            })
                         }
                     }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error procesando link de $lang: ${e.message}")
-            }
+            } catch (e: Exception) { }
         }
     }
-
 }
