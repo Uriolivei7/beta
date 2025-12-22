@@ -153,17 +153,51 @@ class GnulaProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val resText = app.get(url).text
-        val pProps = getNextData(resText) ?: throw ErrorLoadingException("No se pudo cargar la info")
+        Log.d(TAG, "load: Iniciando carga -> $url")
 
-        // Buscamos en 'post' o en 'data'
-        val post = pProps.post ?: pProps.data ?: throw ErrorLoadingException("Contenido vacío")
+        val response = app.get(url)
+        var resText = response.text
+        var pProps = getNextData(resText)
+
+        // LÓGICA DE RECUPERACIÓN: Si el JSON no tiene 'post' o 'data', la URL es incorrecta
+        if (pProps?.post == null && pProps?.data == null) {
+            Log.d(TAG, "load: Contenido no encontrado en URL original, intentando limpiar slug...")
+
+            // Extraemos el slug real (la última parte de la URL)
+            val slugRaw = url.trimEnd('/').substringAfterLast("/")
+
+            // Probamos las rutas que Gnula acepta legalmente
+            val trials = listOf(
+                "$mainUrl/movies/$slugRaw",
+                "$mainUrl/series/$slugRaw",
+                "$mainUrl/$slugRaw"
+            )
+
+            for (trial in trials) {
+                if (trial == url) continue
+                Log.d(TAG, "load: Probando ruta alternativa -> $trial")
+                val nextRes = app.get(trial)
+                val nextProps = getNextData(nextRes.text)
+
+                if (nextProps?.post != null || nextProps?.data != null) {
+                    pProps = nextProps
+                    resText = nextRes.text
+                    break
+                }
+            }
+        }
+
+        // Si después de los intentos sigue vacío, lanzamos error
+        val finalProps = pProps ?: throw ErrorLoadingException("JSON __NEXT_DATA__ no encontrado")
+        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Contenido vacío en todas las rutas")
+
         val title = post.titles.name ?: "Sin título"
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
 
         return if (post.seasons.isNotEmpty()) {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
+                    // Construcción de URL de episodio para loadLinks
                     newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
                         this.name = ep.title
                         this.season = season.number?.toInt()
@@ -179,6 +213,7 @@ class GnulaProvider : MainAPI() {
                 this.tags = post.genres?.mapNotNull { it.name }
             }
         } else {
+            // Importante: pasamos la URL final donde SÍ encontramos los datos para loadLinks
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
@@ -188,6 +223,8 @@ class GnulaProvider : MainAPI() {
             }
         }
     }
+
+    // ... (Data classes y resto del código igual hasta processLinks)
 
     override suspend fun loadLinks(
         data: String,
@@ -199,50 +236,81 @@ class GnulaProvider : MainAPI() {
             val res = app.get(data).text
             val pProps = getNextData(res)
 
-            // Buscamos players en todas las combinaciones posibles
-            val players = pProps?.episode?.players ?: pProps?.post?.players ?: pProps?.data?.players
+            // Búsqueda exhaustiva de reproductores
+            val players = pProps?.episode?.players
+                ?: pProps?.post?.players
+                ?: pProps?.data?.players
 
             if (players == null) {
-                Log.e(TAG, "loadLinks: No se encontró el objeto players")
+                Log.e(TAG, "loadLinks: Objeto players no encontrado en $data")
                 return false
             }
 
             var foundLinks = false
-            val langs = listOf(players.latino to "Latino", players.spanish to "Castellano", players.english to "Subtitulado")
+            val langs = listOf(
+                players.latino to "Latino",
+                players.spanish to "Castellano",
+                players.english to "Subtitulado"
+            )
 
             for ((list, lang) in langs) {
-                if (list.isNotEmpty()) {
-                    processLinks(list, lang, callback)
+                if (!list.isNullOrEmpty()) {
+                    processLinks(list, lang, data, callback) // Pasamos 'data' como referer
                     foundLinks = true
                 }
             }
             foundLinks
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en loadLinks: ${e.message}")
+            false
+        }
     }
 
-    private suspend fun processLinks(list: List<Region>, lang: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun processLinks(
+        list: List<Region>,
+        lang: String,
+        refererUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
         list.forEach { region ->
             try {
-                // Gnula a veces usa 'result', otras 'url' o 'link'
-                val targetUrl = region.result.ifBlank { region.url ?: region.link ?: "" }
+                // Validación robusta del enlace del servidor
+                val targetUrl = if (!region.result.isNullOrBlank()) region.result
+                else if (!region.url.isNullOrBlank()) region.url
+                else region.link ?: ""
+
                 if (targetUrl.isBlank()) return@forEach
 
-                val playerPage = app.get(targetUrl, referer = "$mainUrl/").text
+                // Usamos la URL de la película como referer
+                val playerPage = app.get(targetUrl, referer = refererUrl).text
+
                 if (playerPage.contains("var url = '")) {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
-                    loadExtractor(videoUrl, mainUrl, subtitleCallback = { }) { link ->
-                        GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            callback.invoke(
-                                newExtractorLink(link.source, "${link.name} [$lang]", link.url, if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                    this.headers = link.headers
-                                }
-                            )
+
+                    if (videoUrl.isNotBlank()) {
+                        loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
+                            // Solución definitiva al error de Coroutine Body
+                            GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                callback.invoke(
+                                    newExtractorLink(
+                                        link.source,
+                                        "${link.name} [$lang]",
+                                        link.url,
+                                        if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                    ) {
+                                        this.referer = link.referer
+                                        this.quality = link.quality
+                                        this.headers = link.headers
+                                    }
+                                )
+                            }
                         }
                     }
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error procesando link de $lang: ${e.message}")
+            }
         }
     }
+
 }
