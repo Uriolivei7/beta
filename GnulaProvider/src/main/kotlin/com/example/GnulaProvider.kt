@@ -24,8 +24,22 @@ import kotlinx.serialization.SerialName
     val images: Images = Images(),
     val slug: Slug = Slug(),
     val url: Url = Url(),
+    val releaseDate: String? = null,
     @SerialName("__typename") val typeName: String? = null
 )
+
+@Serializable data class SeasonPost(
+    val titles: Titles = Titles(),
+    val images: Images = Images(),
+    val overview: String? = null,
+    val seasons: List<Season> = emptyList(),
+    val players: Players? = null,
+    val releaseDate: String? = null,
+    val runtime: Int? = null,
+    val genres: List<Genre>? = null
+)
+
+@Serializable data class Genre(val name: String? = null)
 
 @Serializable data class Titles(val name: String? = null)
 
@@ -35,13 +49,6 @@ import kotlinx.serialization.SerialName
 
 @Serializable data class Url(val slug: String? = null)
 
-@Serializable data class SeasonPost(
-    val titles: Titles = Titles(),
-    val images: Images = Images(),
-    val overview: String? = null,
-    val seasons: List<Season> = emptyList(),
-    val players: Players? = null
-)
 @Serializable data class Season(val number: Long? = null, val episodes: List<SeasonEpisode> = emptyList())
 
 @Serializable
@@ -90,8 +97,10 @@ class GnulaProvider : MainAPI() {
                 val results = data.props.pageProps.results.data.mapNotNull { item ->
                     val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
                     val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
-                    newMovieSearchResponse(item.titles.name ?: "", finalUrl, if (finalUrl.contains("/series/")) TvType.TvSeries else TvType.Movie) {
+                    newMovieSearchResponse(item.titles.name ?: "", finalUrl, if (finalUrl.contains("/series/"))
+                        TvType.TvSeries else TvType.Movie) {
                         this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
+                        this.year = item.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
                     }
                 }
                 if (results.isNotEmpty()) items.add(HomePageList(title, results))
@@ -122,7 +131,7 @@ class GnulaProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         Log.d(TAG, "load: Iniciando carga -> $url")
 
-        var response = app.get(url)
+        val response = app.get(url)
         var resText = response.text
 
         if (response.code == 404 || !resText.contains("\"post\":{")) {
@@ -152,6 +161,7 @@ class GnulaProvider : MainAPI() {
         val data = parseJson<PopularModel>(resText.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>"))
         val post = data.props.pageProps.post ?: throw ErrorLoadingException("No post data")
         val title = post.titles.name ?: "Sin título"
+        val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
 
         return if (post.seasons.isNotEmpty()) {
             val episodes = post.seasons.flatMap { season ->
@@ -168,11 +178,16 @@ class GnulaProvider : MainAPI() {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
+                this.year = year
+                this.tags = post.genres?.mapNotNull { it.name }
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
+                this.year = year
+                this.duration = post.runtime
+                this.tags = post.genres?.mapNotNull { it.name }
             }
         }
     }
