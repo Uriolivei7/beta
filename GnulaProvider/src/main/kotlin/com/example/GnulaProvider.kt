@@ -238,7 +238,7 @@ class GnulaProvider : MainAPI() {
                             callback.invoke(
                                 newExtractorLink(
                                     source = link.source,
-                                    name = "$lang: [${link.name}]",
+                                    name = "${link.name} [$lang]",
                                     url = link.url,
                                     type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                                 ) {
