@@ -111,16 +111,19 @@ class GnulaProvider : MainAPI() {
                     .substringBefore("</script>")
 
                 val data = parseJson<PopularModel>(jsonStr)
-                val results = data.props.pageProps.results.data.map {
-                    val isMovie = it.url.slug?.contains("movies") == true
+                val results = data.props.pageProps.results.data.mapNotNull {
+                    val slugPath = it.url.slug ?: it.slug.name ?: return@mapNotNull null
+                    val cleanPath = slugPath.removePrefix("/")
+
+                    val isMovie = cleanPath.contains("movies")
                     val type = if (isMovie) TvType.Movie else TvType.TvSeries
 
                     newMovieSearchResponse(
                         it.titles.name ?: "",
-                        "$mainUrl/${it.url.slug}",
+                        "$mainUrl/$cleanPath",
                         type
                     ) {
-                        this.posterUrl = it.images.poster
+                        this.posterUrl = it.images.poster?.replace("/original/", "/w300/")
                     }
                 }
 
@@ -165,34 +168,77 @@ class GnulaProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d(TAG, "load: Iniciando carga de URL -> $url")
         val res = app.get(url).text
-        val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">")
-            .substringBefore("</script>")
 
-        val data = parseJson<PopularModel>(jsonStr)
+        val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">", "")
+            .substringBefore("</script>", "")
+
+        if (jsonStr.isEmpty()) {
+            Log.e(TAG, "load: No se encontró el JSON __NEXT_DATA__ en la página")
+            throw ErrorLoadingException("Error de red: JSON no encontrado")
+        }
+
+        val data = try {
+            parseJson<PopularModel>(jsonStr)
+        } catch (e: Exception) {
+            Log.e(TAG, "load: Error al parsear JSON -> ${e.message}")
+            throw ErrorLoadingException("Error al procesar datos del servidor")
+        }
+
         val pageProps = data.props.pageProps
-
-        val post = pageProps.post ?: throw ErrorLoadingException("No post data")
-
-        val title = post.titles.name ?: ""
         val isMovie = url.contains("/movies/")
+        val isEpisode = url.contains("/episodes/")
 
-        return if (isMovie) {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
+        Log.d(TAG, "load: Tipo detectado -> Película: $isMovie, Episodio: $isEpisode")
+
+        if (isEpisode) {
+            val episodeData = pageProps.episode ?: pageProps.post?.seasons?.flatMap { it.episodes }?.find { url.contains(it.slug.episode ?: "") }
+
+            return newTvSeriesLoadResponse("Episodio", url, TvType.TvSeries, emptyList()) {
+                this.posterUrl = pageProps.post?.images?.poster ?: pageProps.results.data.firstOrNull()?.images?.poster
+                this.plot = pageProps.post?.overview
+            }
+        }
+
+        if (isMovie) {
+            val post = pageProps.post
+            if (post == null) {
+                Log.e(TAG, "load: Error 'No post data' en Película. JSON: ${jsonStr.take(200)}...")
+                throw ErrorLoadingException("La película no contiene datos de reproducción")
+            }
+
+            return newMovieLoadResponse(post.titles.name ?: "Película", url, TvType.Movie, url) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
             }
-        } else {
+        }
+
+        else {
+            val post = pageProps.post
+            if (post == null) {
+                Log.e(TAG, "load: Error 'No post data' en Serie. Verificando PageProps...")
+                throw ErrorLoadingException("No se encontraron temporadas para esta serie")
+            }
+
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
-                    newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
+                    val epName = ep.slug.name ?: ""
+                    val epSeason = ep.slug.season ?: ""
+                    val epNumber = ep.slug.episode ?: ""
+                    val epUrl = "$mainUrl/series/$epName/seasons/$epSeason/episodes/$epNumber"
+
+                    newEpisode(epUrl) {
                         this.name = ep.title
                         this.season = season.number?.toInt()
                         this.episode = ep.number?.toInt()
                     }
                 }
             }
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
+
+            Log.d(TAG, "load: Serie cargada con ${episodes.size} episodios")
+
+            return newTvSeriesLoadResponse(post.titles.name ?: "Serie", url, TvType.TvSeries, episodes.reversed()) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
             }
@@ -219,7 +265,7 @@ class GnulaProvider : MainAPI() {
             val players = if (data.contains("/movies/")) {
                 pageProps.post?.players
             } else {
-                pageProps.episode?.players
+                pageProps.episode?.players ?: pageProps.post?.players
             }
 
             players?.let {
