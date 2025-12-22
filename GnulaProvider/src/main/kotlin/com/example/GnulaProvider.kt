@@ -12,8 +12,9 @@ import kotlinx.serialization.SerialName
 
 @Serializable data class Props(val pageProps: PageProps = PageProps())
 
-@Serializable data class PageProps(
-    val results: Results = Results(),
+@Serializable
+data class PageProps(
+    val results: Results? = null,
     val post: SeasonPost? = null,
     val episode: EpisodeData? = null
 )
@@ -64,7 +65,11 @@ data class SeasonEpisode(
 
 @Serializable data class EpisodeData(val players: Players? = null)
 
-@Serializable data class Players(val latino: List<Region> = emptyList(), val spanish: List<Region> = emptyList(), val english: List<Region> = emptyList())
+@Serializable data class Players(
+    val latino: List<Region> = emptyList(),
+    val spanish: List<Region> = emptyList(),
+    val english: List<Region> = emptyList()
+)
 
 @Serializable data class Region(val result: String = "")
 
@@ -98,9 +103,10 @@ class GnulaProvider : MainAPI() {
         for ((url, title) in catalogs) {
             try {
                 val res = app.get(url, timeout = 30).text
+                if (!res.contains("id=\"__NEXT_DATA__\"")) continue
                 val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
                 val data = parseJson<PopularModel>(jsonStr)
-                val results = data.props.pageProps.results.data.mapNotNull { item ->
+                val results = data.props.pageProps.results?.data?.mapNotNull { item ->
                     val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
                     val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
                     newMovieSearchResponse(item.titles.name ?: "", finalUrl, if (finalUrl.contains("/series/"))
@@ -108,7 +114,7 @@ class GnulaProvider : MainAPI() {
                         this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
                         this.year = item.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
                     }
-                }
+                } ?: emptyList()
                 if (results.isNotEmpty()) items.add(HomePageList(title, results))
             } catch (e: Exception) { Log.e(TAG, "MainPage Error: ${e.message}") }
         }
@@ -122,7 +128,7 @@ class GnulaProvider : MainAPI() {
             val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
             val data = parseJson<PopularModel>(jsonStr)
 
-            data.props.pageProps.results.data.mapNotNull { item ->
+            data.props.pageProps.results?.data?.mapNotNull { item ->
                 val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
                 val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
                 val type = if (finalUrl.contains("/series/") || item.typeName == "Serie") TvType.TvSeries else TvType.Movie
@@ -130,30 +136,19 @@ class GnulaProvider : MainAPI() {
                 newMovieSearchResponse(item.titles.name ?: "Sin título", finalUrl, type) {
                     this.posterUrl = item.images.poster?.replace("/original/", "/w300/")
                 }
-            }
+            } ?: emptyList()
         } catch (e: Exception) { emptyList() }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "load: Iniciando carga -> $url")
-
         val response = app.get(url)
         var resText = response.text
 
         if (response.code == 404 || !resText.contains("\"post\":{")) {
-            Log.d(TAG, "load: URL con ID fallida o vacía, intentando limpiar...")
-
             val slugRaw = url.substringAfterLast("/")
-
-            val trials = listOf(
-                "$mainUrl/movies/$slugRaw",
-                "$mainUrl/series/$slugRaw",
-                "$mainUrl/$slugRaw"
-            )
-
+            val trials = listOf("$mainUrl/movies/$slugRaw", "$mainUrl/series/$slugRaw", "$mainUrl/$slugRaw")
             for (trial in trials) {
                 if (trial == url) continue
-                Log.d(TAG, "load: Probando ruta alternativa -> $trial")
                 val nextRes = app.get(trial)
                 if (nextRes.code == 200 && nextRes.text.contains("\"post\":{")) {
                     resText = nextRes.text
@@ -162,9 +157,8 @@ class GnulaProvider : MainAPI() {
             }
         }
 
-        if (!resText.contains("__NEXT_DATA__")) throw ErrorLoadingException("Contenido no encontrado en Gnula")
-
-        val data = parseJson<PopularModel>(resText.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>"))
+        val jsonStr = resText.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
+        val data = parseJson<PopularModel>(jsonStr)
         val post = data.props.pageProps.post ?: throw ErrorLoadingException("No post data")
         val title = post.titles.name ?: "Sin título"
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
@@ -177,7 +171,6 @@ class GnulaProvider : MainAPI() {
                         this.season = season.number?.toInt()
                         this.episode = ep.number?.toInt()
                         this.posterUrl = ep.images.poster?.replace("/original/", "/w300/")
-                        this.description = ep.overview
                     }
                 }
             }
@@ -206,13 +199,11 @@ class GnulaProvider : MainAPI() {
     ): Boolean {
         return try {
             val res = app.get(data).text
-            // Verificamos si el JSON existe en la página
             if (!res.contains("id=\"__NEXT_DATA__\"")) return false
 
             val jsonStr = res.substringAfter("id=\"__NEXT_DATA__\" type=\"application/json\">").substringBefore("</script>")
             val pageProps = parseJson<PopularModel>(jsonStr).props.pageProps
 
-            // Intentamos obtener los players de 'episode' (series) o de 'post' (películas)
             val players = pageProps.episode?.players ?: pageProps.post?.players
 
             if (players == null) {
@@ -220,14 +211,13 @@ class GnulaProvider : MainAPI() {
                 return false
             }
 
-            // Procesamos cada idioma
             processLinks(players.latino, "Latino", callback)
             processLinks(players.spanish, "Castellano", callback)
             processLinks(players.english, "Subtitulado", callback)
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "loadLinks Error: ${e.message}")
+            Log.e(TAG, "Error en loadLinks: ${e.message}")
             false
         }
     }
@@ -256,7 +246,6 @@ class GnulaProvider : MainAPI() {
                                     this.referer = link.referer
                                     this.quality = link.quality
                                     this.headers = link.headers
-                                    this.extractorData = link.extractorData
                                 }
                             )
                         }
