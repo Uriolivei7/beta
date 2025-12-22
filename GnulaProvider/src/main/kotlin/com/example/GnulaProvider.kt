@@ -77,12 +77,18 @@ data class Players(
 @Serializable
 data class Region(val result: String = "")
 
+
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
     override var name = "GNULA"
     override val hasMainPage = true
     override var lang = "mx"
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val supportedTypes = setOf(
+        TvType.Movie,
+        TvType.TvSeries,
+        TvType.Anime,
+        TvType.Cartoon
+    )
 
     private val TAG = "GNULA_LOG"
 
@@ -90,15 +96,15 @@ class GnulaProvider : MainAPI() {
         Log.d(TAG, "getMainPage: Cargando página principal $page")
         val items = mutableListOf<HomePageList>()
 
-        // Definimos todas las secciones solicitadas
         val catalogs = listOf(
-            Pair("$mainUrl/archives/episodes/page/$page", "Últimos Episodios"),
+            Pair("$mainUrl/archives/series/page/$page", "Series"),
             Pair("$mainUrl/archives/series/releases/page/$page", "Series: Estrenos"),
             Pair("$mainUrl/archives/series/top/week/page/$page", "Series: Top Semana"),
             Pair("$mainUrl/archives/series/top/day/page/$page", "Series: Top Hoy"),
+            Pair("$mainUrl/archives/movies/page/$page", "Películas"),
             Pair("$mainUrl/archives/movies/releases/page/$page", "Películas: Estrenos"),
             Pair("$mainUrl/archives/movies/top/week/page/$page", "Películas: Top Semana"),
-            Pair("$mainUrl/archives/movies/top/day/page/$page", "Películas: Top Hoy")
+            Pair("$mainUrl/archives/movies/top/day/page/$page", "Películas: Top Hoy"),
         )
 
         for ((url, title) in catalogs) {
@@ -114,7 +120,6 @@ class GnulaProvider : MainAPI() {
                 val data = parseJson<PopularModel>("{\"props\":{\"pageProps\":$jsonStr")
 
                 val results = data.props.pageProps.results.data.map {
-                    // Verificamos si es serie o película basado en la URL del slug
                     val isMovie = it.url.slug?.contains("movies") == true
                     val type = if (isMovie) TvType.Movie else TvType.TvSeries
 
@@ -181,7 +186,6 @@ class GnulaProvider : MainAPI() {
         } else {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
-                    // Usando la firma exacta de newEpisode que proporcionaste
                     newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
                         this.name = ep.title
                         this.season = season.number?.toInt()
@@ -234,7 +238,7 @@ class GnulaProvider : MainAPI() {
                             callback.invoke(
                                 newExtractorLink(
                                     source = link.source,
-                                    name = "$lang ${link.name}",
+                                    name = "${link.name} $lang",
                                     url = link.url,
                                     type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                                 ) {
