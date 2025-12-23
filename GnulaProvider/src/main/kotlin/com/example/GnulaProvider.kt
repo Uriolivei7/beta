@@ -145,37 +145,52 @@ class GnulaProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         Log.d(TAG, "load: Iniciando carga -> $url")
+
+        // 1. Extraemos el slug al principio para que sea accesible en toda la función
+        val slugRaw = url.trimEnd('/').substringAfterLast("/")
+
         val response = app.get(url)
         var resText = response.text
         var pProps = getNextData(resText)
-        var actualUrl = url // <--- Guardamos la URL que vamos a usar finalmente
+        var actualUrl = url
 
         if (pProps?.post == null && pProps?.data == null) {
-            Log.d(TAG, "load: Limpiando slug...")
-            val slugRaw = url.trimEnd('/').substringAfterLast("/")
-            val trials = listOf("$mainUrl/movies/$slugRaw", "$mainUrl/series/$slugRaw", "$mainUrl/$slugRaw")
+            Log.d(TAG, "load: Datos no encontrados, refinando búsqueda por tipo...")
+
+            val isSeriesUrl = url.contains("/series/")
+            val trials = if (isSeriesUrl) {
+                listOf("$mainUrl/series/$slugRaw", "$mainUrl/movies/$slugRaw", "$mainUrl/$slugRaw")
+            } else {
+                listOf("$mainUrl/movies/$slugRaw", "$mainUrl/series/$slugRaw", "$mainUrl/$slugRaw")
+            }
 
             for (trial in trials) {
                 if (trial == url) continue
+                Log.d(TAG, "load: Probando alternativa -> $trial")
                 val nextRes = app.get(trial)
                 val nextProps = getNextData(nextRes.text)
+
                 if (nextProps?.post != null || nextProps?.data != null) {
                     pProps = nextProps
                     resText = nextRes.text
-                    actualUrl = trial // <--- Aquí actualizamos a la URL funcional
+                    actualUrl = trial
                     break
                 }
             }
         }
 
-        val finalProps = pProps ?: throw ErrorLoadingException("Contenido no encontrado")
-        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Post vacío")
-        val title = post.titles.name ?: "Sin título"
+        val finalProps = pProps ?: throw ErrorLoadingException("No se encontró información")
+        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Contenido vacío")
 
-        return if (post.seasons.isNotEmpty()) {
+        val title = post.titles.name ?: "Sin título"
+        val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
+
+        // 3. Decidir si es Serie o Película
+        return if (!post.seasons.isNullOrEmpty()) {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
-                    newEpisode("$mainUrl/series/${ep.slug.name}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
+                    val epSlug = ep.slug.name ?: slugRaw
+                    newEpisode("$mainUrl/series/${epSlug}/seasons/${ep.slug.season}/episodes/${ep.slug.episode}") {
                         this.name = ep.title
                         this.season = season.number?.toInt()
                         this.episode = ep.number?.toInt()
@@ -186,14 +201,14 @@ class GnulaProvider : MainAPI() {
             newTvSeriesLoadResponse(title, actualUrl, TvType.TvSeries, episodes.reversed()) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
-                this.year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
+                this.year = year
+                this.tags = post.genres?.mapNotNull { it.name }
             }
         } else {
-            // Usamos actualUrl tanto para la respuesta como para el 'data' de loadLinks
             newMovieLoadResponse(title, actualUrl, TvType.Movie, actualUrl) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
-                this.year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
+                this.year = year
                 this.duration = post.runtime
                 this.tags = post.genres?.mapNotNull { it.name }
             }
