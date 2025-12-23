@@ -143,38 +143,42 @@ class DoramasytProvider : MainAPI() {
 
         val title = doc.selectFirst("h1.fs-2")?.text()?.trim() ?: ""
 
-        // CORRECCIÓN POSTER: Doramasyt usa lazy loading (data-src)
+        // Corregimos el poster para que se vea (usando data-src)
         val imgElement = doc.selectFirst(".portada-dorama img")
         val poster = cleanPoster(imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") })
 
         val description = doc.selectFirst(".sinopsis")?.text()?.trim()
 
-        // CORRECCIÓN EPISODIOS: Captura masiva de enlaces
-        val episodeList = doc.select("ul.episodios-list li a, .list-group li a, a[href*=/ver/]").mapNotNull { element ->
-            val href = element.attr("href")
+        // --- LÓGICA ORIGINAL RESTAURADA ---
+        val doramaSlug = url.removeSuffix("/").substringAfterLast("/")
+
+        // PARCHE TWINKLING: Si es el dorama del error, usamos el nombre que la web espera en los links
+        val correctedSlug = if (doramaSlug == "twinkling-watermelon-sub-espanol") {
+            "winkling-watermelon-sub-espanol"
+        } else {
+            doramaSlug
+        }
+
+        val episodeList = doc.select(".list-group li, .episodios-list li").mapNotNull { element ->
             val name = element.text().trim()
+            val epNum = Regex("(\\d+)").find(name)?.groupValues?.get(1) ?: return@mapNotNull null
 
-            // Extraer el número del texto del episodio
-            val epNum = Regex("(\\d+)").find(name)?.groupValues?.get(1)?.toIntOrNull()
+            // Construimos la URL como lo hacías antes, pero con el slug corregido
+            val epUrl = "$mainUrl/ver/$correctedSlug-episodio-$epNum".replace("-sub-espanol-episodio-", "-episodio-")
 
-            if (href.contains("/ver/")) {
-                newEpisode(fixUrl(href)) {
-                    this.name = name
-                    this.episode = epNum
-                }
-            } else null
-        }.distinctBy { it.data }.sortedBy { it.episode } // Ordenar del 1 al final
-
-        // IMPORTANTE: Si la lista está vacía, Cloudstream muestra "Ver ahora" como película.
-        // Aquí forzamos el tipo AnimeSearchResponse para asegurar la lista.
+            newEpisode(epUrl) {
+                this.name = name
+                this.episode = epNum.toIntOrNull()
+            }
+        }.reversed()
 
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
             this.posterUrl = poster
             this.plot = description
-            this.tags = doc.select(".categoria-dorama a").map { it.text() }
 
-            // Usamos mutableMapOf para cumplir con el requerimiento de la SDK
-            this.episodes = mutableMapOf(DubStatus.Subbed to episodeList)
+            // CORRECCIÓN DE ERROR DE COMPILACIÓN:
+            // Usamos addEpisodes que es compatible con List<Episode>
+            addEpisodes(DubStatus.Subbed, episodeList)
         }
     }
 
