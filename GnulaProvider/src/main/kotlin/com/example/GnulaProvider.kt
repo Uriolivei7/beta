@@ -146,7 +146,6 @@ class GnulaProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         Log.d(TAG, "load: Iniciando carga -> $url")
 
-        // 1. Extraemos el slug al principio para que sea accesible en toda la función
         val slugRaw = url.trimEnd('/').substringAfterLast("/")
 
         val response = app.get(url)
@@ -185,7 +184,6 @@ class GnulaProvider : MainAPI() {
         val title = post.titles.name ?: "Sin título"
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
 
-        // 3. Decidir si es Serie o Película
         return if (!post.seasons.isNullOrEmpty()) {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
