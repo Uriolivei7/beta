@@ -138,47 +138,31 @@ class DoramasytProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val response = app.get(url, timeout = 120)
-        val doc = response.document
+        Log.d("Doramasyt", "Cargando dorama: $url")
+        getToken(url)
+        val doc = app.get(url, timeout = 120).document
 
-        val title = doc.selectFirst("h1.fs-2")?.text()?.trim() ?: ""
+        val title = doc.selectFirst(".fs-2")?.text() ?: ""
+        val posterRaw = doc.selectFirst("img.rounded-3")?.attr("data-src")
+        val backRaw = doc.selectFirst("img.w-100")?.attr("data-src")
 
-        // Corregimos el poster para que se vea (usando data-src)
-        val imgElement = doc.selectFirst(".portada-dorama img")
-        val poster = cleanPoster(imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") })
+        val caplistUrl = doc.selectFirst(".caplist")?.attr("data-ajax") ?: throw ErrorLoadingException("No se encontró lista de episodios")
 
-        val description = doc.selectFirst(".sinopsis")?.text()?.trim()
+        val capJson = app.post(caplistUrl,
+            headers = mapOf("Referer" to url, "X-Requested-With" to "XMLHttpRequest"),
+            cookies = latestCookie,
+            data = mapOf("_token" to latestToken)).parsed<CapList>()
 
-        // --- LÓGICA ORIGINAL RESTAURADA ---
-        val doramaSlug = url.removeSuffix("/").substringAfterLast("/")
-
-        // PARCHE TWINKLING: Si es el dorama del error, usamos el nombre que la web espera en los links
-        val correctedSlug = if (doramaSlug == "twinkling-watermelon-sub-espanol") {
-            "winkling-watermelon-sub-espanol"
-        } else {
-            doramaSlug
+        val epList = capJson.eps.map { ep ->
+            val epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
+            newEpisode(epUrl) { this.episode = ep.num }
         }
 
-        val episodeList = doc.select(".list-group li, .episodios-list li").mapNotNull { element ->
-            val name = element.text().trim()
-            val epNum = Regex("(\\d+)").find(name)?.groupValues?.get(1) ?: return@mapNotNull null
-
-            // Construimos la URL como lo hacías antes, pero con el slug corregido
-            val epUrl = "$mainUrl/ver/$correctedSlug-episodio-$epNum".replace("-sub-espanol-episodio-", "-episodio-")
-
-            newEpisode(epUrl) {
-                this.name = name
-                this.episode = epNum.toIntOrNull()
-            }
-        }.reversed()
-
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
-            this.posterUrl = poster
-            this.plot = description
-
-            // CORRECCIÓN DE ERROR DE COMPILACIÓN:
-            // Usamos addEpisodes que es compatible con List<Episode>
-            addEpisodes(DubStatus.Subbed, episodeList)
+            this.posterUrl = cleanPoster(posterRaw)
+            this.backgroundPosterUrl = cleanPoster(backRaw)
+            this.plot = doc.selectFirst("div.mb-3")?.text()?.replace("Ver menos", "")
+            addEpisodes(DubStatus.Subbed, epList)
         }
     }
 
@@ -190,9 +174,11 @@ class DoramasytProvider : MainAPI() {
     ): Boolean {
         Log.d("Doramasyt", "Solicitando links para: $data")
         try {
+            // 1. OBTENEMOS COOKIES PRIMERO (Importante para evitar redirección al home)
             val session = app.get(mainUrl)
             val cookies = session.cookies
 
+            // 2. PETICIÓN AL EPISODIO CON COOKIES Y HEADERS DE NAVEGADOR
             val response = app.get(data,
                 cookies = cookies,
                 headers = mapOf(
@@ -202,10 +188,12 @@ class DoramasytProvider : MainAPI() {
                 )
             )
 
+            // Verificamos si nos redirigió al home (si el título no contiene "Episodio" o "Ver")
             if (response.document.select("h1").text().isNullOrEmpty()) {
                 Log.e("Doramasyt", "Redirección detectada. No estamos en la página del episodio.")
             }
 
+            // 3. SELECTOR POR ATRIBUTO (Más seguro que clases o IDs)
             val buttons = response.document.select("button[data-player], li[data-player], .play-video")
             Log.d("Doramasyt", "Botones encontrados: ${buttons.size}")
 
@@ -214,6 +202,7 @@ class DoramasytProvider : MainAPI() {
                 if (encoded.isNotBlank()) {
                     val iframeUrl = "$mainUrl/reproductor?video=$encoded"
 
+                    // La API interna del reproductor requiere el Referer del episodio
                     val iframeRes = app.get(iframeUrl,
                         cookies = cookies,
                         headers = mapOf(
@@ -243,6 +232,7 @@ class DoramasytProvider : MainAPI() {
         sub: (SubtitleFile) -> Unit,
         cb: (ExtractorLink) -> Unit
     ) {
+        // Corrección de dominios para que los extractores nativos funcionen (Streamwish, Vidhide, etc)
         val fixedUrl = url.replace("hglink.to", "streamwish.to")
             .replace("swdyu.com", "streamwish.to")
             .replace("mivalyo.com", "vidhidepro.com")
