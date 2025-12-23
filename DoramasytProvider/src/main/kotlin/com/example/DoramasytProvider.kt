@@ -154,7 +154,14 @@ class DoramasytProvider : MainAPI() {
             data = mapOf("_token" to latestToken)).parsed<CapList>()
 
         val epList = capJson.eps.map { ep ->
-            val epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
+            // 1. Tu lógica original para generar la URL
+            var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
+
+            // 2. PARCHE ESPECÍFICO: Si la URL contiene el error de Twinkling, lo corregimos a Winkling
+            if (epUrl.contains("twinkling-watermelon")) {
+                epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
+            }
+
             newEpisode(epUrl) { this.episode = ep.num }
         }
 
@@ -162,7 +169,9 @@ class DoramasytProvider : MainAPI() {
             this.posterUrl = cleanPoster(posterRaw)
             this.backgroundPosterUrl = cleanPoster(backRaw)
             this.plot = doc.selectFirst("div.mb-3")?.text()?.replace("Ver menos", "")
-            addEpisodes(DubStatus.Subbed, epList)
+
+            // Usamos la asignación directa para evitar errores de MutableMap en versiones nuevas
+            this.episodes = mutableMapOf(DubStatus.Subbed to epList)
         }
     }
 
