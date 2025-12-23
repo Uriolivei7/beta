@@ -138,31 +138,30 @@ class DoramasytProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d("Doramasyt", "Cargando dorama: $url")
-        getToken(url)
-        val doc = app.get(url, timeout = 120).document
+        val response = app.get(url, timeout = 120)
+        val doc = response.document
 
-        val title = doc.selectFirst(".fs-2")?.text() ?: ""
-        val posterRaw = doc.selectFirst("img.rounded-3")?.attr("data-src")
-        val backRaw = doc.selectFirst("img.w-100")?.attr("data-src")
+        val title = doc.selectFirst("h1.fs-2")?.text()?.trim() ?: ""
+        val poster = cleanPoster(doc.selectFirst(".portada-dorama img")?.attr("src"))
+        val description = doc.selectFirst(".sinopsis")?.text()?.trim()
 
-        val caplistUrl = doc.selectFirst(".caplist")?.attr("data-ajax") ?: throw ErrorLoadingException("No se encontró lista de episodios")
+        val episodeList = doc.select(".list-group li a, .episodios-list a").mapNotNull { element ->
+            val href = element.attr("href")
+            if (href.contains("/ver/")) {
+                val name = element.text().trim()
+                val epNum = name.replace(Regex("[^0-9]"), "").toIntOrNull()
 
-        val capJson = app.post(caplistUrl,
-            headers = mapOf("Referer" to url, "X-Requested-With" to "XMLHttpRequest"),
-            cookies = latestCookie,
-            data = mapOf("_token" to latestToken)).parsed<CapList>()
-
-        val epList = capJson.eps.map { ep ->
-            val epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
-            newEpisode(epUrl) { this.episode = ep.num }
-        }
+                newEpisode(fixUrl(href)) {
+                    this.name = name
+                    this.episode = epNum
+                }
+            } else null
+        }.reversed()
 
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
-            this.posterUrl = cleanPoster(posterRaw)
-            this.backgroundPosterUrl = cleanPoster(backRaw)
-            this.plot = doc.selectFirst("div.mb-3")?.text()?.replace("Ver menos", "")
-            addEpisodes(DubStatus.Subbed, epList)
+            this.posterUrl = poster
+            this.plot = description
+            addEpisodes(DubStatus.Subbed, episodeList)
         }
     }
 
@@ -174,11 +173,9 @@ class DoramasytProvider : MainAPI() {
     ): Boolean {
         Log.d("Doramasyt", "Solicitando links para: $data")
         try {
-            // 1. OBTENEMOS COOKIES PRIMERO (Importante para evitar redirección al home)
             val session = app.get(mainUrl)
             val cookies = session.cookies
 
-            // 2. PETICIÓN AL EPISODIO CON COOKIES Y HEADERS DE NAVEGADOR
             val response = app.get(data,
                 cookies = cookies,
                 headers = mapOf(
@@ -188,12 +185,10 @@ class DoramasytProvider : MainAPI() {
                 )
             )
 
-            // Verificamos si nos redirigió al home (si el título no contiene "Episodio" o "Ver")
             if (response.document.select("h1").text().isNullOrEmpty()) {
                 Log.e("Doramasyt", "Redirección detectada. No estamos en la página del episodio.")
             }
 
-            // 3. SELECTOR POR ATRIBUTO (Más seguro que clases o IDs)
             val buttons = response.document.select("button[data-player], li[data-player], .play-video")
             Log.d("Doramasyt", "Botones encontrados: ${buttons.size}")
 
@@ -202,7 +197,6 @@ class DoramasytProvider : MainAPI() {
                 if (encoded.isNotBlank()) {
                     val iframeUrl = "$mainUrl/reproductor?video=$encoded"
 
-                    // La API interna del reproductor requiere el Referer del episodio
                     val iframeRes = app.get(iframeUrl,
                         cookies = cookies,
                         headers = mapOf(
@@ -232,7 +226,6 @@ class DoramasytProvider : MainAPI() {
         sub: (SubtitleFile) -> Unit,
         cb: (ExtractorLink) -> Unit
     ) {
-        // Corrección de dominios para que los extractores nativos funcionen (Streamwish, Vidhide, etc)
         val fixedUrl = url.replace("hglink.to", "streamwish.to")
             .replace("swdyu.com", "streamwish.to")
             .replace("mivalyo.com", "vidhidepro.com")
