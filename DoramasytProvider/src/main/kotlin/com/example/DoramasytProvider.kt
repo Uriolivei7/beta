@@ -145,22 +145,27 @@ class DoramasytProvider : MainAPI() {
         val poster = cleanPoster(doc.selectFirst(".portada-dorama img")?.attr("src"))
         val description = doc.selectFirst(".sinopsis")?.text()?.trim()
 
-        val episodeList = doc.select(".list-group li a, .episodios-list a").mapNotNull { element ->
+        // SELECTOR ULTRA-FLEXIBLE: Busca cualquier enlace que contenga "/ver/" dentro de la lista de episodios
+        val episodeList = doc.select("a[href*=/ver/]").mapNotNull { element ->
             val href = element.attr("href")
-            if (href.contains("/ver/")) {
-                val name = element.text().trim()
-                val epNum = name.replace(Regex("[^0-9]"), "").toIntOrNull()
+            val name = element.text().trim()
+
+            // Solo procesamos si el texto parece un episodio (contiene números)
+            if (name.contains(Regex("\\d+"))) {
+                val epNum = Regex("(\\d+)").find(name)?.groupValues?.get(1)?.toIntOrNull()
 
                 newEpisode(fixUrl(href)) {
                     this.name = name
                     this.episode = epNum
                 }
             } else null
-        }.reversed()
+        }.distinctBy { it.data }.reversed() // .distinctBy evita duplicados y .reversed los ordena del 1 al final
 
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
             this.posterUrl = poster
             this.plot = description
+
+            // Usamos esta función para que aparezcan directamente sin importar el DubStatus
             addEpisodes(DubStatus.Subbed, episodeList)
         }
     }
