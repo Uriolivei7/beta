@@ -174,57 +174,46 @@ class DoramasytProvider : MainAPI() {
     ): Boolean {
         Log.d("Doramasyt", "Iniciando carga de links para: $data")
         try {
-            // Es vital enviar el Referer y User-Agent para que la web no oculte los links
             val response = app.get(data, headers = mapOf(
-                "Referer" to mainUrl,
-                "User-Agent" to USER_AGENT
+                "User-Agent" to USER_AGENT,
+                "Referer" to mainUrl
             ))
 
-            // Selector ampliado para capturar botones de servidores y elementos de lista
-            val buttons = response.document.select("button[data-player], li.play-video, [data-video]")
-            Log.d("Doramasyt", "Elementos de video detectados: ${buttons.size}")
+            // Selector específico basado en tu HTML: botones con clase .play-video dentro de #myTab
+            val buttons = response.document.select("#myTab button.play-video")
+            Log.d("Doramasyt", "Botones encontrados en #myTab: ${buttons.size}")
+
+            if (buttons.isEmpty()) {
+                // Intento secundario si el primero falla
+                val fallbackButtons = response.document.select("button[data-player]")
+                Log.d("Doramasyt", "Botones en fallback: ${fallbackButtons.size}")
+            }
 
             buttons.forEach { button ->
                 try {
-                    val serverName = button.text().trim().ifEmpty { "Reproductor" }
-                    // Intentamos obtener el link de diferentes atributos comunes
-                    val encoded = button.attr("data-player").ifEmpty {
-                        button.attr("data-video").ifEmpty {
-                            button.attr("data-id")
-                        }
-                    }
+                    val encoded = button.attr("data-player")
+                    val serverName = button.text().trim()
 
                     if (encoded.isNullOrEmpty()) return@forEach
 
-                    val isApi = button.attr("data-usa-api") == "1" || button.hasAttr("data-player")
+                    // En tu HTML, todos tienen data-usa-api="1"
+                    val iframeUrl = "$mainUrl/reproductor?video=$encoded"
+                    Log.d("Doramasyt", "Extrayendo servidor $serverName de: $iframeUrl")
 
-                    if (isApi) {
-                        // Caso 1: El link requiere pasar por el reproductor interno de la web
-                        val iframeUrl = "$mainUrl/reproductor?video=$encoded"
-                        Log.d("Doramasyt", "Consultando API interna: $iframeUrl")
+                    val iframeResponse = app.get(iframeUrl, headers = mapOf(
+                        "Referer" to data,
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "User-Agent" to USER_AGENT
+                    ))
 
-                        val iframeDoc = app.get(iframeUrl, headers = mapOf(
-                            "Referer" to data,
-                            "X-Requested-With" to "XMLHttpRequest",
-                            "User-Agent" to USER_AGENT
-                        )).document
+                    val iframeSrc = iframeResponse.document.selectFirst("iframe")?.attr("src")
 
-                        val iframeSrc = iframeDoc.selectFirst("iframe")?.attr("src")
-
-                        if (!iframeSrc.isNullOrEmpty()) {
-                            Log.d("Doramasyt", "Iframe encontrado: $iframeSrc")
-                            customLoadExtractor(fixUrl(iframeSrc), iframeUrl, subtitleCallback, callback)
-                        }
-                    } else {
-                        // Caso 2: El link está en Base64
-                        val decoded = base64Decode(encoded)
-                        if (decoded.startsWith("http")) {
-                            Log.d("Doramasyt", "Link decodificado: $decoded")
-                            customLoadExtractor(decoded, data, subtitleCallback, callback)
-                        }
+                    if (!iframeSrc.isNullOrEmpty()) {
+                        Log.d("Doramasyt", "Link Real encontrado: $iframeSrc")
+                        customLoadExtractor(fixUrl(iframeSrc), iframeUrl, subtitleCallback, callback)
                     }
                 } catch (e: Exception) {
-                    Log.e("Doramasyt", "Error procesando botón: ${e.message}")
+                    Log.e("Doramasyt", "Error en servidor individual: ${e.message}")
                 }
             }
             return true
