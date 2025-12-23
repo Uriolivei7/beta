@@ -145,28 +145,29 @@ class DoramasytProvider : MainAPI() {
         val poster = cleanPoster(doc.selectFirst(".portada-dorama img")?.attr("src"))
         val description = doc.selectFirst(".sinopsis")?.text()?.trim()
 
-        // SELECTOR ULTRA-FLEXIBLE: Busca cualquier enlace que contenga "/ver/" dentro de la lista de episodios
+        // 1. CORRECCIÓN SINTAXIS: Extraer episodios capturando la URL real (ej. winkling)
         val episodeList = doc.select("a[href*=/ver/]").mapNotNull { element ->
             val href = element.attr("href")
             val name = element.text().trim()
 
-            // Solo procesamos si el texto parece un episodio (contiene números)
-            if (name.contains(Regex("\\d+"))) {
-                val epNum = Regex("(\\d+)").find(name)?.groupValues?.get(1)?.toIntOrNull()
+            // Corregido el error de Regex y escape sequence
+            val epNum = Regex("(\\d+)").find(name)?.groupValues?.get(1)?.toIntOrNull()
 
+            if (href.isNotEmpty()) {
                 newEpisode(fixUrl(href)) {
                     this.name = name
                     this.episode = epNum
                 }
             } else null
-        }.distinctBy { it.data }.reversed() // .distinctBy evita duplicados y .reversed los ordena del 1 al final
+        }.distinctBy { it.data }.reversed()
 
+        // 2. CORRECCIÓN MAPA: Usar toMutableMap() para que coincida con el tipo esperado
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
             this.posterUrl = poster
             this.plot = description
 
-            // Usamos esta función para que aparezcan directamente sin importar el DubStatus
-            addEpisodes(DubStatus.Subbed, episodeList)
+            // Convertimos el mapa a MutableMap para que la SDK lo acepte
+            this.episodes = mutableMapOf(DubStatus.Subbed to episodeList)
         }
     }
 
