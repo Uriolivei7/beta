@@ -172,55 +172,56 @@ class DoramasytProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("Doramasyt", "Iniciando carga de links para: $data")
+        Log.d("Doramasyt", "Solicitando links para: $data")
         try {
-            // USAMOS HEADERS COMPLETOS PARA PARECER UN NAVEGADOR REAL
-            val response = app.get(data, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer" to "$mainUrl/",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language" to "es-ES,es;q=0.9"
-            ))
+            // 1. OBTENEMOS COOKIES PRIMERO (Importante para evitar redirección al home)
+            val session = app.get(mainUrl)
+            val cookies = session.cookies
 
-            val doc = response.document
+            // 2. PETICIÓN AL EPISODIO CON COOKIES Y HEADERS DE NAVEGADOR
+            val response = app.get(data,
+                cookies = cookies,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer" to "$mainUrl/",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+                )
+            )
 
-            // BUSCAMOS CUALQUIER BOTÓN QUE TENGA DATA-PLAYER, SIN IMPORTAR DONDE ESTÉ
-            val buttons = doc.select("button[data-player], .play-video[data-player], li[data-player]")
-            Log.d("Doramasyt", "Total botones detectados con selector amplio: ${buttons.size}")
-
-            if (buttons.isEmpty()) {
-                // Si sigue vacío, imprimimos un poco del HTML en el log para ver qué está pasando
-                val htmlSnippet = doc.select("body").text().take(100)
-                Log.d("Doramasyt", "HTML recibido (primeros 100 caracteres): $htmlSnippet")
+            // Verificamos si nos redirigió al home (si el título no contiene "Episodio" o "Ver")
+            if (response.document.select("h1").text().isNullOrEmpty()) {
+                Log.e("Doramasyt", "Redirección detectada. No estamos en la página del episodio.")
             }
 
-            buttons.forEach { button ->
-                try {
-                    val encoded = button.attr("data-player")
-                    if (encoded.isNullOrEmpty()) return@forEach
+            // 3. SELECTOR POR ATRIBUTO (Más seguro que clases o IDs)
+            val buttons = response.document.select("button[data-player], li[data-player], .play-video")
+            Log.d("Doramasyt", "Botones encontrados: ${buttons.size}")
 
-                    // La web usa un reproductor interno (data-usa-api="1")
+            buttons.forEach { button ->
+                val encoded = button.attr("data-player")
+                if (encoded.isNotBlank()) {
                     val iframeUrl = "$mainUrl/reproductor?video=$encoded"
 
-                    val iframeResponse = app.get(iframeUrl, headers = mapOf(
-                        "Referer" to data,
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to USER_AGENT
-                    ))
+                    // La API interna del reproductor requiere el Referer del episodio
+                    val iframeRes = app.get(iframeUrl,
+                        cookies = cookies,
+                        headers = mapOf(
+                            "Referer" to data,
+                            "User-Agent" to USER_AGENT,
+                            "X-Requested-With" to "XMLHttpRequest"
+                        )
+                    )
 
-                    val iframeSrc = iframeResponse.document.selectFirst("iframe")?.attr("src")
-
-                    if (!iframeSrc.isNullOrEmpty()) {
-                        Log.d("Doramasyt", "Link extraído con éxito: $iframeSrc")
-                        customLoadExtractor(fixUrl(iframeSrc), iframeUrl, subtitleCallback, callback)
+                    val finalUrl = iframeRes.document.selectFirst("iframe")?.attr("src")
+                    if (!finalUrl.isNullOrEmpty()) {
+                        Log.d("Doramasyt", "Link final: $finalUrl")
+                        customLoadExtractor(fixUrl(finalUrl), iframeUrl, subtitleCallback, callback)
                     }
-                } catch (e: Exception) {
-                    Log.e("Doramasyt", "Error en servidor: ${e.message}")
                 }
             }
             return true
         } catch (e: Exception) {
-            Log.e("Doramasyt", "Error crítico loadLinks: ${e.message}")
+            Log.e("Doramasyt", "Error en loadLinks: ${e.message}")
             return false
         }
     }
