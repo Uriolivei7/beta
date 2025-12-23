@@ -38,7 +38,6 @@ class DoramasytProvider : MainAPI() {
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.AsianDrama)
 
-    // Lógica importante de posters (Limpieza de parámetros y fixUrl)
     private fun cleanPoster(url: String?): String? {
         if (url.isNullOrEmpty()) return null
         val cleaned = url.substringBefore("?v=")
@@ -64,13 +63,11 @@ class DoramasytProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<HomePageList>()
 
-        // 1. ÚLTIMOS CAPÍTULOS
         try {
             val response = app.get(mainUrl, timeout = 120)
             val latestChapters = response.document.select("h2:contains(últimos capítulos) + ul li.col article").mapNotNull { element ->
                 val title = element.selectFirst("h3")?.text()?.trim() ?: return@mapNotNull null
 
-                // Selector de posters corregido para el data-src
                 val imgElement = element.selectFirst("img")
                 val posterRaw = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") }
 
@@ -84,14 +81,12 @@ class DoramasytProvider : MainAPI() {
                 }
             }
             if (latestChapters.isNotEmpty()) {
-                // Pasamos 'true' directamente en la tercera posición
                 items.add(HomePageList("Últimos capítulos", latestChapters, true))
             }
         } catch (e: Exception) {
             Log.e("Doramasyt", "Error en Últimos Capítulos: ${e.message}")
         }
 
-        // 2. OTRAS SECCIONES
         val urls = listOf(
             Pair("$mainUrl/emision", "En emisión"),
             Pair("$mainUrl/doramas", "Doramas"),
@@ -113,7 +108,6 @@ class DoramasytProvider : MainAPI() {
                             }
                         }
                         if (homeList.isNotEmpty()) {
-                            // Pasamos 'true' directamente en la tercera posición
                             items.add(HomePageList(name, homeList, true))
                         }
                     } catch (e: Exception) {
@@ -154,10 +148,8 @@ class DoramasytProvider : MainAPI() {
             data = mapOf("_token" to latestToken)).parsed<CapList>()
 
         val epList = capJson.eps.map { ep ->
-            // 1. Tu lógica original para generar la URL
             var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
 
-            // 2. PARCHE ESPECÍFICO: Si la URL contiene el error de Twinkling, lo corregimos a Winkling
             if (epUrl.contains("twinkling-watermelon")) {
                 epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
             }
@@ -170,7 +162,6 @@ class DoramasytProvider : MainAPI() {
             this.backgroundPosterUrl = cleanPoster(backRaw)
             this.plot = doc.selectFirst("div.mb-3")?.text()?.replace("Ver menos", "")
 
-            // Usamos la asignación directa para evitar errores de MutableMap en versiones nuevas
             this.episodes = mutableMapOf(DubStatus.Subbed to epList)
         }
     }
@@ -183,11 +174,9 @@ class DoramasytProvider : MainAPI() {
     ): Boolean {
         Log.d("Doramasyt", "Solicitando links para: $data")
         try {
-            // 1. OBTENEMOS COOKIES PRIMERO (Importante para evitar redirección al home)
             val session = app.get(mainUrl)
             val cookies = session.cookies
 
-            // 2. PETICIÓN AL EPISODIO CON COOKIES Y HEADERS DE NAVEGADOR
             val response = app.get(data,
                 cookies = cookies,
                 headers = mapOf(
@@ -197,12 +186,10 @@ class DoramasytProvider : MainAPI() {
                 )
             )
 
-            // Verificamos si nos redirigió al home (si el título no contiene "Episodio" o "Ver")
             if (response.document.select("h1").text().isNullOrEmpty()) {
                 Log.e("Doramasyt", "Redirección detectada. No estamos en la página del episodio.")
             }
 
-            // 3. SELECTOR POR ATRIBUTO (Más seguro que clases o IDs)
             val buttons = response.document.select("button[data-player], li[data-player], .play-video")
             Log.d("Doramasyt", "Botones encontrados: ${buttons.size}")
 
@@ -211,7 +198,6 @@ class DoramasytProvider : MainAPI() {
                 if (encoded.isNotBlank()) {
                     val iframeUrl = "$mainUrl/reproductor?video=$encoded"
 
-                    // La API interna del reproductor requiere el Referer del episodio
                     val iframeRes = app.get(iframeUrl,
                         cookies = cookies,
                         headers = mapOf(
@@ -241,7 +227,6 @@ class DoramasytProvider : MainAPI() {
         sub: (SubtitleFile) -> Unit,
         cb: (ExtractorLink) -> Unit
     ) {
-        // Corrección de dominios para que los extractores nativos funcionen (Streamwish, Vidhide, etc)
         val fixedUrl = url.replace("hglink.to", "streamwish.to")
             .replace("swdyu.com", "streamwish.to")
             .replace("mivalyo.com", "vidhidepro.com")

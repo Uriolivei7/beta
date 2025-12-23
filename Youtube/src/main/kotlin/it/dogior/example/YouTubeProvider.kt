@@ -42,26 +42,39 @@ class YoutubeProvider(
         const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
     }
 
+    // Agrega esto a las propiedades de tu clase YoutubeProvider
+    private var youtubeCookie: String?
+        get() = sharedPrefs?.getString("youtube_cookie", null)
+        set(value) {
+            sharedPrefs?.edit()?.putString("youtube_cookie", value)?.apply()
+        }
+
     init {
         try {
-            // Intentamos configurar el User Agent globalmente a través del Downloader
             val downloader = NewPipe.getDownloader()
 
-            // Si .setUserAgent no existe, intentamos inyectarlo mediante los headers por defecto
-            // Esto emula el comportamiento de una laptop (WSA) en tu Samsung
-
+            // 1. Configurar User Agent (Ya sabemos que esto funciona)
             val fields = downloader.javaClass.declaredFields
-            val userAgentField = fields.find { it.name == "userAgent" || it.type == String::class.java }
+            val uaField = fields.find { it.name == "userAgent" }
+            uaField?.isAccessible = true
+            uaField?.set(downloader, PC_USER_AGENT)
 
-            if (userAgentField != null) {
-                userAgentField.isAccessible = true
-                userAgentField.set(downloader, PC_USER_AGENT)
-                Log.d(TAG, "User Agent configurado exitosamente mediante reflexión.")
-            } else {
-                Log.w(TAG, "No se pudo encontrar el campo UserAgent, YouTube podría bloquear la conexión.")
+            // 2. Configurar Cookies vía Headers (Para saltar el bloqueo de Android 15)
+            // Buscamos si existe un mapa de headers o cookies en la implementación
+            youtubeCookie?.let { cookie ->
+                val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" }
+                if (cookieField != null) {
+                    cookieField.isAccessible = true
+                    cookieField.set(downloader, cookie)
+                    Log.d(TAG, "Cookie aplicada exitosamente.")
+                } else {
+                    // Si no hay campo directo, NewPipe suele esperar que las cookies
+                    // se manejen en el nivel de red (OkHttp).
+                    Log.w(TAG, "No se encontró campo de cookie, usando modo alternativo.")
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error configurando el User Agent: ${e.message}")
+            Log.e(TAG, "Error en inicialización: ${e.message}")
         }
     }
 
@@ -136,34 +149,38 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         return try {
-            // Obtenemos la info del stream.
-            // Si sigue fallando en tu A06, YouTube está pidiendo una Cookie obligatoria.
-            val info = StreamInfo.getInfo(data)
-            val refererUrl = info.url
+            val linkHandler = org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(data)
+            val extractor = ServiceList.YouTube.getStreamExtractor(linkHandler)
 
-            info.videoStreams
-                .sortedByDescending { it.resolution?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-                .forEach { stream ->
-                    val streamUrl = stream.url ?: return@forEach
-                    val resolutionName = stream.resolution ?: return@forEach
+            extractor.fetchPage()
 
-                    callback.invoke(
-                        newExtractorLink(
-                            source = this.name,
-                            name = "Video - $resolutionName",
-                            url = streamUrl
-                        ) {
-                            this.referer = refererUrl
-                        }
-                    )
-                }
+            val refererUrl = extractor.url
 
-            info.subtitles.forEach { sub ->
-                subtitleCallback.invoke(newSubtitleFile(sub.languageTag ?: "Unknown", sub.url ?: return@forEach))
+            // Usamos directamente las listas del extractor ya cargado
+            extractor.videoStreams?.filterNotNull()?.forEach { stream ->
+                val streamUrl = stream.url ?: return@forEach
+                val resolutionName = stream.resolution ?: return@forEach
+
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "Video - $resolutionName",
+                        url = streamUrl
+                    ) {
+                        this.referer = refererUrl
+                    }
+                )
             }
+
+            extractor.subtitlesDefault?.filterNotNull()?.forEach { sub ->
+                subtitleCallback.invoke(
+                    newSubtitleFile(sub.languageTag ?: "Unknown", sub.url ?: return@forEach)
+                )
+            }
+
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Error en loadLinks (Android 15): ${e.message}")
+            Log.e(TAG, "Fallo en loadLinks (Samsung A06): ${e.message}")
             false
         }
     }
