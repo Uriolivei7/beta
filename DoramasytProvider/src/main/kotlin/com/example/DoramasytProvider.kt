@@ -174,31 +174,33 @@ class DoramasytProvider : MainAPI() {
     ): Boolean {
         Log.d("Doramasyt", "Iniciando carga de links para: $data")
         try {
+            // USAMOS HEADERS COMPLETOS PARA PARECER UN NAVEGADOR REAL
             val response = app.get(data, headers = mapOf(
-                "User-Agent" to USER_AGENT,
-                "Referer" to mainUrl
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer" to "$mainUrl/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9"
             ))
 
-            // Selector específico basado en tu HTML: botones con clase .play-video dentro de #myTab
-            val buttons = response.document.select("#myTab button.play-video")
-            Log.d("Doramasyt", "Botones encontrados en #myTab: ${buttons.size}")
+            val doc = response.document
+
+            // BUSCAMOS CUALQUIER BOTÓN QUE TENGA DATA-PLAYER, SIN IMPORTAR DONDE ESTÉ
+            val buttons = doc.select("button[data-player], .play-video[data-player], li[data-player]")
+            Log.d("Doramasyt", "Total botones detectados con selector amplio: ${buttons.size}")
 
             if (buttons.isEmpty()) {
-                // Intento secundario si el primero falla
-                val fallbackButtons = response.document.select("button[data-player]")
-                Log.d("Doramasyt", "Botones en fallback: ${fallbackButtons.size}")
+                // Si sigue vacío, imprimimos un poco del HTML en el log para ver qué está pasando
+                val htmlSnippet = doc.select("body").text().take(100)
+                Log.d("Doramasyt", "HTML recibido (primeros 100 caracteres): $htmlSnippet")
             }
 
             buttons.forEach { button ->
                 try {
                     val encoded = button.attr("data-player")
-                    val serverName = button.text().trim()
-
                     if (encoded.isNullOrEmpty()) return@forEach
 
-                    // En tu HTML, todos tienen data-usa-api="1"
+                    // La web usa un reproductor interno (data-usa-api="1")
                     val iframeUrl = "$mainUrl/reproductor?video=$encoded"
-                    Log.d("Doramasyt", "Extrayendo servidor $serverName de: $iframeUrl")
 
                     val iframeResponse = app.get(iframeUrl, headers = mapOf(
                         "Referer" to data,
@@ -209,16 +211,16 @@ class DoramasytProvider : MainAPI() {
                     val iframeSrc = iframeResponse.document.selectFirst("iframe")?.attr("src")
 
                     if (!iframeSrc.isNullOrEmpty()) {
-                        Log.d("Doramasyt", "Link Real encontrado: $iframeSrc")
+                        Log.d("Doramasyt", "Link extraído con éxito: $iframeSrc")
                         customLoadExtractor(fixUrl(iframeSrc), iframeUrl, subtitleCallback, callback)
                     }
                 } catch (e: Exception) {
-                    Log.e("Doramasyt", "Error en servidor individual: ${e.message}")
+                    Log.e("Doramasyt", "Error en servidor: ${e.message}")
                 }
             }
             return true
         } catch (e: Exception) {
-            Log.e("Doramasyt", "Error general en loadLinks: ${e.message}")
+            Log.e("Doramasyt", "Error crítico loadLinks: ${e.message}")
             return false
         }
     }
