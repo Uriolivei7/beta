@@ -213,12 +213,10 @@ class YouTubeParser(override var name: String) : MainAPI() {
         val CURRENT_TAG = "YT_REC"
         Log.e(CURRENT_TAG, "--- INICIO Carga LoadResponse para URL: $videoUrl ---")
 
-        // 1. Manejo de error con try-catch para evitar el crash del PlayabilityStatus
         val videoInfo = try {
             StreamInfo.getInfo(videoUrl)
         } catch (e: Exception) {
             Log.e(CURRENT_TAG, "ERROR CRÍTICO en StreamInfo.getInfo: ${e.message}")
-            // Si falla, lanzamos una excepción propia o manejamos un LoadResponse vacío
             throw e
         }
 

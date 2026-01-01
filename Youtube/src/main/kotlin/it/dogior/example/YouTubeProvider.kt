@@ -17,7 +17,6 @@ import android.util.Log
 import com.lagradost.cloudstream3.MovieSearchResponse
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.newExtractorLink
-// IMPORTANTE: Asegúrate de tener estas importaciones para configurar NewPipe
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -38,11 +37,9 @@ class YoutubeProvider(
     companion object {
         const val MAIN_URL = "https://www.youtube.com"
         const val TAG = "Youtube"
-        // User Agent de escritorio para evitar el bloqueo de Android 15
         const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
     }
 
-    // Agrega esto a las propiedades de tu clase YoutubeProvider
     private var youtubeCookie: String?
         get() = sharedPrefs?.getString("youtube_cookie", null)
         set(value) {
@@ -53,14 +50,11 @@ class YoutubeProvider(
         try {
             val downloader = NewPipe.getDownloader()
 
-            // 1. Configurar User Agent (Ya sabemos que esto funciona)
             val fields = downloader.javaClass.declaredFields
             val uaField = fields.find { it.name == "userAgent" }
             uaField?.isAccessible = true
             uaField?.set(downloader, PC_USER_AGENT)
 
-            // 2. Configurar Cookies vía Headers (Para saltar el bloqueo de Android 15)
-            // Buscamos si existe un mapa de headers o cookies en la implementación
             youtubeCookie?.let { cookie ->
                 val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" }
                 if (cookieField != null) {
@@ -68,8 +62,6 @@ class YoutubeProvider(
                     cookieField.set(downloader, cookie)
                     Log.d(TAG, "Cookie aplicada exitosamente.")
                 } else {
-                    // Si no hay campo directo, NewPipe suele esperar que las cookies
-                    // se manejen en el nivel de red (OkHttp).
                     Log.w(TAG, "No se encontró campo de cookie, usando modo alternativo.")
                 }
             }
@@ -81,7 +73,6 @@ class YoutubeProvider(
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         Log.d(TAG, "Iniciando getMainPage para página: $page")
 
-        // Ejecutar dentro de un try-catch para que si falla una sección no rompa toda la app
         val isTrendingEnabled = sharedPrefs?.getBoolean("trending", true) ?: true
         val sections = mutableListOf<HomePageList>()
 
@@ -137,8 +128,6 @@ class YoutubeProvider(
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // Aquí es donde ocurría el error en tu log.
-        // El ytParser ahora usará la configuración global del Downloader establecida en el init.
         return ytParser.videoToLoadResponse(url)
     }
 
@@ -156,7 +145,6 @@ class YoutubeProvider(
 
             val refererUrl = extractor.url
 
-            // Usamos directamente las listas del extractor ya cargado
             extractor.videoStreams?.filterNotNull()?.forEach { stream ->
                 val streamUrl = stream.url ?: return@forEach
                 val resolutionName = stream.resolution ?: return@forEach
