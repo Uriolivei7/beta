@@ -24,14 +24,12 @@ jobs:
         with:
           path: "src"
 
-      - name: Checkout or Create Builds Branch
+      - name: Checkout Builds Branch
         uses: actions/checkout@v4
         with:
           ref: "builds"
           path: "builds"
-
-      - name: Clean old builds
-        run: rm -f $GITHUB_WORKSPACE/builds/*.cs3
+        continue-on-error: true
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -46,10 +44,13 @@ jobs:
       - name: Build Plugins
         run: |
           cd $GITHUB_WORKSPACE/src
-          chmod +x gradlew # Se agregó para dar permisos de ejecución
-          ./gradlew make makePluginsJson
+          chmod +x gradlew
+          ./gradlew make
+          
+          rm -f $GITHUB_WORKSPACE/builds/*.cs3
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 files found"
-          cp build/plugins.json $GITHUB_WORKSPACE/builds/
+          
+          cp $GITHUB_WORKSPACE/src/plugins.json $GITHUB_WORKSPACE/builds/ || echo "No se encontró tu plugins.json personalizado"
 
       - name: Commit and Push builds
         run: |
@@ -58,4 +59,4 @@ jobs:
           git config --local user.name "GitHub Actions"
           git add .
           git commit -m "Build $GITHUB_SHA" || true 
-          git push --set-upstream origin builds
+          git push -f origin builds
