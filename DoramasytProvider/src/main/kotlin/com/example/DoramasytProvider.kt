@@ -147,14 +147,29 @@ class DoramasytProvider : MainAPI() {
             cookies = latestCookie,
             data = mapOf("_token" to latestToken)).parsed<CapList>()
 
-        val epList = capJson.eps.map { ep ->
-            var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
+        val epList = if (!capJson.caps.isNullOrEmpty()) {
+            capJson.caps.map { cap ->
+                var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${cap.episodio}"
 
-            if (epUrl.contains("twinkling-watermelon")) {
-                epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
+                if (epUrl.contains("twinkling-watermelon")) {
+                    epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
+                }
+
+                newEpisode(epUrl) {
+                    this.episode = cap.episodio
+                    this.posterUrl = cap.thumb
+                }
             }
+        } else {
+            capJson.eps?.map { ep ->
+                var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
 
-            newEpisode(epUrl) { this.episode = ep.num }
+                if (epUrl.contains("twinkling-watermelon")) {
+                    epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
+                }
+
+                newEpisode(epUrl) { this.episode = ep.num }
+            } ?: emptyList()
         }
 
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
@@ -240,6 +255,17 @@ class DoramasytProvider : MainAPI() {
         }
     }
 
-    data class CapList(@JsonProperty("eps") val eps: List<Ep>)
-    data class Ep(val num: Int?)
+    data class CapList(
+        @JsonProperty("eps") val eps: List<EpisodeJson>? = null,
+        @JsonProperty("caps") val caps: List<CapDetail>? = null
+    )
+
+    data class EpisodeJson(
+        @JsonProperty("num") val num: Int
+    )
+
+    data class CapDetail(
+        @JsonProperty("episodio") val episodio: Int,
+        @JsonProperty("thumb") val thumb: String?
+    )
 }
