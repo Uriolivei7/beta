@@ -164,21 +164,35 @@ class AnimeonsenProvider : MainAPI() {
     ): Boolean {
         val cleanPath = if (data.contains("animeonsen.xyz/")) data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
+
         return try {
             val response = app.get(
                 "$apiUrl/content/$cleanPath",
-                headers = mapOf("Authorization" to "Bearer $token", "Referer" to mainUrl, "User-Agent" to userAgent)
+                headers = mapOf(
+                    "Authorization" to "Bearer $token",
+                    "Referer" to mainUrl,
+                    "User-Agent" to userAgent
+                )
             )
             val res = AppUtils.parseJson<VideoDataDto>(response.text)
             val videoUrl = res.uri.stream
+
             if (videoUrl.isNotEmpty()) {
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
-                    val langName = res.metadata.subtitles[langPrefix] ?: langPrefix
-                    subtitleCallback(newSubtitleFile(langName, subUrl))
+                    val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
+                    subtitleCallback(newSubtitleFile(langName, "$subUrl?format=ass"))
                 }
-                callback(newExtractorLink(this.name, "AnimeOnsen", videoUrl) {
+
+                val isDash = videoUrl.contains(".mpd")
+
+                callback(newExtractorLink(
+                    source = this.name,
+                    name = this.name,
+                    url = videoUrl,
+                    type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
+                ) {
                     this.referer = mainUrl
-                    this.quality = Qualities.P720.value
+                    this.quality = Qualities.P1080.value
                 })
                 true
             } else false
@@ -186,6 +200,7 @@ class AnimeonsenProvider : MainAPI() {
             false
         }
     }
+
     @Serializable
     data class SearchResponseDto(
         val result: List<AnimeListItem>? = null
@@ -213,16 +228,24 @@ class AnimeonsenProvider : MainAPI() {
     data class EpisodeMetadata(
         val title: String? = null
     )
+
     @Serializable
     data class VideoDataDto(
         val metadata: MetaDataDto,
         val uri: StreamDataDto
     )
+
     @Serializable
     data class MetaDataDto(
+        val subtitles: Map<String, String>? = null,
+        val episode: List<@Contextual Any>? = null
+    )
+
+    @Serializable
+    data class StreamDataDto(
+        val stream: String,
         val subtitles: Map<String, String>
     )
-    @Serializable data class StreamDataDto(val stream: String, val subtitles: Map<String, String>)
 
     @Serializable data class AnimeDetailsDto(
         val content_id: String,
