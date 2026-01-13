@@ -24,13 +24,9 @@ class AnimeonsenProvider : MainAPI() {
         "Acción" to "action",
         "Aventura" to "adventure",
         "Comedia" to "comedy",
-        "Drama" to "drama",
-        "Escolar" to "school",
-        "Ciencia Ficción" to "sci-fi",
         "Shounen" to "shounen",
         "Recuentos de la vida" to "slice-of-life",
         "Super Poderes" to "super-power",
-        "Supernatural" to "supernatural",
     )
 
     private suspend fun getAuthToken(): String? {
