@@ -218,7 +218,10 @@ class AnimeonsenProvider : MainAPI() {
         val metadata: MetaDataDto,
         val uri: StreamDataDto
     )
-    @Serializable data class MetaDataDto(val subtitles: Map<String, String>)
+    @Serializable
+    data class MetaDataDto(
+        val subtitles: Map<String, String>
+    )
     @Serializable data class StreamDataDto(val stream: String, val subtitles: Map<String, String>)
 
     @Serializable data class AnimeDetailsDto(
