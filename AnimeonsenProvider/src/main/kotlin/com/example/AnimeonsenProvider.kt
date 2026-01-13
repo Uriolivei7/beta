@@ -180,7 +180,10 @@ class AnimeonsenProvider : MainAPI() {
             if (videoUrl.isNotEmpty()) {
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
-                    subtitleCallback(newSubtitleFile(langName, "$subUrl?format=ass"))
+
+                    val finalSubUrl = "$subUrl?format=ass&token=$token#.ass"
+
+                    subtitleCallback(newSubtitleFile(langName, finalSubUrl))
                 }
 
                 val isDash = videoUrl.contains(".mpd")
@@ -192,7 +195,7 @@ class AnimeonsenProvider : MainAPI() {
                     type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = mainUrl
-                    this.quality = Qualities.P1080.value
+                    this.quality = Qualities.P720.value
                 })
                 true
             } else false
