@@ -128,11 +128,12 @@ class AnimeonsenProvider : MainAPI() {
         val epRes = AppUtils.parseJson<Map<String, EpisodeDto>>(epResponse.text)
 
         val episodesList = epRes.map { (epKey, item) ->
-            val episodeName = item.metadata?.title ?: item.name ?: item.title
+            val episodeName = item.contentTitle_episode_en ?: item.contentTitle_episode_jp
+            val epNum = epKey.toIntOrNull()
 
             newEpisode("$contentId/video/$epKey") {
-                this.name = if (!episodeName.isNullOrBlank()) episodeName else "Episodio $epKey"
-                this.episode = epKey.toIntOrNull()
+                this.name = episodeName ?: "Episode $epKey"
+                this.episode = epNum
             }
         }.sortedBy { it.episode }
 
@@ -204,9 +205,8 @@ class AnimeonsenProvider : MainAPI() {
     )
     @Serializable
     data class EpisodeDto(
-        val name: String? = null,
-        val title: String? = null,
-        val metadata: EpisodeMetadata? = null
+        val contentTitle_episode_en: String? = null,
+        val contentTitle_episode_jp: String? = null
     )
 
     @Serializable
