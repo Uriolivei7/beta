@@ -185,7 +185,10 @@ class AnimeonsenProvider : MainAPI() {
             false
         }
     }
-    @Serializable data class SearchResponseDto(val result: List<AnimeListItem>? = null)
+    @Serializable
+    data class SearchResponseDto(
+        val result: List<AnimeListItem>? = null
+    )
 
     @Serializable
     data class AnimeListResponse(

@@ -58,4 +58,4 @@ jobs:
           git config --local user.name "GitHub Actions"
           git add .
           git commit -m "Build $GITHUB_SHA" || true 
-          git push --set-upstream origin builds
+          git push -f origin builds
