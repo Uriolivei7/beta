@@ -7,19 +7,10 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import java.util.*
 import kotlin.collections.ArrayList
 import android.util.Log
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.*
 
 class DoramasytProvider : MainAPI() {
     companion object {
-        fun getType(t: String): TvType {
-            return if (t.contains("OVA") || t.contains("Especial")) TvType.OVA
-            else if (t.contains("Pelicula")) TvType.Movie
-            else TvType.TvSeries
-        }
         fun getDubStatus(title: String): DubStatus {
             return if (title.contains("Latino") || title.contains("Castellano"))
                 DubStatus.Dubbed
@@ -62,15 +53,12 @@ class DoramasytProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = ArrayList<HomePageList>()
-
         try {
             val response = app.get(mainUrl, timeout = 120)
             val latestChapters = response.document.select("h2:contains(últimos capítulos) + ul li.col article").mapNotNull { element ->
                 val title = element.selectFirst("h3")?.text()?.trim() ?: return@mapNotNull null
-
                 val imgElement = element.selectFirst("img")
                 val posterRaw = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") }
-
                 val url = element.selectFirst("a")?.attr("href")
                     ?.replace("ver/", "dorama/")
                     ?.replace(Regex("-episodio-\\d+"), "-sub-espanol") ?: return@mapNotNull null
@@ -80,48 +68,13 @@ class DoramasytProvider : MainAPI() {
                     addDubStatus(getDubStatus(title))
                 }
             }
-            if (latestChapters.isNotEmpty()) {
-                items.add(HomePageList("Últimos capítulos", latestChapters, true))
-            }
-        } catch (e: Exception) {
-            Log.e("Doramasyt", "Error en Últimos Capítulos: ${e.message}")
-        }
-
-        val urls = listOf(
-            Pair("$mainUrl/emision", "En emisión"),
-            Pair("$mainUrl/doramas", "Doramas"),
-            Pair("$mainUrl/doramas?categoria=pelicula", "Películas")
-        )
-
-        coroutineScope {
-            urls.map { (url, name) ->
-                async {
-                    try {
-                        val response = app.get(url)
-                        val homeList = response.document.select("li.col").mapNotNull { element ->
-                            val title = element.selectFirst("h3")?.text()?.trim() ?: return@mapNotNull null
-                            val imgElement = element.selectFirst("img")
-                            val posterRaw = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") }
-
-                            newAnimeSearchResponse(title, fixUrl(element.selectFirst("a")!!.attr("href"))) {
-                                this.posterUrl = cleanPoster(posterRaw)
-                            }
-                        }
-                        if (homeList.isNotEmpty()) {
-                            items.add(HomePageList(name, homeList, true))
-                        }
-                    } catch (e: Exception) {
-                        Log.e("Doramasyt", "Error en sección $name: ${e.message}")
-                    }
-                }
-            }.awaitAll()
-        }
+            if (latestChapters.isNotEmpty()) items.add(HomePageList("Últimos capítulos", latestChapters, true))
+        } catch (e: Exception) { Log.e("Doramasyt", "Error en Home: ${e.message}") }
 
         return newHomePageResponse(items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d("Doramasyt", "Buscando: $query")
         return app.get("$mainUrl/buscar?q=$query").document.select("li.col").map {
             val title = it.selectFirst("h3")!!.text()
             val posterRaw = it.selectFirst("img")?.attr("data-src")
@@ -140,7 +93,7 @@ class DoramasytProvider : MainAPI() {
         val posterRaw = doc.selectFirst("img.rounded-3")?.attr("data-src")
         val backRaw = doc.selectFirst("img.w-100")?.attr("data-src")
 
-        val caplistUrl = doc.selectFirst(".caplist")?.attr("data-ajax") ?: throw ErrorLoadingException("No se encontró lista de episodios")
+        val caplistUrl = doc.selectFirst(".caplist")?.attr("data-ajax") ?: throw ErrorLoadingException("No se encontró lista")
 
         val capJson = app.post(caplistUrl,
             headers = mapOf("Referer" to url, "X-Requested-With" to "XMLHttpRequest"),
@@ -150,24 +103,16 @@ class DoramasytProvider : MainAPI() {
         val epList = if (!capJson.caps.isNullOrEmpty()) {
             capJson.caps.map { cap ->
                 var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${cap.episodio}"
-
-                if (epUrl.contains("twinkling-watermelon")) {
-                    epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
-                }
+                if (epUrl.contains("twinkling-watermelon")) epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
 
                 newEpisode(epUrl) {
                     this.episode = cap.episodio
-                    this.posterUrl = cap.thumb
+                    this.posterUrl = cleanPoster(cap.thumb)
                 }
             }
         } else {
             capJson.eps?.map { ep ->
                 var epUrl = "${url.replace("-sub-espanol","").replace("/dorama/","/ver/")}-episodio-${ep.num}"
-
-                if (epUrl.contains("twinkling-watermelon")) {
-                    epUrl = epUrl.replace("twinkling-watermelon", "winkling-watermelon")
-                }
-
                 newEpisode(epUrl) { this.episode = ep.num }
             } ?: emptyList()
         }
@@ -176,7 +121,6 @@ class DoramasytProvider : MainAPI() {
             this.posterUrl = cleanPoster(posterRaw)
             this.backgroundPosterUrl = cleanPoster(backRaw)
             this.plot = doc.selectFirst("div.mb-3")?.text()?.replace("Ver menos", "")
-
             this.episodes = mutableMapOf(DubStatus.Subbed to epList)
         }
     }
@@ -187,72 +131,29 @@ class DoramasytProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("Doramasyt", "Solicitando links para: $data")
         try {
-            val session = app.get(mainUrl)
-            val cookies = session.cookies
-
-            val response = app.get(data,
-                cookies = cookies,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer" to "$mainUrl/",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-                )
-            )
-
-            if (response.document.select("h1").text().isNullOrEmpty()) {
-                Log.e("Doramasyt", "Redirección detectada. No estamos en la página del episodio.")
-            }
-
-            val buttons = response.document.select("button[data-player], li[data-player], .play-video")
-            Log.d("Doramasyt", "Botones encontrados: ${buttons.size}")
-
+            val response = app.get(data)
+            val buttons = response.document.select("button[data-player], li[data-player]")
             buttons.forEach { button ->
                 val encoded = button.attr("data-player")
                 if (encoded.isNotBlank()) {
                     val iframeUrl = "$mainUrl/reproductor?video=$encoded"
-
-                    val iframeRes = app.get(iframeUrl,
-                        cookies = cookies,
-                        headers = mapOf(
-                            "Referer" to data,
-                            "User-Agent" to USER_AGENT,
-                            "X-Requested-With" to "XMLHttpRequest"
-                        )
-                    )
-
+                    val iframeRes = app.get(iframeUrl, headers = mapOf("Referer" to data))
                     val finalUrl = iframeRes.document.selectFirst("iframe")?.attr("src")
                     if (!finalUrl.isNullOrEmpty()) {
-                        Log.d("Doramasyt", "Link final: $finalUrl")
                         customLoadExtractor(fixUrl(finalUrl), iframeUrl, subtitleCallback, callback)
                     }
                 }
             }
             return true
-        } catch (e: Exception) {
-            Log.e("Doramasyt", "Error en loadLinks: ${e.message}")
-            return false
-        }
+        } catch (e: Exception) { return false }
     }
 
-    private suspend fun customLoadExtractor(
-        url: String,
-        ref: String?,
-        sub: (SubtitleFile) -> Unit,
-        cb: (ExtractorLink) -> Unit
-    ) {
+    private suspend fun customLoadExtractor(url: String, ref: String?, sub: (SubtitleFile) -> Unit, cb: (ExtractorLink) -> Unit) {
         val fixedUrl = url.replace("hglink.to", "streamwish.to")
             .replace("swdyu.com", "streamwish.to")
             .replace("mivalyo.com", "vidhidepro.com")
-            .replace("filemoon.link", "filemoon.sx")
-
-        Log.d("Doramasyt", "Llamando extractor para: $fixedUrl")
-        try {
-            loadExtractor(fixedUrl, ref, sub, cb)
-        } catch (e: Exception) {
-            Log.e("Doramasyt", "Extractor falló para $fixedUrl: ${e.message}")
-        }
+        loadExtractor(fixedUrl, ref, sub, cb)
     }
 
     data class CapList(
@@ -260,9 +161,7 @@ class DoramasytProvider : MainAPI() {
         @JsonProperty("caps") val caps: List<CapDetail>? = null
     )
 
-    data class EpisodeJson(
-        @JsonProperty("num") val num: Int
-    )
+    data class EpisodeJson(@JsonProperty("num") val num: Int)
 
     data class CapDetail(
         @JsonProperty("episodio") val episodio: Int,
