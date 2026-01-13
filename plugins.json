@@ -232,10 +232,7 @@
     "internalName": "AnimeonsenProvider",
     "authors": ["Ranita"],
     "description": "Plugin para Animes Subtitulados",
-    "tvTypes": [
-      "Anime",
-      "OVA"
-    ],
+    "tvTypes": ["Anime", "OVA"],
     "iconUrl": "https://www.animeonsen.xyz/favicon.ico",
     "language": "en",
     "fileSize": 24000
