@@ -22,22 +22,15 @@ class AnimeonsenProvider : MainAPI() {
 
     private val homeGenres = listOf(
         "Acción" to "action",
-        "Reparto Adulto" to "adult-cast",
         "Aventura" to "adventure",
         "Comedia" to "comedy",
         "Drama" to "drama",
-        "Fantasía" to "fantasy",
-        "Gore" to "gore",
-        "Isekai" to "isekai",
-        "Misterio" to "mystery",
         "Escolar" to "school",
         "Ciencia Ficción" to "sci-fi",
         "Shounen" to "shounen",
         "Recuentos de la vida" to "slice-of-life",
         "Super Poderes" to "super-power",
         "Supernatural" to "supernatural",
-        "Romance" to "romance",
-        "Suspenso" to "suspense",
     )
 
     private suspend fun getAuthToken(): String? {
@@ -133,10 +126,13 @@ class AnimeonsenProvider : MainAPI() {
 
         val epResponse = app.get("$apiUrl/content/$contentId/episodes", headers = mapOf("Authorization" to "Bearer $token"))
         val epRes = AppUtils.parseJson<Map<String, EpisodeDto>>(epResponse.text)
-        val episodesList = epRes.map { (epNum, item) ->
-            newEpisode("$contentId/video/$epNum") {
-                this.name = item.name ?: "Episode $epNum"
-                this.episode = epNum.toIntOrNull()
+
+        val episodesList = epRes.map { (epKey, item) ->
+            val episodeName = item.metadata?.title ?: item.name ?: item.title
+
+            newEpisode("$contentId/video/$epKey") {
+                this.name = if (!episodeName.isNullOrBlank()) episodeName else "Episodio $epKey"
+                this.episode = epKey.toIntOrNull()
             }
         }.sortedBy { it.episode }
 
@@ -203,8 +199,16 @@ class AnimeonsenProvider : MainAPI() {
         val content_title: String? = null,
         val content_title_en: String? = null
     )
-    @Serializable data class EpisodeDto(
-        val name: String? = null
+    @Serializable
+    data class EpisodeDto(
+        val name: String? = null,
+        val title: String? = null,
+        val metadata: EpisodeMetadata? = null
+    )
+
+    @Serializable
+    data class EpisodeMetadata(
+        val title: String? = null
     )
     @Serializable data class VideoDataDto(val metadata: MetaDataDto, val uri: StreamDataDto)
     @Serializable data class MetaDataDto(val subtitles: Map<String, String>)
