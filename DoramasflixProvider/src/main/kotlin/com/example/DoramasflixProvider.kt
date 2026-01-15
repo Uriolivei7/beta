@@ -66,10 +66,7 @@ class DoramasflixProvider:MainAPI() {
         @JsonProperty("languages"        ) var languages      : ArrayList<String>? = arrayListOf(),
         @JsonProperty("poster_path"      ) var posterPath     : String?           = null,
         @JsonProperty("backdrop_path"    ) var backdropPath   : String?           = null,
-        @JsonProperty("first_air_date"   ) var firstAirDate   : String?           = null,
-        @JsonProperty("episode_run_time" ) var episodeRunTime : ArrayList<Int>?    = arrayListOf(),
         @JsonProperty("isTVShow"         ) var isTVShow       : Boolean?          = null,
-        @JsonProperty("premiere"         ) var premiere       : Boolean?          = null,
         @JsonProperty("poster"           ) var poster         : String?           = null,
         @JsonProperty("trailer"          ) var trailer        : String?           = null,
         @JsonProperty("videos"           ) var videos         : ArrayList<String>? = arrayListOf(),
@@ -88,11 +85,14 @@ class DoramasflixProvider:MainAPI() {
         @JsonProperty("views") var views: String? = null,
         @JsonProperty("quality") var quality: String? = null,
         @JsonProperty("country") var country: String? = null,
-        @JsonProperty("release_date") var releaseDate: String? = null,
         @JsonProperty("content_rating") var contentRating: String? = null,
-        @JsonProperty("runtime") var runtime: Int? = null,
         @JsonProperty("rating") var rating: Double? = null,
         @JsonProperty("status") var status: String? = null,
+        @JsonProperty("premiere") var premiere: Boolean? = null,
+        @JsonProperty("first_air_date") var firstAirDate: String? = null,
+        @JsonProperty("release_date") var releaseDate: String? = null,
+        @JsonProperty("runtime") var runtime: Int? = null,
+        @JsonProperty("episode_run_time") var episodeRunTime: ArrayList<Int>? = arrayListOf(),
     )
 
 
@@ -217,9 +217,9 @@ class DoramasflixProvider:MainAPI() {
         val isMovie = tvType == TvType.Movie
         val id = parse.id
 
-        // Query con campos adicionales: runtime, release_date y status
         val detailMovieBody = """{"operationName":"detailMovieExtra","variables":{"slug":"$sluginfo"},"query":"query detailMovieExtra(${"$"}slug: String!) { detailMovie(filter: {slug: ${"$"}slug}) { name name_es overview languages popularity poster_path poster backdrop_path backdrop links_online runtime release_date genres { name } labels { name } } }"}"""
-        val detailDoramaRequestbody = """{"operationName":"detailDorama","variables":{"slug":"$sluginfo"},"query":"query detailDorama(${"$"}slug: String!) { detailDorama(filter: {slug: ${"$"}slug}) { _id name slug names name_es overview languages poster_path backdrop_path first_air_date episode_run_time status isTVShow poster trailer backdrop genres { name } labels { name } } }"}"""
+
+        val detailDoramaRequestbody = """{"operationName":"detailDorama","variables":{"slug":"$sluginfo"},"query":"query detailDorama(${"$"}slug: String!) { detailDorama(filter: {slug: ${"$"}slug}) { _id name slug names name_es overview languages poster_path backdrop_path first_air_date episode_run_time status premiere isTVShow poster trailer backdrop genres { name } labels { name } } }"}"""
 
         val metadataRequestBody = if (!isMovie) detailDoramaRequestbody.toRequestBody(mediaType) else detailMovieBody.toRequestBody(mediaType)
         val metadatarequest = app.post(doraflixapi, requestBody = metadataRequestBody).parsed<MainDoramas>()
@@ -228,24 +228,26 @@ class DoramasflixProvider:MainAPI() {
         val title = metaInfo?.name ?: ""
         val plot = metaInfo?.overview
 
-        // Año
         val dateString = metaInfo?.firstAirDate ?: metaInfo?.releaseDate
         val releaseYear = dateString?.split("-")?.firstOrNull()?.toIntOrNull()
-
-        // Duración (Corregido el error de Unresolved Reference)
         val duration = if (isMovie) metaInfo?.runtime else metaInfo?.episodeRunTime?.firstOrNull()
 
-        // Estado (En Emisión / Finalizado)
-        val status = when (metaInfo?.status?.lowercase()) {
-            "returning series", "en emisión", "ongoing" -> ShowStatus.Ongoing
-            "ended", "finalizado", "canceled" -> ShowStatus.Completed
+        val status = when {
+            metaInfo?.status?.lowercase()?.contains("emisión") == true ||
+                    metaInfo?.status?.lowercase()?.contains("ongoing") == true -> ShowStatus.Ongoing
+            metaInfo?.premiere == true -> ShowStatus.Ongoing
+            metaInfo?.firstAirDate != null -> ShowStatus.Completed
             else -> null
         }
 
-        // Tags
         val tags = ArrayList<String>()
         metaInfo?.genres?.forEach { it.name?.let { name -> tags.add(name) } }
         metaInfo?.labels?.forEach { it.name?.let { name -> tags.add(name) } }
+
+        if (!isMovie) {
+            if (status == ShowStatus.Ongoing) tags.add("En Emisión")
+            else if (status == ShowStatus.Completed) tags.add("Finalizado")
+        }
 
         val poster = getImageUrl(metaInfo?.poster?.takeIf { it.isNotEmpty() } ?: metaInfo?.posterPath)
         val bgposter = getImageUrl(metaInfo?.backdrop?.takeIf { it.isNotEmpty() } ?: metaInfo?.backdropPath)
@@ -290,7 +292,7 @@ class DoramasflixProvider:MainAPI() {
                 this.tags = tags.distinct()
                 this.year = releaseYear
                 this.duration = duration
-                this.showStatus = status // <--- Aquí se asigna el estado (En Emisión/Finalizado)
+                this.showStatus = status
             }
         }
     }
