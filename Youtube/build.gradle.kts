@@ -31,19 +31,17 @@ android {
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-        }
+    kotlinOptions {
+        jvmTarget = "1.8"
     }
 }
 
 dependencies {
     implementation("com.google.android.material:material:1.13.0")
-    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.25.0")
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.24.8")
     //noinspection GradleDependency
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 }

@@ -29,7 +29,6 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
-import java.time.OffsetDateTime
 
 class YouTubeParser(override var name: String) : MainAPI() {
 
@@ -343,22 +342,9 @@ class YouTubeParser(override var name: String) : MainAPI() {
                 this.name = video.name
                 this.posterUrl = video.thumbnails.last().url
                 this.runTime = (video.duration / 60).toInt()
-
-                // Lógica específica para DateWrapper en NewPipe 0.25.0
-                video.uploadDate?.let { wrapper ->
-                    try {
-                        // 1. Extraemos el OffsetDateTime del wrapper
-                        val odt = wrapper.offsetDateTime()
-                        // 2. Convertimos a milisegundos y luego a java.util.Date
-                        val millis = odt.toInstant().toEpochMilli()
-                        addDate(java.util.Date(millis))
-                    } catch (e: Exception) {
-                        Log.e("YouTubeParser", "Error parseando DateWrapper: ${e.message}")
-                    }
-                }
+                video.uploadDate?.let { addDate(Date(it.date().timeInMillis)) }
             }
         }
         return episodes
     }
-
 }
