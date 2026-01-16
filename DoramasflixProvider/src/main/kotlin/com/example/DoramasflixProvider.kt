@@ -329,64 +329,53 @@ class DoramasflixProvider:MainAPI() {
 
             links.forEach { linkInfo ->
                 var link = linkInfo.link
-                val server = linkInfo.server ?: "Servidor"
+                if (link.isNullOrEmpty()) return@forEach
 
-                val language = when (linkInfo.lang?.lowercase()) {
-                    "coreano", "sub", "español (sub)" -> "Subtitulado"
-                    "latino", "español (lat)" -> "Latino"
-                    else -> linkInfo.lang ?: ""
+                link = link.replace("https://swdyu.com", "https://streamwish.to")
+                    .replace("https://uqload.to", "https://uqload.co")
+
+                val language = when (linkInfo.lang) {
+                    "13109", "coreano", "sub" -> "Subtitulado"
+                    "38", "latino" -> "Latino"
+                    else -> "Sub"
                 }
 
-                val finalServerName = if (language.isNotEmpty()) "$server [$language]" else server
+                val rawServer = linkInfo.server ?: ""
+                val serverName = when {
+                    link.contains("dood") -> "Doodstream"
+                    link.contains("filemoon") -> "Filemoon"
+                    link.contains("ok.ru") -> "Ok.ru"
+                    link.contains("voe") -> "Voe"
+                    link.contains("uqload") -> "Uqload"
+                    link.contains("streamwish") -> "Streamwish"
+                    link.contains("fplayer") || link.contains("fkplayer") -> "FPlayer"
+                    rawServer.matches(Regex("\\d+")) -> "Server"
+                    else -> rawServer
+                }
 
-                if (!link.isNullOrEmpty()) {
-                    link = link.replace("https://swdyu.com", "https://streamwish.to")
-                        .replace("https://uqload.to", "https://uqload.co")
+                val finalServerName = "$serverName [$language]"
 
-                    val success = loadExtractor(link, data, subtitleCallback) { extractorLink ->
-                        runBlocking {
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = finalServerName,
-                                    name = finalServerName,
-                                    url = extractorLink.url,
-                                    type = extractorLink.type
-                                ) {
-                                    this.referer = extractorLink.referer
-                                    this.quality = extractorLink.quality
-                                    this.headers = extractorLink.headers
-                                    this.extractorData = extractorLink.extractorData
-                                }
-                            )
-                        }
-                    }
-
-                    if (!success) {
-                        loadManualLinks(link, finalServerName, callback)
+                val success = loadExtractor(link, data, subtitleCallback) { extractorLink ->
+                    runBlocking {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = finalServerName,
+                                name = finalServerName,
+                                url = extractorLink.url,
+                                type = extractorLink.type
+                            ) {
+                                this.referer = extractorLink.referer
+                                this.quality = extractorLink.quality
+                                this.headers = extractorLink.headers
+                                this.extractorData = extractorLink.extractorData
+                            }
+                        )
                     }
                 }
             }
             true
         } catch (e: Exception) {
             false
-        }
-    }
-
-    private suspend fun loadManualLinks(
-        url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        if (url.startsWith("http")) {
-            val link = newExtractorLink(
-                source = name,
-                name = name,
-                url = url,
-            ) {
-                this.quality = if (url.contains("m3u8")) Qualities.Unknown.value else Qualities.P720.value
-                this.referer = ""
-            }
-            callback.invoke(link)
         }
     }
 
