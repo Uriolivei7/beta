@@ -9,6 +9,9 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import android.util.Log
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.runBlocking
 
 class DoramasflixProvider:MainAPI() {
     companion object  {
@@ -109,7 +112,6 @@ class DoramasflixProvider:MainAPI() {
         @JsonProperty("__typename" ) var _typename : String? = null
     )
 
-
     data class DoramasInfo (
         @JsonProperty("id"   ) var id   : String? = null,
         @JsonProperty("slug" ) var slug : String? = null,
@@ -120,6 +122,13 @@ class DoramasflixProvider:MainAPI() {
     data class PaginationEpisode (
         @JsonProperty("items"      ) var items     : ArrayList<DetailDoramaandDoramaMeta> = arrayListOf(),
         @JsonProperty("__typename" ) var _typename : String?          = null
+    )
+
+    data class DoramasServer(
+        @JsonProperty("server") var server: String? = null,
+        @JsonProperty("lang") var lang: String? = null,
+        @JsonProperty("link") var link: String? = null,
+        @JsonProperty("name") var name: String? = null
     )
 
     private fun getImageUrl(link: String?): String? {
@@ -303,82 +312,82 @@ class DoramasflixProvider:MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("DoramasflixProvider", "loadLinks iniciado con data: $data")
-
         return try {
-            if (data.contains("link")) {
-                Log.d("DoramasflixProvider", "Data contiene 'link', parseando como LinksOnline")
-                val parse = parseJson<List<LinksOnline>>(data)
-                Log.d("DoramasflixProvider", "Enlaces encontrados: ${parse.size}")
-
-                parse.forEach { linkInfo ->
-                    val link = linkInfo.link
-                    val server = linkInfo.server
-                    val lang = linkInfo.lang
-                    Log.d("DoramasflixProvider", "Procesando enlace: $link (Server: $server, Lang: $lang)")
-
-                    if (!link.isNullOrEmpty()) {
-                        val success = loadExtractor(link, data, subtitleCallback, callback)
-                        Log.d("DoramasflixProvider", "loadExtractor resultado para $link: $success")
-                    } else {
-                        Log.w("DoramasflixProvider", "Enlace vacío o nulo encontrado")
-                    }
-                }
-                true
+            val links = if (data.contains("link")) {
+                parseJson<List<LinksOnline>>(data)
             } else {
                 val episodeSlug = data.removePrefix("https://doramasflix.co/")
                     .removePrefix("http://doramasflix.co/")
                     .removePrefix(mainUrl + "/")
 
-                Log.d("DoramasflixProvider", "Slug del episodio extraído: $episodeSlug")
+                val episodeslinkRequestbody = """{"operationName":"GetEpisodeLinks","variables":{"episode_slug":"$episodeSlug"},"query":"query GetEpisodeLinks(${"$"}episode_slug: String!) { detailEpisode(filter: {slug: ${"$"}episode_slug, type_serie: \"dorama\"}) { links_online } }"}"""
+                val responseText = app.post(doraflixapi, requestBody = episodeslinkRequestbody.toRequestBody(mediaType)).text
+                parseJson<MainDoramas>(responseText).data?.detailEpisode?.linksOnline
+            }
 
-                val episodeslinkRequestbody = "{\"operationName\":\"GetEpisodeLinks\",\"variables\":{\"episode_slug\":\"$episodeSlug\"},\"query\":\"query GetEpisodeLinks(\$episode_slug: String!) {\\n  detailEpisode(filter: {slug: \$episode_slug, type_serie: \\\"dorama\\\"}) {\\n    links_online\\n   }\\n}\\n\"}"
+            if (links.isNullOrEmpty()) return false
 
-                Log.d("DoramasflixProvider", "Request body: ${episodeslinkRequestbody.take(200)}")
+            links.forEach { linkInfo ->
+                var link = linkInfo.link
+                val server = linkInfo.server ?: "Servidor"
 
-                val request = app.post(doraflixapi, requestBody = episodeslinkRequestbody.toRequestBody(mediaType))
-                val responseText = request.text
-                Log.d("DoramasflixProvider", "Respuesta API: $responseText")
-
-                val parsedResponse = parseJson<MainDoramas>(responseText)
-                val links = parsedResponse.data?.detailEpisode?.linksOnline
-
-                if (links.isNullOrEmpty()) {
-                    Log.e("DoramasflixProvider", "No se encontraron enlaces para el episodio: $episodeSlug")
-                    return false
+                val language = when (linkInfo.lang?.lowercase()) {
+                    "coreano", "sub", "español (sub)" -> "Subtitulado"
+                    "latino", "español (lat)" -> "Latino"
+                    else -> linkInfo.lang ?: ""
                 }
 
-                Log.d("DoramasflixProvider", "Enlaces encontrados: ${links.size}")
+                val finalServerName = if (language.isNotEmpty()) "$server [$language]" else server
 
-                links.forEach { linkInfo ->
-                    var link = linkInfo.link
-                    val server = linkInfo.server
-                    val lang = linkInfo.lang
+                if (!link.isNullOrEmpty()) {
+                    link = link.replace("https://swdyu.com", "https://streamwish.to")
+                        .replace("https://uqload.to", "https://uqload.co")
 
-                    Log.d("DoramasflixProvider", "Enlace original: $link (Server: $server, Lang: $lang)")
-
-                    link = link?.replace("https://swdyu.com", "https://streamwish.to")
-                        ?.replace("https://uqload.to", "https://uqload.co")
-
-                    Log.d("DoramasflixProvider", "Enlace modificado: $link")
-
-                    if (!link.isNullOrEmpty()) {
-                        val success = loadExtractor(link, data, subtitleCallback, callback)
-                        Log.d("DoramasflixProvider", "loadExtractor resultado para $link: $success")
-
-                        if (!success) {
-                            Log.w("DoramasflixProvider", "Falló la extracción para: $link")
+                    val success = loadExtractor(link, data, subtitleCallback) { extractorLink ->
+                        runBlocking {
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = finalServerName,
+                                    name = finalServerName,
+                                    url = extractorLink.url,
+                                    type = extractorLink.type
+                                ) {
+                                    this.referer = extractorLink.referer
+                                    this.quality = extractorLink.quality
+                                    this.headers = extractorLink.headers
+                                    this.extractorData = extractorLink.extractorData
+                                }
+                            )
                         }
-                    } else {
-                        Log.w("DoramasflixProvider", "Enlace vacío después de modificaciones")
+                    }
+
+                    if (!success) {
+                        loadManualLinks(link, finalServerName, callback)
                     }
                 }
-                true
             }
+            true
         } catch (e: Exception) {
-            Log.e("DoramasflixProvider", "Error en loadLinks: ${e.message}", e)
-            e.printStackTrace()
             false
         }
     }
+
+    private suspend fun loadManualLinks(
+        url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        if (url.startsWith("http")) {
+            val link = newExtractorLink(
+                source = name,
+                name = name,
+                url = url,
+            ) {
+                this.quality = if (url.contains("m3u8")) Qualities.Unknown.value else Qualities.P720.value
+                this.referer = ""
+            }
+            callback.invoke(link)
+        }
+    }
+
 }
