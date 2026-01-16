@@ -1,7 +1,6 @@
 package it.dogior.example
 
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -12,7 +11,9 @@ import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeStreamLinkHandlerFactory
+import org.schabi.newpipe.extractor.stream.VideoStream
 import android.util.Log
+import com.lagradost.cloudstream3.newSubtitleFile
 
 open class YouTubeExtractor() : ExtractorApi() {
     override val mainUrl = "https://www.youtube.com"
@@ -20,7 +21,7 @@ open class YouTubeExtractor() : ExtractorApi() {
     override val name = "YouTube"
 
     companion object {
-        const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     }
 
     private fun mapResolutionToQuality(resolution: String): Qualities {
@@ -37,7 +38,6 @@ open class YouTubeExtractor() : ExtractorApi() {
         }
     }
 
-    @Suppress("DEPRECATION")
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -46,13 +46,13 @@ open class YouTubeExtractor() : ExtractorApi() {
     ) {
         try {
             val downloader = NewPipe.getDownloader()
-            val uaField = downloader.javaClass.declaredFields.find { it.name == "userAgent" }
-            uaField?.let {
+            val fields = downloader.javaClass.declaredFields
+            fields.find { it.name == "userAgent" }?.let {
                 it.isAccessible = true
                 it.set(downloader, PC_USER_AGENT)
             }
         } catch (e: Exception) {
-            Log.e("YT_EXTRACTOR", "No se pudo setear User Agent: ${e.message}")
+            Log.e("YT_EXTRACTOR", "Error UserAgent: ${e.message}")
         }
 
         val link = YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(
@@ -64,38 +64,50 @@ open class YouTubeExtractor() : ExtractorApi() {
         try {
             extractor.fetchPage()
         } catch (e: Exception) {
-            Log.e("YT_EXTRACTOR", "Error en fetchPage (Playability Status): ${e.message}")
+            Log.e("YT_EXTRACTOR", "Error fetchPage: ${e.message}")
             return
         }
 
-        val videoStreams = extractor.videoStreams?.filterNotNull() ?: emptyList()
-        val audioStreams = extractor.audioStreams?.filterNotNull() ?: emptyList()
+        val audioStream = extractor.audioStreams
+            ?.filter { it.format?.name?.contains("m4a") == true || it.format?.name?.contains("mp4") == true }
+            ?.maxByOrNull { it.averageBitrate }
 
-        videoStreams.forEach { stream ->
+        val videoStreams = extractor.videoStreams ?: emptyList()
+        val videoOnlyStreams = extractor.videoOnlyStreams ?: emptyList()
+        val allVideoStreams = videoStreams + videoOnlyStreams
+
+        allVideoStreams.filterNotNull().forEach { stream ->
             val quality = mapResolutionToQuality(stream.resolution ?: "")
             if (quality != Qualities.Unknown) {
+
+                val isVideoOnly = stream.isVideoOnly
+
                 callback.invoke(
                     newExtractorLink(
-                        this.name,
-                        this.name,
-                        stream.url ?: return@forEach,
-                        type = ExtractorLinkType.M3U8
+                        source = this.name,
+                        name = "${this.name} ${stream.resolution ?: ""}",
+                        url = stream.url ?: return@forEach,
+                        type = ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = url
                         this.quality = quality.value
+                        this.referer = url
+
+                        if (isVideoOnly) {
+                            this.extractorData = audioStream?.url
+                        }
                     }
                 )
             }
         }
 
-        val subtitles = try {
-            extractor.subtitlesDefault?.filterNotNull() ?: emptyList()
+        try {
+            extractor.subtitlesDefault?.filterNotNull()?.forEach { sub ->
+                subtitleCallback.invoke(
+                    newSubtitleFile(sub.languageTag ?: "en", sub.url ?: return@forEach)
+                )
+            }
         } catch (e: Exception) {
-            emptyList()
+            Log.e("YT_EXTRACTOR", "Error en subtítulos: ${e.message}")
         }
-
-        subtitles.mapNotNull {
-            SubtitleFile(it.languageTag ?: return@mapNotNull null, it.content ?: return@mapNotNull null)
-        }.forEach(subtitleCallback)
     }
 }

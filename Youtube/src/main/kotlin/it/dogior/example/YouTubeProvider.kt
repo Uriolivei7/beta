@@ -56,7 +56,7 @@ class YoutubeProvider(
             uaField?.set(downloader, PC_USER_AGENT)
 
             youtubeCookie?.let { cookie ->
-                val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" }
+                val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" || it.name == "mCookie" }
                 if (cookieField != null) {
                     cookieField.isAccessible = true
                     cookieField.set(downloader, cookie)
