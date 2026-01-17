@@ -232,22 +232,29 @@ class PlushdProvider : MainAPI() {
                         subtitleCallback = subtitleCallback,
                         callback = { link ->
                             com.lagradost.cloudstream3.utils.Coroutines.ioSafe {
-                                val finalLink = newExtractorLink(
-                                    source = link.source,
-                                    name = "${link.name} (Directo)",
-                                    url = link.url,
-                                    type = link.type
-                                ) {
-                                    this.headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                        "Referer" to fixedLink,
-                                        "Origin" to "https://${URL(fixedLink).host}",
-                                        "Accept" to "*/*",
-                                        "Connection" to "keep-alive"
-                                    )
-                                }
+                                try {
+                                    val finalLink = newExtractorLink(
+                                        source = link.source,
+                                        name = "${link.name} (Plus)",
+                                        url = link.url,
+                                        type = link.type
+                                    ) {
+                                        // Solo asignamos headers para evitar el error de 'val'
+                                        this.headers = mapOf(
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                            "Referer" to fixedLink,
+                                            "Origin" to "https://${URL(fixedLink).host}",
+                                            "Accept" to "*/*",
+                                            "Connection" to "keep-alive"
+                                        )
+                                    }
 
-                                callback.invoke(finalLink)
+                                    Log.i("PlushdProvider", "[EXTRACTOR ÉXITO] Enviando al reproductor: ${finalLink.name} -> ${finalLink.url}")
+                                    callback.invoke(finalLink)
+
+                                } catch (e: Exception) {
+                                    Log.e("PlushdProvider", "Error al crear el link final: ${e.message}")
+                                }
                             }
                         }
                     )
