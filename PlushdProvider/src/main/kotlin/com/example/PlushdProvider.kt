@@ -11,8 +11,8 @@ import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    override var mainUrl = "https://ww3.tioplus.net"
-    //override var mainUrl = "https://tioplus.app"
+    //override var mainUrl = "https://ww3.tioplus.net"
+    override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -196,7 +196,9 @@ class PlushdProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
+        val linkRegex = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""")
+
+        Log.d("PlushdProvider", "Iniciando carga de links para: $data")
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -204,56 +206,65 @@ class PlushdProvider : MainAPI() {
         )
 
         val doc = app.get(data, headers = headers).document
+        val servers = doc.select("div ul.subselect li")
 
-        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
-            subtitleCallback.invoke(file)
-        }
+        Log.d("PlushdProvider", "Servidores encontrados en HTML: ${servers.size}")
 
-        doc.select("div ul.subselect li").toList().forEach { serverLi ->
+        servers.forEachIndexed { index, serverLi ->
             try {
                 val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@forEach
+                val serverName = serverLi.text().ifEmpty { "Servidor ${index + 1}" }
 
-                val encodedOne = serverData.toByteArray()
-                val encodedTwo = base64Encode(encodedOne)
+                if (serverData.isNullOrEmpty()) {
+                    Log.w("PlushdProvider", "[$serverName] data-server está vacío, saltando...")
+                    return@forEachIndexed
+                }
+
+                val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
+
+                Log.d("PlushdProvider", "[$serverName] Solicitando player: $playerUrl")
 
                 val text = app.get(playerUrl, headers = headers).text
 
                 if (text.contains("bloqueo temporal")) {
-                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
-                    return@forEach
+                    Log.e("PlushdProvider", "[$serverName] BLOQUEO TEMPORAL detectado por la web.")
+                    return@forEachIndexed
                 }
 
-                val link = linkRegex.find(text)?.destructured?.component1()
+                val rawLink = linkRegex.find(text)?.groupValues?.get(1)
 
-                if (!link.isNullOrBlank()) {
-                    val fixedLink = fixPelisplusHostsLinks(link)
+                if (!rawLink.isNullOrBlank()) {
+                    val fixedLink = fixPelisplusHostsLinks(rawLink)
+                    Log.i("PlushdProvider", "[$serverName] Link extraído con éxito: $fixedLink")
 
-                    val extractorReferer = try {
-                        val urlObject = URL(fixedLink)
-                        urlObject.protocol + "://" + urlObject.host + "/"
-                    } catch (e: Exception) {
-                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
-                        playerUrl
-                    }
-
-                    loadExtractor(
+                    val wasLoaded = loadExtractor(
                         url = fixedLink,
-                        referer = extractorReferer,
-                        subtitleCallback = loggingSubtitleCallback,
-                        callback = callback
+                        referer = playerUrl,
+                        subtitleCallback = subtitleCallback,
+                        callback = { link ->
+                            Log.i("PlushdProvider", "[$serverName] EXTRACTOR ÉXITO: Link de video generado -> ${link.url}")
+                            callback.invoke(link)
+                        }
                     )
-                    linksFound = true
-                }
-            } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
-            }
 
-            delay(1500L)
+                    if (wasLoaded) {
+                        linksFound = true
+                        Log.d("PlushdProvider", "[$serverName] loadExtractor devolvió TRUE")
+                    } else {
+                        Log.w("PlushdProvider", "[$serverName] No hay un extractor compatible para este link o falló la extracción.")
+                    }
+                } else {
+                    Log.w("PlushdProvider", "[$serverName] No se pudo encontrar la URL dentro del script del player.")
+                }
+
+            } catch (e: Exception) {
+                Log.e("PlushdProvider", "Error procesando servidor en índice $index: ${e.message}")
+            }
+            delay(800L)
         }
 
+        Log.d("PlushdProvider", "Finalizado. ¿Se encontraron links válidos?: $linksFound")
         return linksFound
     }
 }
