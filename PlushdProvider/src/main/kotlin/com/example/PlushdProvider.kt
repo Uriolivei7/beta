@@ -39,16 +39,16 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            .replace(Regex("https://.*(vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay).*\\.(com|pro|cc|sx|plus|pre)"), "https://vidhidepro.com")
+            .replace(Regex("https://.*(vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay|vidhideplus).*\\.(com|pro|cc|sx|plus|pre)"),
+                "https://vidhidepro.com")
+            .replace("https://vudeo.co/embed-", "https://vudeo.co/")
+            .replace(".html", "")
+            .replace("https://waaw.to/f/", "https://hqq.to/watch/")
             .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"), "https://lulustream.com")
-            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"), "https://streamwish.to")
-            .replaceFirst("https://emturbovid.com", "https://turbovid.eu")
-            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
-            .replaceFirst("https://sblona.com", "https://watchsb.com")
-            .replaceFirst("https://uqload.io", "https://uqload.com")
-            .replaceFirst("https://do7go.com", "https://dood.la")
-            .replaceFirst("https://doodstream.com", "https://dood.la")
-            .replaceFirst("https://streamtape.com", "https://streamtape.cc")
+            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
+                "https://streamwish.to")
+            .replace("https://pelisplus.rpmstream.live", "https://pelisplus.upns.pro")
+            .replace("https://emturbovid.com", "https://turbovid.eu")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -202,23 +202,18 @@ class PlushdProvider : MainAPI() {
         Log.d("PlushdProvider", "Cargando página de enlaces: $data")
         val doc = app.get(data, headers = headers).document
 
-        doc.select("div ul.subselect li").toList().forEach { serverLi ->
+        doc.select("div ul.subselect li").forEach { serverLi ->
             try {
                 val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) {
-                    Log.w("PlushdProvider", "Servidor vacío o sin data-server")
-                    return@forEach
-                }
+                val serverNameText = serverLi.selectFirst("span")?.text() ?: ""
 
-                val encodedOne = serverData.toByteArray()
-                val encodedTwo = base64Encode(encodedOne)
-                val playerUrl = "$mainUrl/player/$encodedTwo"
+                if (serverData.isNullOrEmpty()) return@forEach
 
-                Log.d("PlushdProvider", "Procesando servidor en: $playerUrl")
+                val playerUrl = "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
                 val text = app.get(playerUrl, headers = headers).text
 
                 if (text.contains("bloqueo temporal")) {
-                    Log.w("PlushdProvider", "BLOQUEO TEMPORAL detectado en PlusHD")
+                    Log.w("PlushdProvider", "BLOQUEO detectado en: $serverNameText")
                     return@forEach
                 }
 
@@ -226,56 +221,49 @@ class PlushdProvider : MainAPI() {
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "Enlace extraído y corregido: $fixedLink")
+                    Log.d("PlushdProvider", "Servidor: $serverNameText -> URL: $fixedLink")
 
-                    val extractorReferer = try {
-                        val urlObject = URL(fixedLink)
-                        urlObject.protocol + "://" + urlObject.host + "/"
-                    } catch (e: Exception) {
-                        playerUrl
+                    val extractorReferer = when {
+                        fixedLink.contains("hqq.to") || fixedLink.contains("waaw.to") -> "https://hqq.to/"
+                        fixedLink.contains("upns.pro") || fixedLink.contains("strp2p.com") -> fixedLink
+                        else -> fixedLink
                     }
 
-                    loadExtractor(
-                        url = fixedLink,
-                        referer = extractorReferer,
-                        subtitleCallback = subtitleCallback,
-                        callback = { link ->
-
-                            val isVidhide = listOf("vidhide", "pixibay", "callistanise", "streamwish", "mivalyo", "awish")
-                                .any { link.url.contains(it, ignoreCase = true) || link.source.contains(it, ignoreCase = true) }
-
-                            Log.d("PlushdProvider", "Extractor encontró: ${link.name} (EsVidhide: $isVidhide)")
-
-                            if (isVidhide) {
-                                val finalLink = runBlocking {
-                                    newExtractorLink(
-                                        source = link.source,
-                                        name = link.name,
-                                        url = link.url,
-                                        type = link.type,
-                                    ) {
-                                        this.quality = link.quality
-                                        this.referer = fixedLink
-                                        this.headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                                            "Origin" to "https://tioplus.app",
-                                            "Accept" to "*/*",
-                                            "Connection" to "keep-alive"
-                                        )
-                                    }
-                                }
-                                callback.invoke(finalLink)
-                            } else {
-                                callback.invoke(link)
+                    loadExtractor(fixedLink, extractorReferer, subtitleCallback) { extLink ->
+                        val isSpecialServer = listOf("vidhide", "pixibay", "callistanise", "streamwish", "mivalyo", "awish", "earnvids")
+                            .any {
+                                extLink.url.contains(it, ignoreCase = true) ||
+                                        extLink.source.contains(it, ignoreCase = true) ||
+                                        serverNameText.contains(it, ignoreCase = true)
                             }
-                            linksFound = true
+
+                        if (isSpecialServer) {
+                            val finalLink = runBlocking {
+                                newExtractorLink(
+                                    source = extLink.source,
+                                    name = extLink.name,
+                                    url = extLink.url,
+                                    type = extLink.type
+                                ) {
+                                    this.quality = extLink.quality
+                                    this.referer = fixedLink
+                                    this.headers = mapOf(
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                                        "Origin" to "https://tioplus.app",
+                                        "Accept" to "*/*",
+                                        "Connection" to "keep-alive"
+                                    )
+                                }
+                            }
+                            callback.invoke(finalLink)
+                        } else {
+                            callback.invoke(extLink)
                         }
-                    )
-                } else {
-                    Log.w("PlushdProvider", "No se encontró URL de redirección en el player")
+                        linksFound = true
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error procesando servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error en servidor: ${e.message}")
             }
             delay(500L)
         }
