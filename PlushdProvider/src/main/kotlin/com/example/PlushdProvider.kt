@@ -39,13 +39,10 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            // --- Dominios de Streamwish ---
-            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"), "https://streamwish.to")
-
-            // --- Dominios de Vidhide (Familia Pixibay/Callistanise) ---
-            .replace(Regex("https://(mivalyo\\.com|dinisglows\\.com|dhtpre\\.com|vidhidepro\\.com|vidhidepre\\.com|vidhide\\.com|callistanise\\.com|pixibay\\.cc)"), "https://vidhidepro.com")
-
-            // --- Otros Servidores ---
+            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
+                "https://streamwish.to")
+            .replace(Regex("https://(mivalyo\\.com|dinisglows\\.com|dhtpre\\.com|vidhidepro\\.com|vidhidepre\\.com|vidhide\\.com|callistanise\\.com|pixibay\\.cc)"),
+                "https://vidhidepro.com")
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
             .replaceFirst("https://sblona.com", "https://watchsb.com")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
@@ -203,26 +200,26 @@ class PlushdProvider : MainAPI() {
             "Referer" to data
         )
 
+        Log.d("PlushdProvider", "Cargando página de enlaces: $data")
         val doc = app.get(data, headers = headers).document
-
-        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
-            subtitleCallback.invoke(file)
-        }
 
         doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
                 val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@forEach
+                if (serverData.isNullOrEmpty()) {
+                    Log.w("PlushdProvider", "Servidor vacío o sin data-server")
+                    return@forEach
+                }
 
                 val encodedOne = serverData.toByteArray()
                 val encodedTwo = base64Encode(encodedOne)
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
+                Log.d("PlushdProvider", "Procesando servidor en: $playerUrl")
                 val text = app.get(playerUrl, headers = headers).text
 
                 if (text.contains("bloqueo temporal")) {
-                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
+                    Log.w("PlushdProvider", "BLOQUEO TEMPORAL detectado en PlusHD")
                     return@forEach
                 }
 
@@ -230,29 +227,29 @@ class PlushdProvider : MainAPI() {
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
+                    Log.d("PlushdProvider", "Enlace extraído y corregido: $fixedLink")
 
                     val extractorReferer = try {
                         val urlObject = URL(fixedLink)
                         urlObject.protocol + "://" + urlObject.host + "/"
                     } catch (e: Exception) {
-                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
                         playerUrl
                     }
 
                     loadExtractor(
                         url = fixedLink,
                         referer = extractorReferer,
-                        subtitleCallback = loggingSubtitleCallback,
+                        subtitleCallback = subtitleCallback,
                         callback = { link ->
-                            // Dentro de tu loadLinks, en la parte del callback:
                             val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
                                     link.url.contains("vidhide", ignoreCase = true) ||
                                     link.url.contains("pixibay", ignoreCase = true) ||
                                     link.url.contains("callistanise", ignoreCase = true) ||
-                                    link.url.contains("streamwish", ignoreCase = true) // Streamwish también suele ser lento
+                                    link.url.contains("streamwish", ignoreCase = true)
+
+                            Log.d("PlushdProvider", "Extractor encontró: ${link.name} (EsVidhide: $isVidhide)")
 
                             if (isVidhide) {
-                                // Solo para Vidhide/Streamwish aplicamos los headers pesados
                                 val finalLink = runBlocking {
                                     newExtractorLink(
                                         source = link.source,
@@ -272,21 +269,19 @@ class PlushdProvider : MainAPI() {
                                 }
                                 callback.invoke(finalLink)
                             } else {
-                                // PARA LULUSTREAM Y OTROS: No modificamos nada.
-                                // Dejamos que el link pase exactamente como el extractor lo generó.
                                 callback.invoke(link)
                             }
+                            linksFound = true
                         }
                     )
-                    linksFound = true
+                } else {
+                    Log.w("PlushdProvider", "No se encontró URL de redirección en el player")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error procesando servidor: ${e.message}")
             }
-
-            delay(1500L)
+            delay(1000L)
         }
-
         return linksFound
     }
 }
