@@ -7,15 +7,12 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
-import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
-import com.lagradost.cloudstream3.utils.Coroutines.main
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    //override var mainUrl = "https://ww3.tioplus.net"
-    override var mainUrl = "https://tioplus.app"
+    override var mainUrl = "https://ww3.tioplus.net"
+    //override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -199,72 +196,79 @@ class PlushdProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val linkRegex = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""")
+        val tag = "PlushdProvider"
+        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data,
-            "Accept" to "*/*"
+            "Referer" to data
         )
 
-        val doc = app.get(data, headers = headers).document
-        val servers = doc.select("div ul.subselect li")
+        Log.d(tag, "Iniciando carga de enlaces para: $data")
 
-        servers.forEachIndexed { index, serverLi ->
+        val doc = app.get(data, headers = headers).document
+        val servers = doc.select("div ul.subselect li").toList()
+
+        Log.d(tag, "Servidores encontrados: ${servers.size}")
+
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("${tag}_Subs", "Subtítulo captado: ${file.url}")
+            subtitleCallback.invoke(file)
+        }
+
+        servers.forEach { serverLi ->
             try {
                 val serverData = serverLi.attr("data-server")
-                val serverName = serverLi.text()
 
-                if (serverData.isNullOrEmpty()) return@forEachIndexed
+                if (serverData.isNullOrEmpty()) {
+                    Log.w(tag, "data-server vacío, saltando...")
+                    return@forEach
+                }
 
-                val encodedTwo = base64Encode(serverData.toByteArray())
+                val encodedOne = serverData.toByteArray()
+                val encodedTwo = base64Encode(encodedOne)
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                val text = app.get(playerUrl, headers = headers).text
-                val rawLink = linkRegex.find(text)?.groupValues?.get(1)
+                Log.d(tag, "Cargando Player: $playerUrl")
 
-                if (!rawLink.isNullOrBlank()) {
-                    val fixedLink = fixPelisplusHostsLinks(rawLink)
+                val text = app.get(playerUrl, headers = headers).text
+
+                if (text.contains("bloqueo temporal")) {
+                    Log.e(tag, "¡BLOQUEO TEMPORAL DETECTADO!")
+                    return@forEach
+                }
+
+                val link = linkRegex.find(text)?.destructured?.component1()
+
+                if (!link.isNullOrBlank()) {
+                    val fixedLink = fixPelisplusHostsLinks(link)
+                    Log.i(tag, "Enlace extraído: $fixedLink")
+
+                    val extractorReferer = try {
+                        val urlObject = URL(fixedLink)
+                        "${urlObject.protocol}://${urlObject.host}/"
+                    } catch (e: Exception) {
+                        playerUrl
+                    }
 
                     loadExtractor(
                         url = fixedLink,
-                        referer = playerUrl,
-                        subtitleCallback = subtitleCallback,
-                        callback = { link ->
-                            com.lagradost.cloudstream3.utils.Coroutines.ioSafe {
-                                try {
-                                    val finalLink = newExtractorLink(
-                                        source = link.source,
-                                        name = "${link.name} (Plus)",
-                                        url = link.url,
-                                        type = link.type
-                                    ) {
-                                        // Solo asignamos headers para evitar el error de 'val'
-                                        this.headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                            "Referer" to fixedLink,
-                                            "Origin" to "https://${URL(fixedLink).host}",
-                                            "Accept" to "*/*",
-                                            "Connection" to "keep-alive"
-                                        )
-                                    }
-
-                                    Log.i("PlushdProvider", "[EXTRACTOR ÉXITO] Enviando al reproductor: ${finalLink.name} -> ${finalLink.url}")
-                                    callback.invoke(finalLink)
-
-                                } catch (e: Exception) {
-                                    Log.e("PlushdProvider", "Error al crear el link final: ${e.message}")
-                                }
-                            }
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = { extractorLink ->
+                            Log.d(tag, "Extractor detectó: ${extractorLink.name}")
+                            callback.invoke(extractorLink)
                         }
                     )
                     linksFound = true
                 }
             } catch (e: Exception) {
-                Log.e("PlusHD_Debug", "Error en servidor $index: ${e.message}")
+                Log.e(tag, "Error en servidor: ${e.message}")
             }
-            delay(1000L)
-        }
+
+            delay(1500L)
+        } 
+
         return linksFound
     }
 }
