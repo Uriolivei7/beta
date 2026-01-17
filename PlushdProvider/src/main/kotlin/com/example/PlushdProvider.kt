@@ -7,9 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
@@ -39,8 +37,13 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"), "https://streamwish.to")
-            .replace(Regex("https://(mivalyo\\.com|dinisglows\\.com|dhtpre\\.com|vidhidepro\\.com|vidhidepre\\.com|vidhide\\.com|callistanise\\.com|pixibay\\.cc)"), "https://vidhidepro.com")
+            .replaceFirst("https://hglink.to", "https://streamwish.to")
+            .replaceFirst("https://swdyu.com", "https://streamwish.to")
+            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
+            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
             .replaceFirst("https://sblona.com", "https://watchsb.com")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
@@ -238,36 +241,7 @@ class PlushdProvider : MainAPI() {
                         url = fixedLink,
                         referer = extractorReferer,
                         subtitleCallback = loggingSubtitleCallback,
-                        callback = { link ->
-                            val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
-                                    link.url.contains("vidhide", ignoreCase = true) ||
-                                    link.url.contains("pixibay", ignoreCase = true) ||
-                                    link.url.contains("callistanise", ignoreCase = true) ||
-                                    link.url.contains("streamwish", ignoreCase = true)
-
-                            if (isVidhide) {
-                                val finalLink = runBlocking {
-                                    newExtractorLink(
-                                        source = link.source,
-                                        name = link.name,
-                                        url = link.url,
-                                        type = link.type,
-                                    ) {
-                                        this.quality = link.quality
-                                        this.referer = fixedLink
-                                        this.headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                                            "Origin" to "https://tioplus.app",
-                                            "Accept" to "*/*",
-                                            "Connection" to "keep-alive"
-                                        )
-                                    }
-                                }
-                                callback.invoke(finalLink)
-                            } else {
-                                callback.invoke(link)
-                            }
-                        }
+                        callback = callback
                     )
                     linksFound = true
                 }
