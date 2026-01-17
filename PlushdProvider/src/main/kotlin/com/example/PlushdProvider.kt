@@ -254,7 +254,14 @@ class PlushdProvider : MainAPI() {
                                     this.quality = link.quality
                                     this.referer = link.referer
                                     this.headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                                        "Accept" to "*/*",
+                                        "Accept-Language" to "es-MX,es;q=0.9",
+                                        "Connection" to "keep-alive",
+                                        "Sec-Fetch-Dest" to "video",
+                                        "Sec-Fetch-Mode" to "no-cors",
+                                        "Sec-Fetch-Site" to "cross-site",
+                                        "Range" to "bytes=0-"
                                     )
                                 }
                             }
