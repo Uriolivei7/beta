@@ -39,20 +39,15 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
+            .replace("https://vidhideplus.com", "https://vidhide.com")
+            .replace("https://filemoon.to", "https://filemoon.sx")
+            .replace("https://filemoon.link", "https://filemoon.sx")
+            .replace("https://vudeo.co", "https://vudeo.net")
+            .replace("https://waaw.to", "https://netu.to")
             .replaceFirst("https://hglink.to", "https://streamwish.to")
             .replaceFirst("https://swdyu.com", "https://streamwish.to")
-            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
-            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
             .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
             .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
-            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
-            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
-            .replaceFirst("https://sblona.com", "https://watchsb.com")
-            .replaceFirst("https://lulu.st", "https://lulustream.com")
-            .replaceFirst("https://uqload.io", "https://uqload.com")
-            .replaceFirst("https://do7go.com", "https://dood.la")
-            .replaceFirst("https://doodstream.com", "https://dood.la")
-            .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -267,7 +262,7 @@ class PlushdProvider : MainAPI() {
             }
 
             delay(1500L)
-        } 
+        }
 
         return linksFound
     }
