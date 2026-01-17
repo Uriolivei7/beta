@@ -215,17 +215,14 @@ class PlushdProvider : MainAPI() {
                 if (sData.isNullOrEmpty()) continue
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
 
-                // Timeout de 25s: rápido pero seguro para Vidhide
                 val text = app.get(playerUrl, referer = data, timeout = 25).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
 
-                    // 1. Extractor oficial
                     val found = loadExtractor(fixedLink, fixedLink, subtitleCallback, callback)
 
-                    // 2. Fallback con newExtractorLink (Manual)
                     if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro"))) {
                         callback.invoke(
                             newExtractorLink(
@@ -238,7 +235,13 @@ class PlushdProvider : MainAPI() {
                                 this.referer = fixedLink
                                 this.headers = mapOf(
                                     "User-Agent" to stableUserAgent,
-                                    "Connection" to "keep-alive"
+                                    "Accept" to "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
+                                    "Accept-Language" to "en-US,en;q=0.5",
+                                    "Connection" to "keep-alive",
+                                    "Sec-Fetch-Dest" to "video",
+                                    "Sec-Fetch-Mode" to "cors",
+                                    "Sec-Fetch-Site" to "cross-site",
+                                    "Range" to "bytes=0-"
                                 )
                             }
                         )
