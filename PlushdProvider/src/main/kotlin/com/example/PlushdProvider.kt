@@ -202,37 +202,31 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data, headers = headers).document
 
         doc.select("div ul.subselect li").forEach { serverLi ->
+            val sData = serverLi.attr("data-server")
+            val sName = serverLi.selectFirst("span")?.text() ?: "Server"
+
             try {
-                val serverData = serverLi.attr("data-server")
-                val serverNameText = serverLi.selectFirst("span")?.text() ?: "Unknown"
+                if (sData.isNullOrEmpty()) return@forEach
 
-                if (serverData.isNullOrEmpty()) return@forEach
-
-                val playerUrl = "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
-                Log.d("PlushdProvider", "Procesando: $serverNameText en $playerUrl")
+                val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
+                Log.d("PlushdProvider", "Procesando: $sName")
 
                 val text = app.get(playerUrl, headers = headers).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "Enlace extraído ($serverNameText): $fixedLink")
+                    Log.d("PlushdProvider", "Link extraído ($sName): $fixedLink")
 
                     val extractorReferer = when {
                         fixedLink.contains("hqq.to") || fixedLink.contains("waaw.to") -> "https://hqq.to/"
-                        fixedLink.contains("upns.pro") || fixedLink.contains("strp2p.com") -> fixedLink
                         else -> fixedLink
                     }
 
                     loadExtractor(fixedLink, extractorReferer, subtitleCallback) { extLink ->
-                        val isSpecial = listOf("vidhide", "pixibay", "callistanise", "streamwish", "mivalyo", "awish", "earnvids")
-                            .any {
-                                extLink.url.contains(it, ignoreCase = true) ||
-                                        extLink.source.contains(it, ignoreCase = true) ||
-                                        serverNameText.contains(it, ignoreCase = true)
-                            }
-
-                        Log.d("PlushdProvider", "Extractor encontró: ${extLink.name} (Especial: $isSpecial)")
+                        val isSpecial = extLink.url.contains("vidhide") ||
+                                extLink.name.contains("vidhide", ignoreCase = true) ||
+                                sName.contains("Earnvids", ignoreCase = true)
 
                         if (isSpecial) {
                             val finalLink = runBlocking {
@@ -246,8 +240,7 @@ class PlushdProvider : MainAPI() {
                                     this.referer = fixedLink
                                     this.headers = mapOf(
                                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                                        "Origin" to "https://tioplus.app",
-                                        "Connection" to "keep-alive"
+                                        "Origin" to "https://tioplus.app"
                                     )
                                 }
                             }
@@ -259,7 +252,7 @@ class PlushdProvider : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error: ${e.message}")
+                Log.e("PlushdProvider", "Error en servidor $sName: ${e.message}")
             }
             delay(500L)
         }
