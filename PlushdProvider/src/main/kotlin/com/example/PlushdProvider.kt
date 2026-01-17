@@ -202,7 +202,8 @@ class PlushdProvider : MainAPI() {
     ): Boolean {
         var linksFound = false
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
-        val stableUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        // User Agent de Chrome Android para evitar bloqueos de velocidad
+        val chromeMobileAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
         val doc = app.get(data).document
         val servers = doc.select("div ul.subselect li")
@@ -215,15 +216,20 @@ class PlushdProvider : MainAPI() {
                 if (sData.isNullOrEmpty()) continue
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
 
-                val text = app.get(playerUrl, referer = data, timeout = 25).text
+                val text = app.get(playerUrl, referer = data, timeout = 20).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
 
+                    // 1. Intentar extractor normal
                     val found = loadExtractor(fixedLink, fixedLink, subtitleCallback, callback)
 
+                    // 2. Fallback Manual Optimizado para evitar cortes
                     if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro"))) {
+                        // Si es Vidhide, usamos el formato de 'embed' para el referer, eso ayuda a la velocidad
+                        val refererUrl = if (fixedLink.contains("vidhide")) fixedLink.replace("/v/", "/e/") else fixedLink
+
                         callback.invoke(
                             newExtractorLink(
                                 sName,
@@ -231,12 +237,17 @@ class PlushdProvider : MainAPI() {
                                 fixedLink,
                                 ExtractorLinkType.M3U8
                             ) {
-                                this.quality = Qualities.Unknown.value
-                                this.referer = "https://vidhidepro.com/"
+                                // Ponemos Calidad 720p para asegurar fluidez si el 1080p es muy pesado
+                                this.quality = Qualities.P720.value
+                                this.referer = refererUrl
                                 this.headers = mapOf(
-                                    "User-Agent" to "com.lagradost.cloudstream3",
+                                    "User-Agent" to chromeMobileAgent,
+                                    "Accept" to "*/*",
+                                    "Accept-Language" to "es-MX,es;q=0.9",
                                     "Connection" to "keep-alive",
-                                    "Range" to "bytes=0-"
+                                    "Sec-Fetch-Dest" to "video",
+                                    "Sec-Fetch-Mode" to "cors",
+                                    "Sec-Fetch-Site" to "cross-site"
                                 )
                             }
                         )
