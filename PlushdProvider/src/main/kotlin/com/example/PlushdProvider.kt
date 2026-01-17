@@ -226,8 +226,7 @@ class PlushdProvider : MainAPI() {
                     loadExtractor(fixedLink, extractorReferer, subtitleCallback) { extLink ->
                         val isSpecial = extLink.url.contains("vidhide") ||
                                 extLink.name.contains("vidhide", ignoreCase = true) ||
-                                sName.contains("Earnvids", ignoreCase = true
-                                    
+                                sName.contains("Earnvids", ignoreCase = true)
 
                         if (isSpecial) {
                             val finalLink = runBlocking {
