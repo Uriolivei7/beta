@@ -223,7 +223,7 @@ class PlushdProvider : MainAPI() {
                     val fixedLink = fixPelisplusHostsLinks(link)
                     Log.d("PlushdProvider", "Link extraído ($sName): $fixedLink")
 
-                    val found = loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
+                    val found = loadExtractor(fixedLink, data, subtitleCallback) { extLink ->
                         val finalLink = runBlocking {
                             newExtractorLink(
                                 extLink.source,
@@ -235,11 +235,7 @@ class PlushdProvider : MainAPI() {
                                 this.referer = fixedLink
                                 this.headers = mapOf(
                                     "User-Agent" to stableUserAgent,
-                                    "Accept" to "*/*",
-                                    "Connection" to "keep-alive",
-                                    "Sec-Fetch-Dest" to "video",
-                                    "Sec-Fetch-Mode" to "cors",
-                                    "Sec-Fetch-Site" to "cross-site"
+                                    "Connection" to "keep-alive"
                                 )
                             }
                         }
@@ -247,31 +243,21 @@ class PlushdProvider : MainAPI() {
                         linksFound = true
                     }
 
-                    if (!found) {
-                        val isSupportedDirect = fixedLink.contains("vidhide") ||
-                                fixedLink.contains("lulustream") ||
-                                fixedLink.contains("turbovid") ||
-                                fixedLink.contains("upns.pro")
-
-                        if (isSupportedDirect) {
-                            val finalLink = runBlocking {
-                                newExtractorLink(
-                                    source = sName,
-                                    name = "$sName (Directo)",
-                                    url = fixedLink,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.quality = Qualities.Unknown.value
-                                    this.referer = fixedLink
-                                    this.headers = mapOf(
-                                        "User-Agent" to stableUserAgent,
-                                        "Connection" to "keep-alive"
-                                    )
-                                }
+                    if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream"))) {
+                        val finalLink = runBlocking {
+                            newExtractorLink(
+                                source = sName,
+                                name = "$sName (Directo)",
+                                url = fixedLink,
+                                type = ExtractorLinkType.VIDEO 
+                            ) {
+                                this.quality = Qualities.P1080.value
+                                this.referer = fixedLink
+                                this.headers = mapOf("User-Agent" to stableUserAgent)
                             }
-                            callback.invoke(finalLink)
-                            linksFound = true
                         }
+                        callback.invoke(finalLink)
+                        linksFound = true
                     }
                 }
             } catch (e: Exception) {
