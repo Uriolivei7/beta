@@ -239,22 +239,21 @@ class PlushdProvider : MainAPI() {
                         referer = extractorReferer,
                         subtitleCallback = loggingSubtitleCallback,
                         callback = { link ->
-                            val finalLink = runBlocking {
-                                newExtractorLink(
-                                    source = link.source,
-                                    name = link.name,
-                                    url = link.url,
-                                    type = link.type,
-                                ) {
-                                    this.quality = link.quality
+                            val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
+                                    link.url.contains("vidhide", ignoreCase = true) ||
+                                    link.url.contains("pixibay", ignoreCase = true) ||
+                                    link.url.contains("callistanise", ignoreCase = true) ||
+                                    link.url.contains("streamwish", ignoreCase = true)
 
-                                    val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
-                                            link.url.contains("vidhide", ignoreCase = true) ||
-                                            link.url.contains("pixibay", ignoreCase = true) ||
-                                            link.url.contains("callistanise", ignoreCase = true) ||
-                                            link.url.contains("streamwish", ignoreCase = true)
-
-                                    if (isVidhide) {
+                            if (isVidhide) {
+                                val finalLink = runBlocking {
+                                    newExtractorLink(
+                                        source = link.source,
+                                        name = link.name,
+                                        url = link.url,
+                                        type = link.type,
+                                    ) {
+                                        this.quality = link.quality
                                         this.referer = fixedLink
                                         this.headers = mapOf(
                                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -262,15 +261,12 @@ class PlushdProvider : MainAPI() {
                                             "Accept" to "*/*",
                                             "Connection" to "keep-alive"
                                         )
-                                    } else {
-                                        this.referer = link.referer
-                                        this.headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                                        )
                                     }
                                 }
+                                callback.invoke(finalLink)
+                            } else {
+                                callback.invoke(link)
                             }
-                            callback.invoke(finalLink)
                         }
                     )
                     linksFound = true
