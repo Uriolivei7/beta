@@ -39,13 +39,8 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            .replaceFirst("https://hglink.to", "https://streamwish.to")
-            .replaceFirst("https://swdyu.com", "https://streamwish.to")
-            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
-            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
-            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
-            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
-            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"), "https://streamwish.to")
+            .replace(Regex("https://(mivalyo\\.com|dinisglows\\.com|dhtpre\\.com|vidhidepro\\.com|vidhidepre\\.com|vidhide\\.com|callistanise\\.com|pixibay\\.cc)"), "https://vidhidepro.com")
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
             .replaceFirst("https://sblona.com", "https://watchsb.com")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
@@ -254,7 +249,10 @@ class PlushdProvider : MainAPI() {
                                     this.quality = link.quality
 
                                     val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
-                                            link.url.contains("pixibay", ignoreCase = true)
+                                            link.url.contains("vidhide", ignoreCase = true) ||
+                                            link.url.contains("pixibay", ignoreCase = true) ||
+                                            link.url.contains("callistanise", ignoreCase = true) ||
+                                            link.url.contains("streamwish", ignoreCase = true)
 
                                     if (isVidhide) {
                                         this.referer = fixedLink
