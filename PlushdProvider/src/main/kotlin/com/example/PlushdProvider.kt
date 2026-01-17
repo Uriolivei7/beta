@@ -231,16 +231,11 @@ class PlushdProvider : MainAPI() {
                                 fixedLink,
                                 ExtractorLinkType.M3U8
                             ) {
-                                this.quality = Qualities.P1080.value
-                                this.referer = fixedLink
+                                this.quality = Qualities.Unknown.value
+                                this.referer = "https://vidhidepro.com/"
                                 this.headers = mapOf(
-                                    "User-Agent" to stableUserAgent,
-                                    "Accept" to "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
-                                    "Accept-Language" to "en-US,en;q=0.5",
+                                    "User-Agent" to "com.lagradost.cloudstream3",
                                     "Connection" to "keep-alive",
-                                    "Sec-Fetch-Dest" to "video",
-                                    "Sec-Fetch-Mode" to "cors",
-                                    "Sec-Fetch-Site" to "cross-site",
                                     "Range" to "bytes=0-"
                                 )
                             }
