@@ -7,6 +7,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
+import com.lagradost.cloudstream3.utils.Coroutines.main
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
 import java.net.URL
 
@@ -198,73 +201,63 @@ class PlushdProvider : MainAPI() {
         var linksFound = false
         val linkRegex = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""")
 
-        Log.d("PlushdProvider", "Iniciando carga de links para: $data")
-
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data
+            "Referer" to data,
+            "Accept" to "*/*"
         )
 
         val doc = app.get(data, headers = headers).document
         val servers = doc.select("div ul.subselect li")
 
-        Log.d("PlushdProvider", "Servidores encontrados en HTML: ${servers.size}")
-
         servers.forEachIndexed { index, serverLi ->
             try {
                 val serverData = serverLi.attr("data-server")
-                val serverName = serverLi.text().ifEmpty { "Servidor ${index + 1}" }
+                val serverName = serverLi.text()
 
-                if (serverData.isNullOrEmpty()) {
-                    Log.w("PlushdProvider", "[$serverName] data-server está vacío, saltando...")
-                    return@forEachIndexed
-                }
+                if (serverData.isNullOrEmpty()) return@forEachIndexed
 
                 val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                Log.d("PlushdProvider", "[$serverName] Solicitando player: $playerUrl")
-
                 val text = app.get(playerUrl, headers = headers).text
-
-                if (text.contains("bloqueo temporal")) {
-                    Log.e("PlushdProvider", "[$serverName] BLOQUEO TEMPORAL detectado por la web.")
-                    return@forEachIndexed
-                }
-
                 val rawLink = linkRegex.find(text)?.groupValues?.get(1)
 
                 if (!rawLink.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(rawLink)
-                    Log.i("PlushdProvider", "[$serverName] Link extraído con éxito: $fixedLink")
 
-                    val wasLoaded = loadExtractor(
+                    loadExtractor(
                         url = fixedLink,
                         referer = playerUrl,
                         subtitleCallback = subtitleCallback,
                         callback = { link ->
-                            Log.i("PlushdProvider", "[$serverName] EXTRACTOR ÉXITO: Link de video generado -> ${link.url}")
-                            callback.invoke(link)
+                            com.lagradost.cloudstream3.utils.Coroutines.ioSafe {
+                                val finalLink = newExtractorLink(
+                                    source = link.source,
+                                    name = "${link.name} (Directo)",
+                                    url = link.url,
+                                    type = link.type
+                                ) {
+                                    this.headers = mapOf(
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                        "Referer" to fixedLink,
+                                        "Origin" to "https://${URL(fixedLink).host}",
+                                        "Accept" to "*/*",
+                                        "Connection" to "keep-alive"
+                                    )
+                                }
+
+                                callback.invoke(finalLink)
+                            }
                         }
                     )
-
-                    if (wasLoaded) {
-                        linksFound = true
-                        Log.d("PlushdProvider", "[$serverName] loadExtractor devolvió TRUE")
-                    } else {
-                        Log.w("PlushdProvider", "[$serverName] No hay un extractor compatible para este link o falló la extracción.")
-                    }
-                } else {
-                    Log.w("PlushdProvider", "[$serverName] No se pudo encontrar la URL dentro del script del player.")
+                    linksFound = true
                 }
-
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error procesando servidor en índice $index: ${e.message}")
+                Log.e("PlusHD_Debug", "Error en servidor $index: ${e.message}")
             }
-            delay(800L)
+            delay(1000L)
         }
-
-        Log.d("PlushdProvider", "Finalizado. ¿Se encontraron links válidos?: $linksFound")
         return linksFound
     }
 }
