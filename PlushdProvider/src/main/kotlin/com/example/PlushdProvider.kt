@@ -37,20 +37,6 @@ class PlushdProvider : MainAPI() {
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
-    private fun fixPelisplusHostsLinks(url: String): String {
-        return url
-            .replace(Regex("https://.*(vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay|vidhideplus).*\\.(com|pro|cc|sx|plus|pre)"),
-                "https://vidhidepro.com")
-            .replace("https://vudeo.co/embed-", "https://vudeo.co/")
-            .replace(".html", "")
-            .replace("https://waaw.to/f/", "https://hqq.to/watch/")
-            .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"), "https://lulustream.com")
-            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
-                "https://streamwish.to")
-            .replace("https://pelisplus.rpmstream.live", "https://pelisplus.upns.pro")
-            .replace("https://emturbovid.com", "https://turbovid.eu")
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get("$mainUrl/${request.data}/$page").document
         val home = document.select(".articlesList article").filter { !it.selectFirst("a")?.attr("target").equals("_blank") }
@@ -185,6 +171,20 @@ class PlushdProvider : MainAPI() {
         }
     }
 
+    private fun fixPelisplusHostsLinks(url: String): String {
+        return url
+            .replace(Regex("https://.*(vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay|vidhideplus).*\\.(com|pro|cc|sx|plus|pre|space|xyz)"),
+                "https://vidhidepro.com/v/${url.substringAfterLast("/")}")
+            .replace("https://vudeo.co/embed-", "https://vudeo.co/")
+            .replace(".html", "")
+            .replace("https://waaw.to/f/", "https://hqq.to/watch/")
+            .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"), "https://lulustream.com")
+            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
+                "https://streamwish.to")
+            .replace("https://pelisplus.rpmstream.live", "https://pelisplus.upns.pro")
+            .replace("https://emturbovid.com", "https://turbovid.eu")
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -193,13 +193,11 @@ class PlushdProvider : MainAPI() {
     ): Boolean {
         var linksFound = false
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data
-        )
+
+        val stableUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         Log.d("PlushdProvider", "Cargando página de enlaces: $data")
-        val doc = app.get(data, headers = headers).document
+        val doc = app.get(data).document
 
         doc.select("div ul.subselect li").forEach { serverLi ->
             val sData = serverLi.attr("data-server")
@@ -209,52 +207,42 @@ class PlushdProvider : MainAPI() {
                 if (sData.isNullOrEmpty()) return@forEach
 
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
-                Log.d("PlushdProvider", "Procesando: $sName")
 
-                val text = app.get(playerUrl, headers = headers).text
+                val text = app.get(playerUrl, referer = data, timeout = 45).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
                     Log.d("PlushdProvider", "Link extraído ($sName): $fixedLink")
 
-                    val extractorReferer = when {
-                        fixedLink.contains("hqq.to") || fixedLink.contains("waaw.to") -> "https://hqq.to/"
-                        else -> fixedLink
-                    }
-
-                    loadExtractor(fixedLink, extractorReferer, subtitleCallback) { extLink ->
-                        val isSpecial = extLink.url.contains("vidhide") ||
-                                extLink.name.contains("vidhide", ignoreCase = true) ||
-                                sName.contains("Earnvids", ignoreCase = true)
-
-                        if (isSpecial) {
-                            val finalLink = runBlocking {
-                                newExtractorLink(
-                                    source = extLink.source,
-                                    name = extLink.name,
-                                    url = extLink.url,
-                                    type = extLink.type
-                                ) {
-                                    this.quality = extLink.quality
-                                    this.referer = fixedLink
-                                    this.headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                                        "Origin" to "https://tioplus.app"
-                                    )
-                                }
+                    loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
+                        val finalLink = runBlocking {
+                            newExtractorLink(
+                                extLink.source,
+                                "$sName - ${extLink.name}",
+                                extLink.url,
+                                extLink.type
+                            ) {
+                                this.quality = extLink.quality
+                                this.referer = fixedLink
+                                this.headers = mapOf(
+                                    "User-Agent" to stableUserAgent,
+                                    "Accept" to "*/*",
+                                    "Connection" to "keep-alive",
+                                    "Range" to "bytes=0-",
+                                    "Sec-Fetch-Dest" to "video",
+                                    "Origin" to "https://tioplus.app"
+                                )
                             }
-                            callback.invoke(finalLink)
-                        } else {
-                            callback.invoke(extLink)
                         }
+                        callback.invoke(finalLink)
                         linksFound = true
                     }
                 }
             } catch (e: Exception) {
                 Log.e("PlushdProvider", "Error en servidor $sName: ${e.message}")
             }
-            delay(500L)
+            delay(300L)
         }
         return linksFound
     }
