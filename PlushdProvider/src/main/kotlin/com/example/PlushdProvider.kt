@@ -215,39 +215,42 @@ class PlushdProvider : MainAPI() {
                 if (sData.isNullOrEmpty()) return@forEach
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
 
-                val text = app.get(playerUrl, referer = data, timeout = 60).text
+                // Timeout equilibrado para no congelar pero dar tiempo a Vidhide
+                val text = app.get(playerUrl, referer = data, timeout = 30).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
+                    Log.d("PlushdProvider", "Link Detectado ($sName): $fixedLink")
 
-                    val found = loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
-                        callback.invoke(extLink)
+                    // Intentamos extractor oficial
+                    val found = loadExtractor(fixedLink, fixedLink, subtitleCallback, callback)
+
+                    // FORZAMOS EL LINK SIEMPRE (Incluso si loadExtractor dice que no o falla)
+                    // Esto garantiza que en el episodio 7 aparezca Earnvids sí o sí
+                    if (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro")) {
+                        callback.invoke(
+                            ExtractorLink(
+                                source = sName,
+                                name = "$sName (Directo)",
+                                url = fixedLink,
+                                referer = fixedLink,
+                                quality = Qualities.P1080.value,
+                                type = ExtractorLinkType.VIDEO,
+                                headers = mapOf(
+                                    "User-Agent" to stableUserAgent,
+                                    "Connection" to "keep-alive"
+                                )
+                            )
+                        )
                         linksFound = true
-                        Log.d("PlushdProvider", "Link enviado via Extractor: ${extLink.name}")
-                    }
-
-                    if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro"))) {
-                        val manualLink = newExtractorLink(
-                            source = sName,
-                            name = "$sName (Directo)",
-                            url = fixedLink,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.quality = Qualities.P1080.value
-                            this.referer = fixedLink
-                            this.headers = mapOf("User-Agent" to stableUserAgent)
-                        }
-
-                        callback.invoke(manualLink)
+                    } else if (found) {
                         linksFound = true
-                        Log.d("PlushdProvider", "Link enviado via Manual Fallback: $sName")
                     }
                 }
             } catch (e: Exception) {
                 Log.e("PlushdProvider", "Error en $sName: ${e.message}")
             }
-            delay(150L)
         }
         return linksFound
     }
