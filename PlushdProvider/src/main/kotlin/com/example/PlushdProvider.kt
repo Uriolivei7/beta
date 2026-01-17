@@ -44,7 +44,8 @@ class PlushdProvider : MainAPI() {
             .replace("https://vudeo.co/embed-", "https://vudeo.co/")
             .replace(".html", "")
             .replace("https://waaw.to/f/", "https://hqq.to/watch/")
-            .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"), "https://lulustream.com")
+            .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"),
+                "https://lulustream.com")
             .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
                 "https://streamwish.to")
             .replace("https://pelisplus.rpmstream.live", "https://pelisplus.upns.pro")
