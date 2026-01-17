@@ -7,7 +7,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
@@ -241,7 +243,25 @@ class PlushdProvider : MainAPI() {
                         url = fixedLink,
                         referer = extractorReferer,
                         subtitleCallback = loggingSubtitleCallback,
-                        callback = callback
+                        callback = { link ->
+                            val finalLink = runBlocking {
+                                newExtractorLink(
+                                    source = link.source,
+                                    name = link.name,
+                                    url = link.url,
+                                    type = link.type,
+                                ) {
+                                    this.quality = link.quality
+                                    this.referer = playerUrl
+                                    this.headers = mapOf(
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                                        "Accept" to "*/*",
+                                        "Connection" to "keep-alive"
+                                    )
+                                }
+                            }
+                            callback.invoke(finalLink)
+                        }
                     )
                     linksFound = true
                 }
