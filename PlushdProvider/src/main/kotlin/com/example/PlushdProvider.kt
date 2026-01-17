@@ -202,13 +202,14 @@ class PlushdProvider : MainAPI() {
     ): Boolean {
         var linksFound = false
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
-
         val stableUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         Log.d("PlushdProvider", "Cargando página de enlaces: $data")
         val doc = app.get(data).document
 
-        doc.select("div ul.subselect li").forEach { serverLi ->
+        val servers = doc.select("div ul.subselect li")
+
+        servers.forEach { serverLi ->
             val sData = serverLi.attr("data-server")
             val sName = serverLi.selectFirst("span")?.text() ?: "Server"
 
@@ -216,14 +217,15 @@ class PlushdProvider : MainAPI() {
                 if (sData.isNullOrEmpty()) return@forEach
 
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
-                val text = app.get(playerUrl, referer = data, timeout = 45).text
+
+                val text = app.get(playerUrl, referer = data, timeout = 60).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "Link extraído ($sName): $fixedLink")
+                    Log.d("PlushdProvider", "Procesando ($sName): $fixedLink")
 
-                    val found = loadExtractor(fixedLink, data, subtitleCallback) { extLink ->
+                    val found = loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
                         val finalLink = runBlocking {
                             newExtractorLink(
                                 extLink.source,
@@ -243,27 +245,25 @@ class PlushdProvider : MainAPI() {
                         linksFound = true
                     }
 
-                    if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream"))) {
-                        val finalLink = runBlocking {
-                            newExtractorLink(
-                                source = sName,
-                                name = "$sName (Directo)",
-                                url = fixedLink,
-                                type = ExtractorLinkType.VIDEO 
-                            ) {
-                                this.quality = Qualities.P1080.value
-                                this.referer = fixedLink
-                                this.headers = mapOf("User-Agent" to stableUserAgent)
-                            }
+                    if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro"))) {
+                        val fallbackLink = newExtractorLink(
+                            source = sName,
+                            name = "$sName (Directo)",
+                            url = fixedLink,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.quality = Qualities.P1080.value
+                            this.referer = fixedLink
+                            this.headers = mapOf("User-Agent" to stableUserAgent)
                         }
-                        callback.invoke(finalLink)
+                        callback.invoke(fallbackLink)
                         linksFound = true
                     }
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error en servidor $sName: ${e.message}")
+                Log.e("PlushdProvider", "Error en $sName: ${e.message}")
             }
-            delay(300L)
+            delay(100L)
         }
         return linksFound
     }
