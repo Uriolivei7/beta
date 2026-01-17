@@ -11,8 +11,8 @@ import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    //override var mainUrl = "https://ww3.tioplus.net"
-    override var mainUrl = "https://tioplus.app"
+    override var mainUrl = "https://ww3.tioplus.net"
+    //override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
