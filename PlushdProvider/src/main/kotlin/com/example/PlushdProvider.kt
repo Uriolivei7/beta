@@ -207,41 +207,40 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data).document
         val servers = doc.select("div ul.subselect li")
 
-        servers.forEach { serverLi ->
+        for (serverLi in servers) {
             val sData = serverLi.attr("data-server")
             val sName = serverLi.selectFirst("span")?.text() ?: "Server"
 
             try {
-                if (sData.isNullOrEmpty()) return@forEach
+                if (sData.isNullOrEmpty()) continue
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
 
-                // Timeout equilibrado para no congelar pero dar tiempo a Vidhide
-                val text = app.get(playerUrl, referer = data, timeout = 30).text
+                // Timeout de 25s: rápido pero seguro para Vidhide
+                val text = app.get(playerUrl, referer = data, timeout = 25).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "Link Detectado ($sName): $fixedLink")
 
-                    // Intentamos extractor oficial
+                    // 1. Extractor oficial
                     val found = loadExtractor(fixedLink, fixedLink, subtitleCallback, callback)
 
-                    // FORZAMOS EL LINK SIEMPRE (Incluso si loadExtractor dice que no o falla)
-                    // Esto garantiza que en el episodio 7 aparezca Earnvids sí o sí
-                    if (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro")) {
+                    // 2. Fallback con newExtractorLink (Manual)
+                    if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro"))) {
                         callback.invoke(
-                            ExtractorLink(
-                                source = sName,
-                                name = "$sName (Directo)",
-                                url = fixedLink,
-                                referer = fixedLink,
-                                quality = Qualities.P1080.value,
-                                type = ExtractorLinkType.VIDEO,
-                                headers = mapOf(
+                            newExtractorLink(
+                                sName,
+                                "$sName (Directo)",
+                                fixedLink,
+                                ExtractorLinkType.M3U8
+                            ) {
+                                this.quality = Qualities.P1080.value
+                                this.referer = fixedLink
+                                this.headers = mapOf(
                                     "User-Agent" to stableUserAgent,
                                     "Connection" to "keep-alive"
                                 )
-                            )
+                            }
                         )
                         linksFound = true
                     } else if (found) {
