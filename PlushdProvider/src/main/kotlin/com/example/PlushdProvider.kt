@@ -172,17 +172,24 @@ class PlushdProvider : MainAPI() {
     }
 
     private fun fixPelisplusHostsLinks(url: String): String {
-        return url
-            .replace(Regex("https://.*(vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay|vidhideplus).*\\.(com|pro|cc|sx|plus|pre|space|xyz)"),
-                "https://vidhidepro.com/v/${url.substringAfterLast("/")}")
-            .replace("https://vudeo.co/embed-", "https://vudeo.co/")
-            .replace(".html", "")
-            .replace("https://waaw.to/f/", "https://hqq.to/watch/")
-            .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"), "https://lulustream.com")
-            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
-                "https://streamwish.to")
-            .replace("https://pelisplus.rpmstream.live", "https://pelisplus.upns.pro")
-            .replace("https://emturbovid.com", "https://turbovid.eu")
+        val trimmedUrl = url.trim().trimEnd('/')
+        val id = trimmedUrl.substringAfterLast("/")
+
+        val vidhideMirrors = Regex("vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay|vidhideplus|allmistery|entervideo")
+
+        return when {
+            trimmedUrl.contains(vidhideMirrors) -> "https://vidhidepro.com/v/$id"
+            trimmedUrl.contains("vudeo.co") -> "https://vudeo.co/$id"
+            trimmedUrl.contains("waaw.to") || trimmedUrl.contains("hqq.to") -> "https://hqq.to/watch/$id"
+            trimmedUrl.contains(Regex("lulu\\.st|lulustream\\.com|luluvdo\\.com")) ->
+                "https://lulustream.com/e/$id".replace("/e/e/", "/e/")
+            trimmedUrl.contains(Regex("hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to")) ->
+                "https://streamwish.to/e/$id".replace("/e/e/", "/e/")
+            trimmedUrl.contains("rpmstream") -> "https://pelisplus.upns.pro/$id"
+            trimmedUrl.contains("emturbovid") || trimmedUrl.contains("turbovid") -> "https://turbovid.eu/$id"
+
+            else -> trimmedUrl
+        }
     }
 
     override suspend fun loadLinks(
@@ -215,7 +222,7 @@ class PlushdProvider : MainAPI() {
                     val fixedLink = fixPelisplusHostsLinks(link)
                     Log.d("PlushdProvider", "Link extraído ($sName): $fixedLink")
 
-                    loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
+                    loadExtractor(fixedLink, data, subtitleCallback) { extLink ->
                         val finalLink = runBlocking {
                             newExtractorLink(
                                 extLink.source,
@@ -226,12 +233,12 @@ class PlushdProvider : MainAPI() {
                                 this.quality = extLink.quality
                                 this.referer = fixedLink
                                 this.headers = mapOf(
-                                    "User-Agent" to stableUserAgent,
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                                     "Accept" to "*/*",
                                     "Connection" to "keep-alive",
-                                    "Range" to "bytes=0-",
                                     "Sec-Fetch-Dest" to "video",
-                                    "Origin" to "https://tioplus.app"
+                                    "Sec-Fetch-Mode" to "cors",
+                                    "Sec-Fetch-Site" to "cross-site"
                                 )
                             }
                         }
