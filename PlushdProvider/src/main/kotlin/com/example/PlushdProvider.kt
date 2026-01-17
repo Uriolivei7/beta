@@ -204,9 +204,7 @@ class PlushdProvider : MainAPI() {
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
         val stableUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        Log.d("PlushdProvider", "Cargando página de enlaces: $data")
         val doc = app.get(data).document
-
         val servers = doc.select("div ul.subselect li")
 
         servers.forEach { serverLi ->
@@ -215,7 +213,6 @@ class PlushdProvider : MainAPI() {
 
             try {
                 if (sData.isNullOrEmpty()) return@forEach
-
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
 
                 val text = app.get(playerUrl, referer = data, timeout = 60).text
@@ -223,30 +220,15 @@ class PlushdProvider : MainAPI() {
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "Procesando ($sName): $fixedLink")
 
                     val found = loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
-                        val finalLink = runBlocking {
-                            newExtractorLink(
-                                extLink.source,
-                                "$sName - ${extLink.name}",
-                                extLink.url,
-                                extLink.type
-                            ) {
-                                this.quality = extLink.quality
-                                this.referer = fixedLink
-                                this.headers = mapOf(
-                                    "User-Agent" to stableUserAgent,
-                                    "Connection" to "keep-alive"
-                                )
-                            }
-                        }
-                        callback.invoke(finalLink)
+                        callback.invoke(extLink)
                         linksFound = true
+                        Log.d("PlushdProvider", "Link enviado via Extractor: ${extLink.name}")
                     }
 
                     if (!found && (fixedLink.contains("vidhide") || fixedLink.contains("lulustream") || fixedLink.contains("upns.pro"))) {
-                        val fallbackLink = newExtractorLink(
+                        val manualLink = newExtractorLink(
                             source = sName,
                             name = "$sName (Directo)",
                             url = fixedLink,
@@ -256,14 +238,16 @@ class PlushdProvider : MainAPI() {
                             this.referer = fixedLink
                             this.headers = mapOf("User-Agent" to stableUserAgent)
                         }
-                        callback.invoke(fallbackLink)
+
+                        callback.invoke(manualLink)
                         linksFound = true
+                        Log.d("PlushdProvider", "Link enviado via Manual Fallback: $sName")
                     }
                 }
             } catch (e: Exception) {
                 Log.e("PlushdProvider", "Error en $sName: ${e.message}")
             }
-            delay(100L)
+            delay(150L)
         }
         return linksFound
     }
