@@ -7,6 +7,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -214,7 +216,6 @@ class PlushdProvider : MainAPI() {
                 if (sData.isNullOrEmpty()) return@forEach
 
                 val playerUrl = "$mainUrl/player/${base64Encode(sData.toByteArray())}"
-
                 val text = app.get(playerUrl, referer = data, timeout = 45).text
                 val link = linkRegex.find(text)?.destructured?.component1()
 
@@ -222,7 +223,7 @@ class PlushdProvider : MainAPI() {
                     val fixedLink = fixPelisplusHostsLinks(link)
                     Log.d("PlushdProvider", "Link extraído ($sName): $fixedLink")
 
-                    loadExtractor(fixedLink, data, subtitleCallback) { extLink ->
+                    val found = loadExtractor(fixedLink, fixedLink, subtitleCallback) { extLink ->
                         val finalLink = runBlocking {
                             newExtractorLink(
                                 extLink.source,
@@ -233,7 +234,7 @@ class PlushdProvider : MainAPI() {
                                 this.quality = extLink.quality
                                 this.referer = fixedLink
                                 this.headers = mapOf(
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                    "User-Agent" to stableUserAgent,
                                     "Accept" to "*/*",
                                     "Connection" to "keep-alive",
                                     "Sec-Fetch-Dest" to "video",
@@ -244,6 +245,33 @@ class PlushdProvider : MainAPI() {
                         }
                         callback.invoke(finalLink)
                         linksFound = true
+                    }
+
+                    if (!found) {
+                        val isSupportedDirect = fixedLink.contains("vidhide") ||
+                                fixedLink.contains("lulustream") ||
+                                fixedLink.contains("turbovid") ||
+                                fixedLink.contains("upns.pro")
+
+                        if (isSupportedDirect) {
+                            val finalLink = runBlocking {
+                                newExtractorLink(
+                                    source = sName,
+                                    name = "$sName (Directo)",
+                                    url = fixedLink,
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.quality = Qualities.Unknown.value
+                                    this.referer = fixedLink
+                                    this.headers = mapOf(
+                                        "User-Agent" to stableUserAgent,
+                                        "Connection" to "keep-alive"
+                                    )
+                                }
+                            }
+                            callback.invoke(finalLink)
+                            linksFound = true
+                        }
                     }
                 }
             } catch (e: Exception) {
