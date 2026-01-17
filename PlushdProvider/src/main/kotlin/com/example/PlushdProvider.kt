@@ -39,13 +39,12 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"),
-                "https://streamwish.to")
-            .replace(Regex("https://(mivalyo\\.com|dinisglows\\.com|dhtpre\\.com|vidhidepro\\.com|vidhidepre\\.com|vidhide\\.com|callistanise\\.com|pixibay\\.cc)"),
-                "https://vidhidepro.com")
+            .replace(Regex("https://.*(vidhide|mivalyo|dinisglows|dhtpre|callistanise|pixibay).*\\.(com|pro|cc|sx|plus|pre)"), "https://vidhidepro.com")
+            .replace(Regex("https://(lulu\\.st|lulustream\\.com|luluvdo\\.com)"), "https://lulustream.com")
+            .replace(Regex("https://(hglink\\.to|swdyu\\.com|cybervynx\\.com|dumbalag\\.com|awish\\.pro|streamwish\\.to)"), "https://streamwish.to")
+            .replaceFirst("https://emturbovid.com", "https://turbovid.eu")
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
             .replaceFirst("https://sblona.com", "https://watchsb.com")
-            .replaceFirst("https://lulu.st", "https://lulustream.com")
             .replaceFirst("https://uqload.io", "https://uqload.com")
             .replaceFirst("https://do7go.com", "https://dood.la")
             .replaceFirst("https://doodstream.com", "https://dood.la")
@@ -241,11 +240,9 @@ class PlushdProvider : MainAPI() {
                         referer = extractorReferer,
                         subtitleCallback = subtitleCallback,
                         callback = { link ->
-                            val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
-                                    link.url.contains("vidhide", ignoreCase = true) ||
-                                    link.url.contains("pixibay", ignoreCase = true) ||
-                                    link.url.contains("callistanise", ignoreCase = true) ||
-                                    link.url.contains("streamwish", ignoreCase = true)
+
+                            val isVidhide = listOf("vidhide", "pixibay", "callistanise", "streamwish", "mivalyo", "awish")
+                                .any { link.url.contains(it, ignoreCase = true) || link.source.contains(it, ignoreCase = true) }
 
                             Log.d("PlushdProvider", "Extractor encontró: ${link.name} (EsVidhide: $isVidhide)")
 
@@ -280,7 +277,7 @@ class PlushdProvider : MainAPI() {
             } catch (e: Exception) {
                 Log.e("PlushdProvider", "Error procesando servidor: ${e.message}")
             }
-            delay(1000L)
+            delay(500L)
         }
         return linksFound
     }
