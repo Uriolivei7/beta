@@ -252,17 +252,24 @@ class PlushdProvider : MainAPI() {
                                     type = link.type,
                                 ) {
                                     this.quality = link.quality
-                                    this.referer = link.referer
-                                    this.headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                                        "Accept" to "*/*",
-                                        "Accept-Language" to "es-MX,es;q=0.9",
-                                        "Connection" to "keep-alive",
-                                        "Sec-Fetch-Dest" to "video",
-                                        "Sec-Fetch-Mode" to "no-cors",
-                                        "Sec-Fetch-Site" to "cross-site",
-                                        "Range" to "bytes=0-"
-                                    )
+
+                                    val isVidhide = link.source.contains("vidhide", ignoreCase = true) ||
+                                            link.url.contains("pixibay", ignoreCase = true)
+
+                                    if (isVidhide) {
+                                        this.referer = fixedLink
+                                        this.headers = mapOf(
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                                            "Origin" to "https://tioplus.app",
+                                            "Accept" to "*/*",
+                                            "Connection" to "keep-alive"
+                                        )
+                                    } else {
+                                        this.referer = link.referer
+                                        this.headers = mapOf(
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                        )
+                                    }
                                 }
                             }
                             callback.invoke(finalLink)
