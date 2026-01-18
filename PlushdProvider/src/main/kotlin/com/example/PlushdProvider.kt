@@ -56,6 +56,7 @@ class PlushdProvider : MainAPI() {
             .replaceFirst("https://do7go.com", "https://dood.la")
             .replaceFirst("https://doodstream.com", "https://dood.la")
             .replaceFirst("https://streamtape.com", "https://streamtape.cc")
+            .replaceFirst("https://moon.app", "https://filemoon.sx")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -200,21 +201,27 @@ class PlushdProvider : MainAPI() {
     ): Boolean {
         var linksFound = false
         val doc = app.get(data).document
+        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
-        // 1. Buscamos todos los servidores en la lista
-        doc.select("ul.subselect li").forEach { li ->
-            val serverData = li.attr("data-server")
-            if (serverData.isNullOrEmpty()) return@forEach
-
+        // Buscamos los servidores en el menú desplegable
+        doc.select("ul.subselect li").forEach { serverLi ->
             try {
+                val serverData = serverLi.attr("data-server")
+                if (serverData.isNullOrEmpty()) return@forEach
+
                 val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                val playerRes = app.get(playerUrl, referer = data).text
+                val response = app.get(playerUrl, referer = data)
+                val text = response.text
+                val playerDoc = response.document
 
-                val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
-                val finalLink = linkRegex.find(playerRes)?.groupValues?.get(1)
-                    ?: doc.selectFirst("iframe")?.attr("data-src") 
+                var finalLink = linkRegex.find(text)?.groupValues?.get(1)
+
+                if (finalLink.isNullOrBlank()) {
+                    finalLink = playerDoc.selectFirst("iframe")?.attr("src")
+                        ?: playerDoc.selectFirst("iframe")?.attr("data-src")
+                }
 
                 if (!finalLink.isNullOrBlank()) {
                     val cleanLink = if (finalLink.startsWith("/")) "$mainUrl$finalLink" else finalLink
@@ -229,7 +236,7 @@ class PlushdProvider : MainAPI() {
                     linksFound = true
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error cargando servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error en servidor: ${e.message}")
             }
         }
         return linksFound
