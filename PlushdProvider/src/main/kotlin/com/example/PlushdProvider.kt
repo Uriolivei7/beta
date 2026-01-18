@@ -39,15 +39,13 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            .replace("https://vidhideplus.com", "https://vidhide.com")
-            .replace("https://filemoon.to", "https://filemoon.sx")
-            .replace("https://filemoon.link", "https://filemoon.sx")
-            .replace("https://vudeo.co", "https://vudeo.net")
-            .replace("https://waaw.to", "https://netu.to")
-            .replaceFirst("https://hglink.to", "https://streamwish.to")
-            .replaceFirst("https://swdyu.com", "https://streamwish.to")
-            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
-            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+            .replace("vidhideplus.com", "vidhide.com")
+            .replace("vidhidepro.com", "vidhide.com")
+            .replace("vudeo.co", "vudeo.net")
+            .replace("luluvideo.com", "luluvdo.com")
+            .replace("filemoon.to", "filemoon.sx")
+            .replace("filemoon.link", "filemoon.sx")
+            .replace("emturbovid.com/t/", "emturbovid.com/v/")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
