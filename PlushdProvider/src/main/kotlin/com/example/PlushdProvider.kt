@@ -12,7 +12,6 @@ import java.net.URL
 
 class PlushdProvider : MainAPI() {
     override var mainUrl = "https://ww3.tioplus.net"
-    //override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -45,6 +44,7 @@ class PlushdProvider : MainAPI() {
             .replace("luluvideo.com", "luluvdo.com")
             .replace("filemoon.to", "filemoon.sx")
             .replace("filemoon.link", "filemoon.sx")
+            .replace("waaw.to", "netu.to") // WAAW es Netu
             .replace("emturbovid.com/t/", "emturbovid.com/v/")
     }
 
@@ -87,9 +87,6 @@ class PlushdProvider : MainAPI() {
         return results
     }
 
-
-    data class MainTemporada(val elements: Map<String, List<MainTemporadaElement>>)
-
     data class MainTemporadaElement(
         val title: String? = null,
         val image: String? = null,
@@ -125,30 +122,20 @@ class PlushdProvider : MainAPI() {
                 if (!jsonscript.isNullOrEmpty()) {
                     try {
                         val seasonsMap = parseJson<Map<String, List<MainTemporadaElement>>>(jsonscript)
-                        seasonsMap.values.map { list ->
-                            list.map { info ->
-                                val epTitle = info.title
-                                val seasonNum = info.season
-                                val epNum = info.episode
+                        seasonsMap.values.forEach { list ->
+                            list.forEach { info ->
+                                val epTitle = info.title ?: "Episodio"
+                                val seasonNum = info.season ?: 1
+                                val epNum = info.episode ?: 1
                                 val img = info.image
-                                val realimg =
-                                    if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${
-                                        img.replace(
-                                            "\\/",
-                                            "/"
-                                        )
-                                    }"
-                                val epurl = "$url/season/$seasonNum/episode/$epNum"
-                                if (epTitle != null && seasonNum != null && epNum != null) {
-                                    epi.add(
-                                        newEpisode(epurl) {
-                                            this.name = epTitle
-                                            this.season = seasonNum
-                                            this.episode = epNum
-                                            this.posterUrl = realimg
-                                        }
-                                    )
-                                }
+                                val realimg = if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${img.replace("\\/", "/")}"
+
+                                epi.add(newEpisode("$url/season/$seasonNum/episode/$epNum") {
+                                    this.name = epTitle
+                                    this.season = seasonNum
+                                    this.episode = epNum
+                                    this.posterUrl = realimg
+                                })
                             }
                         }
                     } catch (e: Exception) {
@@ -160,10 +147,7 @@ class PlushdProvider : MainAPI() {
 
         return when (tvType) {
             TvType.TvSeries, TvType.Anime, TvType.AsianDrama -> {
-                newTvSeriesLoadResponse(
-                    title,
-                    url, tvType, epi,
-                ) {
+                newTvSeriesLoadResponse(title, url, tvType, epi) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backimage
                     this.plot = description
@@ -192,76 +176,58 @@ class PlushdProvider : MainAPI() {
         val tag = "PlushdProvider"
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
+        val customExtractors = listOf(
+            PelisplusUpnsPro(),
+            PelisplusUpnsPro2(),
+            PelisplusUpnsPro3(),
+            PelisplusRpmStream(),
+            EmturbovidCom(),
+            VidhideCustom(),
+            LuluvdoCustom(),
+            VudeoCustom()
+        )
+
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer" to data
         )
 
-        Log.d(tag, "Iniciando carga de enlaces para: $data")
-
         val doc = app.get(data, headers = headers).document
         val servers = doc.select("div ul.subselect li").toList()
 
-        Log.d(tag, "Servidores encontrados: ${servers.size}")
-
-        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("${tag}_Subs", "Subtítulo captado: ${file.url}")
-            subtitleCallback.invoke(file)
-        }
-
         servers.forEach { serverLi ->
             try {
-                val serverData = serverLi.attr("data-server")
-
-                if (serverData.isNullOrEmpty()) {
-                    Log.w(tag, "data-server vacío, saltando...")
-                    return@forEach
-                }
-
-                val encodedOne = serverData.toByteArray()
-                val encodedTwo = base64Encode(encodedOne)
+                val serverData = serverLi.attr("data-server") ?: return@forEach
+                val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                Log.d(tag, "Cargando Player: $playerUrl")
-
                 val text = app.get(playerUrl, headers = headers).text
-
-                if (text.contains("bloqueo temporal")) {
-                    Log.e(tag, "¡BLOQUEO TEMPORAL DETECTADO!")
-                    return@forEach
-                }
-
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
                     Log.i(tag, "Enlace extraído: $fixedLink")
 
-                    val extractorReferer = try {
-                        val urlObject = URL(fixedLink)
-                        "${urlObject.protocol}://${urlObject.host}/"
-                    } catch (e: Exception) {
-                        playerUrl
+                    var extractorFound = false
+                    customExtractors.forEach { extractor ->
+                        if (fixedLink.startsWith(extractor.mainUrl)) {
+                            extractor.getUrl(fixedLink, data, subtitleCallback, callback)
+                            Log.d(tag, "Extractor manual detectó: ${extractor.name}")
+                            extractorFound = true
+                        }
                     }
 
-                    loadExtractor(
-                        url = fixedLink,
-                        referer = extractorReferer,
-                        subtitleCallback = loggingSubtitleCallback,
-                        callback = { extractorLink ->
-                            Log.d(tag, "Extractor detectó: ${extractorLink.name}")
-                            callback.invoke(extractorLink)
-                        }
-                    )
+                    if (!extractorFound) {
+                        loadExtractor(fixedLink, data, subtitleCallback, callback)
+                    }
+
                     linksFound = true
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Error en servidor: ${e.message}")
             }
-
-            delay(1500L)
+            delay(1000L)
         }
-
         return linksFound
     }
 }
