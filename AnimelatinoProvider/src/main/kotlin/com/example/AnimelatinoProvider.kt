@@ -39,11 +39,11 @@ class AnimelatinoProvider : MainAPI() {
         "sec-fetch-site" to "same-origin"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
-        Log.d("AnimeLatino", "--- INICIANDO BYPASS AGRESIVO ---")
-        val items = mutableListOf<HomePageList>()
+    // Reemplaza tu función getMainPage por esta versión "Limpia":
 
-        // Token extraído de tu inspección
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
+        Log.d("AnimeLatino", "--- INICIANDO CARGA CON CFKILLER ---")
+        val items = mutableListOf<HomePageList>()
         val rscToken = "1ld0r"
 
         val sections = listOf(
@@ -54,20 +54,26 @@ class AnimelatinoProvider : MainAPI() {
 
         for ((url, title) in sections) {
             try {
-                Log.d("AnimeLatino", ">> Intentando conexión rápida a: $title")
+                Log.d("AnimeLatino", ">> Solicitando: $title")
 
-                // Intentamos la petición SIN el interceptor primero para saltar bloqueos de TLS
+                // Eliminamos headers manuales complejos que puedan delatarnos
+                // Dejamos que el interceptor maneje las cookies
                 val res = app.get(
                     url,
-                    headers = fastHeaders,
-                    timeout = 15 // Timeout corto: si no responde en 15s, Cloudflare nos bloqueó
+                    interceptor = cfKiller,
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                        "RSC" to "1",
+                        "Referer" to "$mainUrl/"
+                    ),
+                    timeout = 30
                 )
 
-                Log.d("AnimeLatino", "<< Respuesta: ${res.code} | Longitud: ${res.text.length}")
+                Log.d("AnimeLatino", "<< Respuesta $title: ${res.code} | Longitud: ${res.text.length}")
 
                 if (res.code == 200) {
                     val animeList = parseRscList(res.text)
-                    Log.d("AnimeLatino", "++ Encontrados: ${animeList.size} animes")
+                    Log.d("AnimeLatino", "++ Parseados: ${animeList.size}")
 
                     val searchResponses = animeList.mapNotNull { obj ->
                         val name = obj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
@@ -80,16 +86,11 @@ class AnimelatinoProvider : MainAPI() {
                         }
                     }
                     if (searchResponses.isNotEmpty()) items.add(HomePageList(title, searchResponses))
+                } else if (res.code == 403) {
+                    Log.e("AnimeLatino", "!! Bloqueo 403 en $title. Requiere validación en WebView.")
                 }
             } catch (e: Exception) {
-                Log.e("AnimeLatino", "XX Fallo en $title: ${e.message}. Reintentando con CFKiller...")
-                // Segundo intento con el Interceptor si el primero falla
-                try {
-                    val resCf = app.get(url, interceptor = cfKiller, headers = fastHeaders, timeout = 20)
-                    Log.d("AnimeLatino", "Respuesta reintento: ${resCf.code}")
-                } catch (e2: Exception) {
-                    Log.e("AnimeLatino", "Error persistente: ${e2.message}")
-                }
+                Log.e("AnimeLatino", "XX Error en $title: ${e.message}")
             }
         }
         newHomePageResponse(items)
