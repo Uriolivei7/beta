@@ -9,7 +9,7 @@ import kotlinx.serialization.json.*
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 
-class AnimeLatinoHDProvider : MainAPI() {
+class AnimelatinoProvider : MainAPI() {
     override var mainUrl = "https://www.animelatinohd.com"
     override var name = "AnimeLatinoHD"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
