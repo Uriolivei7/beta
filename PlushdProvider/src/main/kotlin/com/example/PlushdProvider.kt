@@ -11,7 +11,7 @@ import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    override var mainUrl = "https://tioplus.app"
+    override var mainUrl = "https://ww3.tioplus.net"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -37,43 +37,21 @@ class PlushdProvider : MainAPI() {
     }
 
     private fun fixPelisplusHostsLinks(url: String): String {
-        var fixedUrl = url
-
-        val hostReplacements = mapOf(
-            "https://hglink.to" to "https://streamwish.to",
-            "https://swdyu.com" to "https://streamwish.to",
-            "https://cybervynx.com" to "https://streamwish.to",
-            "https://dumbalag.com" to "https://streamwish.to",
-            "https://earnvids.com" to "https://streamwish.to",
-            "https://awish.pro" to "https://streamwish.to",
-
-            "https://mivalyo.com" to "https://vidhidepro.com",
-            "https://dinisglows.com" to "https://vidhidepro.com",
-            "https://dhtpre.com" to "https://vidhidepro.com",
-            "https://mobilefast.to" to "https://vidhidepro.com",
-            "https://vidhide.com" to "https://vidhidepro.com",
-
-            "https://filemoon.link" to "https://filemoon.sx",
-            "https://filemoon.to" to "https://filemoon.sx",
-            "https://moon.app" to "https://filemoon.sx",
-            "https://plusto.app" to "https://filemoon.sx",
-            "https://callistanise.com" to "https://filemoon.sx",
-
-            "https://sblona.com" to "https://watchsb.com",
-            "https://lulu.st" to "https://lulustream.com",
-            "https://uqload.io" to "https://uqload.com",
-            "https://do7go.com" to "https://dood.la",
-            "https://doodstream.com" to "https://dood.la",
-            "https://streamtape.com" to "https://streamtape.cc"
-        )
-
-        hostReplacements.forEach { (old, new) ->
-            if (fixedUrl.startsWith(old)) {
-                fixedUrl = fixedUrl.replaceFirst(old, new)
-            }
-        }
-
-        return fixedUrl
+        return url
+            .replaceFirst("https://hglink.to", "https://streamwish.to")
+            .replaceFirst("https://swdyu.com", "https://streamwish.to")
+            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
+            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+            .replaceFirst("https://sblona.com", "https://watchsb.com")
+            .replaceFirst("https://lulu.st", "https://lulustream.com")
+            .replaceFirst("https://uqload.io", "https://uqload.com")
+            .replaceFirst("https://do7go.com", "https://dood.la")
+            .replaceFirst("https://doodstream.com", "https://dood.la")
+            .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -217,63 +195,64 @@ class PlushdProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val doc = app.get(data).document
+        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
-        Log.d("PlushdProvider", "--- Iniciando carga de links ---")
-        Log.d("PlushdProvider", "URL de la página: $data")
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to data
+        )
 
-        val servers = doc.select("ul.subselect li")
-        Log.d("PlushdProvider", "Servidores encontrados en HTML: ${servers.size}")
+        val doc = app.get(data, headers = headers).document
 
-        servers.forEach { serverLi ->
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
+            subtitleCallback.invoke(file)
+        }
+
+        doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
-                val serverName = serverLi.text()
                 val serverData = serverLi.attr("data-server")
+                if (serverData.isNullOrEmpty()) return@forEach
 
-                if (serverData.isNullOrEmpty()) {
-                    Log.w("PlushdProvider", "Servidor $serverName no tiene data-server")
+                val encodedOne = serverData.toByteArray()
+                val encodedTwo = base64Encode(encodedOne)
+                val playerUrl = "$mainUrl/player/$encodedTwo"
+
+                val text = app.get(playerUrl, headers = headers).text
+
+                if (text.contains("bloqueo temporal")) {
+                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
                     return@forEach
                 }
 
-                val encodedTwo = base64Encode(serverData.toByteArray())
-                val playerUrl = "$mainUrl/player/$encodedTwo"
-                Log.d("PlushdProvider", "Procesando: $serverName -> Player URL: $playerUrl")
+                val link = linkRegex.find(text)?.destructured?.component1()
 
-                val playerRes = app.get(playerUrl, headers = mapOf("Referer" to data))
-                val playerHtml = playerRes.text
-                val playerDoc = playerRes.document
+                if (!link.isNullOrBlank()) {
+                    val fixedLink = fixPelisplusHostsLinks(link)
 
-                val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
-                var finalLink = linkRegex.find(playerHtml)?.groupValues?.get(1)
-
-                if (finalLink.isNullOrBlank()) {
-                    val iframe = playerDoc.selectFirst("iframe")
-                    finalLink = iframe?.attr("src") ?: iframe?.attr("data-src")
-                    Log.d("PlushdProvider", "Link extraído de iframe: $finalLink")
-                } else {
-                    Log.d("PlushdProvider", "Link extraído de Redirect JS: $finalLink")
-                }
-
-                if (!finalLink.isNullOrBlank()) {
-                    val cleanLink = if (finalLink.startsWith("/")) "$mainUrl$finalLink" else finalLink
-                    val fixedLink = fixPelisplusHostsLinks(cleanLink)
-
-                    Log.d("PlushdProvider", "URL Final enviada al extractor: $fixedLink")
+                    val extractorReferer = try {
+                        val urlObject = URL(fixedLink)
+                        urlObject.protocol + "://" + urlObject.host + "/"
+                    } catch (e: Exception) {
+                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
+                        playerUrl
+                    }
 
                     loadExtractor(
                         url = fixedLink,
-                        referer = playerUrl,
-                        subtitleCallback = subtitleCallback,
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
                         callback = callback
                     )
                     linksFound = true
-                } else {
-                    Log.e("PlushdProvider", "No se pudo encontrar ningún enlace de video en el player de $serverName")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error en servidor ${serverLi.text()}: ${e.message}")
+                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
             }
+
+            delay(1500L)
         }
+
         return linksFound
     }
 }
