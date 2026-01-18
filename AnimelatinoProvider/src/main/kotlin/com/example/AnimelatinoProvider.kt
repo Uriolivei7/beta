@@ -19,11 +19,19 @@ class AnimelatinoProvider : MainAPI() {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cfKiller = CloudflareKiller()
 
-    // Definimos los headers como una variable normal
-    private val commonHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
+    // Headers maestros basados en tu CURL de Brave/Chrome 144
+    private val rscHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+        "RSC" to "1",
+        "Next-Router-Prefetch" to "1",
+        "Next-Url" to "/",
+        "Accept" to "*/*",
+        "Accept-Language" to "es-ES,es;q=0.7",
+        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Brave\";v=\"144\"",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "same-origin"
     )
 
     private fun getNextProps(document: Document): JsonObject? {
@@ -31,63 +39,46 @@ class AnimelatinoProvider : MainAPI() {
             val script = document.select("script#__NEXT_DATA__").first()
                 ?: document.select("script").find { it.data().contains("props") }
 
-            val dataText = script?.data()
-            if (dataText == null) {
-                Log.e("AnimeLatino", "Script no encontrado. Título: ${document.title()}")
-                return null
-            }
-
+            val dataText = script?.data() ?: return null
             val root = json.parseToJsonElement(dataText).jsonObject
             val pageProps = root["props"]?.jsonObject?.get("pageProps")?.jsonObject
             pageProps?.get("data")?.jsonObject ?: pageProps
         } catch (e: Exception) {
-            Log.e("AnimeLatino", "Error parseando NextProps: ${e.message}")
             null
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
-        Log.d("AnimeLatino", "Iniciando bypass de red...")
-
-        // Calentamiento
-        try { app.get(mainUrl, interceptor = cfKiller, headers = commonHeaders) } catch (e: Exception) {}
-
+        Log.d("AnimeLatino", "Iniciando peticiones RSC...")
         val items = mutableListOf<HomePageList>()
-        val urls = listOf(
-            Pair("$mainUrl/animes", "Animes"),
-            Pair("$mainUrl/animes/latino", "Latino"),
-            Pair("$mainUrl/animes/populares", "Populares")
+
+        // URLs con el token rsc que obtuviste
+        val sections = listOf(
+            Pair("$mainUrl/animes?_rsc=1ld0r", "Animes"),
+            Pair("$mainUrl/animes/latino?_rsc=1ld0r", "Latino"),
+            Pair("$mainUrl/animes/populares?_rsc=1ld0r", "Populares")
         )
 
-        for ((url, title) in urls) {
+        for ((url, title) in sections) {
             try {
-                Log.d("AnimeLatino", "Solicitando $title...")
-                val res = app.get(
-                    url,
-                    interceptor = cfKiller,
-                    timeout = 45,
-                    headers = commonHeaders + mapOf("Referer" to "$mainUrl/")
-                )
+                val res = app.get(url, interceptor = cfKiller, headers = rscHeaders, timeout = 30)
 
-                Log.d("AnimeLatino", "Respuesta recibida: ${res.code}")
-
-                val data = getNextProps(res.document)
-                val list = mutableListOf<SearchResponse>()
-                val array = if (url.contains("populares")) data?.get("popular_today")?.jsonArray
-                else data?.get("data")?.jsonArray ?: data?.get("animes")?.jsonArray
-
-                array?.forEach { item ->
-                    val obj = item.jsonObject
+                // Extraemos la lista de animes del texto RSC
+                val animeList = parseRscList(res.text)
+                val searchResponses = animeList.map { obj ->
                     val name = obj["name"]?.jsonPrimitive?.content ?: ""
                     val slug = obj["slug"]?.jsonPrimitive?.content ?: ""
                     val posterPath = obj["poster"]?.jsonPrimitive?.content ?: ""
                     val poster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w200$posterPath"
 
-                    list.add(newAnimeSearchResponse(name, "$mainUrl/anime/$slug") {
+                    newAnimeSearchResponse(name, "$mainUrl/anime/$slug") {
                         this.posterUrl = poster
-                    })
+                    }
                 }
-                if (list.isNotEmpty()) items.add(HomePageList(title, list))
+
+                if (searchResponses.isNotEmpty()) {
+                    items.add(HomePageList(title, searchResponses))
+                }
             } catch (e: Exception) {
                 Log.e("AnimeLatino", "Error en sección $title: ${e.message}")
             }
@@ -96,8 +87,9 @@ class AnimelatinoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val res = app.get(url, interceptor = cfKiller, headers = commonHeaders)
-        val data = getNextProps(res.document) ?: throw ErrorLoadingException("JSON null")
+        // En load usamos la página normal (HTML), por eso no enviamos el header RSC
+        val res = app.get(url, interceptor = cfKiller, headers = mapOf("User-Agent" to rscHeaders["User-Agent"]!!))
+        val data = getNextProps(res.document) ?: throw ErrorLoadingException("Error al cargar datos del anime")
 
         val title = data["name"]?.jsonPrimitive?.content ?: ""
         val posterPath = data["poster"]?.jsonPrimitive?.content ?: ""
@@ -125,7 +117,7 @@ class AnimelatinoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
-        val res = app.get(data, interceptor = cfKiller, headers = commonHeaders)
+        val res = app.get(data, interceptor = cfKiller, headers = mapOf("User-Agent" to rscHeaders["User-Agent"]!!))
         val nextData = getNextProps(res.document)
         val players = nextData?.get("players")?.jsonArray ?: return@coroutineScope false
 
@@ -137,7 +129,11 @@ class AnimelatinoProvider : MainAPI() {
 
                 val apiRes = app.get(
                     "https://api.animelatinohd.com/stream/$id",
-                    headers = commonHeaders + mapOf("Referer" to "$mainUrl/", "X-Requested-With" to "XMLHttpRequest")
+                    headers = mapOf(
+                        "User-Agent" to rscHeaders["User-Agent"]!!,
+                        "Referer" to "$mainUrl/",
+                        "X-Requested-With" to "XMLHttpRequest"
+                    )
                 )
 
                 val streamUrl = fetchUrlFromResponse(apiRes.text)
@@ -160,5 +156,18 @@ class AnimelatinoProvider : MainAPI() {
     private fun fetchUrlFromResponse(text: String): String? {
         val linkRegex = """https?://[^\s"']+""".toRegex()
         return linkRegex.find(text)?.value
+    }
+
+    // Nueva función para extraer la lista de animes del formato RSC de Next.js
+    private fun parseRscList(text: String): List<JsonObject> {
+        return try {
+            // Buscamos todos los fragmentos que parecen objetos de anime dentro del RSC
+            val regex = Regex("""\{"id":\d+,"name":"[^"]+","slug":"[^"]+","poster":"[^"]+"[^\}]*\}""")
+            regex.findAll(text).map {
+                json.parseToJsonElement(it.value).jsonObject
+            }.toList()
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 }
