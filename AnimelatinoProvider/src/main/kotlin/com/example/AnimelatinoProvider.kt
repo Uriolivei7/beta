@@ -18,10 +18,7 @@ class AnimelatinoProvider : MainAPI() {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    // Mantenemos el killer pero lo usaremos con precaución
     private val cfKiller = CloudflareKiller()
-
-    // Busca esta parte en tu código y reemplázala:
 
     private val fastHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -39,8 +36,6 @@ class AnimelatinoProvider : MainAPI() {
         "sec-fetch-site" to "same-origin"
     )
 
-    // Reemplaza tu función getMainPage por esta versión "Limpia":
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
         Log.d("AnimeLatino", "--- INICIANDO CARGA CON CFKILLER ---")
         val items = mutableListOf<HomePageList>()
@@ -56,8 +51,6 @@ class AnimelatinoProvider : MainAPI() {
             try {
                 Log.d("AnimeLatino", ">> Solicitando: $title")
 
-                // Eliminamos headers manuales complejos que puedan delatarnos
-                // Dejamos que el interceptor maneje las cookies
                 val res = app.get(
                     url,
                     interceptor = cfKiller,
@@ -97,11 +90,9 @@ class AnimelatinoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // Para los detalles, pedimos la página normal pero con el User-Agent de Brave
         val res = app.get(url, interceptor = cfKiller, headers = mapOf("User-Agent" to fastHeaders["User-Agent"]!!))
         val document = res.document
 
-        // Buscamos la data en el script __NEXT_DATA__
         val script = document.select("script#__NEXT_DATA__").first()?.data()
             ?: throw ErrorLoadingException("No se encontró la data del anime")
 
