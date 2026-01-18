@@ -21,7 +21,8 @@ class AnimelatinoProvider : MainAPI() {
     // Mantenemos el killer pero lo usaremos con precaución
     private val cfKiller = CloudflareKiller()
 
-    // Headers exactos de tu CURL - Versión simplificada para evitar sospechas
+    // Busca esta parte en tu código y reemplázala:
+
     private val fastHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
         "Accept" to "*/*",
@@ -29,6 +30,7 @@ class AnimelatinoProvider : MainAPI() {
         "Next-Router-Prefetch" to "1",
         "Next-Url" to "/",
         "Referer" to "https://www.animelatinohd.com/",
+        "Cookie" to "cf_clearance=zRxKw3hEBgSVPRHkUQ1Xs8oH49u2coFGVs4b0h.aFNU-1768761656-1.2.1.1-.FwveTOjvxEzz3eWOuqLUIuxI32SBydHjM8KpBq35_Ehi9WiH_pVfREnbVouSj7t.Ik8fYYRXtTMkC0cdhjEGq.1bCX.upRahfUH_e7vnopz3uCgxURtB2KRrDlkz.AodRkE2wODa9stNA1Sb2bXmncijP.oc7yglA8M4ZVlkQefe6ll1tnDYMV1jP7qgV0f8aIAEAT4.PKtZ9YHFzGk5cyEnIfwInpXT1Gop8b5097TDZEMhTwWnMKk6QN6So2b",
         "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Brave\";v=\"144\"",
         "sec-ch-ua-mobile" to "?0",
         "sec-ch-ua-platform" to "\"Windows\"",
