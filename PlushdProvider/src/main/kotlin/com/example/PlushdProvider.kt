@@ -218,18 +218,26 @@ class PlushdProvider : MainAPI() {
     ): Boolean {
         var linksFound = false
         val doc = app.get(data).document
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Referer" to mainUrl
-        )
 
-        doc.select("ul.subselect li").forEach { serverLi ->
+        Log.d("PlushdProvider", "--- Iniciando carga de links ---")
+        Log.d("PlushdProvider", "URL de la página: $data")
+
+        val servers = doc.select("ul.subselect li")
+        Log.d("PlushdProvider", "Servidores encontrados en HTML: ${servers.size}")
+
+        servers.forEach { serverLi ->
             try {
+                val serverName = serverLi.text()
                 val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@forEach
+
+                if (serverData.isNullOrEmpty()) {
+                    Log.w("PlushdProvider", "Servidor $serverName no tiene data-server")
+                    return@forEach
+                }
 
                 val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
+                Log.d("PlushdProvider", "Procesando: $serverName -> Player URL: $playerUrl")
 
                 val playerRes = app.get(playerUrl, headers = mapOf("Referer" to data))
                 val playerHtml = playerRes.text
@@ -241,12 +249,16 @@ class PlushdProvider : MainAPI() {
                 if (finalLink.isNullOrBlank()) {
                     val iframe = playerDoc.selectFirst("iframe")
                     finalLink = iframe?.attr("src") ?: iframe?.attr("data-src")
+                    Log.d("PlushdProvider", "Link extraído de iframe: $finalLink")
+                } else {
+                    Log.d("PlushdProvider", "Link extraído de Redirect JS: $finalLink")
                 }
 
                 if (!finalLink.isNullOrBlank()) {
                     val cleanLink = if (finalLink.startsWith("/")) "$mainUrl$finalLink" else finalLink
-
                     val fixedLink = fixPelisplusHostsLinks(cleanLink)
+
+                    Log.d("PlushdProvider", "URL Final enviada al extractor: $fixedLink")
 
                     loadExtractor(
                         url = fixedLink,
@@ -255,9 +267,11 @@ class PlushdProvider : MainAPI() {
                         callback = callback
                     )
                     linksFound = true
+                } else {
+                    Log.e("PlushdProvider", "No se pudo encontrar ningún enlace de video en el player de $serverName")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error procesando servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error en servidor ${serverLi.text()}: ${e.message}")
             }
         }
         return linksFound
