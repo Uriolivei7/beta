@@ -11,7 +11,8 @@ import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    override var mainUrl = "https://ww3.tioplus.net"
+    //override var mainUrl = "https://ww3.tioplus.net"
+    override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -38,14 +39,20 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         return url
-            .replace("vidhideplus.com", "vidhide.com")
-            .replace("vidhidepro.com", "vidhide.com")
-            .replace("vudeo.co", "vudeo.net")
-            .replace("luluvideo.com", "luluvdo.com")
-            .replace("filemoon.to", "filemoon.sx")
-            .replace("filemoon.link", "filemoon.sx")
-            .replace("waaw.to", "netu.to") // WAAW es Netu
-            .replace("emturbovid.com/t/", "emturbovid.com/v/")
+            .replaceFirst("https://hglink.to", "https://streamwish.to")
+            .replaceFirst("https://swdyu.com", "https://streamwish.to")
+            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
+            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+            .replaceFirst("https://sblona.com", "https://watchsb.com")
+            .replaceFirst("https://lulu.st", "https://lulustream.com")
+            .replaceFirst("https://uqload.io", "https://uqload.com")
+            .replaceFirst("https://do7go.com", "https://dood.la")
+            .replaceFirst("https://doodstream.com", "https://dood.la")
+            .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -87,6 +94,9 @@ class PlushdProvider : MainAPI() {
         return results
     }
 
+
+    data class MainTemporada(val elements: Map<String, List<MainTemporadaElement>>)
+
     data class MainTemporadaElement(
         val title: String? = null,
         val image: String? = null,
@@ -122,20 +132,30 @@ class PlushdProvider : MainAPI() {
                 if (!jsonscript.isNullOrEmpty()) {
                     try {
                         val seasonsMap = parseJson<Map<String, List<MainTemporadaElement>>>(jsonscript)
-                        seasonsMap.values.forEach { list ->
-                            list.forEach { info ->
-                                val epTitle = info.title ?: "Episodio"
-                                val seasonNum = info.season ?: 1
-                                val epNum = info.episode ?: 1
+                        seasonsMap.values.map { list ->
+                            list.map { info ->
+                                val epTitle = info.title
+                                val seasonNum = info.season
+                                val epNum = info.episode
                                 val img = info.image
-                                val realimg = if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${img.replace("\\/", "/")}"
-
-                                epi.add(newEpisode("$url/season/$seasonNum/episode/$epNum") {
-                                    this.name = epTitle
-                                    this.season = seasonNum
-                                    this.episode = epNum
-                                    this.posterUrl = realimg
-                                })
+                                val realimg =
+                                    if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${
+                                        img.replace(
+                                            "\\/",
+                                            "/"
+                                        )
+                                    }"
+                                val epurl = "$url/season/$seasonNum/episode/$epNum"
+                                if (epTitle != null && seasonNum != null && epNum != null) {
+                                    epi.add(
+                                        newEpisode(epurl) {
+                                            this.name = epTitle
+                                            this.season = seasonNum
+                                            this.episode = epNum
+                                            this.posterUrl = realimg
+                                        }
+                                    )
+                                }
                             }
                         }
                     } catch (e: Exception) {
@@ -147,7 +167,10 @@ class PlushdProvider : MainAPI() {
 
         return when (tvType) {
             TvType.TvSeries, TvType.Anime, TvType.AsianDrama -> {
-                newTvSeriesLoadResponse(title, url, tvType, epi) {
+                newTvSeriesLoadResponse(
+                    title,
+                    url, tvType, epi,
+                ) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backimage
                     this.plot = description
@@ -173,19 +196,7 @@ class PlushdProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val tag = "PlushdProvider"
         val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
-
-        val customExtractors = listOf(
-            PelisplusUpnsPro(),
-            PelisplusUpnsPro2(),
-            PelisplusUpnsPro3(),
-            PelisplusRpmStream(),
-            EmturbovidCom(),
-            VidhideCustom(),
-            LuluvdoCustom(),
-            VudeoCustom()
-        )
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -193,45 +204,56 @@ class PlushdProvider : MainAPI() {
         )
 
         val doc = app.get(data, headers = headers).document
-        val servers = doc.select("div ul.subselect li").toList()
 
-        servers.forEach { serverLi ->
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
+            subtitleCallback.invoke(file)
+        }
+
+        doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
-                val serverData = serverLi.attr("data-server") ?: return@forEach
-                val encodedTwo = base64Encode(serverData.toByteArray())
+                val serverData = serverLi.attr("data-server")
+                if (serverData.isNullOrEmpty()) return@forEach
+
+                val encodedOne = serverData.toByteArray()
+                val encodedTwo = base64Encode(encodedOne)
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
                 val text = app.get(playerUrl, headers = headers).text
+
+                if (text.contains("bloqueo temporal")) {
+                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
+                    return@forEach
+                }
+
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.i(tag, "Enlace extraído: $fixedLink")
 
-                    var extractorFound = false
-
-                    for (extractor in customExtractors) {
-                        val domainMatch = extractor.mainUrl.replace("https://", "").replace("http://", "")
-                        if (fixedLink.contains(domainMatch)) {
-                            extractor.getUrl(fixedLink, playerUrl, subtitleCallback, callback)
-                            Log.d(tag, "Extractor manual detectó: ${extractor.name}")
-                            extractorFound = true
-                            break
-                        }
+                    val extractorReferer = try {
+                        val urlObject = URL(fixedLink)
+                        urlObject.protocol + "://" + urlObject.host + "/"
+                    } catch (e: Exception) {
+                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
+                        playerUrl
                     }
 
-                    if (!extractorFound) {
-                        loadExtractor(fixedLink, playerUrl, subtitleCallback, callback)
-                    }
-
+                    loadExtractor(
+                        url = fixedLink,
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = callback
+                    )
                     linksFound = true
                 }
             } catch (e: Exception) {
-                Log.e(tag, "Error en servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
             }
-            delay(1000L)
+
+            delay(1500L)
         }
+
         return linksFound
     }
-    
 }
