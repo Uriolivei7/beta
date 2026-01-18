@@ -16,71 +16,99 @@ class AnimelatinoProvider : MainAPI() {
     override var lang = "es"
     override val hasMainPage = true
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
 
-    // 1. Killer de Cloudflare para saltar protecciones
+    val baseHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language" to "es-MX,es;q=0.8,en-US;q=0.5,en;q=0.3",
+        "Cache-Control" to "no-cache",
+        "Pragma" to "no-cache"
+    )
+
     private val cfKiller = CloudflareKiller()
 
     private fun getNextProps(document: Document): JsonObject? {
         return try {
-            val script = document.select("script").find { it.data().contains("{\"props\":{\"pageProps\":") }
+            // Buscamos el ID estándar de Next.js
+            val script = document.select("script#__NEXT_DATA__").first()
+                ?: document.select("script").find { it.data().contains("props") }
+
             val dataText = script?.data()
             if (dataText == null) {
-                Log.e("AnimeLatino", "No se encontró el script de Next.js")
+                // LOG CLAVE: Ver que devolvió la web si no hay script
+                Log.e("AnimeLatino", "Script no encontrado. Título: ${document.title()}")
+                Log.d("AnimeLatino", "HTML Corto: ${document.body().text().take(200)}")
                 return null
             }
-            json.parseToJsonElement(dataText).jsonObject["props"]?.jsonObject?.get("pageProps")?.jsonObject?.get("data")?.jsonObject
+
+            val root = json.parseToJsonElement(dataText).jsonObject
+            val pageProps = root["props"]?.jsonObject?.get("pageProps")?.jsonObject
+
+            // AnimeLatino a veces pone la data directo en pageProps o dentro de una llave 'data'
+            pageProps?.get("data")?.jsonObject ?: pageProps
         } catch (e: Exception) {
             Log.e("AnimeLatino", "Error parseando NextProps: ${e.message}")
             null
         }
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.d("AnimeLatino", "Cargando Home...")
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
+        Log.d("AnimeLatino", "Intentando cargar Home...")
         val items = mutableListOf<HomePageList>()
 
-        // Usamos interceptor de Cloudflare en la petición
         val urls = listOf(
             Pair("$mainUrl/animes/populares", "Populares"),
             Pair("$mainUrl/animes?status=1", "En Emisión")
         )
 
         for ((url, title) in urls) {
-            val res = app.get(url, interceptor = cfKiller)
-            val data = getNextProps(res.document)
-            val list = mutableListOf<SearchResponse>()
+            try {
+                val res = app.get(url, interceptor = cfKiller, timeout = 15)
+                val data = getNextProps(res.document)
+                val list = mutableListOf<SearchResponse>()
 
-            val array = if (url.contains("populares")) data?.get("popular_today")?.jsonArray
-            else data?.get("data")?.jsonArray
+                // Log para verificar si el array viene con el nombre esperado
+                val array = if (url.contains("populares")) data?.get("popular_today")?.jsonArray
+                else data?.get("data")?.jsonArray ?: data?.get("animes")?.jsonArray
 
-            array?.forEach { item ->
-                val obj = item.jsonObject
-                val name = obj["name"]?.jsonPrimitive?.content ?: ""
-                val slug = obj["slug"]?.jsonPrimitive?.content ?: ""
-                val poster = "https://image.tmdb.org/t/p/w200${obj["poster"]?.jsonPrimitive?.content}"
+                array?.forEach { item ->
+                    val obj = item.jsonObject
+                    val name = obj["name"]?.jsonPrimitive?.content ?: ""
+                    val slug = obj["slug"]?.jsonPrimitive?.content ?: ""
+                    val posterPath = obj["poster"]?.jsonPrimitive?.content ?: ""
+                    val poster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w200$posterPath"
 
-                list.add(newAnimeSearchResponse(name, "$mainUrl/anime/$slug") {
-                    this.posterUrl = poster
-                })
+                    list.add(newAnimeSearchResponse(name, "$mainUrl/anime/$slug") {
+                        this.posterUrl = poster
+                    })
+                }
+                if (list.isNotEmpty()) items.add(HomePageList(title, list))
+            } catch (e: Exception) {
+                Log.e("AnimeLatino", "Error en sección $title: ${e.message}")
             }
-            items.add(HomePageList(title, list))
         }
-        return newHomePageResponse(items)
+        newHomePageResponse(items)
     }
 
     override suspend fun load(url: String): LoadResponse {
         Log.d("AnimeLatino", "Cargando info de: $url")
         val res = app.get(url, interceptor = cfKiller)
-        val data = getNextProps(res.document) ?: throw ErrorLoadingException("JSON null")
+        val data = getNextProps(res.document) ?: throw ErrorLoadingException("No se pudo obtener la data del Anime")
 
-        val title = data["name"]!!.jsonPrimitive.content
-        val poster = "https://image.tmdb.org/t/p/w600_and_h900_bestv2${data["poster"]?.jsonPrimitive?.content}"
+        val title = data["name"]?.jsonPrimitive?.content ?: ""
+        val posterPath = data["poster"]?.jsonPrimitive?.content ?: ""
+        val poster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w600_and_h900_bestv2$posterPath"
 
-        val episodes = data["episodes"]?.jsonArray?.map { ep ->
+        val episodes = data["episodes"]?.jsonArray?.mapNotNull { ep ->
             val obj = ep.jsonObject
-            val num = obj["number"]!!.jsonPrimitive.content
-            newEpisode("$mainUrl/ver/${data["slug"]!!.jsonPrimitive.content}/$num") {
+            val num = obj["number"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            val slug = data["slug"]?.jsonPrimitive?.content ?: return@mapNotNull null
+
+            newEpisode("$mainUrl/ver/$slug/$num") {
                 this.name = "Episodio $num"
                 this.episode = num.split(".")[0].toIntOrNull()
             }
@@ -89,6 +117,7 @@ class AnimelatinoProvider : MainAPI() {
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
             this.plot = data["overview"]?.jsonPrimitive?.content
+            this.showStatus = if (data["status"]?.jsonPrimitive?.content == "1") ShowStatus.Ongoing else ShowStatus.Completed
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
@@ -99,40 +128,35 @@ class AnimelatinoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
-        Log.d("AnimeLatino", "Cargando links para: $data")
+        Log.d("AnimeLatino", "Cargando links de: $data")
         val res = app.get(data, interceptor = cfKiller)
         val nextData = getNextProps(res.document)
         val players = nextData?.get("players")?.jsonArray ?: return@coroutineScope false
 
-        // 2. Uso de bucles 'for' para evitar errores de Corrutinas
         for (langGroup in players) {
             for (player in langGroup.jsonArray) {
                 val obj = player.jsonObject
-                val id = obj["id"]?.jsonPrimitive?.content
-                val lang = if (obj["languaje"]?.jsonPrimitive?.content == "1") "Lat" else "Sub"
+                val id = obj["id"]?.jsonPrimitive?.content ?: continue
+                val langLabel = if (obj["languaje"]?.jsonPrimitive?.content == "1") "Lat" else "Sub"
 
-                // Petición a la API de streaming
                 val apiRes = app.get(
                     "https://api.animelatinohd.com/stream/$id",
-                    headers = mapOf("Referer" to "$mainUrl/")
+                    headers = mapOf("Referer" to "$mainUrl/", "X-Requested-With" to "XMLHttpRequest")
                 )
 
-                Log.d("AnimeLatino", "Respuesta API Stream: ${apiRes.text}")
-
                 val streamUrl = fetchUrlFromResponse(apiRes.text)
+                Log.d("AnimeLatino", "URL de stream encontrada: $streamUrl")
 
                 if (streamUrl != null) {
-                    Log.d("AnimeLatino", "Extrayendo de: $streamUrl")
                     loadExtractor(streamUrl, "$mainUrl/", subtitleCallback) { link ->
-                        runBlocking { // Crea un puente para llamar a la suspend fun newExtractorLink
+                        runBlocking {
                             callback.invoke(
                                 newExtractorLink(
                                     source = link.source,
-                                    name = "${link.name} [$lang]",
-                                    url = link.url
+                                    name = "${link.name} [$langLabel]",
+                                    url = link.url,
                                 ) {
-                                    this.quality = link.quality
-                                    this.referer = link.referer
+                                    this.referer = mainUrl
                                 }
                             )
                         }
