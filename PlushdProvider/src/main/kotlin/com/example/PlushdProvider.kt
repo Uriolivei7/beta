@@ -11,7 +11,7 @@ import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    override var mainUrl = "https://ww3.pelisplus.to"
+    override var mainUrl = "https://tioplus.app" 
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -205,7 +205,7 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data, headers = headers).document
 
         val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
+            Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
             subtitleCallback.invoke(file)
         }
 
