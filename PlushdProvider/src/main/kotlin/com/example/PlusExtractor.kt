@@ -1,14 +1,12 @@
 package com.example
 
-/*
-    CEO: Ranita
-    Empresa: RANITA TECH
-    Versión software: 1.1     fecha: 17/01/2026
-*/
-
 import com.lagradost.cloudstream3.extractors.VidStack
+import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.utils.loadExtractor
 
-// --- EXTRACTORES PELISPLUS CLONES ---
+// --- CLONES DE PELISPLUS (MANTIENEN VIDSTACK) ---
 
 class PelisplusUpnsPro : VidStack() {
     override var mainUrl = "https://pelisplus.upns.pro"
@@ -30,22 +28,44 @@ class PelisplusRpmStream : VidStack() {
     override var name = "PelisplusRPM"
 }
 
-class EmturbovidCom : VidStack() {
+// --- SERVIDORES EXTERNOS (USAN EXTRACTOR_API) ---
+
+class EmturbovidCom : ExtractorApi() {
     override var mainUrl = "https://emturbovid.com"
     override var name = "Emturbovid"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        loadExtractor(url, referer, subtitleCallback, callback)
+    }
 }
 
-class VidhideCustom : VidStack() {
+class VidhideCustom : ExtractorApi() {
     override var mainUrl = "https://vidhide.com"
     override var name = "Vidhide"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        loadExtractor(url, referer, subtitleCallback, callback)
+    }
 }
 
-class LuluvdoCustom : VidStack() {
+class LuluvdoCustom : ExtractorApi() {
     override var mainUrl = "https://luluvdo.com"
     override var name = "LuluStream"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        loadExtractor(url, referer, subtitleCallback, callback)
+    }
 }
 
-class VudeoCustom : VidStack() {
+class VudeoCustom : ExtractorApi() {
     override var mainUrl = "https://vudeo.net"
     override var name = "Vudeo"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        loadExtractor(url, referer, subtitleCallback, callback)
+    }
 }

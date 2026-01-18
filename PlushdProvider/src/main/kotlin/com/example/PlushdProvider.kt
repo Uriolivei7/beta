@@ -209,16 +209,19 @@ class PlushdProvider : MainAPI() {
                     Log.i(tag, "Enlace extraído: $fixedLink")
 
                     var extractorFound = false
-                    customExtractors.forEach { extractor ->
-                        if (fixedLink.startsWith(extractor.mainUrl)) {
-                            extractor.getUrl(fixedLink, data, subtitleCallback, callback)
+
+                    for (extractor in customExtractors) {
+                        val domainMatch = extractor.mainUrl.replace("https://", "").replace("http://", "")
+                        if (fixedLink.contains(domainMatch)) {
+                            extractor.getUrl(fixedLink, playerUrl, subtitleCallback, callback)
                             Log.d(tag, "Extractor manual detectó: ${extractor.name}")
                             extractorFound = true
+                            break
                         }
                     }
 
                     if (!extractorFound) {
-                        loadExtractor(fixedLink, data, subtitleCallback, callback)
+                        loadExtractor(fixedLink, playerUrl, subtitleCallback, callback)
                     }
 
                     linksFound = true
@@ -230,4 +233,5 @@ class PlushdProvider : MainAPI() {
         }
         return linksFound
     }
+    
 }
