@@ -38,38 +38,31 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         var fixedUrl = url
+            .replace("/v/", "/e/")
+            .replace("/f/", "/e/")
 
         val hostReplacements = mapOf(
-            "https://hglink.to" to "https://streamwish.to",
-            "https://swdyu.com" to "https://streamwish.to",
-            "https://cybervynx.com" to "https://streamwish.to",
-            "https://dumbalag.com" to "https://streamwish.to",
+            "https://vidhideplus.com" to "https://vidhidepro.com",
+            "https://mobilefast.to" to "https://vidhidepro.com",
+            "https://mivalyo.com" to "https://vidhidepro.com",
+
+            "https://filemoon.to" to "https://filemoon.sx",
+            "https://callistanise.com" to "https://filemoon.sx",
+            "https://moon.app" to "https://filemoon.sx",
+
             "https://earnvids.com" to "https://streamwish.to",
             "https://awish.pro" to "https://streamwish.to",
 
-            "https://mivalyo.com" to "https://vidhidepro.com",
-            "https://dinisglows.com" to "https://vidhidepro.com",
-            "https://dhtpre.com" to "https://vidhidepro.com",
-            "https://mobilefast.to" to "https://vidhidepro.com",
-            "https://vidhide.com" to "https://vidhidepro.com",
+            "https://luluvdo.com" to "https://lulustream.com",
 
-            "https://filemoon.link" to "https://filemoon.sx",
-            "https://filemoon.to" to "https://filemoon.sx",
-            "https://moon.app" to "https://filemoon.sx",
-            "https://plusto.app" to "https://filemoon.sx",
-            "https://callistanise.com" to "https://filemoon.sx",
-
-            "https://sblona.com" to "https://watchsb.com",
-            "https://lulu.st" to "https://lulustream.com",
-            "https://uqload.io" to "https://uqload.com",
-            "https://do7go.com" to "https://dood.la",
-            "https://doodstream.com" to "https://dood.la",
-            "https://streamtape.com" to "https://streamtape.cc"
+            "https://waaw.to" to "https://hqq.ac",
+            
+            "https://pelisplus.upns.pro" to "https://upns.pro"
         )
 
         hostReplacements.forEach { (old, new) ->
-            if (fixedUrl.startsWith(old)) {
-                fixedUrl = fixedUrl.replaceFirst(old, new)
+            if (fixedUrl.contains(old)) {
+                fixedUrl = fixedUrl.replace(old, new)
             }
         }
 
