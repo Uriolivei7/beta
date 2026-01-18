@@ -17,16 +17,18 @@ class AnimelatinoProvider : MainAPI() {
     override val hasMainPage = true
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    // Mantenemos el killer pero lo usaremos con precaución
     private val cfKiller = CloudflareKiller()
 
-    // Headers optimizados basados en tu inspección (CURL)
-    private val rscHeaders = mapOf(
+    // Headers exactos de tu CURL - Versión simplificada para evitar sospechas
+    private val fastHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
         "Accept" to "*/*",
-        "Accept-Language" to "es-ES,es;q=0.7",
         "RSC" to "1",
         "Next-Router-Prefetch" to "1",
         "Next-Url" to "/",
+        "Referer" to "https://www.animelatinohd.com/",
         "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Brave\";v=\"144\"",
         "sec-ch-ua-mobile" to "?0",
         "sec-ch-ua-platform" to "\"Windows\"",
@@ -35,33 +37,39 @@ class AnimelatinoProvider : MainAPI() {
         "sec-fetch-site" to "same-origin"
     )
 
-    private val rscToken = "_rsc=1ld0r"
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse = coroutineScope {
-        Log.d("AnimeLatino", "--- INICIANDO MAIN PAGE (RSC MODE) ---")
+        Log.d("AnimeLatino", "--- INICIANDO BYPASS AGRESIVO ---")
         val items = mutableListOf<HomePageList>()
 
+        // Token extraído de tu inspección
+        val rscToken = "1ld0r"
+
         val sections = listOf(
-            Pair("$mainUrl/animes?$rscToken", "Animes"),
-            Pair("$mainUrl/animes/latino?$rscToken", "Latino"),
-            Pair("$mainUrl/animes/populares?$rscToken", "Populares")
+            Pair("$mainUrl/animes?_rsc=$rscToken", "Animes"),
+            Pair("$mainUrl/animes/latino?_rsc=$rscToken", "Latino"),
+            Pair("$mainUrl/animes/populares?_rsc=$rscToken", "Populares")
         )
 
         for ((url, title) in sections) {
             try {
-                Log.d("AnimeLatino", ">> Solicitando sección: $title | URL: $url")
+                Log.d("AnimeLatino", ">> Intentando conexión rápida a: $title")
 
-                val res = app.get(url, interceptor = cfKiller, headers = rscHeaders, timeout = 30)
+                // Intentamos la petición SIN el interceptor primero para saltar bloqueos de TLS
+                val res = app.get(
+                    url,
+                    headers = fastHeaders,
+                    timeout = 15 // Timeout corto: si no responde en 15s, Cloudflare nos bloqueó
+                )
 
-                Log.d("AnimeLatino", "<< Respuesta recibida: ${res.code} | Tamaño: ${res.text.length} bytes")
+                Log.d("AnimeLatino", "<< Respuesta: ${res.code} | Longitud: ${res.text.length}")
 
                 if (res.code == 200) {
                     val animeList = parseRscList(res.text)
-                    Log.d("AnimeLatino", "++ Animes parseados en $title: ${animeList.size}")
+                    Log.d("AnimeLatino", "++ Encontrados: ${animeList.size} animes")
 
-                    val searchResponses = animeList.map { obj ->
-                        val name = obj["name"]?.jsonPrimitive?.content ?: ""
-                        val slug = obj["slug"]?.jsonPrimitive?.content ?: ""
+                    val searchResponses = animeList.mapNotNull { obj ->
+                        val name = obj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                        val slug = obj["slug"]?.jsonPrimitive?.content ?: return@mapNotNull null
                         val posterPath = obj["poster"]?.jsonPrimitive?.content ?: ""
                         val poster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w200$posterPath"
 
@@ -70,50 +78,49 @@ class AnimelatinoProvider : MainAPI() {
                         }
                     }
                     if (searchResponses.isNotEmpty()) items.add(HomePageList(title, searchResponses))
-                } else {
-                    Log.e("AnimeLatino", "!! Error de servidor en $title: Código ${res.code}")
                 }
             } catch (e: Exception) {
-                Log.e("AnimeLatino", "XX Excepción en $title: ${e.message}")
-                e.printStackTrace()
+                Log.e("AnimeLatino", "XX Fallo en $title: ${e.message}. Reintentando con CFKiller...")
+                // Segundo intento con el Interceptor si el primero falla
+                try {
+                    val resCf = app.get(url, interceptor = cfKiller, headers = fastHeaders, timeout = 20)
+                    Log.d("AnimeLatino", "Respuesta reintento: ${resCf.code}")
+                } catch (e2: Exception) {
+                    Log.e("AnimeLatino", "Error persistente: ${e2.message}")
+                }
             }
         }
         newHomePageResponse(items)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d("AnimeLatino", "--- CARGANDO DETALLES: $url ---")
-        val rscUrl = if (url.contains("?")) "$url&$rscToken" else "$url?$rscToken"
+        // Para los detalles, pedimos la página normal pero con el User-Agent de Brave
+        val res = app.get(url, interceptor = cfKiller, headers = mapOf("User-Agent" to fastHeaders["User-Agent"]!!))
+        val document = res.document
 
-        val res = app.get(rscUrl, interceptor = cfKiller, headers = rscHeaders)
-        Log.d("AnimeLatino", "Respuesta LOAD: ${res.code}")
+        // Buscamos la data en el script __NEXT_DATA__
+        val script = document.select("script#__NEXT_DATA__").first()?.data()
+            ?: throw ErrorLoadingException("No se encontró la data del anime")
 
-        val data = parseRscList(res.text).firstOrNull()
-            ?: throw ErrorLoadingException("No se encontró el objeto de anime en el RSC")
+        val data = json.parseToJsonElement(script).jsonObject["props"]?.jsonObject?.get("pageProps")?.jsonObject?.get("data")?.jsonObject
+            ?: throw ErrorLoadingException("Error al parsear el contenido")
 
         val title = data["name"]?.jsonPrimitive?.content ?: ""
-        Log.d("AnimeLatino", "Cargando anime: $title")
-
         val posterPath = data["poster"]?.jsonPrimitive?.content ?: ""
         val poster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w600_and_h900_bestv2$posterPath"
 
         val episodes = data["episodes"]?.jsonArray?.mapNotNull { ep ->
             val obj = ep.jsonObject
             val num = obj["number"]?.jsonPrimitive?.content ?: return@mapNotNull null
-            val slug = data["slug"]?.jsonPrimitive?.content ?: return@mapNotNull null
-
-            newEpisode("$mainUrl/ver/$slug/$num") {
+            newEpisode("$mainUrl/ver/${data["slug"]?.jsonPrimitive?.content}/$num") {
                 this.name = "Episodio $num"
                 this.episode = num.split(".")[0].toIntOrNull()
             }
         }?.reversed() ?: emptyList()
 
-        Log.d("AnimeLatino", "Total episodios encontrados: ${episodes.size}")
-
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
             this.plot = data["overview"]?.jsonPrimitive?.content
-            this.showStatus = if (data["status"]?.jsonPrimitive?.content == "1") ShowStatus.Ongoing else ShowStatus.Completed
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
@@ -124,27 +131,13 @@ class AnimelatinoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
-        Log.d("AnimeLatino", "--- BUSCANDO LINKS EN: $data ---")
-
-        val res = app.get(data, interceptor = cfKiller, headers = mapOf("User-Agent" to rscHeaders["User-Agent"]!!))
-
-        val script = res.document.select("script").find { it.data().contains("players") }?.data()
-        if (script == null) {
-            Log.e("AnimeLatino", "No se encontró el script de players en el HTML")
-            return@coroutineScope false
-        }
+        val res = app.get(data, interceptor = cfKiller, headers = mapOf("User-Agent" to fastHeaders["User-Agent"]!!))
+        val script = res.document.select("script").find { it.data().contains("players") }?.data() ?: return@coroutineScope false
 
         val playersRegex = Regex("""\\"players\\":\s*(\[.*?\])""")
-        val playersMatch = playersRegex.find(script)?.groupValues?.get(1)
+        val playersMatch = playersRegex.find(script)?.groupValues?.get(1)?.replace("\\\"", "\"")?.replace("\\\\", "\\") ?: return@coroutineScope false
 
-        if (playersMatch == null) {
-            Log.e("AnimeLatino", "Regex falló al extraer el array de players")
-            return@coroutineScope false
-        }
-
-        val cleanJson = playersMatch.replace("\\\"", "\"").replace("\\\\", "\\")
-        val playersArray = json.parseToJsonElement(cleanJson).jsonArray
-        Log.d("AnimeLatino", "Idiomas/Grupos de servidores encontrados: ${playersArray.size}")
+        val playersArray = json.parseToJsonElement(playersMatch).jsonArray
 
         for (langGroup in playersArray) {
             for (player in langGroup.jsonArray) {
@@ -152,20 +145,13 @@ class AnimelatinoProvider : MainAPI() {
                 val id = obj["id"]?.jsonPrimitive?.content ?: continue
                 val langLabel = if (obj["languaje"]?.jsonPrimitive?.content == "1") "Lat" else "Sub"
 
-                Log.d("AnimeLatino", "Extrayendo stream ID: $id ($langLabel)")
-
                 val apiRes = app.get(
                     "https://api.animelatinohd.com/stream/$id",
-                    headers = mapOf(
-                        "Referer" to "$mainUrl/",
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to rscHeaders["User-Agent"]!!
-                    )
+                    headers = mapOf("Referer" to "$mainUrl/", "X-Requested-With" to "XMLHttpRequest")
                 )
 
                 val streamUrl = Regex("""https?://[^\s"']+""").find(apiRes.text)?.value
                 if (streamUrl != null) {
-                    Log.d("AnimeLatino", "URL final para extractor: $streamUrl")
                     loadExtractor(streamUrl, "$mainUrl/", subtitleCallback) { link ->
                         runBlocking {
                             callback.invoke(newExtractorLink(link.source, "${link.name} [$langLabel]", link.url) {
@@ -181,15 +167,8 @@ class AnimelatinoProvider : MainAPI() {
 
     private fun parseRscList(text: String): List<JsonObject> {
         return try {
-            // Regex ajustado para capturar la estructura de datos que envía Next.js en RSC
             val regex = Regex("""\{"id":\d+,"name":"[^"]+","slug":"[^"]+","poster":"[^"]+"[^\}]*\}""")
-            val matches = regex.findAll(text).map {
-                json.parseToJsonElement(it.value).jsonObject
-            }.toList()
-            matches
-        } catch (e: Exception) {
-            Log.e("AnimeLatino", "Error parseando RSC List: ${e.message}")
-            emptyList()
-        }
+            regex.findAll(text).map { json.parseToJsonElement(it.value).jsonObject }.toList()
+        } catch (e: Exception) { emptyList() }
     }
 }
