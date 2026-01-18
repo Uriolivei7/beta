@@ -1,13 +1,12 @@
 // use an integer for version numbers
-version = 5
-
+version = 21
 
 cloudstream {
-    language = "mx"
+    language = "es"
     // All of these properties are optional, you can safely remove them
 
-    //description = "Lorem Ipsum"
-    authors = listOf("redblacker8")
+    description = "Contenido en Latino"
+    authors = listOf("Ranita", "Yeji", "Mina")
 
     /**
      * Status int as the following:
@@ -20,7 +19,9 @@ cloudstream {
     tvTypes = listOf(
         "Movie",
         "TvSeries",
+        "Cartoon",
+        "Anime"
     )
 
-    iconUrl = "https://pelis-plus.icu/assets/img/ic/favicon-96x96.png"
+    //iconUrl = "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/NetflixMirrorProvider/icon.png"
 }
