@@ -67,11 +67,23 @@ class AnimelatinoProvider : MainAPI() {
 
         for ((url, title) in urls) {
             try {
-                val res = app.get(url, interceptor = cfKiller, timeout = 15)
+                Log.d("AnimeLatino", "Solicitando $title...")
+                val res = app.get(
+                    url,
+                    interceptor = cfKiller,
+                    timeout = 60,
+                    verify = true
+                )
+
+                if (res.code == 200) {
+                    Log.d("AnimeLatino", "Conexión exitosa a $title")
+                } else {
+                    Log.e("AnimeLatino", "Error de respuesta: ${res.code}")
+                }
+
                 val data = getNextProps(res.document)
                 val list = mutableListOf<SearchResponse>()
 
-                // Log para verificar si el array viene con el nombre esperado
                 val array = if (url.contains("populares")) data?.get("popular_today")?.jsonArray
                 else data?.get("data")?.jsonArray ?: data?.get("animes")?.jsonArray
 
