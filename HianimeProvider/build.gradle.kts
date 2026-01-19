@@ -9,31 +9,30 @@ android {
 
     defaultConfig {
         val properties = Properties()
-        properties.load(project.rootProject.file("local.properties").inputStream())
-        buildConfigField("String", "WASMAPI", "\"${properties.getProperty("WASMAPI")}\"")
+        val propertiesFile = project.rootProject.file("local.properties")
+
+        val wasmApiKey = if (propertiesFile.exists()) {
+            properties.load(propertiesFile.inputStream())
+            properties.getProperty("WASMAPI") ?: ""
+        } else {
+            System.getenv("WASMAPI") ?: ""
+        }
+
+        buildConfigField("String", "WASMAPI", "\"$wasmApiKey\"")
     }
 }
+
 dependencies {
     implementation("com.google.firebase:firebase-crashlytics-buildtools:3.0.6")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.android.material:material:1.13.0")
 }
 
-
 cloudstream {
     language = "en"
-    // All of these properties are optional, you can safely remove them
+    authors = listOf("Stormunblessed", "KillerDogeEmpire", "RowdyRushya", "Phisher98")
 
-    authors = listOf("Stormunblessed, KillerDogeEmpire,RowdyRushya,Phisher98")
-
-    /**
-     * Status int as the following:
-     * 0: Down
-     * 1: Ok
-     * 2: Slow
-     * 3: Beta only
-     * */
-    status = 1 // will be 3 if unspecified
+    status = 1
     tvTypes = listOf(
         "Anime",
         "OVA",
