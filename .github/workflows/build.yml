@@ -30,11 +30,10 @@ jobs:
           ref: "builds"
           path: "builds"
 
-      # --- IMPORTANTE: Guardamos tu JSON personalizado antes de limpiar ---
-      - name: Preserve Custom JSON
+      - name: Backup Custom JSON
         run: |
           if [ -f $GITHUB_WORKSPACE/builds/plugins.json ]; then
-            cp $GITHUB_WORKSPACE/builds/plugins.json $GITHUB_WORKSPACE/plugins_backup.json
+            cp $GITHUB_WORKSPACE/builds/plugins.json $GITHUB_WORKSPACE/my_custom_plugins.json
           fi
 
       - name: Clean old builds
@@ -59,17 +58,37 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          # Ejecutamos 'make' pero NO 'makePluginsJson' para no borrar tu archivo
-          ./gradlew make 
-          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 files found"
+          ./gradlew make
+          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 found"
 
-      - name: Restore Custom JSON
+      # --- NUEVO: SCRIPT PARA ACTUALIZAR FILESIZE AUTOMÁTICAMENTE ---
+      - name: Update JSON FileSizes
+        shell: python
         run: |
-          if [ -f $GITHUB_WORKSPACE/plugins_backup.json ]; then
-            mv $GITHUB_WORKSPACE/plugins_backup.json $GITHUB_WORKSPACE/builds/plugins.json
-          else
-            echo "No backup found, using the one in builds if it exists"
-          fi
+          import json
+          import os
+
+          json_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'my_custom_plugins.json')
+          builds_dir = os.path.join(os.environ['GITHUB_WORKSPACE'], 'builds')
+
+          if os.path.exists(json_path):
+              with open(json_path, 'r', encoding='utf-8') as f:
+                  data = json.load(f)
+
+              for plugin in data:
+                  # Buscamos el archivo .cs3 que corresponde al internalName
+                  file_name = f"{plugin['internalName']}.cs3"
+                  file_path = os.path.join(builds_dir, file_name)
+          
+                  if os.path.exists(file_path):
+                      # Actualizamos el tamaño del archivo en bytes
+                      plugin['fileSize'] = os.path.getsize(file_path)
+                      print(f"Actualizado {file_name}: {plugin['fileSize']} bytes")
+
+              with open(os.path.join(builds_dir, 'plugins.json'), 'w', encoding='utf-8') as f:
+                  json.dump(data, f, indent=2, ensure_ascii=False)
+          else:
+              print("No se encontró el archivo personalizado para actualizar.")
 
       - name: Commit and Push builds
         run: |
@@ -77,5 +96,5 @@ jobs:
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
           git add .
-          git commit -m "Build $GITHUB_SHA" || true 
+          git commit -m "Build $GITHUB_SHA con JSON personalizado" || true 
           git push --set-upstream origin builds
