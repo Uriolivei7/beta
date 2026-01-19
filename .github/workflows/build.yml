@@ -52,47 +52,30 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make makePluginsJson
-          # Copiamos los archivos generados
+          # Compilamos los .cs3
+          ./gradlew make
+          # Copiamos los archivos .cs3 a la carpeta de builds
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No cs3 found"
 
-      - name: Force Custom JSON and Update Size
-        shell: python
+      - name: Restore My Custom JSON
         run: |
-          import json
-          import os
-
-          # Ruta donde DEBES tener tu JSON personalizado en la rama principal
-          custom_json_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'src', 'custom_plugins.json')
-          # Ruta donde Gradle puso su JSON automático
-          builds_json_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'builds', 'plugins.json')
-          builds_dir = os.path.join(os.environ['GITHUB_WORKSPACE'], 'builds')
-
-          if os.path.exists(custom_json_path):
-              print("Cargando tu JSON personalizado...")
-              with open(custom_json_path, 'r', encoding='utf-8') as f:
-                  data = json.load(f)
-
-              # Actualizar pesos reales de los archivos .cs3
-              for plugin in data:
-                  file_name = f"{plugin['internalName']}.cs3"
-                  file_path = os.path.join(builds_dir, file_name)
-                  if os.path.exists(file_path):
-                      plugin['fileSize'] = os.path.getsize(file_path)
-                      print(f"Tamaño actualizado para {file_name}")
-
-              # SOBRESCRIBIR el archivo de la rama builds con tu data
-              with open(builds_json_path, 'w', encoding='utf-8') as f:
-                  json.dump(data, f, indent=2, ensure_ascii=False)
-              print("¡Éxito! Tu JSON personalizado ha sobrescrito al de Gradle.")
-          else:
-              print(f"ERROR: No encontré 'src/custom_plugins.json'. Asegúrate de subirlo a esa carpeta.")
+          # 1. Forzamos la copia de TU plugins.json (desde src) a la carpeta de salida (builds)
+          # Esto borrará el que Gradle generó automáticamente.
+          if [ -f "$GITHUB_WORKSPACE/src/plugins.json" ]; then
+            cp -f "$GITHUB_WORKSPACE/src/plugins.json" "$GITHUB_WORKSPACE/builds/plugins.json"
+            echo "¡Éxito! Tu plugins.json personalizado ha sido restaurado."
+          else
+            echo "ERROR: No se encontró 'src/plugins.json'. Revisa si está en la carpeta correcta."
+            exit 1
+          fi
 
       - name: Commit and Push builds
         run: |
           cd $GITHUB_WORKSPACE/builds
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add .
+          # Forzamos que añada el archivo por si Git piensa que no cambió
+          git add -f plugins.json
+          git add *.cs3
           git commit -m "Build con JSON personalizado forzado" || true 
           git push --set-upstream origin builds
