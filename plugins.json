@@ -1,310 +1,442 @@
 [
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnizoneProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "AniZone",
-    "internalName": "AnizoneProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para animes Subtitulados y con Doblajes",
-    "tvTypes": ["Anime"],
-    "iconUrl": "https://img.icons8.com/?size=200&id=fztMk7eF9g8D&format=png",
-    "language": "en",
-    "fileSize": 19000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/NetflixmirrorProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "NetMirror",
-    "internalName": "NetflixmirrorProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Netflix y PrimeVideo con Subtitulos y Doblajes",
-    "tvTypes": ["TvSeries", "Movie", "Anime", "AsianDrama"],
-    "iconUrl": "https://net51.cc/img/nf2/icon_x192.png",
-    "language": "en",
-    "fileSize": 53000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvporinternetProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "TVporInternet",
-    "internalName": "TvporinternetProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para TV en Vivo",
-    "tvTypes": ["Live"],
-    "iconUrl": "https://www.tvporinternet2.com/imge/favicon.png",
-    "language": "mx",
-    "fileSize": 23000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SoloLatinoProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "SoloLatino",
-    "internalName": "SoloLatinoProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para series",
-    "tvTypes": ["TvSeries", "Movie", "Cartoon"],
-    "iconUrl": "https://sololatino.net/wp-content/uploads/2022/11/logo-final.png",
-    "language": "mx",
-    "fileSize": 31000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PlushdProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "PlusHD",
-    "internalName": "PlushdProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para series",
-    "tvTypes": ["TvSeries", "Movie", "Cartoon"],
-    "iconUrl": "https://ww3.pelisplus.to/images/faviconhd.png",
-    "language": "mx",
-    "fileSize": 20000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/LacartoonsProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "Lacartoons",
-    "internalName": "LacartoonsProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para series",
-    "tvTypes": ["Cartoon"],
-    "iconUrl": "https://img.icons8.com/?size=200&id=tlzsVoeHOw9V&format=png",
-    "language": "mx",
-    "fileSize": 15000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "Twitch",
-    "internalName": "TwitchProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Twitch",
-    "tvTypes": ["Live"],
-    "iconUrl": "https://assets.twitch.tv/assets/favicon-32-e29e246c157142c94346.png",
-    "language": "en",
-    "fileSize": 19000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Youtube.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "YouTube",
-    "internalName": "Youtube",
-    "authors": ["Ranita"],
-    "description": "Plugin para YouTube",
-    "tvTypes": ["Others"],
-    "iconUrl": "https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144_v2.png",
-    "language": "mx",
-    "fileSize": 50000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Animeav1Provider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "AnimeAV1",
-    "internalName": "Animeav1Provider",
-    "authors": ["Ranita"],
-    "description": "Plugin para anime Subtitulado y con Doblaje Latino",
-    "tvTypes": ["Anime", "OVA"],
-    "iconUrl": "https://animeav1.com/favicon.png",
-    "language": "mx",
-    "fileSize": 22000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/IptvProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "IPTVm3u",
-    "internalName": "IptvProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para listas IPTV",
-    "tvTypes": ["Live", "Other"],
-    "iconUrl": "https://img.icons8.com/?size=96&id=ZoYpHWHHeiQa&format=png",
-    "language": "mx",
-    "fileSize": 37000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelispediaProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "Pelispedia",
-    "internalName": "PelispediaProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Latino, Español y Subtitulado",
-    "tvTypes": ["TvSeries", "Anime", "Movie"],
-    "iconUrl": "https://pelispedia.is/wp-content/uploads/2022/01/cropped-pelispediafavicon-e1642201982676-32x32.png",
-    "language": "mx",
-    "fileSize": 24000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/HomecineProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "HomeCine",
-    "internalName": "HomecineProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Latino, Español y Subtitulado",
-    "tvTypes": ["TvSeries", "Anime", "Movie"],
-    "iconUrl": "https://www3.homecine.to/wp-content/uploads/2018/05/homedark-1-3.png",
-    "language": "mx",
-    "fileSize": 22000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/XtreamProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "XtreamIPTV",
-    "internalName": "XtreamProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para cuentas IPTV",
-    "tvTypes": ["TvSeries", "Anime", "Movie", "Live"],
-    "iconUrl": "https://img.icons8.com/?size=96&id=oQQIRt5dU74V&format=png",
-    "language": "mx",
-    "fileSize": 43000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DoramasytProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "DoramasYT",
-    "internalName": "DoramasytProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Doramas",
-    "tvTypes": ["AsianDrama"],
-    "iconUrl": "https://www.doramasyt.com/favicon.ico?v=4.97",
-    "language": "mx",
-    "fileSize": 20000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeioProvider.cs3",
-    "status": 0,
-    "version": 5,
-    "apiVersion": 1,
-    "name": "AnimeIO",
-    "internalName": "AnimeioProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Animes Subtitulados",
-    "tvTypes": ["Anime", "OVA"],
-    "iconUrl": "https://animeio.com/favicon.ico",
-    "language": "mx",
-    "fileSize": 24000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/MonoschinosProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "MonosChinos3",
-    "internalName": "MonoschinosProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Animes Subtitulados y con Doblaje",
-    "tvTypes": ["Anime", "OVA"],
-    "iconUrl": "https://ww3.monoschinos3.com/img/favicon.ico",
-    "language": "mx",
-    "fileSize": 17000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeonsenProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "AnimeOnsen",
-    "internalName": "AnimeonsenProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Animes Subtitulados",
-    "tvTypes": ["Anime", "OVA"],
-    "iconUrl": "https://www.animeonsen.xyz/favicon.ico",
-    "language": "en",
-    "fileSize": 24000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/OnetouchtvProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "OneTouchTV",
-    "internalName": "OnetouchtvProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para K-Dramas Subtitulados",
-    "tvTypes": ["Anime", "Anime"],
-    "iconUrl": "https://img.icons8.com/?size=96&id=M9xNyIu2wL3e&format=png",
-    "language": "en",
-    "fileSize": 35000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/GnulaProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "GNULA",
-    "internalName": "GnulaProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para contenido en Latino",
-    "tvTypes": ["TvSeries", "Anime", "Movie", "Cartoon"],
-    "iconUrl": "https://gnula.life/favicon.ico",
-    "language": "mx",
-    "fileSize": 28000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DoramasflixProvider.cs3",
-    "status": 1,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "DoramasFlix",
-    "internalName": "DoramasflixProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para Doramas",
-    "tvTypes": ["AsianDrama"],
-    "iconUrl": "https://doramasflix.co/favicon.ico",
-    "language": "mx",
-    "fileSize": 34000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusProvider.cs3",
-    "status": 0,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "PelisPlus",
-    "internalName": "PelisplusProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para series",
-    "tvTypes": ["TvSeries", "Movie", "Cartoon"],
-    "iconUrl": "https://ww3.pelisplus.to/images/faviconhd.png",
-    "language": "mx",
-    "fileSize": 20000
-  },
-  {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimelatinoProvider.cs3",
-    "status": 0,
-    "version": 1,
-    "apiVersion": 1,
-    "name": "AnimeLatinoHD",
-    "internalName": "AnimelatinoProvider",
-    "authors": ["Ranita"],
-    "description": "Plugin para series",
-    "tvTypes": ["Anime"],
-    "iconUrl": "https://www.animelatinohd.com/favicon.ico",
-    "language": "mx",
-    "fileSize": 20000
-  }
+    {
+        "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/animeav1.png",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 22336,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Phisher98"
+        ],
+        "tvTypes": [
+            "Movie",
+            "Anime",
+            "AnimeMovie"
+        ],
+        "version": 1,
+        "internalName": "Animeav1Provider",
+        "description": "Espa\u00f1ola (Spanish) Anime Extension",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Animeav1Provider.cs3",
+        "name": "Animeav1Provider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 24513,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Movie",
+            "Anime",
+            "AnimeMovie"
+        ],
+        "version": 1,
+        "internalName": "AnimeonsenProvider",
+        "description": "Animes Subtitulos en varios idiomas",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeonsenProvider.cs3",
+        "name": "AnimeonsenProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 18945,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 2,
+        "internalName": "AnizoneProvider",
+        "description": "Anizone.to Anime subtitulado y con multiples doblajes",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnizoneProvider.cs3",
+        "name": "AnizoneProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=doramasflix.co&sz=%size%",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 37577,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Stormunblessed"
+        ],
+        "tvTypes": [
+            "AsianDrama"
+        ],
+        "version": 5,
+        "internalName": "DoramasflixProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DoramasflixProvider.cs3",
+        "name": "DoramasflixProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=doramasyt.com&sz=%size%",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 21559,
+        "status": 1,
+        "language": "mx",
+        "authors": [
+            "Stormunblessed"
+        ],
+        "tvTypes": [
+            "AsianDrama"
+        ],
+        "version": 6,
+        "internalName": "DoramasytProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DoramasytProvider.cs3",
+        "name": "DoramasytProvider"
+    },
+    {
+        "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 7317,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Cloudburst",
+            "Luna712"
+        ],
+        "tvTypes": [
+            "Movie"
+        ],
+        "version": 1,
+        "internalName": "ExampleProvider",
+        "description": "Lorem ipsum",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/ExampleProvider.cs3",
+        "name": "ExampleProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 28287,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "GnulaProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/GnulaProvider.cs3",
+        "name": "GnulaProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=hianime.to&sz=%size%",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 48603,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Stormunblessed",
+            "KillerDogeEmpire",
+            "RowdyRushya",
+            "Phisher98"
+        ],
+        "tvTypes": [
+            "Anime",
+            "OVA"
+        ],
+        "version": 27,
+        "internalName": "HianimeProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/HianimeProvider.cs3",
+        "name": "HianimeProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 21687,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 5,
+        "internalName": "HomecineProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/HomecineProvider.cs3",
+        "name": "HomecineProvider"
+    },
+    {
+        "iconUrl": "https://www.shutterstock.com/image-vector/iptv-vector-line-icon-ip-260nw-1841427610.jpg",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 36977,
+        "status": 1,
+        "authors": [
+            "anhdaden"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 9,
+        "internalName": "IptvProvider",
+        "description": "C\u1ea7n nh\u1eadp link IPTV \u0111\u1ec3 xem",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/IptvProvider.cs3",
+        "name": "IptvProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 14369,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Cartoon"
+        ],
+        "version": 21,
+        "internalName": "LacartoonsProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/LacartoonsProvider.cs3",
+        "name": "LacartoonsProvider"
+    },
+    {
+        "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/animeav1.png",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 16550,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Phisher98"
+        ],
+        "tvTypes": [
+            "Movie",
+            "Anime",
+            "AnimeMovie"
+        ],
+        "version": 1,
+        "internalName": "MonoschinosProvider",
+        "description": "Espa\u00f1ola (Spanish) Anime Extension",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/MonoschinosProvider.cs3",
+        "name": "MonoschinosProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 53266,
+        "status": 1,
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "AsianDrama",
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "NetflixmirrorProvider",
+        "description": "Netflix y PrimeVideo Contenido en M\u00faltiples Lenguajes",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/NetflixmirrorProvider.cs3",
+        "name": "NetflixmirrorProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=onetouchtv.xyz/&sz=%size%",
+        "jarFileSize": 167244,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 35634,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Phisher98"
+        ],
+        "tvTypes": [
+            "AsianDrama",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "OnetouchtvProvider",
+        "jarUrl": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/OnetouchtvProvider.jar",
+        "description": "Asian Dramas",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/OnetouchtvProvider.cs3",
+        "name": "OnetouchtvProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 24538,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 5,
+        "internalName": "PelispediaProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelispediaProvider.cs3",
+        "name": "PelispediaProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 20674,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "PelisplusProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusProvider.cs3",
+        "name": "PelisplusProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 19661,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "PlushdProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PlushdProvider.cs3",
+        "name": "PlushdProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 31294,
+        "status": 1,
+        "language": "es",
+        "authors": [
+            "Ranita",
+            "Yeji",
+            "Mina"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Cartoon",
+            "Anime"
+        ],
+        "version": 21,
+        "internalName": "SoloLatinoProvider",
+        "description": "Contenido en Latino",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SoloLatinoProvider.cs3",
+        "name": "SoloLatinoProvider"
+    },
+    {
+        "iconUrl": "https://www.cablevisionhd.com/imge/cablevisionhd.png",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 22644,
+        "status": 1,
+        "language": "mx",
+        "authors": [
+            "misajimenezmx"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 5,
+        "internalName": "TvporinternetProvider",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvporinternetProvider.cs3",
+        "name": "TvporinternetProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%",
+        "jarFileSize": 75071,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 19015,
+        "status": 1,
+        "authors": [
+            "CranberrySoup"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 2,
+        "internalName": "TwitchProvider",
+        "jarUrl": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.jar",
+        "description": "Watch livestreams from Twitch",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TwitchProvider.cs3",
+        "name": "TwitchProvider"
+    },
+    {
+        "iconUrl": "https://play-lh.googleusercontent.com/gMB8Eq9g9Uq6CXiOHcqatXpx-6HTexAzcQibTgpqAE756Fnt1Jyyp0j7S3UDKPztkA=w480-h960-rw",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 43436,
+        "status": 1,
+        "authors": [
+            "anhdaden"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "XtreamProvider",
+        "description": "C\u1ea7n nh\u1eadp link Xtream IPTV, t\u00e0i kho\u1ea3n v\u00e0 m\u1eadt kh\u1ea9u \u0111\u1ec3 xem",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/XtreamProvider.cs3",
+        "name": "XtreamProvider"
+    },
+    {
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/Uriolivei7/beta",
+        "fileSize": 50512,
+        "status": 1,
+        "authors": [
+            "Ranita"
+        ],
+        "tvTypes": [
+            "Others"
+        ],
+        "version": 12,
+        "internalName": "Youtube",
+        "description": "Videos, playlists and channels from YouTube",
+        "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Youtube.cs3",
+        "name": "Youtube"
+    }
 ]
