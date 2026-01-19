@@ -30,6 +30,13 @@ jobs:
           ref: "builds"
           path: "builds"
 
+      # --- IMPORTANTE: Guardamos tu JSON personalizado antes de limpiar ---
+      - name: Preserve Custom JSON
+        run: |
+          if [ -f $GITHUB_WORKSPACE/builds/plugins.json ]; then
+            cp $GITHUB_WORKSPACE/builds/plugins.json $GITHUB_WORKSPACE/plugins_backup.json
+          fi
+
       - name: Clean old builds
         run: rm -f $GITHUB_WORKSPACE/builds/*.cs3
 
@@ -51,11 +58,18 @@ jobs:
       - name: Build Plugins
         run: |
           cd $GITHUB_WORKSPACE/src
-           # ESTA LÍNEA DA PERMISOS DE EJECUCIÓN:
-           chmod +x gradlew
-           ./gradlew make makePluginsJson
-           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 files found"
-           cp build/plugins.json $GITHUB_WORKSPACE/builds/
+          chmod +x gradlew
+          # Ejecutamos 'make' pero NO 'makePluginsJson' para no borrar tu archivo
+          ./gradlew make 
+          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 files found"
+
+      - name: Restore Custom JSON
+        run: |
+          if [ -f $GITHUB_WORKSPACE/plugins_backup.json ]; then
+            mv $GITHUB_WORKSPACE/plugins_backup.json $GITHUB_WORKSPACE/builds/plugins.json
+          else
+            echo "No backup found, using the one in builds if it exists"
+          fi
 
       - name: Commit and Push builds
         run: |
