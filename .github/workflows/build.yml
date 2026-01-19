@@ -30,12 +30,6 @@ jobs:
           ref: "builds"
           path: "builds"
 
-      - name: Backup Custom JSON
-        run: |
-          if [ -f $GITHUB_WORKSPACE/builds/plugins.json ]; then
-            cp $GITHUB_WORKSPACE/builds/plugins.json $GITHUB_WORKSPACE/my_custom_plugins.json
-          fi
-
       - name: Clean old builds
         run: rm -f $GITHUB_WORKSPACE/builds/*.cs3
 
@@ -58,37 +52,41 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make
-          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 found"
+          ./gradlew make makePluginsJson
+          # Copiamos los archivos generados
+          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No cs3 found"
 
-      # --- NUEVO: SCRIPT PARA ACTUALIZAR FILESIZE AUTOMÁTICAMENTE ---
-      - name: Update JSON FileSizes
+      - name: Force Custom JSON and Update Size
         shell: python
         run: |
           import json
           import os
 
-          json_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'my_custom_plugins.json')
+          # Ruta donde DEBES tener tu JSON personalizado en la rama principal
+          custom_json_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'src', 'custom_plugins.json')
+          # Ruta donde Gradle puso su JSON automático
+          builds_json_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'builds', 'plugins.json')
           builds_dir = os.path.join(os.environ['GITHUB_WORKSPACE'], 'builds')
 
-          if os.path.exists(json_path):
-              with open(json_path, 'r', encoding='utf-8') as f:
+          if os.path.exists(custom_json_path):
+              print("Cargando tu JSON personalizado...")
+              with open(custom_json_path, 'r', encoding='utf-8') as f:
                   data = json.load(f)
 
+              # Actualizar pesos reales de los archivos .cs3
               for plugin in data:
-                  # Buscamos el archivo .cs3 que corresponde al internalName
                   file_name = f"{plugin['internalName']}.cs3"
                   file_path = os.path.join(builds_dir, file_name)
-          
                   if os.path.exists(file_path):
-                      # Actualizamos el tamaño del archivo en bytes
                       plugin['fileSize'] = os.path.getsize(file_path)
-                      print(f"Actualizado {file_name}: {plugin['fileSize']} bytes")
+                      print(f"Tamaño actualizado para {file_name}")
 
-              with open(os.path.join(builds_dir, 'plugins.json'), 'w', encoding='utf-8') as f:
+              # SOBRESCRIBIR el archivo de la rama builds con tu data
+              with open(builds_json_path, 'w', encoding='utf-8') as f:
                   json.dump(data, f, indent=2, ensure_ascii=False)
+              print("¡Éxito! Tu JSON personalizado ha sobrescrito al de Gradle.")
           else:
-              print("No se encontró el archivo personalizado para actualizar.")
+              print(f"ERROR: No encontré 'src/custom_plugins.json'. Asegúrate de subirlo a esa carpeta.")
 
       - name: Commit and Push builds
         run: |
@@ -96,5 +94,5 @@ jobs:
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
           git add .
-          git commit -m "Build $GITHUB_SHA con JSON personalizado" || true 
+          git commit -m "Build con JSON personalizado forzado" || true 
           git push --set-upstream origin builds
