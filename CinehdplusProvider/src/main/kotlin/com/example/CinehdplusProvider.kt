@@ -194,8 +194,8 @@ suspend fun loadSourceNameExtractor(
 ) {
     loadExtractor(url, referer, subtitleCallback) { link ->
         val idiomaLabel = when {
-            source.lowercase().contains("lat") -> "Español Latino"
-            source.lowercase().contains("es") || source.lowercase().contains("cast") -> "Español de España"
+            source.lowercase().contains("lat") -> "Español Latino "
+            source.lowercase().contains("es") || source.lowercase().contains("cast") -> "Español de España "
             else -> source
         }
 
