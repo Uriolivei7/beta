@@ -193,11 +193,21 @@ suspend fun loadSourceNameExtractor(
     callback: (ExtractorLink) -> Unit,
 ) {
     loadExtractor(url, referer, subtitleCallback) { link ->
+        val idiomaLabel = when {
+            source.lowercase().contains("lat") -> "Español Latino"
+            source.lowercase().contains("es") || source.lowercase().contains("cast") -> "Español de España"
+            else -> source
+        }
+
+        val calidadLabel = if (link.quality > 0) "${link.quality}p" else ""
+
+        val nombreFinal = "$idiomaLabel [${link.source}] $calidadLabel".trim()
+
         CoroutineScope(Dispatchers.IO).launch {
             callback.invoke(
                 newExtractorLink(
-                    "$source[${link.source}]",
-                    "$source[${link.source}]",
+                    nombreFinal,
+                    nombreFinal,
                     link.url,
                 ) {
                     this.quality = link.quality
