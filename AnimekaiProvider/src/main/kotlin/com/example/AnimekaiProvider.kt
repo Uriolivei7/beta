@@ -41,7 +41,7 @@ import kotlin.random.Random
 
 class AnimekaiProvider : MainAPI() {
     override var mainUrl = AnimeKaiPlugin.currentAnimeKaiServer
-    override var name = "Animekai"
+    override var name = "AnimeKai"
     override val hasQuickSearch = true
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -164,97 +164,77 @@ class AnimekaiProvider : MainAPI() {
         val malid = document.select("div.watch-section").attr("data-mal-id")
         val aniid = document.select("div.watch-section").attr("data-al-id")
         val poster = document.select("div.poster img").attr("src")
-        val syncMetaData = app.get("https://api.ani.zip/mappings?anilist_id=$aniid").toString()
-        val animeMetaData = parseAnimeData(syncMetaData)
-        val data = anilistAPICall(
-            "query (\$id: Int = ${aniid}) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } bannerImage episodes format nextAiringEpisode { episode } airingSchedule { nodes { episode } } recommendations { edges { node { id mediaRecommendation { id title { romaji english } coverImage { extraLarge large medium } } } } } } }"
-        ).data.media ?: throw Exception("Unable to fetch media details")
 
-        val backgroundposter = data.bannerImage ?: animeMetaData?.images?.find { it.coverType == "Fanart" }?.url ?: data.coverImage.extraLarge
-        ?: document.selectFirst(".anisc-poster img")?.attr("src")
-        val title = document.selectFirst("h1.title")?.text().orEmpty()
-        val jptitle = document.selectFirst("h1.title")?.attr("data-jp").orEmpty()
-        val plot= document.selectFirst("div.desc")?.text()
-        val logoposter = animeMetaData?.images?.find { it.coverType == "Clearlogo" }?.url
+        val animeMetaData = try {
+            val syncMetaData = app.get("https://api.ani.zip/mappings?anilist_id=$aniid").text
+            parseAnimeData(syncMetaData)
+        } catch (_: Exception) { null }
+
+        val data = anilistAPICall(
+            "query (\$id: Int = ${aniid.toIntOrNull() ?: 0}) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } episodes format recommendations { edges { node { id mediaRecommendation { id title { romaji english } coverImage { extraLarge large medium } } } } } } }"
+        ).data.media ?: throw Exception("No se pudieron obtener detalles de AniList")
+
+        val backgroundposter = data.bannerImage ?: data.coverImage.extraLarge
+        val title = document.selectFirst("h1.title")?.text() ?: data.title.english ?: data.title.romaji ?: ""
+        val jptitle = document.selectFirst("h1.title")?.attr("data-jp")
+        val plot = document.selectFirst("div.desc")?.text() ?: data.description
+
         val animeId = document.selectFirst("div.rate-box")?.attr("data-id")
-        val subCount = document.selectFirst("#main-entity div.info span.sub")?.text()?.toIntOrNull()
-        val dubCount = document.selectFirst("#main-entity div.info span.dub")?.text()?.toIntOrNull()
+            ?: document.selectFirst("div.watch-section")?.attr("data-id")
+            ?: url.split("-").lastOrNull()?.filter { it.isDigit() }
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
-        val decoded = decode(animeId)
+        if (!animeId.isNullOrEmpty()) {
+            val decodedToken = decode(animeId)
 
-        val epRes = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$decoded")
-            .parsedSafe<Response>()?.getDocument()
+            val responseText = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$decodedToken").text
+            val jsonResponse = JSONObject(responseText)
+            val htmlResult = jsonResponse.optString("result")
 
-        epRes?.select("div.eplist a")?.forEachIndexed { index, ep ->
-            // --- Helper to get best episode title ---
-            fun resolveTitle(ep: Element, episodeKey: String): String {
-                val titleMap = animeMetaData?.episodes?.get(episodeKey)?.title
-                val jsonTitle = titleMap?.get("en")
-                    ?: titleMap?.get("ja")
-                    ?: titleMap?.get("x-jat")
-                    ?: animeMetaData?.titles?.get("en")
-                    ?: animeMetaData?.titles?.get("ja")
-                    ?: animeMetaData?.titles?.get("x-jat")
-                    ?: ""
-                val attrTitle = ep.selectFirst("span")?.text() ?: ep.attr("title")
-                return jsonTitle.ifBlank { attrTitle }
-            }
+            val epDocument = Jsoup.parse(htmlResult)
+            val episodesList = epDocument.select("div.eplist a")
 
-            val episodeNum = index + 1
-            fun createEpisode(source: String, ep: Element, episodeNum: Int): Episode {
+            episodesList.forEachIndexed { index, ep ->
+                val episodeNum = index + 1
+                val token = ep.attr("token")
                 val episodeKey = episodeNum.toString()
                 val metaEp = animeMetaData?.episodes?.get(episodeKey)
-                return newEpisode("$source|${ep.attr("token")}") {
-                    this.name = resolveTitle(ep, episodeKey)
-                    this.episode = episodeNum
-                    this.score = Score.from10(metaEp?.rating)
-                    this.posterUrl = metaEp?.image ?: animeMetaData?.images?.firstOrNull()?.url ?: ""
-                    this.description = metaEp?.overview ?: "No summary available"
-                    this.addDate(metaEp?.airdate)
-                    this.runTime = metaEp?.runtime
-                }
-            }
-            // Sub episodes
-            subCount?.let { subTotal ->
-                if (index < subTotal) {
-                    subEpisodes += createEpisode("sub", ep, episodeNum)
-                }
-            }
 
-            // Dub episodes
-            dubCount?.let { dubTotal ->
-                if (index < dubTotal) {
-                    val dubEpisodeNum = ep.attr("num").toIntOrNull() ?: episodeNum
-                    dubEpisodes += createEpisode("dub", ep, dubEpisodeNum)
+                fun createEpisode(source: String): Episode {
+                    return newEpisode("$source|$token") {
+                        this.name = metaEp?.title?.get("en") ?: ep.selectFirst("span")?.text() ?: "Episode $episodeNum"
+                        this.episode = episodeNum
+                        this.posterUrl = metaEp?.image ?: ""
+                        this.description = metaEp?.overview
+                        this.addDate(metaEp?.airdate)
+                    }
+                }
+
+                subEpisodes.add(createEpisode("sub"))
+
+                if (ep.hasClass("dub") || document.selectFirst("div.info span.dub") != null) {
+                    dubEpisodes.add(createEpisode("dub"))
                 }
             }
         }
 
         val recommendations = document.select("div.aitem-col a").map { it.toRecommendResult() }
-        val genres = document.select("div.detail a")
-            .asSequence()
-            .filter { it.attr("href").contains("/genres/") }
-            .map { it.text() }
-            .toList()
-        val status = document.select("div:containsOwn(Status) span")
-            .firstOrNull()
-            ?.text()?.trim()
+        val genres = document.select("div.detail a").filter { it.attr("href").contains("/genres/") }.map { it.text() }
+        val statusText = document.select("div:containsOwn(Status) span").firstOrNull()?.text()
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
-            engName = title
-            japName = jptitle
-            posterUrl = poster
-            backgroundPosterUrl = backgroundposter
-            //try { this.logoUrl = logoposter } catch(_:Throwable){}
+            this.engName = title
+            this.japName = jptitle
+            this.posterUrl = poster
+            this.backgroundPosterUrl = backgroundposter
             addEpisodes(DubStatus.Subbed, subEpisodes)
             addEpisodes(DubStatus.Dubbed, dubEpisodes)
             this.recommendations = recommendations
             this.tags = genres
             this.plot = plot
-            showStatus = status?.let { getStatus(it) }
+            this.showStatus = getStatus(statusText ?: "")
             addMalId(malid.toIntOrNull())
             addAniListId(aniid.toIntOrNull())
         }
