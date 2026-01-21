@@ -42,3 +42,4 @@ class AnimeKaiPlugin : Plugin() {
             }
     }
 }
+
