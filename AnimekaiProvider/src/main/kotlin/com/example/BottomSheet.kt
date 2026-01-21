@@ -16,7 +16,6 @@ import android.widget.Toast
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.phisher98.BuildConfig
 
 class BottomFragment(private val plugin: AnimeKaiPlugin) : BottomSheetDialogFragment() {
 
