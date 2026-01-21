@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.Episode
@@ -156,87 +157,109 @@ class AnimekaiProvider : MainAPI() {
 
         return newHomePageResponse(request.name, items)
     }
-
-
-
+    
     override suspend fun load(url: String): LoadResponse {
+        val TAG = "Animekai"
+        Log.i(TAG, "Iniciando carga de URL: $url")
+
         val document = app.get(url).documentLarge
+
         val malid = document.select("div.watch-section").attr("data-mal-id")
         val aniid = document.select("div.watch-section").attr("data-al-id")
         val poster = document.select("div.poster img").attr("src")
 
+        Log.d(TAG, "IDs encontrados -> MAL: $malid, AniList: $aniid")
+
         val animeMetaData = try {
-            val syncMetaData = app.get("https://api.ani.zip/mappings?anilist_id=$aniid").text
-            parseAnimeData(syncMetaData)
-        } catch (_: Exception) { null }
+            val res = app.get("https://api.ani.zip/mappings?anilist_id=$aniid").text
+            parseAnimeData(res)
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo cargar metadata de AniZip: ${e.message}")
+            null
+        }
 
-        val data = anilistAPICall(
-            "query (\$id: Int = ${aniid.toIntOrNull() ?: 0}) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } episodes format recommendations { edges { node { id mediaRecommendation { id title { romaji english } coverImage { extraLarge large medium } } } } } } }"
-        ).data.media ?: throw Exception("No se pudieron obtener detalles de AniList")
+        val data = try {
+            anilistAPICall(
+                "query (\$id: Int = ${aniid.toIntOrNull() ?: 0}) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } episodes format recommendations { edges { node { id mediaRecommendation { id title { romaji english } coverImage { extraLarge large medium } } } } } } }"
+            ).data.media
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en llamada a AniList API: ${e.message}")
+            null
+        }
 
-        val backgroundposter = data.bannerImage ?: data.coverImage.extraLarge
-        val title = document.selectFirst("h1.title")?.text() ?: data.title.english ?: data.title.romaji ?: ""
-        val jptitle = document.selectFirst("h1.title")?.attr("data-jp")
-        val plot = document.selectFirst("div.desc")?.text() ?: data.description
+        val title = document.selectFirst("h1.title")?.text() ?: data?.title?.english ?: "Sin título"
+        val plot = document.selectFirst("div.desc")?.text() ?: data?.description
 
         val animeId = document.selectFirst("div.rate-box")?.attr("data-id")
             ?: document.selectFirst("div.watch-section")?.attr("data-id")
             ?: url.split("-").lastOrNull()?.filter { it.isDigit() }
 
+        if (animeId.isNullOrEmpty()) {
+            Log.e(TAG, "ERROR: No se encontró animeId. Los episodios no se cargarán.")
+        } else {
+            Log.i(TAG, "animeId detectado: $animeId")
+        }
+
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
         if (!animeId.isNullOrEmpty()) {
-            val decodedToken = decode(animeId)
+            try {
+                val decodedToken = decode(animeId)
+                Log.d(TAG, "Token decodificado: $decodedToken")
 
-            val responseText = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$decodedToken").text
-            val jsonResponse = JSONObject(responseText)
-            val htmlResult = jsonResponse.optString("result")
+                val epUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$decodedToken"
+                Log.i(TAG, "Solicitando lista de episodios a: $epUrl")
 
-            val epDocument = Jsoup.parse(htmlResult)
-            val episodesList = epDocument.select("div.eplist a")
+                val responseText = app.get(epUrl).text
+                Log.d(TAG, "Respuesta RAW (primeros 150 caracteres): ${responseText.take(150)}")
 
-            episodesList.forEachIndexed { index, ep ->
-                val episodeNum = index + 1
-                val token = ep.attr("token")
-                val episodeKey = episodeNum.toString()
-                val metaEp = animeMetaData?.episodes?.get(episodeKey)
+                val jsonResponse = JSONObject(responseText)
+                val status = jsonResponse.optBoolean("status")
+                val htmlResult = jsonResponse.optString("result")
 
-                fun createEpisode(source: String): Episode {
-                    return newEpisode("$source|$token") {
-                        this.name = metaEp?.title?.get("en") ?: ep.selectFirst("span")?.text() ?: "Episode $episodeNum"
-                        this.episode = episodeNum
-                        this.posterUrl = metaEp?.image ?: ""
-                        this.description = metaEp?.overview
-                        this.addDate(metaEp?.airdate)
+                if (!status) {
+                    Log.w(TAG, "ALERTA: El servidor respondió con status: false")
+                }
+
+                if (htmlResult.isBlank()) {
+                    Log.e(TAG, "ERROR: El HTML de los episodios (campo 'result') llegó vacío")
+                } else {
+                    val epDocument = Jsoup.parse(htmlResult)
+                    val episodesList = epDocument.select("div.eplist a")
+                    Log.i(TAG, "Se encontraron ${episodesList.size} episodios en el HTML")
+
+                    episodesList.forEachIndexed { index, ep ->
+                        val episodeNum = index + 1
+                        val token = ep.attr("token")
+
+                        if (token.isEmpty()) Log.w(TAG, "Episodio $episodeNum no tiene token")
+
+                        subEpisodes.add(newEpisode("sub|$token") {
+                            this.name = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
+                            this.episode = episodeNum
+                        })
+
+                        if (ep.hasClass("dub")) {
+                            dubEpisodes.add(newEpisode("dub|$token") {
+                                this.episode = episodeNum
+                            })
+                        }
                     }
                 }
-
-                subEpisodes.add(createEpisode("sub"))
-
-                if (ep.hasClass("dub") || document.selectFirst("div.info span.dub") != null) {
-                    dubEpisodes.add(createEpisode("dub"))
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Excepción crítica cargando episodios", e)
             }
         }
 
-        val recommendations = document.select("div.aitem-col a").map { it.toRecommendResult() }
-        val genres = document.select("div.detail a").filter { it.attr("href").contains("/genres/") }.map { it.text() }
-        val statusText = document.select("div:containsOwn(Status) span").firstOrNull()?.text()
-
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.engName = title
-            this.japName = jptitle
             this.posterUrl = poster
-            this.backgroundPosterUrl = backgroundposter
             addEpisodes(DubStatus.Subbed, subEpisodes)
             addEpisodes(DubStatus.Dubbed, dubEpisodes)
-            this.recommendations = recommendations
-            this.tags = genres
             this.plot = plot
-            this.showStatus = getStatus(statusText ?: "")
-            addMalId(malid.toIntOrNull())
-            addAniListId(aniid.toIntOrNull())
+            addMalId(malid?.toIntOrNull())
+            addAniListId(aniid?.toIntOrNull())
         }
     }
 
