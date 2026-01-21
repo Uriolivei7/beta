@@ -74,7 +74,6 @@ class AnimekaiProvider : MainAPI() {
 
 
     companion object {
-
         suspend fun decode(text: String?): String {
             return try {
                 val res = app.get("${BuildConfig.KAIENC}?text=$text").text
@@ -122,10 +121,10 @@ class AnimekaiProvider : MainAPI() {
 
 
     override val mainPage = mainPageOf(
-            "$mainUrl/browser?keyword=&status[]=releasing&sort=trending" to "Trending",
-            "$mainUrl/browser?keyword=&status[]=releasing&sort=updated_date" to "Latest Episode",
-            "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=sub&language[]=softsub" to "Recently SUB",
-            "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=dub" to "Recently DUB",
+            "$mainUrl/browser?keyword=&status[]=releasing&sort=trending" to "Tendecias",
+            "$mainUrl/browser?keyword=&status[]=releasing&sort=updated_date" to "Últimos Episodios",
+            "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=sub&language[]=softsub" to "Recientes Subtitulados",
+            "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=dub" to "Recientes con Doblaje en Inglés",
     )
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query,1).items
