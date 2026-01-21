@@ -157,98 +157,71 @@ class AnimekaiProvider : MainAPI() {
 
         return newHomePageResponse(request.name, items)
     }
-    
+
     override suspend fun load(url: String): LoadResponse {
         val TAG = "Animekai"
-        Log.i(TAG, "Iniciando carga de URL: $url")
-
         val document = app.get(url).documentLarge
 
+        // 1. Mejora de Póster: Buscamos la imagen original de alta calidad
+        val poster = document.selectFirst(".anisc-poster img")?.attr("src")
+            ?: document.selectFirst("div.poster img")?.attr("src")
+            ?: document.select("meta[property=og:image]").attr("content")
+
+        val title = document.selectFirst("h1.title")?.text() ?: "Sin título"
+        val plot = document.selectFirst("div.desc")?.text() ?: ""
+
+        // 2. IDs para sincronización
         val malid = document.select("div.watch-section").attr("data-mal-id")
         val aniid = document.select("div.watch-section").attr("data-al-id")
-        val poster = document.select("div.poster img").attr("src")
 
-        Log.d(TAG, "IDs encontrados -> MAL: $malid, AniList: $aniid")
-
-        val animeMetaData = try {
-            val res = app.get("https://api.ani.zip/mappings?anilist_id=$aniid").text
-            parseAnimeData(res)
-        } catch (e: Exception) {
-            Log.w(TAG, "No se pudo cargar metadata de AniZip: ${e.message}")
-            null
-        }
-
-        val data = try {
-            anilistAPICall(
-                "query (\$id: Int = ${aniid.toIntOrNull() ?: 0}) { Media(id: \$id, type: ANIME) { id title { romaji english } startDate { year } genres description averageScore status bannerImage coverImage { extraLarge large medium } episodes format recommendations { edges { node { id mediaRecommendation { id title { romaji english } coverImage { extraLarge large medium } } } } } } }"
-            ).data.media
-        } catch (e: Exception) {
-            Log.e(TAG, "Error en llamada a AniList API: ${e.message}")
-            null
-        }
-
-        val title = document.selectFirst("h1.title")?.text() ?: data?.title?.english ?: "Sin título"
-        val plot = document.selectFirst("div.desc")?.text() ?: data?.description
-
+        // 3. ID de Anime para episodios
         val animeId = document.selectFirst("div.rate-box")?.attr("data-id")
-            ?: document.selectFirst("div.watch-section")?.attr("data-id")
-            ?: url.split("-").lastOrNull()?.filter { it.isDigit() }
-
-        if (animeId.isNullOrEmpty()) {
-            Log.e(TAG, "ERROR: No se encontró animeId. Los episodios no se cargarán.")
-        } else {
-            Log.i(TAG, "animeId detectado: $animeId")
-        }
+            ?: document.selectFirst(".watch-section")?.attr("data-id")
+            ?: url.split("-").lastOrNull()?.filter { it.isDigit() || it.isLetter() }
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
         if (!animeId.isNullOrEmpty()) {
             try {
+                // Decodificación
                 val decodedToken = decode(animeId)
-                Log.d(TAG, "Token decodificado: $decodedToken")
 
-                val epUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$decodedToken"
-                Log.i(TAG, "Solicitando lista de episodios a: $epUrl")
+                // Si el token sigue siendo null, intentamos usar el ID crudo como respaldo
+                val finalToken = if (decodedToken == "null" || decodedToken.isNullOrEmpty()) animeId else decodedToken
+
+                val epUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$finalToken"
+                Log.i(TAG, "Cargando episodios: $epUrl")
 
                 val responseText = app.get(epUrl).text
-                Log.d(TAG, "Respuesta RAW (primeros 150 caracteres): ${responseText.take(150)}")
-
                 val jsonResponse = JSONObject(responseText)
-                val status = jsonResponse.optBoolean("status")
                 val htmlResult = jsonResponse.optString("result")
 
-                if (!status) {
-                    Log.w(TAG, "ALERTA: El servidor respondió con status: false")
-                }
-
-                if (htmlResult.isBlank()) {
-                    Log.e(TAG, "ERROR: El HTML de los episodios (campo 'result') llegó vacío")
-                } else {
+                if (!htmlResult.isNullOrBlank()) {
                     val epDocument = Jsoup.parse(htmlResult)
                     val episodesList = epDocument.select("div.eplist a")
-                    Log.i(TAG, "Se encontraron ${episodesList.size} episodios en el HTML")
 
                     episodesList.forEachIndexed { index, ep ->
                         val episodeNum = index + 1
                         val token = ep.attr("token")
+                        val name = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
 
-                        if (token.isEmpty()) Log.w(TAG, "Episodio $episodeNum no tiene token")
-
-                        subEpisodes.add(newEpisode("sub|$token") {
-                            this.name = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
+                        val episodeObj = newEpisode("sub|$token") {
+                            this.name = name
                             this.episode = episodeNum
-                        })
+                        }
+                        subEpisodes.add(episodeObj)
 
-                        if (ep.hasClass("dub")) {
+                        if (ep.hasClass("dub") || ep.selectFirst(".dub") != null) {
                             dubEpisodes.add(newEpisode("dub|$token") {
+                                this.name = name
                                 this.episode = episodeNum
                             })
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Excepción crítica cargando episodios", e)
+                Log.e(TAG, "Error en lista de episodios: ${e.message}")
             }
         }
 
@@ -258,8 +231,9 @@ class AnimekaiProvider : MainAPI() {
             addEpisodes(DubStatus.Subbed, subEpisodes)
             addEpisodes(DubStatus.Dubbed, dubEpisodes)
             this.plot = plot
-            addMalId(malid?.toIntOrNull())
-            addAniListId(aniid?.toIntOrNull())
+            // Quitamos recomendaciones para mayor velocidad
+            addMalId(malid.toIntOrNull())
+            addAniListId(aniid.toIntOrNull())
         }
     }
 
@@ -269,50 +243,84 @@ class AnimekaiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val token = data.split("|").last().split("=").last()
-        val dubType = data.replace("$mainUrl/", "").split("|").firstOrNull() ?: "raw"
-        val types = if ("sub" in data) listOf(dubType, "softsub") else listOf(dubType)
-        val decodetoken =decode(token)
-        val document =
-            app.get("$mainUrl/ajax/links/list?token=$token&_=$decodetoken")
-                .parsed<Response>()
-                .getDocument()
+        val TAG = "AnimekaiLinks"
+        Log.i(TAG, "Iniciando loadLinks con data: $data")
 
+        // 1. Extraer el token del episodio
+        val token = data.split("|").last()
+        val dubType = data.split("|").firstOrNull() ?: "sub"
+        val types = if (dubType == "sub") listOf("sub", "softsub") else listOf(dubType)
+
+        // 2. Decodificar el token para el parámetro de seguridad _
+        val decodeToken = decode(token)
+        Log.d(TAG, "Token de episodio: $token | Decodificado (_): $decodeToken")
+
+        // 3. Obtener lista de servidores (AJAX)
+        val linkListUrl = "$mainUrl/ajax/links/list?token=$token&_=$decodeToken"
+        val responseText = app.get(linkListUrl).text
+
+        val jsonResponse = try { JSONObject(responseText) } catch(e: Exception) {
+            Log.e(TAG, "Error al parsear JSON de servidores: ${e.message}")
+            return false
+        }
+
+        val htmlResult = jsonResponse.optString("result")
+        if (htmlResult.isNullOrBlank()) {
+            Log.e(TAG, "No se recibió HTML de servidores. Respuesta: $responseText")
+            return false
+        }
+
+        val document = Jsoup.parse(htmlResult)
         val servers = types.flatMap { type ->
             document.select("div.server-items[data-id=$type] span.server[data-lid]")
                 .map { server ->
                     val lid = server.attr("data-lid")
                     val serverName = server.text()
+                    Log.i(TAG, "Servidor encontrado: $serverName (LID: $lid) para tipo: $type")
                     Triple(type, lid, serverName)
                 }
-        }.distinct()
+        }.distinctBy { it.second } // Evitar duplicados por LID
 
+        // 4. Procesar cada servidor para extraer el iframe
         servers.amap { (type, lid, serverName) ->
-            val decodelid = decode(lid)
+            try {
+                val decodeLid = decode(lid)
+                val viewUrl = "$mainUrl/ajax/links/view?id=$lid&_=$decodeLid"
 
-            val result = app.get("$mainUrl/ajax/links/view?id=$lid&_=$decodelid")
-                .parsed<Response>().result
-            val decodeiframe= decodeReverse(result)
+                val viewRes = app.get(viewUrl).text
+                val viewJson = JSONObject(viewRes)
+                val encryptedResult = viewJson.optString("result")
 
-            val iframe = extractVideoUrlFromJson(decodeiframe)
-            val nameSuffix = if (type == "softsub") " [Soft Sub]" else ""
-            val name = "⌜ AnimeKai ⌟  |  $serverName  | $nameSuffix"
-            loadExtractor(iframe, name, subtitleCallback, callback)
+                if (encryptedResult.isNotEmpty()) {
+                    // Desencriptar el resultado para obtener la URL del iframe
+                    val decryptedIframeJson = decodeReverse(encryptedResult)
+                    val finalUrl = JSONObject(decryptedIframeJson).getString("url")
+
+                    Log.d(TAG, "Extrayendo video de: $finalUrl")
+
+                    val nameSuffix = if (type == "softsub") " [Soft Sub]" else ""
+                    val displayName = "⌜ AnimeKai ⌟ | $serverName$nameSuffix"
+
+                    loadExtractor(finalUrl, displayName, subtitleCallback, callback)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error procesando servidor $serverName: ${e.message}")
+            }
         }
         return true
     }
 
+    // Clases de apoyo actualizadas para evitar errores de Jackson
     data class Response(
-        @JsonProperty("status") val status: Boolean,
-        @JsonProperty("result") val result: String
-    ) {
-        fun getDocument(): Document {
-            return Jsoup.parse(result)
-        }
-    }
+        @JsonProperty("status") val status: Any? = null, // Cambiado a Any por si viene int o bool
+        @JsonProperty("result") val result: String? = null
+    )
 
     private fun extractVideoUrlFromJson(jsonData: String): String {
-        val jsonObject = JSONObject(jsonData)
-        return jsonObject.getString("url")
+        return try {
+            JSONObject(jsonData).getString("url")
+        } catch (e: Exception) {
+            ""
+        }
     }
 }
