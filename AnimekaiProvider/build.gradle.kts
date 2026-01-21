@@ -28,8 +28,8 @@ dependencies {
 cloudstream {
     language = "en"
     // All of these properties are optional, you can safely remove them
-    description = "Animes & Animes Movie"
-    authors = listOf("Phisher98")
+    //description = "Animes & Animes Movie"
+    authors = listOf("Ranita")
     /**
      * Status int as the following:
      * 0: Down
@@ -44,7 +44,7 @@ cloudstream {
         "AnimeMovie"
     )
 
-    iconUrl = "https://www.google.com/s2/favicons?domain=animekai.to&sz=%size%"
+    //iconUrl = "https://www.google.com/s2/favicons?domain=animekai.to&sz=%size%"
 
     requiresResources = true
     isCrossPlatform = false
