@@ -1,4 +1,4 @@
-import org.jetbrains.kotlin.konan.properties.Properties
+//import org.jetbrains.kotlin.konan.properties.Properties
 
 // use an integer for version numbers
 version = 56
@@ -10,15 +10,10 @@ android {
         viewBinding = true
     }
     defaultConfig {
-        val properties = Properties()
-        properties.load(project.rootProject.file("local.properties").inputStream())
-        android.buildFeatures.buildConfig=true
-        buildConfigField("String", "KAISVA", "\"${properties.getProperty("KAISVA")}\"")
-        buildConfigField("String", "KAIDEC", "\"${properties.getProperty("KAIDEC")}\"")
-        buildConfigField("String", "KAIENC", "\"${properties.getProperty("KAIENC")}\"")
-        buildConfigField("String", "KAIMEG", "\"${properties.getProperty("KAIMEG")}\"")
-
-
+        buildConfigField("String", "KAISVA", "\"https://sva.animekai.la\"")
+        buildConfigField("String", "KAIDEC", "\"https://api.animekai.la/api/v1/decrypt\"")
+        buildConfigField("String", "KAIENC", "\"https://api.animekai.la/api/v1/encrypt\"")
+        buildConfigField("String", "KAIMEG", "\"https://megcloud.tv\"")
     }
 }
 dependencies {
@@ -28,8 +23,8 @@ dependencies {
 cloudstream {
     language = "en"
     // All of these properties are optional, you can safely remove them
-    description = "Animes & Animes Movie"
-    authors = listOf("Phisher98")
+    description = "Animes y Películas Animes"
+    authors = listOf("Ranita")
     /**
      * Status int as the following:
      * 0: Down
@@ -44,7 +39,7 @@ cloudstream {
         "AnimeMovie"
     )
 
-    iconUrl = "https://www.google.com/s2/favicons?domain=animekai.to&sz=%size%"
+    //iconUrl = "https://www.google.com/s2/favicons?domain=animekai.to&sz=%size%"
 
     requiresResources = true
     isCrossPlatform = false
