@@ -55,12 +55,27 @@ class AnimekaiProvider : MainAPI() {
         val title = this.select("a.title").text()
         val subCount = this.selectFirst("div.info span.sub")?.text()?.toIntOrNull()
         val dubCount = this.selectFirst("div.info span.dub")?.text()?.toIntOrNull()
-        val posterUrl = fixUrl(this.select("a.poster img").attr("data-src"))
-        val type = getType(this.selectFirst("div.fd-infor > span.fdi-item")?.text() ?: "")
+
+        // Fallback: si data-src está vacío, usa src
+        val imgElement = this.select("a.poster img")
+        val posterUrl = fixUrl(imgElement.attr("data-src").ifBlank { imgElement.attr("src") })
+
+        val typeStr = this.selectFirst("div.fd-infor > span.fdi-item")?.text() ?: ""
+        val type = getType(typeStr) // Ahora sí encontrará la función
 
         return newAnimeSearchResponse(title, href, type) {
             this.posterUrl = posterUrl
             addDubStatus(dubCount != null, subCount != null, dubCount, subCount)
+        }
+    }
+
+    private fun getType(type: String): TvType {
+        return when (type.lowercase()) {
+            "tv", "anime", "estreno" -> TvType.Anime
+            "movie", "película", "pelicula" -> TvType.AnimeMovie
+            "ova", "special", "especial" -> TvType.OVA
+            "ona" -> TvType.OVA
+            else -> TvType.Anime
         }
     }
 
@@ -75,48 +90,50 @@ class AnimekaiProvider : MainAPI() {
 
 
     companion object {
+        // Forzamos las URLs correctas aquí
+        private const val KAI_ENC = "https://api.animekai.to/api/v1/encrypt"
+        private const val KAI_DEC = "https://api.animekai.to/api/v1/decrypt"
+        private const val KAI_SVA = "https://sva.animekai.la"
 
-        suspend fun decode(text: String?): String {
+        suspend fun decode(text: String?): String? {
+            if (text.isNullOrEmpty()) return null
             return try {
-                val res = app.get("${BuildConfig.KAIENC}?text=$text").text
-                JSONObject(res).getString("result")
+                // Intento 1: Servidor Principal
+                val res = app.get("$KAI_ENC?text=$text").text
+                val result = JSONObject(res).optString("result")
+                if (result.isEmpty() || result == "null") throw Exception("Empty")
+                result
             } catch (_: Exception) {
-                app.get("${BuildConfig.KAISVA}/?f=e&d=$text").text
+                try {
+                    // Intento 2: Servidor Alternativo
+                    val res = app.get("$KAI_SVA/?f=e&d=$text").text
+                    if (res.isEmpty() || res == "null") throw Exception("Empty")
+                    res
+                } catch (_: Exception) {
+                    text
+                }
             }
         }
-
-        private val JSON = "application/json; charset=utf-8".toMediaType()
 
         suspend fun decodeReverse(text: String): String {
-            val jsonBody = """{"text":"$text"}""".toRequestBody(JSON)
-
+            val jsonBody = """{"text":"$text"}""".toRequestBody("application/json; charset=utf-8".toMediaType())
             return try {
-                val res = app.post(
-                    BuildConfig.KAIDEC,
-                    requestBody = jsonBody
-                ).text
+                val res = app.post(KAI_DEC, requestBody = jsonBody).text
                 JSONObject(res).getString("result")
             } catch (_: Exception) {
-                app.get("${BuildConfig.KAISVA}/?f=d&d=$text").text
+                try {
+                    app.get("$KAI_SVA/?f=d&d=$text").text
+                } catch (_: Exception) {
+                    text
+                }
             }
         }
 
-
-
-        fun getType(t: String): TvType {
-            val lower = t.lowercase()
-            return when {
-                "ova" in lower || "special" in lower -> TvType.OVA
-                "movie" in lower -> TvType.AnimeMovie
-                else -> TvType.Anime
-            }
-        }
-
-        fun getStatus(t: String): ShowStatus {
-            return when (t) {
-                "Finished Airing" -> ShowStatus.Completed
-                "Releasing" -> ShowStatus.Ongoing
-                else -> ShowStatus.Completed // optionally log unexpected status
+        fun getStatus(t: String?): ShowStatus {
+            return when (t?.lowercase()) {
+                "finished airing", "finalizado" -> ShowStatus.Completed
+                "releasing", "en emisión" -> ShowStatus.Ongoing
+                else -> ShowStatus.Completed
             }
         }
     }
@@ -162,7 +179,7 @@ class AnimekaiProvider : MainAPI() {
         val TAG = "Animekai"
         val document = app.get(url).documentLarge
 
-        // 1. Mejora de Póster: Buscamos la imagen original de alta calidad
+        // Mejora de póster: priorizamos la imagen más grande
         val poster = document.selectFirst(".anisc-poster img")?.attr("src")
             ?: document.selectFirst("div.poster img")?.attr("src")
             ?: document.select("meta[property=og:image]").attr("content")
@@ -170,58 +187,57 @@ class AnimekaiProvider : MainAPI() {
         val title = document.selectFirst("h1.title")?.text() ?: "Sin título"
         val plot = document.selectFirst("div.desc")?.text() ?: ""
 
-        // 2. IDs para sincronización
+        // CORRECCIÓN: Quitamos el .text() de los atributos para evitar error de compilación
         val malid = document.select("div.watch-section").attr("data-mal-id")
         val aniid = document.select("div.watch-section").attr("data-al-id")
 
-        // 3. ID de Anime para episodios
-        val animeId = document.selectFirst("div.rate-box")?.attr("data-id")
+        // Selector robusto de ID
+        val animeId = document.selectFirst("#syncData")?.attr("data-id")
+            ?: document.selectFirst("div.rate-box")?.attr("data-id")
             ?: document.selectFirst(".watch-section")?.attr("data-id")
-            ?: url.split("-").lastOrNull()?.filter { it.isDigit() || it.isLetter() }
+            ?: url.split("-").lastOrNull()?.filter { it.isLetterOrDigit() }
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
         if (!animeId.isNullOrEmpty()) {
             try {
-                // Decodificación
                 val decodedToken = decode(animeId)
-
-                // Si el token sigue siendo null, intentamos usar el ID crudo como respaldo
-                val finalToken = if (decodedToken == "null" || decodedToken.isNullOrEmpty()) animeId else decodedToken
+                // Si el decode devuelve null, usamos el animeId como token de emergencia
+                val finalToken = if (decodedToken == null || decodedToken == "null") animeId else decodedToken
 
                 val epUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$finalToken"
-                Log.i(TAG, "Cargando episodios: $epUrl")
+                Log.i(TAG, "Cargando episodios desde: $epUrl")
 
                 val responseText = app.get(epUrl).text
                 val jsonResponse = JSONObject(responseText)
                 val htmlResult = jsonResponse.optString("result")
 
-                if (!htmlResult.isNullOrBlank()) {
+                if (htmlResult.isNotEmpty()) {
                     val epDocument = Jsoup.parse(htmlResult)
                     val episodesList = epDocument.select("div.eplist a")
+                    Log.d(TAG, "Episodios encontrados: ${episodesList.size}")
 
                     episodesList.forEachIndexed { index, ep ->
                         val episodeNum = index + 1
                         val token = ep.attr("token")
-                        val name = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
+                        val epName = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
 
-                        val episodeObj = newEpisode("sub|$token") {
-                            this.name = name
+                        subEpisodes.add(newEpisode("sub|$token") {
+                            this.name = epName
                             this.episode = episodeNum
-                        }
-                        subEpisodes.add(episodeObj)
+                        })
 
                         if (ep.hasClass("dub") || ep.selectFirst(".dub") != null) {
                             dubEpisodes.add(newEpisode("dub|$token") {
-                                this.name = name
+                                this.name = epName
                                 this.episode = episodeNum
                             })
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en lista de episodios: ${e.message}")
+                Log.e(TAG, "Error cargando episodios", e)
             }
         }
 
@@ -231,7 +247,6 @@ class AnimekaiProvider : MainAPI() {
             addEpisodes(DubStatus.Subbed, subEpisodes)
             addEpisodes(DubStatus.Dubbed, dubEpisodes)
             this.plot = plot
-            // Quitamos recomendaciones para mayor velocidad
             addMalId(malid.toIntOrNull())
             addAniListId(aniid.toIntOrNull())
         }
