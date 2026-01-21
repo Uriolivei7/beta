@@ -39,7 +39,6 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import kotlin.random.Random
 
-
 class AnimekaiProvider : MainAPI() {
     override var mainUrl = AnimeKaiPlugin.currentAnimeKaiServer
     override var name = "AnimeKai"
@@ -56,12 +55,11 @@ class AnimekaiProvider : MainAPI() {
         val subCount = this.selectFirst("div.info span.sub")?.text()?.toIntOrNull()
         val dubCount = this.selectFirst("div.info span.dub")?.text()?.toIntOrNull()
 
-        // Fallback: si data-src está vacío, usa src
         val imgElement = this.select("a.poster img")
         val posterUrl = fixUrl(imgElement.attr("data-src").ifBlank { imgElement.attr("src") })
 
         val typeStr = this.selectFirst("div.fd-infor > span.fdi-item")?.text() ?: ""
-        val type = getType(typeStr) // Ahora sí encontrará la función
+        val type = getType(typeStr)
 
         return newAnimeSearchResponse(title, href, type) {
             this.posterUrl = posterUrl
@@ -71,10 +69,9 @@ class AnimekaiProvider : MainAPI() {
 
     private fun getType(type: String): TvType {
         return when (type.lowercase()) {
-            "tv", "anime", "estreno" -> TvType.Anime
-            "movie", "película", "pelicula" -> TvType.AnimeMovie
-            "ova", "special", "especial" -> TvType.OVA
-            "ona" -> TvType.OVA
+            "tv", "anime" -> TvType.Anime
+            "movie", "película" -> TvType.AnimeMovie
+            "ova", "special", "ona" -> TvType.OVA
             else -> TvType.Anime
         }
     }
@@ -88,9 +85,7 @@ class AnimekaiProvider : MainAPI() {
         }
     }
 
-
     companion object {
-        // Forzamos las URLs correctas aquí
         private const val KAI_ENC = "https://api.animekai.to/api/v1/encrypt"
         private const val KAI_DEC = "https://api.animekai.to/api/v1/decrypt"
         private const val KAI_SVA = "https://sva.animekai.la"
@@ -98,20 +93,14 @@ class AnimekaiProvider : MainAPI() {
         suspend fun decode(text: String?): String? {
             if (text.isNullOrEmpty()) return null
             return try {
-                // Intento 1: Servidor Principal
                 val res = app.get("$KAI_ENC?text=$text").text
-                val result = JSONObject(res).optString("result")
-                if (result.isEmpty() || result == "null") throw Exception("Empty")
-                result
+                JSONObject(res).optString("result").takeIf { it.isNotBlank() && it != "null" }
+                    ?: throw Exception()
             } catch (_: Exception) {
                 try {
-                    // Intento 2: Servidor Alternativo
                     val res = app.get("$KAI_SVA/?f=e&d=$text").text
-                    if (res.isEmpty() || res == "null") throw Exception("Empty")
-                    res
-                } catch (_: Exception) {
-                    text
-                }
+                    res.takeIf { it.isNotBlank() && it != "null" } ?: text
+                } catch (_: Exception) { text }
             }
         }
 
@@ -121,11 +110,7 @@ class AnimekaiProvider : MainAPI() {
                 val res = app.post(KAI_DEC, requestBody = jsonBody).text
                 JSONObject(res).getString("result")
             } catch (_: Exception) {
-                try {
-                    app.get("$KAI_SVA/?f=d&d=$text").text
-                } catch (_: Exception) {
-                    text
-                }
+                try { app.get("$KAI_SVA/?f=d&d=$text").text } catch (_: Exception) { text }
             }
         }
 
@@ -138,64 +123,46 @@ class AnimekaiProvider : MainAPI() {
         }
     }
 
-
     override val mainPage = mainPageOf(
-            "$mainUrl/browser?keyword=&status[]=releasing&sort=trending" to "Trending",
-            "$mainUrl/browser?keyword=&status[]=releasing&sort=updated_date" to "Latest Episode",
-            "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=sub&language[]=softsub" to "Recently SUB",
-            "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=dub" to "Recently DUB",
+        "$mainUrl/browser?keyword=&status[]=releasing&sort=trending" to "Trending",
+        "$mainUrl/browser?keyword=&status[]=releasing&sort=updated_date" to "Latest Episode",
+        "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=sub&language[]=softsub" to "Recently SUB",
+        "$mainUrl/browser?keyword=&type[]=tv&status[]=releasing&sort=added_date&language[]=dub" to "Recently DUB",
     )
 
-    override suspend fun quickSearch(query: String): List<SearchResponse> = search(query,1).items
-
-
-    override suspend fun search(query: String,page: Int): SearchResponseList {
+    override suspend fun search(query: String, page: Int): SearchResponseList {
         val link = "$mainUrl/browser?keyword=$query&page=$page"
         val res = app.get(link).documentLarge
         return res.select("div.aitem-wrapper div.aitem").map { it.toSearchResult() }.toNewSearchResponseList()
     }
 
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        delay(Random.nextLong(1000, 2000))
-
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Referer" to "$mainUrl/",
-            "Connection" to "keep-alive",
-            "Upgrade-Insecure-Requests" to "1",
-            "Cookie" to "usertype=guest; session=Mv2Y6x1b2I8SEw3fj0eNDfQYJM3CTpH9KjJc3ACK; cf_clearance=z9kEgtOSx3us4aluy5_5MfYEL6Ei8RJ3jCbcFTD2R1E-1745122952-1.2.1.1-UYjW2QUhPKUmojZE3XUE.gqHf3g5O6lvdl0qDCNPb5IjjavrpZIOpbE64osKxLbcblCAWynfNLv6bKSO75WzURG.FqDtfcu_si3MrCHECNtbMJC.k9cuhqDRcsz8hHPgpQE2fY8rR1z5Z4HfGmCw2MWMT6GelsZW_RQrTMHUYtIqjaEiAtxfcg.O4v_RGPwio_2J2V3rP16JbWO8wRh_dObNvWSMwMW.t44PhOZml_xWuh7DH.EIxLu3AzI91wggYU9rw6JJkaWY.UBbvWB0ThZRPTAJZy_9wlx2QFyh80AXU2c5BPHwEZPQhTQHBGQZZ0BGZkzoAB8pYI3f3eEEpBUW9fEbEJ9uoDKs7WOow8g"
-        )
-
-        val res = app.get("${request.data}&page=$page", headers).documentLarge
+        val res = app.get("${request.data}&page=$page").documentLarge
         val items = res.select("div.aitem-wrapper div.aitem").map { it.toSearchResult() }
-
         return newHomePageResponse(request.name, items)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val TAG = "Animekai"
         val document = app.get(url).documentLarge
 
-        // Mejora de póster: priorizamos la imagen más grande
-        val poster = document.selectFirst(".anisc-poster img")?.attr("src")
+        val poster = document.selectFirst(".anisc-poster img")?.attr("src")?.replace("-600x900", "")
             ?: document.selectFirst("div.poster img")?.attr("src")
-            ?: document.select("meta[property=og:image]").attr("content")
 
         val title = document.selectFirst("h1.title")?.text() ?: "Sin título"
         val plot = document.selectFirst("div.desc")?.text() ?: ""
+        val statusText = document.select("div:containsOwn(Status) span").firstOrNull()?.text()
 
-        // CORRECCIÓN: Quitamos el .text() de los atributos para evitar error de compilación
         val malid = document.select("div.watch-section").attr("data-mal-id")
         val aniid = document.select("div.watch-section").attr("data-al-id")
 
-        // Selector robusto de ID
-        val animeId = document.selectFirst("#syncData")?.attr("data-id")
-            ?: document.selectFirst("div.rate-box")?.attr("data-id")
+        // Extracción del ID numérico real desde los scripts de la página
+        val scriptData = document.select("script").map { it.data() }
+        val animeId = scriptData.firstOrNull { it.contains("anime_id") }
+            ?.substringAfter("anime_id = '")?.substringBefore("'")
+            ?: document.selectFirst("#syncData")?.attr("data-id")
             ?: document.selectFirst(".watch-section")?.attr("data-id")
-            ?: url.split("-").lastOrNull()?.filter { it.isLetterOrDigit() }
+
+        Log.i("AnimeKai", "ID detectado: $animeId")
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
@@ -203,22 +170,14 @@ class AnimekaiProvider : MainAPI() {
         if (!animeId.isNullOrEmpty()) {
             try {
                 val decodedToken = decode(animeId)
-                // Si el decode devuelve null, usamos el animeId como token de emergencia
-                val finalToken = if (decodedToken == null || decodedToken == "null") animeId else decodedToken
+                val finalToken = if (decodedToken.isNullOrBlank() || decodedToken == "null") animeId else decodedToken
 
-                val epUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$finalToken"
-                Log.i(TAG, "Cargando episodios desde: $epUrl")
+                val responseText = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$finalToken").text
+                val htmlResult = JSONObject(responseText).optString("result")
 
-                val responseText = app.get(epUrl).text
-                val jsonResponse = JSONObject(responseText)
-                val htmlResult = jsonResponse.optString("result")
-
-                if (htmlResult.isNotEmpty()) {
+                if (htmlResult.isNotBlank()) {
                     val epDocument = Jsoup.parse(htmlResult)
-                    val episodesList = epDocument.select("div.eplist a")
-                    Log.d(TAG, "Episodios encontrados: ${episodesList.size}")
-
-                    episodesList.forEachIndexed { index, ep ->
+                    epDocument.select("div.eplist a").forEachIndexed { index, ep ->
                         val episodeNum = index + 1
                         val token = ep.attr("token")
                         val epName = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
@@ -237,16 +196,20 @@ class AnimekaiProvider : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error cargando episodios", e)
+                Log.e("AnimeKai", "Error episodios: ${e.message}")
             }
         }
 
+        // Recuperar recomendaciones
+        val recommendations = document.select("div.aitem-col a").map { it.toRecommendResult() }
+
         return newAnimeLoadResponse(title, url, TvType.Anime) {
-            this.engName = title
             this.posterUrl = poster
             addEpisodes(DubStatus.Subbed, subEpisodes)
             addEpisodes(DubStatus.Dubbed, dubEpisodes)
             this.plot = plot
+            this.showStatus = getStatus(statusText)
+            this.recommendations = recommendations
             addMalId(malid.toIntOrNull())
             addAniListId(aniid.toIntOrNull())
         }
@@ -258,84 +221,38 @@ class AnimekaiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val TAG = "AnimekaiLinks"
-        Log.i(TAG, "Iniciando loadLinks con data: $data")
-
-        // 1. Extraer el token del episodio
         val token = data.split("|").last()
         val dubType = data.split("|").firstOrNull() ?: "sub"
         val types = if (dubType == "sub") listOf("sub", "softsub") else listOf(dubType)
 
-        // 2. Decodificar el token para el parámetro de seguridad _
         val decodeToken = decode(token)
-        Log.d(TAG, "Token de episodio: $token | Decodificado (_): $decodeToken")
+        val responseText = app.get("$mainUrl/ajax/links/list?token=$token&_=$decodeToken").text
+        val htmlResult = JSONObject(responseText).optString("result")
 
-        // 3. Obtener lista de servidores (AJAX)
-        val linkListUrl = "$mainUrl/ajax/links/list?token=$token&_=$decodeToken"
-        val responseText = app.get(linkListUrl).text
-
-        val jsonResponse = try { JSONObject(responseText) } catch(e: Exception) {
-            Log.e(TAG, "Error al parsear JSON de servidores: ${e.message}")
-            return false
-        }
-
-        val htmlResult = jsonResponse.optString("result")
-        if (htmlResult.isNullOrBlank()) {
-            Log.e(TAG, "No se recibió HTML de servidores. Respuesta: $responseText")
-            return false
-        }
+        if (htmlResult.isBlank()) return false
 
         val document = Jsoup.parse(htmlResult)
         val servers = types.flatMap { type ->
             document.select("div.server-items[data-id=$type] span.server[data-lid]")
-                .map { server ->
-                    val lid = server.attr("data-lid")
-                    val serverName = server.text()
-                    Log.i(TAG, "Servidor encontrado: $serverName (LID: $lid) para tipo: $type")
-                    Triple(type, lid, serverName)
-                }
-        }.distinctBy { it.second } // Evitar duplicados por LID
+                .map { Triple(type, it.attr("data-lid"), it.text()) }
+        }.distinctBy { it.second }
 
-        // 4. Procesar cada servidor para extraer el iframe
         servers.amap { (type, lid, serverName) ->
             try {
                 val decodeLid = decode(lid)
-                val viewUrl = "$mainUrl/ajax/links/view?id=$lid&_=$decodeLid"
-
-                val viewRes = app.get(viewUrl).text
-                val viewJson = JSONObject(viewRes)
-                val encryptedResult = viewJson.optString("result")
+                val viewRes = app.get("$mainUrl/ajax/links/view?id=$lid&_=$decodeLid").text
+                val encryptedResult = JSONObject(viewRes).optString("result")
 
                 if (encryptedResult.isNotEmpty()) {
-                    // Desencriptar el resultado para obtener la URL del iframe
                     val decryptedIframeJson = decodeReverse(encryptedResult)
                     val finalUrl = JSONObject(decryptedIframeJson).getString("url")
-
-                    Log.d(TAG, "Extrayendo video de: $finalUrl")
-
                     val nameSuffix = if (type == "softsub") " [Soft Sub]" else ""
-                    val displayName = "⌜ AnimeKai ⌟ | $serverName$nameSuffix"
-
-                    loadExtractor(finalUrl, displayName, subtitleCallback, callback)
+                    loadExtractor(finalUrl, "⌜ AnimeKai ⌟ | $serverName$nameSuffix", subtitleCallback, callback)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error procesando servidor $serverName: ${e.message}")
+                Log.e("AnimeKaiLinks", "Error server $serverName: ${e.message}")
             }
         }
         return true
-    }
-
-    // Clases de apoyo actualizadas para evitar errores de Jackson
-    data class Response(
-        @JsonProperty("status") val status: Any? = null, // Cambiado a Any por si viene int o bool
-        @JsonProperty("result") val result: String? = null
-    )
-
-    private fun extractVideoUrlFromJson(jsonData: String): String {
-        return try {
-            JSONObject(jsonData).getString("url")
-        } catch (e: Exception) {
-            ""
-        }
     }
 }
