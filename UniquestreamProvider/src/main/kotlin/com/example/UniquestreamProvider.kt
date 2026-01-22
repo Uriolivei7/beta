@@ -82,26 +82,27 @@ class UniqueStreamProvider : MainAPI() {
             "X-Requested-With" to "XMLHttpRequest"
         )
 
-        // 1. Obtener detalles de la serie
         val seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
-        Log.d(TAG, "Respuesta details: ${seriesResponse.take(100)}")
-
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
         val episodesList = mutableListOf<Episode>()
 
-        // 2. Recorrer temporadas
+        // Usamos un Set para evitar cargar temporadas duplicadas (como esa temporada 7 y 8 repetida)
+        val processedSeasonIds = mutableSetOf<String>()
+
         details.seasons?.forEach { season ->
+            if (processedSeasonIds.contains(season.content_id)) return@forEach
+            processedSeasonIds.add(season.content_id)
+
             try {
-                // Usamos la ruta exacta del CURL que funcionó
-                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=1000&order_by=asc"
+                // BAJAMOS EL LÍMITE A 100 para que el servidor no nos bloquee
+                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=100&order_by=asc"
                 val response = app.get(seasonUrl, headers = apiHeaders).text
 
-                Log.d(TAG, "Respuesta temporada ${season.season_number}: ${response.take(100)}")
+                Log.d(TAG, "Respuesta temporada ${season.season_number}: ${response.take(50)}...")
 
                 if (response.trim().startsWith("[")) {
                     val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
                     eps.forEach { ep ->
-                        // Filtramos clips y verificamos que tenga ID
                         if (ep.is_clip != true) {
                             val cleanEpId = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
                             episodesList.add(newEpisode(cleanEpId) {
@@ -112,15 +113,13 @@ class UniqueStreamProvider : MainAPI() {
                             })
                         }
                     }
-                } else {
-                    Log.e(TAG, "La temporada ${season.season_number} no devolvió una lista válida")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error procesando temporada ${season.season_number}: ${e.message}")
+                Log.e(TAG, "Error en temporada ${season.season_number}: ${e.message}")
             }
         }
 
-        Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
+        Log.d(TAG, "Total episodios cargados final: ${episodesList.size}")
 
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
