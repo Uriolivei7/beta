@@ -198,61 +198,25 @@ class UniqueStreamProvider : MainAPI() {
                         Log.d(TAG, "DEBUG - Cantidad DASH: ${videoData.versions?.dash?.size ?: 0}")
                         Log.d(TAG, "DEBUG - Cantidad HLS: ${videoData.versions?.hls?.size ?: 0}")
 
-                        // Intentar DASH primero, pero también agregar opción de iframe
+                        // Intentar DASH primero, pero también agregar opción web
                         val dashVersions = videoData.versions?.dash ?: emptyList()
 
                         if (dashVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${dashVersions.size} versiones DASH")
 
-                            // PRIMERO: Agregar iframe como opción principal (funciona siempre)
-                            val embedHtml = """
-                                <!DOCTYPE html>
-                                <html>
-                                <head>
-                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                    <style>
-                                        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-                                        iframe { width: 100%; height: 100%; border: none; }
-                                    </style>
-                                </head>
-                                <body>
-                                    <iframe src="$watchUrl" allowfullscreen allow="autoplay; encrypted-media"></iframe>
-                                </body>
-                                </html>
-                            """.trimIndent()
-
-                            val encodedHtml = Base64.encodeToString(
-                                embedHtml.toByteArray(),
-                                Base64.NO_PADDING or Base64.NO_WRAP
-                            )
-
-                            callback(
-                                newExtractorLink(
-                                    source = this.name,
-                                    name = "${this.name} - Web Player (Recomendado)",
-                                    url = "data:text/html;base64,$encodedHtml",
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.quality = Qualities.P1080.value
-                                }
-                            )
-                            linksEnviados++
-
-                            Log.d(TAG, "✓ Agregado Web Player embebido")
-
-                            // SEGUNDO: Agregar links DASH directos como opciones secundarias
+                            // Agregar links DASH directos
                             dashVersions.take(3).forEach { dashVersion ->
                                 if (dashVersion.playlist.isNotBlank()) {
-                                    Log.d(TAG, "✓ DASH directo ${dashVersion.locale} (experimental)")
+                                    Log.d(TAG, "✓ DASH ${dashVersion.locale}")
 
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
-                                            name = "${this.name} - ${dashVersion.locale.uppercase()} (Directo)",
+                                            name = "${this.name} - ${dashVersion.locale.uppercase()}",
                                             url = dashVersion.playlist,
                                             type = ExtractorLinkType.DASH
                                         ) {
-                                            this.quality = Qualities.P720.value
+                                            this.quality = Qualities.Unknown.value
                                             this.referer = "$mainUrl/"
                                             this.headers = mapOf(
                                                 "Accept" to "*/*",
@@ -264,6 +228,8 @@ class UniqueStreamProvider : MainAPI() {
                                     linksEnviados++
                                 }
                             }
+
+                            Log.d(TAG, "Nota: Si los links DASH no funcionan, abre el episodio en el navegador: $watchUrl")
                         }
 
                         // Fallback a HLS si no hay DASH

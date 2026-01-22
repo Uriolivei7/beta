@@ -8,5 +8,7 @@ import android.content.Context
 class UniquestreamPlugin: Plugin() {
     override fun load(context: Context) {
         registerMainAPI(UniqueStreamProvider())
+        registerExtractorAPI(MediaCacheExtractor())
+
     }
 }
