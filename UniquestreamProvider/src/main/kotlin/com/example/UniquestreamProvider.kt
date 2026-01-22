@@ -157,38 +157,44 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // USAMOS EL AGENT QUE APARECE EN EL HTML DEL SITIO
-        val siteUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.39 Safari/537.36"
+        // User-Agent idéntico al que el sitio declara en su HTML
+        val macUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.39 Safari/537.36"
 
-        val masterHeaders = mapOf(
-            "User-Agent" to siteUserAgent,
-            "Accept" to "*/*",
-            "Origin" to "https://anime.uniquestream.net",
-            "Referer" to "$watchUrl/", // Referer directo al episodio
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site",
-            "X-Requested-With" to "XMLHttpRequest"
-        )
+        Log.d(TAG, "--- INICIO DE CARGA DE ENLACES: $cleanId ---")
 
         return try {
-            // 1. Visitamos la web para intentar "activar" el reto de Cloudflare
-            val pageResponse = app.get(watchUrl, headers = mapOf("User-Agent" to siteUserAgent))
+            // 1. PASO: Handshake inicial para cookies
+            val pageResponse = app.get(watchUrl, headers = mapOf("User-Agent" to macUserAgent))
             val cookies = pageResponse.cookies
+            val cookieStr = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
 
-            // Combinamos headers con las cookies capturadas (si las hay)
-            val authHeaders = masterHeaders.toMutableMap()
-            if (cookies.isNotEmpty()) {
-                authHeaders["Cookie"] = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-            }
+            Log.d(TAG, "WEB STATUS: ${pageResponse.code}")
+            Log.d(TAG, "COOKIES CAPTURADAS: ${if (cookieStr.isEmpty()) "NINGUNA" else cookieStr}")
 
-            // 2. Pedimos los links a la API
+            // 2. CONSTRUCCIÓN DE HEADERS DE SEGURIDAD
+            val masterHeaders = mapOf(
+                "User-Agent" to macUserAgent,
+                "Accept" to "*/*",
+                "Origin" to "https://anime.uniquestream.net",
+                "Referer" to "$watchUrl/",
+                "Cookie" to cookieStr,
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "cross-site",
+                "X-Requested-With" to "XMLHttpRequest"
+            )
+
+            // 3. PASO: Petición a la API de medios
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
-            val response = app.get(mediaUrl, headers = authHeaders).text
+            val apiResponse = app.get(mediaUrl, headers = masterHeaders)
 
-            if (response.contains("versions")) {
-                val videoData = AppUtils.parseJson<VideoResponse>(response)
+            Log.d(TAG, "API STATUS: ${apiResponse.code}")
+
+            if (apiResponse.text.contains("versions")) {
+                val videoData = AppUtils.parseJson<VideoResponse>(apiResponse.text)
 
                 videoData.versions?.hls?.forEach { v ->
+                    Log.d(TAG, "LINK ENCONTRADO [${v.locale}]: ${v.playlist.take(60)}...")
+
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -196,14 +202,14 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // ESTO ES CLAVE: Pasamos los headers exactos al reproductor
-                            this.headers = authHeaders
+                            // Inyectamos los headers al reproductor
+                            this.headers = masterHeaders
                         }
                     )
 
                     v.hard_subs?.forEach { sub ->
                         subtitleCallback(
-                            newSubtitleFile(
+                            SubtitleFile(
                                 lang = "Hardsub ${sub.locale.uppercase()}",
                                 url = sub.playlist
                             )
@@ -212,10 +218,12 @@ class UniqueStreamProvider : MainAPI() {
                 }
                 true
             } else {
+                Log.e(TAG, "API ERROR: No se encontraron versiones. Body: ${apiResponse.text.take(100)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error Final: ${e.message}")
+            Log.e(TAG, "FALLO CRÍTICO EN LOADLINKS: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
