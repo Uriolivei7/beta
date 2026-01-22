@@ -225,7 +225,7 @@ class UniqueStreamProvider : MainAPI() {
                 hlsVersion.subtitles?.forEach { sub ->
                     if (sub.url.isNotBlank()) {
                         subtitleCallback(
-                            newSubtitleFile(
+                            SubtitleFile(
                                 lang = sub.locale,
                                 url = sub.url
                             )
