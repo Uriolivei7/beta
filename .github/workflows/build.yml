@@ -4,8 +4,11 @@ concurrency:
   group: "build"
   cancel-in-progress: true
 
+# PERMISOS AMPLIADOS PARA EVITAR EL ERROR 401/403
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 on:
   push:
@@ -23,6 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: "src"
+          fetch-depth: 0 # Necesario para evitar problemas de historial al pushear
 
       - name: Checkout or Create Builds Branch
         uses: actions/checkout@v4
@@ -52,20 +56,18 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          # Compilamos los .cs3
-          ./gradlew make
+          # Agregamos flags para ignorar warnings de compilación si es necesario
+          ./gradlew make --stacktrace
           # Copiamos los archivos .cs3 a la carpeta de builds
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No cs3 found"
 
       - name: Restore My Custom JSON
         run: |
-          # 1. Forzamos la copia de TU plugins.json (desde src) a la carpeta de salida (builds)
-          # Esto borrará el que Gradle generó automáticamente.
           if [ -f "$GITHUB_WORKSPACE/src/plugins.json" ]; then
             cp -f "$GITHUB_WORKSPACE/src/plugins.json" "$GITHUB_WORKSPACE/builds/plugins.json"
             echo "¡Éxito! Tu plugins.json personalizado ha sido restaurado."
           else
-            echo "ERROR: No se encontró 'src/plugins.json'. Revisa si está en la carpeta correcta."
+            echo "ERROR: No se encontró 'src/plugins.json'."
             exit 1
           fi
 
@@ -74,8 +76,7 @@ jobs:
           cd $GITHUB_WORKSPACE/builds
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          # Forzamos que añada el archivo por si Git piensa que no cambió
           git add -f plugins.json
           git add *.cs3
-          git commit -m "Build con JSON personalizado forzado" || true 
-          git push --set-upstream origin builds
+          # El commit solo se hace si hay cambios para evitar errores
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Build con JSON personalizado forzado" && git push origin builds)
