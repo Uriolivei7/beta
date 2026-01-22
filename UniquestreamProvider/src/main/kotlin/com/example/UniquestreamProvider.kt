@@ -157,42 +157,30 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // Usamos el User-Agent exacto de un Android moderno para que no sospeche
-        val userAgent = "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        val fixedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+
+        Log.d(TAG, "--- INICIANDO PRUEBA DE REPRODUCTOR: $cleanId ---")
 
         return try {
-            // 1. PRIMERA ENTRADA: Simulamos que el humano entra a la web
-            val firstStep = app.get(watchUrl, headers = mapOf("User-Agent" to userAgent))
+            val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
 
-            // ESPERA ESTRATÉGICA: Damos tiempo a que el "servidor" crea que procesamos el JS
-            kotlinx.coroutines.delay(1200)
-
-            // 2. CAPTURA DE COOKIES (Incluso las invisibles)
-            val cookies = firstStep.cookies
-            val cookieString = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-
-            Log.d(TAG, "DIAGNÓSTICO -> Cookies tras espera: ${if(cookieString.isEmpty()) "VACÍO" else "CAPTURADAS"}")
-
-            val masterHeaders = mapOf(
-                "User-Agent" to userAgent,
-                "Accept" to "application/json, text/plain, */*", // Más específico para API
-                "Accept-Language" to "es-MX,es;q=0.9,en;q=0.8",
-                "Referer" to "$watchUrl/",
+            val apiHeaders = mapOf(
+                "User-Agent" to fixedUA,
+                "Accept" to "application/json",
+                "Referer" to watchUrl,
                 "Origin" to "https://anime.uniquestream.net",
-                "Cookie" to cookieString,
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "same-origin" // Cambiamos a same-origin para la API
+                "X-Requested-With" to "XMLHttpRequest"
             )
 
-            // 3. PEDIR LOS ENLACES A LA API
-            val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
-            val apiResponse = app.get(mediaUrl, headers = masterHeaders)
+            val response = app.get(mediaUrl, headers = apiHeaders)
+            Log.d(TAG, "API STATUS: ${response.code}")
 
-            if (apiResponse.text.contains("versions")) {
-                val videoData = AppUtils.parseJson<VideoResponse>(apiResponse.text)
+            if (response.text.contains("versions")) {
+                val videoData = AppUtils.parseJson<VideoResponse>(response.text)
 
                 videoData.versions?.hls?.forEach { v ->
+                    Log.d(TAG, "LINK OBTENIDO [${v.locale}]: ${v.playlist.take(50)}...")
+
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -200,20 +188,26 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // IMPORTANTE: Para el video usamos 'cross-site' porque el dominio cambia
-                            val videoHeaders = masterHeaders.toMutableMap()
-                            videoHeaders["Sec-Fetch-Site"] = "cross-site"
-                            this.headers = videoHeaders
+                            // HEADERS QUE RECIBE EL REPRODUCTOR
+                            this.headers = mapOf(
+                                "User-Agent" to fixedUA,
+                                "Referer" to "https://anime.uniquestream.net/",
+                                "Origin" to "https://anime.uniquestream.net",
+                                "Accept" to "*/*",
+                                "Sec-Fetch-Dest" to "video",
+                                "Sec-Fetch-Mode" to "no-cors",
+                                "Sec-Fetch-Site" to "cross-site"
+                            )
                         }
                     )
                 }
                 true
             } else {
-                Log.e(TAG, "API rechazada. Status: ${apiResponse.code}")
+                Log.e(TAG, "API NO DEVOLVIÓ VERSIONES. Body: ${response.text.take(100)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error: ${e.message}")
+            Log.e(TAG, "ERROR EN LOADLINKS: ${e.message}")
             false
         }
     }
