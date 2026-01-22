@@ -15,7 +15,6 @@ class UniqueStreamProvider : MainAPI() {
     private val apiUrl = "https://anime.uniquestream.net/api/v1"
     private val TAG = "UniqueStream"
 
-    // Fix para el error de "Unresolved reference" en toSearchResponse
     private fun SeriesItem.toSearchResponse(): SearchResponse {
         return newAnimeSearchResponse(this.title, this.content_id) {
             this.posterUrl = image
@@ -31,16 +30,14 @@ class UniqueStreamProvider : MainAPI() {
                 "Accept" to "application/json, text/plain, */*",
                 "Referer" to "$mainUrl/",
                 "Origin" to mainUrl,
-                "X-Requested-With" to "XMLHttpRequest" // Esto ayuda mucho con las APIs
+                "X-Requested-With" to "XMLHttpRequest"
             )
 
-            // Cambiamos el endpoint a uno más probable de funcionar para la Home
             val response = app.get("$apiUrl/search?query=&limit=20&order_by=popular", headers = apiHeaders).text
             val data = AppUtils.parseJson<SearchRoot>(response)
 
             val homeItems = mutableListOf<HomePageList>()
 
-            // Verificamos si hay series
             val seriesList = data.series?.map {
                 newAnimeSearchResponse(it.title, it.content_id) {
                     this.posterUrl = it.image
@@ -91,7 +88,6 @@ class UniqueStreamProvider : MainAPI() {
             if (processedSeasonIds.contains(season.content_id)) return@forEach
             processedSeasonIds.add(season.content_id)
 
-            // BUCLE DE PAGINACIÓN: Pedimos de 20 en 20
             var page = 1
             var keepLoading = true
 
@@ -107,12 +103,9 @@ class UniqueStreamProvider : MainAPI() {
                             keepLoading = false
                         } else {
                             eps.forEach { ep ->
-                                // DENTRO DE eps.forEach en la función load:
                                 if (ep.is_clip != true) {
-                                    // PASAMOS EL ID COMPLETO (sin hacer split)
-                                    val idParaLink = ep.content_id
-
-                                    episodesList.add(newEpisode(idParaLink) {
+                                    // CRÍTICO: Pasar SOLO el content_id, sin modificaciones
+                                    episodesList.add(newEpisode(ep.content_id) {
                                         this.name = ep.title
                                         this.episode = ep.episode_number?.toInt()
                                         this.season = season.season_number
@@ -120,11 +113,11 @@ class UniqueStreamProvider : MainAPI() {
                                     })
                                 }
                             }
-                            // Si recibimos menos de 20, es que ya no hay más páginas
+
                             if (eps.size < 20) {
                                 keepLoading = false
                             } else {
-                                page++ // Pedir la siguiente página
+                                page++
                             }
                         }
                     } else {
@@ -154,66 +147,120 @@ class UniqueStreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val cleanId = data.split("/").last { it.isNotBlank() }
-        val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
+        // El 'data' ya viene como content_id limpio desde load()
+        val episodeId = data.trim()
 
-        // User-Agent idéntico a un navegador real
         val chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        Log.d(TAG, "--- INICIANDO CARGA DE LINKS (INTENTO DE FIX 2000) ---")
-        Log.d(TAG, "Watch URL: $watchUrl")
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "CARGANDO LINKS PARA EPISODIO: $episodeId")
+        Log.d(TAG, "========================================")
 
         return try {
-            // Obtenemos los links de la API
-            val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
+            // PASO 1: Visitar la página del watch para obtener cookies/tokens
+            val watchUrl = "https://anime.uniquestream.net/watch/$episodeId"
+            Log.d(TAG, "Visitando página: $watchUrl")
+
+            val watchPage = app.get(watchUrl, headers = mapOf(
+                "User-Agent" to chromeUA,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language" to "en-US,en;q=0.5",
+                "Connection" to "keep-alive",
+                "Upgrade-Insecure-Requests" to "1"
+            ))
+
+            Log.d(TAG, "Página cargada - Status: ${watchPage.code}")
+
+            // PASO 2: Ahora pedir los links de la API con las cookies obtenidas
+            val mediaUrl = "$apiUrl/episode/$episodeId/media"
+
+            Log.d(TAG, "URL API: $mediaUrl")
+
             val response = app.get(mediaUrl, headers = mapOf(
                 "User-Agent" to chromeUA,
-                "Referer" to watchUrl,
+                "Referer" to "https://anime.uniquestream.net/",
+                "Accept" to "application/json",
                 "X-Requested-With" to "XMLHttpRequest"
             ))
 
-            Log.d(TAG, "API Status: ${response.code}")
+            Log.d(TAG, "Status Code: ${response.code}")
+
+            if (response.code != 200) {
+                Log.e(TAG, "Error HTTP: ${response.code}")
+                return false
+            }
 
             val videoData = AppUtils.parseJson<VideoResponse>(response.text)
             var linksEnviados = 0
 
-            videoData.versions?.hls?.forEach { v ->
-                Log.d(TAG, "Configurando Headers para link: ${v.locale}")
+            // Procesar versiones HLS
+            videoData.versions?.hls?.forEach { hlsVersion ->
+                val playlistUrl = hlsVersion.playlist
+
+                // Validar que la URL no esté vacía
+                if (playlistUrl.isBlank()) {
+                    Log.w(TAG, "URL vacía para locale: ${hlsVersion.locale}")
+                    return@forEach
+                }
+
+                Log.d(TAG, "✓ Link ${hlsVersion.locale}: $playlistUrl")
 
                 callback(
                     newExtractorLink(
                         source = this.name,
-                        name = "${this.name} - ${v.locale.uppercase()}",
-                        url = v.playlist,
+                        name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                        url = playlistUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        // Estos headers son los que el reproductor (ExoPlayer) usará.
-                        // Hemos añadido 'Connection' y 'Accept-Language' para mayor realismo.
+                        this.quality = Qualities.Unknown.value
+                        this.referer = "https://anime.uniquestream.net/"
                         this.headers = mapOf(
                             "User-Agent" to chromeUA,
                             "Referer" to "https://anime.uniquestream.net/",
                             "Origin" to "https://anime.uniquestream.net",
                             "Accept" to "*/*",
-                            "Accept-Language" to "es-ES,es;q=0.9",
-                            "Connection" to "keep-alive",
-                            "Sec-Fetch-Dest" to "video",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "cross-site"
+                            "Accept-Language" to "en-US,en;q=0.9",
+                            "Connection" to "keep-alive"
                         )
                     }
                 )
                 linksEnviados++
+
+                // Procesar subtítulos si existen
+                hlsVersion.subtitles?.forEach { sub ->
+                    if (sub.url.isNotBlank()) {
+                        subtitleCallback(
+                            newSubtitleFile(
+                                lang = sub.locale,
+                                url = sub.url
+                            )
+                        )
+                        Log.d(TAG, "✓ Subtítulo ${sub.locale}: ${sub.url}")
+                    }
+                }
             }
 
-            Log.d(TAG, "Links enviados al sistema: $linksEnviados")
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "TOTAL LINKS ENVIADOS: $linksEnviados")
+            Log.d(TAG, "========================================")
+
             linksEnviados > 0
+
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR CRÍTICO EN REPRODUCCIÓN: ${e.message}")
+            Log.e(TAG, "========================================")
+            Log.e(TAG, "ERROR CRÍTICO: ${e.message}")
+            Log.e(TAG, "Stack trace: ${e.stackTraceToString()}")
+            Log.e(TAG, "========================================")
             false
         }
     }
 
-    @Serializable data class SeriesItem(val content_id: String, val title: String, val image: String? = null)
+    @Serializable
+    data class SeriesItem(
+        val content_id: String,
+        val title: String,
+        val image: String? = null
+    )
 
     @Serializable
     data class SearchRoot(
@@ -222,27 +269,8 @@ class UniqueStreamProvider : MainAPI() {
     )
 
     @Serializable
-    data class VideoVersions(
-        val hls: List<VideoV>? = null,
-        val dash: List<VideoV>? = null
-    )
-
-    @Serializable
-    data class VideoV(
-        val locale: String,
-        val playlist: String,
-        val subtitles: List<SubtitleItem>? = null // Para los subtítulos
-    )
-
-    @Serializable
-    data class SubtitleItem(
-        val locale: String,
-        val url: String
-    )
-
-    @Serializable
     data class DetailsResponse(
-        val content_id: String? = null, // El signo ? es vital aquí
+        val content_id: String? = null,
         val title: String? = null,
         val description: String? = null,
         val images: List<ImageItem>? = null,
@@ -261,7 +289,7 @@ class UniqueStreamProvider : MainAPI() {
     @Serializable
     data class EpisodeItem(
         val content_id: String,
-        val series_id: String? = null, // <--- AÑADIR ESTO
+        val series_id: String? = null,
         val title: String? = null,
         val episode_number: Double? = null,
         val image: String? = null,
@@ -281,17 +309,26 @@ class UniqueStreamProvider : MainAPI() {
 
     @Serializable
     data class Versions(
-        val hls: List<HlsVersion>? = null
+        val hls: List<HlsVersion>? = null,
+        val dash: List<DashVersion>? = null
     )
 
     @Serializable
     data class HlsVersion(
         val locale: String,
+        val playlist: String,
+        val subtitles: List<SubtitleItem>? = null
+    )
+
+    @Serializable
+    data class DashVersion(
+        val locale: String,
         val playlist: String
     )
 
-    data class HardSub(
+    @Serializable
+    data class SubtitleItem(
         val locale: String,
-        val playlist: String
+        val url: String
     )
 }
