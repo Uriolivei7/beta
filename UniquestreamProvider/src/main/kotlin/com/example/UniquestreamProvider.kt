@@ -160,47 +160,34 @@ class UniqueStreamProvider : MainAPI() {
         return try {
             val watchUrl = "$mainUrl/watch/$episodeId"
 
-            // PASO 1: Visitar la página watch para obtener cookies de Cloudflare
-            Log.d(TAG, "Obteniendo cookies de Cloudflare...")
+            // Visitar página watch para obtener cookies
+            Log.d(TAG, "Visitando página watch...")
             val watchHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language" to "en-US,en;q=0.5",
-                "Referer" to mainUrl
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             )
 
-            val watchPage = app.get(watchUrl, headers = watchHeaders, timeout = 30L)
-            Log.d(TAG, "Página watch cargada: ${watchPage.code}")
+            app.get(watchUrl, headers = watchHeaders, timeout = 30L)
 
-            // Extraer cookies importantes de la respuesta
-            val cookieHeader = watchPage.headers["set-cookie"] ?: ""
-            Log.d(TAG, "Cookies recibidas: ${if(cookieHeader.isNotEmpty()) "Sí" else "No"}")
-
-            // PASO 2: Probar diferentes locales para obtener los links
-            val locales = listOf("es-419", "en-US", "ja-JP", "es-ES", "pt-BR")
+            // Probar diferentes locales
+            val locales = listOf("es-419", "en-US", "ja-JP")
             var linksEnviados = 0
 
             for (locale in locales) {
                 try {
                     val mediaUrl = "$apiUrl/episode/$episodeId/media/dash/$locale"
 
-                    Log.d(TAG, "Intentando locale: $locale")
-
                     val apiHeaders = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         "Accept" to "*/*",
-                        "Accept-Language" to "en-US,en;q=0.9",
                         "Referer" to watchUrl,
-                        "Origin" to mainUrl,
-                        "Sec-Fetch-Dest" to "empty",
-                        "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Site" to "same-origin"
+                        "Origin" to mainUrl
                     )
 
                     val response = app.get(mediaUrl, headers = apiHeaders, timeout = 30L)
 
                     if (response.code == 200) {
-                        Log.d(TAG, "✓ API respondió 200 para $locale")
+                        Log.d(TAG, "✓ API 200 para $locale")
 
                         val videoData = AppUtils.parseJson<VideoResponse>(response.text)
 
@@ -209,32 +196,69 @@ class UniqueStreamProvider : MainAPI() {
                             val playlistUrl = hlsVersion.playlist
 
                             if (playlistUrl.isNotBlank()) {
-                                Log.d(TAG, "✓ Link encontrado: ${hlsVersion.locale}")
-                                Log.d(TAG, "  URL COMPLETA: $playlistUrl")
+                                Log.d(TAG, "Procesando: ${hlsVersion.locale}")
 
-                                // URLs del CDN mediacache.cc requieren headers específicos
-                                callback(
-                                    newExtractorLink(
-                                        source = this.name,
-                                        name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                                        url = playlistUrl,
-                                        type = ExtractorLinkType.M3U8
-                                    ) {
-                                        this.quality = Qualities.Unknown.value
-                                        // Headers CRÍTICOS para el CDN mediacache.cc
-                                        this.referer = "$mainUrl/"
-                                        this.headers = mapOf(
-                                            "Accept" to "*/*",
-                                            "Origin" to mainUrl,
-                                            "Sec-Fetch-Dest" to "empty",
-                                            "Sec-Fetch-Mode" to "cors",
-                                            "Sec-Fetch-Site" to "cross-site"
+                                // SOLUCIÓN: Descargar el master.m3u8 y extraer URLs directas
+                                try {
+                                    val m3u8Headers = mapOf(
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                        "Accept" to "*/*",
+                                        "Origin" to mainUrl,
+                                        "Referer" to "$mainUrl/"
+                                    )
+
+                                    val m3u8Content = app.get(playlistUrl, headers = m3u8Headers, timeout = 20L).text
+
+                                    // Parsear el master.m3u8 para obtener las variantes
+                                    val variants = parseM3U8(m3u8Content, playlistUrl)
+
+                                    Log.d(TAG, "✓ Encontradas ${variants.size} variantes para ${hlsVersion.locale}")
+
+                                    // Agregar cada variante como un link separado
+                                    variants.forEachIndexed { index, variant ->
+                                        callback(
+                                            newExtractorLink(
+                                                source = this.name,
+                                                name = "${this.name} - ${hlsVersion.locale.uppercase()} (${variant.quality})",
+                                                url = variant.url,
+                                                type = ExtractorLinkType.M3U8
+                                            ) {
+                                                this.quality = variant.qualityValue
+                                                this.referer = "$mainUrl/"
+                                                this.headers = mapOf(
+                                                    "Accept" to "*/*",
+                                                    "Origin" to mainUrl,
+                                                    "Referer" to "$mainUrl/"
+                                                )
+                                            }
                                         )
                                     }
-                                )
-                                linksEnviados++
 
-                                // Procesar subtítulos
+                                    linksEnviados += variants.size
+
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error descargando m3u8: ${e.message}")
+                                    // Si falla, intentar con la URL directa
+                                    callback(
+                                        newExtractorLink(
+                                            source = this.name,
+                                            name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                                            url = playlistUrl,
+                                            type = ExtractorLinkType.M3U8
+                                        ) {
+                                            this.quality = Qualities.Unknown.value
+                                            this.referer = "$mainUrl/"
+                                            this.headers = mapOf(
+                                                "Accept" to "*/*",
+                                                "Origin" to mainUrl,
+                                                "Referer" to "$mainUrl/"
+                                            )
+                                        }
+                                    )
+                                    linksEnviados++
+                                }
+
+                                // Subtítulos
                                 hlsVersion.subtitles?.forEach { sub ->
                                     if (sub.url.isNotBlank()) {
                                         subtitleCallback(
@@ -248,10 +272,7 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // Si encontramos links, no necesitamos probar más locales
                         if (linksEnviados > 0) break
-                    } else {
-                        Log.w(TAG, "API devolvió ${response.code} para $locale")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error con locale $locale: ${e.message}")
@@ -266,11 +287,71 @@ class UniqueStreamProvider : MainAPI() {
             linksEnviados > 0
 
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR CRÍTICO: ${e.message}")
+            Log.e(TAG, "ERROR: ${e.message}")
             e.printStackTrace()
             false
         }
     }
+
+    // Función para parsear master.m3u8 y extraer variantes
+    private fun parseM3U8(content: String, baseUrl: String): List<M3U8Variant> {
+        val variants = mutableListOf<M3U8Variant>()
+        val lines = content.lines()
+        var currentQuality = "Unknown"
+        var currentResolution = ""
+
+        for (i in lines.indices) {
+            val line = lines[i].trim()
+
+            // Buscar información de calidad en #EXT-X-STREAM-INF
+            if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                // Extraer resolución
+                val resolutionMatch = Regex("RESOLUTION=(\\d+x\\d+)").find(line)
+                currentResolution = resolutionMatch?.groupValues?.get(1) ?: ""
+
+                // Extraer bandwidth para determinar calidad
+                val bandwidthMatch = Regex("BANDWIDTH=(\\d+)").find(line)
+                val bandwidth = bandwidthMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+                currentQuality = when {
+                    currentResolution.contains("1920") -> "1080p"
+                    currentResolution.contains("1280") -> "720p"
+                    currentResolution.contains("854") || currentResolution.contains("848") -> "480p"
+                    currentResolution.contains("640") -> "360p"
+                    else -> currentResolution.ifEmpty { "Auto" }
+                }
+            }
+            // La siguiente línea después de #EXT-X-STREAM-INF es la URL
+            else if (!line.startsWith("#") && line.isNotEmpty() && currentQuality.isNotEmpty()) {
+                val variantUrl = if (line.startsWith("http")) {
+                    line
+                } else {
+                    // URL relativa - construir URL absoluta
+                    val base = baseUrl.substringBeforeLast("/")
+                    "$base/$line"
+                }
+
+                val qualityValue = when (currentQuality) {
+                    "1080p" -> Qualities.P1080.value
+                    "720p" -> Qualities.P720.value
+                    "480p" -> Qualities.P480.value
+                    "360p" -> Qualities.P360.value
+                    else -> Qualities.Unknown.value
+                }
+
+                variants.add(M3U8Variant(variantUrl, currentQuality, qualityValue))
+                currentQuality = ""
+            }
+        }
+
+        return variants
+    }
+
+    data class M3U8Variant(
+        val url: String,
+        val quality: String,
+        val qualityValue: Int
+    )
 
     @Serializable
     data class SeriesItem(
