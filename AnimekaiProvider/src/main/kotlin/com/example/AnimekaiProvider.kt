@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.Episode
@@ -76,11 +77,18 @@ class AnimekaiProvider : MainAPI() {
     companion object {
 
         suspend fun decode(text: String?): String {
+            val input = text ?: "null_input"
+            Log.d("AnimeKaiDebug", "decode() llamado con: $input")
+
             return try {
-                val res = app.get("${BuildConfig.KAIENC}?text=$text").text
+                val res = app.get("${BuildConfig.KAIENC}?text=$input").text
+                Log.d("AnimeKaiDebug", "Respuesta de KAIENC: $res")
                 JSONObject(res).getString("result")
-            } catch (_: Exception) {
-                app.get("${BuildConfig.KAISVA}/?f=e&d=$text").text
+            } catch (e: Exception) {
+                Log.e("AnimeKaiDebug", "Error en KAIENC: ${e.message}")
+                val fallback = app.get("${BuildConfig.KAISVA}/?f=e&d=$input").text
+                Log.d("AnimeKaiDebug", "Fallback KAISVA devolvió: $fallback")
+                fallback
             }
         }
 
