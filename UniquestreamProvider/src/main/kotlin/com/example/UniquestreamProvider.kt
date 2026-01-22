@@ -198,25 +198,61 @@ class UniqueStreamProvider : MainAPI() {
                         Log.d(TAG, "DEBUG - Cantidad DASH: ${videoData.versions?.dash?.size ?: 0}")
                         Log.d(TAG, "DEBUG - Cantidad HLS: ${videoData.versions?.hls?.size ?: 0}")
 
-                        // PRIORIZAR DASH sobre HLS (está en el mismo dominio)
+                        // Intentar DASH primero, pero también agregar opción de iframe
                         val dashVersions = videoData.versions?.dash ?: emptyList()
 
                         if (dashVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${dashVersions.size} versiones DASH")
 
-                            dashVersions.forEach { dashVersion ->
-                                // Agregar playlist principal
+                            // PRIMERO: Agregar iframe como opción principal (funciona siempre)
+                            val embedHtml = """
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                    <style>
+                                        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+                                        iframe { width: 100%; height: 100%; border: none; }
+                                    </style>
+                                </head>
+                                <body>
+                                    <iframe src="$watchUrl" allowfullscreen allow="autoplay; encrypted-media"></iframe>
+                                </body>
+                                </html>
+                            """.trimIndent()
+
+                            val encodedHtml = Base64.encodeToString(
+                                embedHtml.toByteArray(),
+                                Base64.NO_PADDING or Base64.NO_WRAP
+                            )
+
+                            callback(
+                                newExtractorLink(
+                                    source = this.name,
+                                    name = "${this.name} - Web Player (Recomendado)",
+                                    url = "data:text/html;base64,$encodedHtml",
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.quality = Qualities.P1080.value
+                                }
+                            )
+                            linksEnviados++
+
+                            Log.d(TAG, "✓ Agregado Web Player embebido")
+
+                            // SEGUNDO: Agregar links DASH directos como opciones secundarias
+                            dashVersions.take(3).forEach { dashVersion ->
                                 if (dashVersion.playlist.isNotBlank()) {
-                                    Log.d(TAG, "✓ DASH ${dashVersion.locale}: ${dashVersion.playlist.take(60)}...")
+                                    Log.d(TAG, "✓ DASH directo ${dashVersion.locale} (experimental)")
 
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
-                                            name = "${this.name} - ${dashVersion.locale.uppercase()}",
+                                            name = "${this.name} - ${dashVersion.locale.uppercase()} (Directo)",
                                             url = dashVersion.playlist,
                                             type = ExtractorLinkType.DASH
                                         ) {
-                                            this.quality = Qualities.Unknown.value
+                                            this.quality = Qualities.P720.value
                                             this.referer = "$mainUrl/"
                                             this.headers = mapOf(
                                                 "Accept" to "*/*",
@@ -226,31 +262,6 @@ class UniqueStreamProvider : MainAPI() {
                                         }
                                     )
                                     linksEnviados++
-                                }
-
-                                // Agregar hard_subs si existen
-                                dashVersion.hard_subs?.forEach { hardSub ->
-                                    if (hardSub.playlist.isNotBlank()) {
-                                        Log.d(TAG, "✓ DASH HardSub ${dashVersion.locale}-${hardSub.locale}")
-
-                                        callback(
-                                            newExtractorLink(
-                                                source = this.name,
-                                                name = "${this.name} - ${dashVersion.locale.uppercase()} (${hardSub.locale.uppercase()} subs)",
-                                                url = hardSub.playlist,
-                                                type = ExtractorLinkType.DASH
-                                            ) {
-                                                this.quality = Qualities.Unknown.value
-                                                this.referer = "$mainUrl/"
-                                                this.headers = mapOf(
-                                                    "Accept" to "*/*",
-                                                    "Origin" to mainUrl,
-                                                    "Referer" to "$mainUrl/"
-                                                )
-                                            }
-                                        )
-                                        linksEnviados++
-                                    }
                                 }
                             }
                         }
@@ -277,9 +288,9 @@ class UniqueStreamProvider : MainAPI() {
                             """.trimIndent()
 
                             // Codificar en base64
-                            val encodedHtml = Base64.encodeToString(
+                            val encodedHtml = android.util.Base64.encodeToString(
                                 embedHtml.toByteArray(),
-                                Base64.NO_PADDING or Base64.NO_WRAP
+                                android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
                             )
 
                             callback(
