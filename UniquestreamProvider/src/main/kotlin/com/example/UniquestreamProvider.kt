@@ -212,8 +212,7 @@ class UniqueStreamProvider : MainAPI() {
                                 Log.d(TAG, "✓ Link encontrado: ${hlsVersion.locale}")
                                 Log.d(TAG, "  URL COMPLETA: $playlistUrl")
 
-                                // CRÍTICO: URLs HLS con tokens firmados
-                                // Dejar que el reproductor use sus headers por defecto
+                                // URLs del CDN mediacache.cc requieren headers específicos
                                 callback(
                                     newExtractorLink(
                                         source = this.name,
@@ -222,8 +221,15 @@ class UniqueStreamProvider : MainAPI() {
                                         type = ExtractorLinkType.M3U8
                                     ) {
                                         this.quality = Qualities.Unknown.value
-                                        // Solo Referer, sin sobrescribir otros headers
+                                        // Headers CRÍTICOS para el CDN mediacache.cc
                                         this.referer = "$mainUrl/"
+                                        this.headers = mapOf(
+                                            "Accept" to "*/*",
+                                            "Origin" to mainUrl,
+                                            "Sec-Fetch-Dest" to "empty",
+                                            "Sec-Fetch-Mode" to "cors",
+                                            "Sec-Fetch-Site" to "cross-site"
+                                        )
                                     }
                                 )
                                 linksEnviados++
@@ -232,7 +238,7 @@ class UniqueStreamProvider : MainAPI() {
                                 hlsVersion.subtitles?.forEach { sub ->
                                     if (sub.url.isNotBlank()) {
                                         subtitleCallback(
-                                            newSubtitleFile(
+                                            SubtitleFile(
                                                 lang = sub.locale,
                                                 url = sub.url
                                             )
