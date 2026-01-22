@@ -155,28 +155,26 @@ class UniqueStreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val cleanId = data.split("/").last { it.isNotBlank() }
-        Log.d(TAG, "Obteniendo enlaces para el episodio: $cleanId")
 
-        // Headers idénticos a los de tu captura para evitar el "Source Error"
+        // Headers estrictos para evitar el Error 2000
         val videoHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
             "Accept" to "*/*",
-            "Referer" to "https://anime.uniquestream.net/watch/$cleanId",
-            "Origin" to "https://anime.uniquestream.net"
+            "Referer" to "https://anime.uniquestream.net/",
+            "Origin" to "https://anime.uniquestream.net",
+            "X-Requested-With" to "XMLHttpRequest"
         )
 
         return try {
-            // Usamos el trigger de japonés para obtener el JSON completo de versiones
+            // Obtenemos el JSON de medios
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
             val response = app.get(mediaUrl, headers = videoHeaders).text
 
             if (response.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
-                var linksFound = 0
 
-                // Cloudstream detectará estos como pistas diferentes si tienen el mismo 'source'
                 videoData.versions?.hls?.forEach { v ->
-                    // Agregamos la pista de Audio (Original o Doblada)
+                    // AUDIO: Se envía al selector de pistas de audio/video
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -187,29 +185,35 @@ class UniqueStreamProvider : MainAPI() {
                             this.headers = videoHeaders
                         }
                     )
-                    linksFound++
 
-                    // Agregamos los Hardsubs como enlaces adicionales
                     v.hard_subs?.forEach { sub ->
+                        // Si quieres que aparezcan en el menú de subtítulos de la app:
+                        subtitleCallback(
+                            SubtitleFile(
+                                lang = "${v.locale.uppercase()} (Hardsub ${sub.locale.uppercase()})",
+                                url = sub.playlist
+                            )
+                        )
+
+                        // OPCIONAL: Si también los quieres como una pista de video independiente:
+                        /*
                         callback(
                             newExtractorLink(
                                 source = this.name,
-                                name = "${this.name} - ${v.locale.uppercase()} (Subs: ${sub.locale.uppercase()})",
+                                name = "${this.name} - Subs: ${sub.locale.uppercase()}",
                                 url = sub.playlist,
                                 type = ExtractorLinkType.M3U8
-                            ) {
-                                this.headers = videoHeaders
-                            }
+                            ) { this.headers = videoHeaders }
                         )
-                        linksFound++
+                        */
                     }
                 }
-                linksFound > 0
+                true
             } else {
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error: ${e.message}")
+            Log.e(TAG, "Error en loadLinks: ${e.message}")
             false
         }
     }
