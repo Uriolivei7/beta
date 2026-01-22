@@ -165,8 +165,6 @@ class UniqueStreamProvider : MainAPI() {
         )
 
         return try {
-            // 1. Pedimos la info del episodio para sacar todas las versiones disponibles
-            // Usamos la ruta de tu segundo curl que es la que trae todo el JSON de versiones
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP" // ja-JP es el trigger para que suelte el JSON
             val response = app.get(mediaUrl, headers = headers).text
 
@@ -179,13 +177,14 @@ class UniqueStreamProvider : MainAPI() {
                     // AUDIO ORIGINAL / DOBLADO
                     callback(
                         newExtractorLink(
-                            this.name,
-                            "${this.name} - Audio: ${v.locale.uppercase()}",
-                            v.playlist,
-                            "https://anime.uniquestream.net/",
-                            ExtractorLinkType.M3U8,
-                            headers = headers
-                        )
+                            source = this.name,
+                            name = "${this.name} - Audio: ${v.locale.uppercase()}",
+                            url = v.playlist,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            // Aquí es donde se configuran los headers y el referer correctamente
+                            this.headers = headers
+                        }
                     )
                     linksFound++
 
@@ -193,13 +192,13 @@ class UniqueStreamProvider : MainAPI() {
                     v.hard_subs?.forEach { sub ->
                         callback(
                             newExtractorLink(
-                                this.name,
-                                "${this.name} - ${v.locale.uppercase()} (Subs: ${sub.locale.uppercase()})",
-                                sub.playlist,
-                                "https://anime.uniquestream.net/",
-                                ExtractorLinkType.M3U8,
-                                headers = headers
-                            )
+                                source = this.name,
+                                name = "${this.name} - ${v.locale.uppercase()} (Subs: ${sub.locale.uppercase()})",
+                                url = sub.playlist,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.headers = headers
+                            }
                         )
                         linksFound++
                     }

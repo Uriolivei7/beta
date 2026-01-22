@@ -62,6 +62,7 @@ subprojects {
                     "-Xno-param-assertions",
                     "-Xno-receiver-assertions",
                     "-Xsuppress-version-warnings",
+                    "-Xannotation-default-target=param-property"
                 )
             }
         }
