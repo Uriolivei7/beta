@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -191,6 +192,12 @@ class UniqueStreamProvider : MainAPI() {
 
                         val videoData = AppUtils.parseJson<VideoResponse>(response.text)
 
+                        // Debug: Ver qué contiene la respuesta
+                        Log.d(TAG, "DEBUG - DASH disponible: ${videoData.versions?.dash != null}")
+                        Log.d(TAG, "DEBUG - HLS disponible: ${videoData.versions?.hls != null}")
+                        Log.d(TAG, "DEBUG - Cantidad DASH: ${videoData.versions?.dash?.size ?: 0}")
+                        Log.d(TAG, "DEBUG - Cantidad HLS: ${videoData.versions?.hls?.size ?: 0}")
+
                         // PRIORIZAR DASH sobre HLS (está en el mismo dominio)
                         val dashVersions = videoData.versions?.dash ?: emptyList()
 
@@ -210,6 +217,12 @@ class UniqueStreamProvider : MainAPI() {
                                             type = ExtractorLinkType.DASH
                                         ) {
                                             this.quality = Qualities.Unknown.value
+                                            this.referer = "$mainUrl/"
+                                            this.headers = mapOf(
+                                                "Accept" to "*/*",
+                                                "Origin" to mainUrl,
+                                                "Referer" to "$mainUrl/"
+                                            )
                                         }
                                     )
                                     linksEnviados++
@@ -228,6 +241,12 @@ class UniqueStreamProvider : MainAPI() {
                                                 type = ExtractorLinkType.DASH
                                             ) {
                                                 this.quality = Qualities.Unknown.value
+                                                this.referer = "$mainUrl/"
+                                                this.headers = mapOf(
+                                                    "Accept" to "*/*",
+                                                    "Origin" to mainUrl,
+                                                    "Referer" to "$mainUrl/"
+                                                )
                                             }
                                         )
                                         linksEnviados++
@@ -238,25 +257,42 @@ class UniqueStreamProvider : MainAPI() {
 
                         // Fallback a HLS si no hay DASH
                         if (linksEnviados == 0) {
-                            videoData.versions?.hls?.forEach { hlsVersion ->
-                                val playlistUrl = hlsVersion.playlist
+                            Log.w(TAG, "No hay DASH disponible, usando página web embebida")
 
-                                if (playlistUrl.isNotBlank()) {
-                                    Log.d(TAG, "Procesando HLS: ${hlsVersion.locale}")
+                            // Crear un HTML que embeba el reproductor del sitio
+                            val embedHtml = """
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                    <style>
+                                        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+                                        iframe { width: 100%; height: 100%; border: none; }
+                                    </style>
+                                </head>
+                                <body>
+                                    <iframe src="$watchUrl" allowfullscreen></iframe>
+                                </body>
+                                </html>
+                            """.trimIndent()
 
-                                    callback(
-                                        newExtractorLink(
-                                            source = this.name,
-                                            name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                                            url = playlistUrl,
-                                            type = ExtractorLinkType.M3U8
-                                        ) {
-                                            this.quality = Qualities.Unknown.value
-                                        }
-                                    )
-                                    linksEnviados++
+                            // Codificar en base64
+                            val encodedHtml = Base64.encodeToString(
+                                embedHtml.toByteArray(),
+                                Base64.NO_PADDING or Base64.NO_WRAP
+                            )
+
+                            callback(
+                                newExtractorLink(
+                                    source = this.name,
+                                    name = "${this.name} - Web Player",
+                                    url = "data:text/html;base64,$encodedHtml",
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.quality = Qualities.Unknown.value
                                 }
-                            }
+                            )
+                            linksEnviados++
                         }
 
                         if (linksEnviados > 0) break
