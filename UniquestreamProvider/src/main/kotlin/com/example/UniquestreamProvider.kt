@@ -60,7 +60,8 @@ class UniqueStreamProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val cleanId = url.split("/").filter { it.isNotEmpty() }.lastOrNull() ?: url
+        var cleanId = url.split("/").lastOrNull { it.isNotBlank() } ?: url
+        Log.d(TAG, "ID inicial para carga: $cleanId")
 
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -68,21 +69,40 @@ class UniqueStreamProvider : MainAPI() {
             "Accept" to "application/json"
         )
 
-        // 1. Obtener detalles de la serie
-        val response = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
-        val details = AppUtils.parseJson<DetailsResponse>(response)
+        var seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders)
+
+        if (seriesResponse.text.contains("Not Found")) {
+            Log.d(TAG, "No es una serie, intentando obtener serie-padre desde el episodio...")
+            try {
+                val epInfo = app.get("$apiUrl/episode/$cleanId", headers = apiHeaders).text
+                if (!epInfo.contains("Not Found")) {
+                    val epData = AppUtils.parseJson<EpisodeItem>(epInfo)
+                    epData.series_id?.let {
+                        cleanId = it
+                        seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error recuperando padre del episodio: ${e.message}")
+            }
+        }
+
+        val responseText = seriesResponse.text
+        if (responseText.contains("detail") || responseText.contains("Not Found")) {
+            Log.e(TAG, "Error final de API en $cleanId: $responseText")
+            return newAnimeLoadResponse("Error de Carga", url, TvType.Anime) { }
+        }
+
+        val details = AppUtils.parseJson<DetailsResponse>(responseText)
         val episodesList = mutableListOf<Episode>()
 
-        // 2. Cargar episodios usando la nueva ruta descubierta
         details.seasons?.forEach { season ->
             try {
-                // USAMOS LA RUTA: /api/v1/season/{id}/episodes
-                // Agregamos limit=100 para asegurar que traiga todos los episodios
                 val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=100&order_by=asc"
-                val seasonEpsResponse = app.get(seasonUrl, headers = apiHeaders).text
+                val seasonEps = app.get(seasonUrl, headers = apiHeaders).text
 
-                if (seasonEpsResponse.startsWith("[")) {
-                    val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsResponse)
+                if (seasonEps.startsWith("[")) {
+                    val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEps)
                     eps.forEach { ep ->
                         if (ep.is_clip != true) {
                             episodesList.add(newEpisode(ep.content_id) {
@@ -99,7 +119,7 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        return newAnimeLoadResponse(details.title ?: "Anime", url, TvType.Anime) {
+        return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
             this.plot = details.description
             this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
@@ -176,41 +196,10 @@ class UniqueStreamProvider : MainAPI() {
 
     @Serializable data class SeriesItem(val content_id: String, val title: String, val image: String? = null)
 
-    @Serializable data class ImageItem(val url: String, val type: String)
-
-    @Serializable
-    data class DetailsResponse(
-        val content_id: String,
-        val title: String? = null,
-        val description: String? = null,
-        val images: List<ImageItem>? = null,
-        val seasons: List<SeasonItem>? = null,
-        val audio_locales: List<String>? = null,
-        val subtitle_locales: List<String>? = null
-    )
-
-    @Serializable
-    data class SeasonItem(
-        val content_id: String,
-        val season_number: Int,
-        val title: String? = null
-    )
-
     @Serializable
     data class SearchRoot(
         val series: List<SeriesItem>? = null,
         val episodes: List<EpisodeItem>? = null
-    )
-
-    @Serializable
-    data class EpisodeItem(
-        val series_title: String? = null,
-        val content_id: String,
-        val title: String? = null,
-        val episode_number: Double? = null,
-        val image: String? = null,
-        val is_clip: Boolean? = false,
-        val episode: String? = null
     )
 
     @Serializable
@@ -235,5 +224,39 @@ class UniqueStreamProvider : MainAPI() {
     data class SubtitleItem(
         val locale: String,
         val url: String
+    )
+
+    @Serializable
+    data class DetailsResponse(
+        val content_id: String? = null, // El signo ? es vital aquí
+        val title: String? = null,
+        val description: String? = null,
+        val images: List<ImageItem>? = null,
+        val seasons: List<SeasonItem>? = null,
+        val audio_locales: List<String>? = null,
+        val subtitle_locales: List<String>? = null
+    )
+
+    @Serializable
+    data class SeasonItem(
+        val content_id: String,
+        val season_number: Int,
+        val title: String? = null
+    )
+
+    @Serializable
+    data class EpisodeItem(
+        val content_id: String,
+        val series_id: String? = null, // <--- AÑADIR ESTO
+        val title: String? = null,
+        val episode_number: Double? = null,
+        val image: String? = null,
+        val is_clip: Boolean? = false
+    )
+
+    @Serializable
+    data class ImageItem(
+        val url: String,
+        val type: String
     )
 }
