@@ -155,29 +155,30 @@ class UniqueStreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val cleanId = data.split("/").last { it.isNotBlank() }
+        val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
+
+        // User-Agent idéntico a un navegador real
         val chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        Log.d(TAG, "--- INICIANDO CARGA DE LINKS ---")
-        Log.d(TAG, "ID de episodio: $cleanId")
+        Log.d(TAG, "--- INICIANDO CARGA DE LINKS (INTENTO DE FIX 2000) ---")
+        Log.d(TAG, "Watch URL: $watchUrl")
 
         return try {
+            // Obtenemos los links de la API
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
-            Log.d(TAG, "Solicitando API: $mediaUrl")
-
             val response = app.get(mediaUrl, headers = mapOf(
                 "User-Agent" to chromeUA,
-                "Accept" to "application/json",
-                "Referer" to "https://anime.uniquestream.net/watch/$cleanId",
+                "Referer" to watchUrl,
                 "X-Requested-With" to "XMLHttpRequest"
             ))
 
-            Log.d(TAG, "Respuesta API Status: ${response.code}")
+            Log.d(TAG, "API Status: ${response.code}")
 
             val videoData = AppUtils.parseJson<VideoResponse>(response.text)
             var linksEnviados = 0
 
             videoData.versions?.hls?.forEach { v ->
-                Log.d(TAG, "Procesando Link [${v.locale}]: ${v.playlist.take(50)}...")
+                Log.d(TAG, "Configurando Headers para link: ${v.locale}")
 
                 callback(
                     newExtractorLink(
@@ -186,12 +187,15 @@ class UniqueStreamProvider : MainAPI() {
                         url = v.playlist,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        // Logs internos para depurar el reproductor si fuera necesario
+                        // Estos headers son los que el reproductor (ExoPlayer) usará.
+                        // Hemos añadido 'Connection' y 'Accept-Language' para mayor realismo.
                         this.headers = mapOf(
                             "User-Agent" to chromeUA,
                             "Referer" to "https://anime.uniquestream.net/",
                             "Origin" to "https://anime.uniquestream.net",
                             "Accept" to "*/*",
+                            "Accept-Language" to "es-ES,es;q=0.9",
+                            "Connection" to "keep-alive",
                             "Sec-Fetch-Dest" to "video",
                             "Sec-Fetch-Mode" to "cors",
                             "Sec-Fetch-Site" to "cross-site"
@@ -199,13 +203,12 @@ class UniqueStreamProvider : MainAPI() {
                     }
                 )
                 linksEnviados++
-                Log.d(TAG, "Link enviado al callback correctamente")
             }
 
-            Log.d(TAG, "Carga finalizada. Links totales: $linksEnviados")
+            Log.d(TAG, "Links enviados al sistema: $linksEnviados")
             linksEnviados > 0
         } catch (e: Exception) {
-            Log.e(TAG, "FALLO CRÍTICO en loadLinks: ${e.message}")
+            Log.e(TAG, "ERROR CRÍTICO EN REPRODUCCIÓN: ${e.message}")
             false
         }
     }
