@@ -210,7 +210,7 @@ class UniqueStreamProvider : MainAPI() {
 
                             if (playlistUrl.isNotBlank()) {
                                 Log.d(TAG, "✓ Link encontrado: ${hlsVersion.locale}")
-                                Log.d(TAG, "  URL: ${playlistUrl.take(80)}...")
+                                Log.d(TAG, "  URL COMPLETA: $playlistUrl")
 
                                 // CRÍTICO: URLs HLS con tokens firmados
                                 // Dejar que el reproductor use sus headers por defecto
