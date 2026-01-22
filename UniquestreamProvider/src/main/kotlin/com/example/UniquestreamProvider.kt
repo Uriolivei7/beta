@@ -24,14 +24,33 @@ class UniqueStreamProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
-            Log.d(TAG, "Cargando MainPage simplificada...")
-            val response = app.get("$apiUrl/search?query=a&limit=30").text
+            Log.d(TAG, "Cargando MainPage...")
+
+            val apiHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "Accept" to "application/json, text/plain, */*",
+                "Referer" to "$mainUrl/",
+                "Origin" to mainUrl,
+                "X-Requested-With" to "XMLHttpRequest" // Esto ayuda mucho con las APIs
+            )
+
+            // Cambiamos el endpoint a uno más probable de funcionar para la Home
+            val response = app.get("$apiUrl/search?query=&limit=20&order_by=popular", headers = apiHeaders).text
             val data = AppUtils.parseJson<SearchRoot>(response)
 
             val homeItems = mutableListOf<HomePageList>()
 
-            data.series?.let { series ->
-                homeItems.add(HomePageList("Series Disponibles", series.map { it.toSearchResponse() }))
+            // Verificamos si hay series
+            val seriesList = data.series?.map {
+                newAnimeSearchResponse(it.title, it.content_id) {
+                    this.posterUrl = it.image
+                }
+            }
+
+            if (!seriesList.isNullOrEmpty()) {
+                homeItems.add(HomePageList("Series Destacadas", seriesList))
+            } else {
+                Log.e(TAG, "La API no devolvió series para la Home")
             }
 
             newHomePageResponse(homeItems, homeItems.isNotEmpty())
@@ -58,8 +77,10 @@ class UniqueStreamProvider : MainAPI() {
 
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Referer" to "https://anime.uniquestream.net/series/$cleanId",
-            "Accept" to "application/json"
+            "Accept" to "application/json, text/plain, */*",
+            "Referer" to "$mainUrl/",
+            "Origin" to mainUrl,
+            "X-Requested-With" to "XMLHttpRequest" // Esto ayuda mucho con las APIs
         )
 
         val seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
