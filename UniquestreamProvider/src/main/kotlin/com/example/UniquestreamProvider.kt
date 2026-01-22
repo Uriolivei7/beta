@@ -36,7 +36,7 @@ class UniqueStreamProvider : MainAPI() {
 
             data.episodes?.let { episodes ->
                 homeItems.add(HomePageList("Últimos Episodios", episodes.map {
-                    newAnimeSearchResponse(it.series_title ?: it.title, it.content_id) {
+                    newAnimeSearchResponse(it.title ?: "Anime", it.content_id) {
                         this.posterUrl = it.image
                     }
                 }))
@@ -60,34 +60,49 @@ class UniqueStreamProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "Cargando detalles ID: $url")
-        val detailsJson = app.get("$apiUrl/article?content_id=$url").text
-        val details = AppUtils.parseJson<DetailsResponse>(detailsJson)
-        val episodesList = mutableListOf<Episode>()
+        // Limpiamos la URL para obtener solo el ID (ej: AG689vQw)
+        val cleanId = url.split("/").filter { it.isNotEmpty() }.lastOrNull() ?: url
+        Log.d(TAG, "Iniciando load para ID: $cleanId")
 
-        details.seasons?.forEach { season ->
-            try {
-                val seasonEpsJson = app.get("$apiUrl/episodes?season_id=${season.content_id}").text
-                val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsJson)
+        // Llamada a la ruta correcta: /api/v1/series/{id}
+        val response = app.get("$apiUrl/series/$cleanId").text
 
-                eps.filter { !it.is_clip }.forEach { ep ->
-                    episodesList.add(newEpisode(ep.content_id) {
-                        this.name = ep.title
-                        this.episode = ep.episode_number.toInt()
-                        this.season = season.season_number
-                        this.posterUrl = ep.image
-                    })
+        return try {
+            val details = AppUtils.parseJson<DetailsResponse>(response)
+            val episodesList = mutableListOf<Episode>()
+
+            Log.d(TAG, "Serie encontrada: ${details.title}. Temporadas: ${details.seasons?.size}")
+
+            details.seasons?.forEach { season ->
+                try {
+                    // Cargamos los episodios de cada temporada
+                    val seasonEpsJson = app.get("$apiUrl/episodes?season_id=${season.content_id}").text
+                    val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsJson)
+
+                    eps.forEach { ep ->
+                        episodesList.add(newEpisode(ep.content_id) {
+                            this.name = ep.title
+                            this.episode = ep.episode_number?.toInt()
+                            this.season = season.season_number
+                            this.posterUrl = ep.image
+                        })
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error cargando temporada ${season.season_number}: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Fallo al cargar episodios temporada ${season.season_number}")
             }
-        }
 
-        return newAnimeLoadResponse(details.title, url, TvType.Anime) {
-            this.posterUrl = details.images?.firstOrNull { it.type == "poster_tall" }?.url
-            this.plot = details.description
-            this.tags = details.audio_locales
-            addEpisodes(DubStatus.Subbed, episodesList)
+            newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
+                this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
+                this.plot = details.description
+                // Combinamos audio y subs para los tags informativos
+                this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
+
+                addEpisodes(DubStatus.Subbed, episodesList)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error procesando JSON de detalles: ${e.message}")
+            throw e
         }
     }
 
@@ -99,29 +114,44 @@ class UniqueStreamProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "Iniciando loadLinks para: $data")
         return try {
+            // Obtenemos los links de video
             val response = app.get("$apiUrl/video?content_id=$data").text
             val videoData = AppUtils.parseJson<VideoResponse>(response)
             var linksFound = 0
 
-            // --- CORRECCIÓN HLS CON newExtractorLink ---
+            // Definimos los headers que vimos en tu CURL
+            val commonHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "Referer" to "$mainUrl/",
+                "Accept" to "*/*"
+            )
+
+            // --- HLS ---
             videoData.versions?.hls?.forEach { v ->
-                Log.d(TAG, "HLS Localidad: ${v.locale}")
+                Log.d(TAG, "HLS encontrado: ${v.locale}")
                 callback(
                     newExtractorLink(
                         source = this.name,
                         name = "${this.name} HLS ${v.locale}",
                         url = v.playlist,
-                        type = ExtractorLinkType.M3U8 // Cambiado a ExtractorLinkType
+                        type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = mainUrl
+                        // Agregamos los headers aquí para que el reproductor los use
+                        this.headers = commonHeaders
                     }
                 )
                 linksFound++
+
+                // Si el JSON de video trae subtítulos, los cargamos aquí
+                v.subtitles?.forEach { sub ->
+                    Log.d(TAG, "Subtítulo detectado: ${sub.locale}")
+                    subtitleCallback(SubtitleFile(sub.locale, sub.url))
+                }
             }
 
-            // --- CORRECCIÓN DASH CON newExtractorLink ---
+            // --- DASH ---
             videoData.versions?.dash?.forEach { v ->
-                Log.d(TAG, "DASH Localidad: ${v.locale}")
+                Log.d(TAG, "DASH encontrado: ${v.locale}")
                 callback(
                     newExtractorLink(
                         source = this.name,
@@ -129,13 +159,13 @@ class UniqueStreamProvider : MainAPI() {
                         url = v.playlist,
                         type = ExtractorLinkType.DASH
                     ) {
-                        this.referer = mainUrl
+                        this.headers = commonHeaders
                     }
                 )
                 linksFound++
             }
 
-            if (linksFound == 0) Log.e(TAG, "No se encontraron links de video válidos")
+            if (linksFound == 0) Log.e(TAG, "La API no devolvió enlaces de video")
             linksFound > 0
         } catch (e: Exception) {
             Log.e(TAG, "Error crítico en loadLinks: ${e.message}")
@@ -143,19 +173,64 @@ class UniqueStreamProvider : MainAPI() {
         }
     }
 
-    // --- MODELOS JSON ---
-    @Serializable data class SearchRoot(val series: List<SeriesItem>? = null, val episodes: List<EpisodeItem>? = null)
     @Serializable data class SeriesItem(val content_id: String, val title: String, val image: String? = null)
 
-    @Serializable data class DetailsResponse(
-        val title: String, val description: String? = null,
-        val images: List<ImageItem>? = null, val seasons: List<SeasonItem>? = null,
-        val audio_locales: List<String>? = null
-    )
     @Serializable data class ImageItem(val url: String, val type: String)
-    @Serializable data class SeasonItem(val content_id: String, val season_number: Int)
-    @Serializable data class EpisodeItem(val content_id: String, val title: String, val episode_number: Double, val image: String? = null, val is_clip: Boolean, val series_title: String? = null)
-    @Serializable data class VideoResponse(val versions: VideoVersions? = null)
-    @Serializable data class VideoVersions(val hls: List<VideoV>? = null, val dash: List<VideoV>? = null)
-    @Serializable data class VideoV(val locale: String, val playlist: String)
+
+    @Serializable
+    data class DetailsResponse(
+        val content_id: String,
+        val title: String? = null,
+        val description: String? = null,
+        val images: List<ImageItem>? = null,
+        val seasons: List<SeasonItem>? = null,
+        val audio_locales: List<String>? = null,
+        val subtitle_locales: List<String>? = null
+    )
+
+    @Serializable
+    data class SeasonItem(
+        val content_id: String,
+        val season_number: Int,
+        val title: String? = null
+    )
+
+    @Serializable
+    data class SearchRoot(
+        val series: List<SeriesItem>? = null,
+        val episodes: List<EpisodeItem>? = null
+    )
+
+    @Serializable
+    data class EpisodeItem(
+        val content_id: String,
+        val title: String? = null, // Cambiado a opcional
+        val image: String? = null,
+        val episode_number: Double? = null,
+        val series_title: String? = null // Añadido para que getMainPage lo encuentre
+    )
+
+    @Serializable
+    data class VideoResponse(
+        val versions: VideoVersions? = null
+    )
+
+    @Serializable
+    data class VideoVersions(
+        val hls: List<VideoV>? = null,
+        val dash: List<VideoV>? = null
+    )
+
+    @Serializable
+    data class VideoV(
+        val locale: String,
+        val playlist: String,
+        val subtitles: List<SubtitleItem>? = null // Para los subtítulos
+    )
+
+    @Serializable
+    data class SubtitleItem(
+        val locale: String,
+        val url: String
+    )
 }
