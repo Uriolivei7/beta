@@ -60,49 +60,50 @@ class UniqueStreamProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // Limpiamos la URL para obtener solo el ID (ej: AG689vQw)
         val cleanId = url.split("/").filter { it.isNotEmpty() }.lastOrNull() ?: url
-        Log.d(TAG, "Iniciando load para ID: $cleanId")
 
-        // Llamada a la ruta correcta: /api/v1/series/{id}
-        val response = app.get("$apiUrl/series/$cleanId").text
+        val apiHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Referer" to "$mainUrl/",
+            "Accept" to "application/json"
+        )
 
-        return try {
-            val details = AppUtils.parseJson<DetailsResponse>(response)
-            val episodesList = mutableListOf<Episode>()
+        // 1. Obtener detalles de la serie
+        val response = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
+        val details = AppUtils.parseJson<DetailsResponse>(response)
+        val episodesList = mutableListOf<Episode>()
 
-            Log.d(TAG, "Serie encontrada: ${details.title}. Temporadas: ${details.seasons?.size}")
+        // 2. Cargar episodios usando la nueva ruta descubierta
+        details.seasons?.forEach { season ->
+            try {
+                // USAMOS LA RUTA: /api/v1/season/{id}/episodes
+                // Agregamos limit=100 para asegurar que traiga todos los episodios
+                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=100&order_by=asc"
+                val seasonEpsResponse = app.get(seasonUrl, headers = apiHeaders).text
 
-            details.seasons?.forEach { season ->
-                try {
-                    // Cargamos los episodios de cada temporada
-                    val seasonEpsJson = app.get("$apiUrl/episodes?season_id=${season.content_id}").text
-                    val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsJson)
-
+                if (seasonEpsResponse.startsWith("[")) {
+                    val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsResponse)
                     eps.forEach { ep ->
-                        episodesList.add(newEpisode(ep.content_id) {
-                            this.name = ep.title
-                            this.episode = ep.episode_number?.toInt()
-                            this.season = season.season_number
-                            this.posterUrl = ep.image
-                        })
+                        if (ep.is_clip != true) {
+                            episodesList.add(newEpisode(ep.content_id) {
+                                this.name = ep.title
+                                this.episode = ep.episode_number?.toInt()
+                                this.season = season.season_number
+                                this.posterUrl = ep.image
+                            })
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error cargando temporada ${season.season_number}: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en temporada ${season.season_number}: ${e.message}")
             }
+        }
 
-            newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
-                this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
-                this.plot = details.description
-                // Combinamos audio y subs para los tags informativos
-                this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
-
-                addEpisodes(DubStatus.Subbed, episodesList)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error procesando JSON de detalles: ${e.message}")
-            throw e
+        return newAnimeLoadResponse(details.title ?: "Anime", url, TvType.Anime) {
+            this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
+            this.plot = details.description
+            this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
+            addEpisodes(DubStatus.Subbed, episodesList)
         }
     }
 
@@ -203,11 +204,13 @@ class UniqueStreamProvider : MainAPI() {
 
     @Serializable
     data class EpisodeItem(
+        val series_title: String? = null,
         val content_id: String,
-        val title: String? = null, // Cambiado a opcional
-        val image: String? = null,
+        val title: String? = null,
         val episode_number: Double? = null,
-        val series_title: String? = null // Añadido para que getMainPage lo encuentre
+        val image: String? = null,
+        val is_clip: Boolean? = false,
+        val episode: String? = null
     )
 
     @Serializable
