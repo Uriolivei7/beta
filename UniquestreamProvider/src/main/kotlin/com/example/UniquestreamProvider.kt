@@ -157,46 +157,30 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        Log.d(TAG, "--- INICIANDO DIAGNÓSTICO PARA ID: $cleanId ---")
+        // Estos headers simulan exactamente el comportamiento del navegador que viste en el log
+        val masterHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Accept" to "*/*",
+            "Accept-Language" to "es-ES,es;q=0.9",
+            "Referer" to "https://anime.uniquestream.net/",
+            "Origin" to "https://anime.uniquestream.net",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site", // Importante: la API y el video están en dominios distintos
+            "X-Requested-With" to "XMLHttpRequest"
+        )
 
         return try {
-            // 1. PETICIÓN DE HANDSHAKE CON LOG DE HEADERS
-            val sessionReq = app.get(watchUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
-            ))
-
-            Log.d(TAG, "STATUS CODE WEB: ${sessionReq.code}")
-            Log.d(TAG, "HEADERS RECIBIDOS: ${sessionReq.headers}")
-
-            val cookies = sessionReq.cookies
-            val cookieString = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-
-            if (cookieString.isEmpty()) {
-                Log.e(TAG, "ALERTA: El servidor no envió Cookies. Posible bloqueo de Cloudflare.")
-            } else {
-                Log.d(TAG, "COOKIES DETECTADAS: $cookieString")
-            }
-
-            // 2. HEADERS MAESTROS
-            val masterHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                "Accept" to "*/*",
-                "Referer" to watchUrl,
-                "Origin" to "https://anime.uniquestream.net",
-                "Cookie" to cookieString
-            )
-
-            // 3. PETICIÓN API
+            // Pedimos la API directamente ya que sabemos que el Status es 200
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
-            val apiResponse = app.get(mediaUrl, headers = masterHeaders)
+            val response = app.get(mediaUrl, headers = masterHeaders).text
 
-            Log.d(TAG, "STATUS CODE API: ${apiResponse.code}")
-
-            if (apiResponse.text.contains("versions")) {
-                val videoData = AppUtils.parseJson<VideoResponse>(apiResponse.text)
+            if (response.contains("versions")) {
+                val videoData = AppUtils.parseJson<VideoResponse>(response)
 
                 videoData.versions?.hls?.forEach { v ->
-                    Log.d(TAG, "ENLACE GENERADO (${v.locale}): ${v.playlist.take(50)}...")
+                    // LOG DE SEGURIDAD
+                    Log.d(TAG, "Cargando Pista: ${v.locale.uppercase()} -> ${v.playlist.take(40)}...")
 
                     callback(
                         newExtractorLink(
@@ -205,13 +189,14 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
+                            // REGLA DE ORO: El reproductor DEBE llevar estos headers para no dar Error 2000
                             this.headers = masterHeaders
                         }
                     )
 
                     v.hard_subs?.forEach { sub ->
                         subtitleCallback(
-                            SubtitleFile(
+                            newSubtitleFile(
                                 lang = "Hardsub ${sub.locale.uppercase()}",
                                 url = sub.playlist
                             )
@@ -220,12 +205,10 @@ class UniqueStreamProvider : MainAPI() {
                 }
                 true
             } else {
-                Log.e(TAG, "ERROR API: La respuesta no contiene versiones. Body: ${apiResponse.text.take(100)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "FALLO TOTAL: ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Fallo en reproducción: ${e.message}")
             false
         }
     }
