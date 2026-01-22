@@ -143,41 +143,59 @@ class AnimekaiProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).documentLarge
+        val TAG = "Animekai"
+        Log.i(TAG, "Iniciando carga de URL: $url")
+
+        val response = app.get(url)
+        val document = response.documentLarge
+
+        // 1. Datos Básicos
+        val title = document.selectFirst("h1.title")?.text()
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?: "Sin título"
 
         val poster = document.selectFirst(".anisc-poster img")?.attr("src")?.replace("-600x900", "")
             ?: document.selectFirst("div.poster img")?.attr("src")
+            ?: document.selectFirst("meta[property=og:image]")?.attr("content")
 
-        val title = document.selectFirst("h1.title")?.text() ?: "Sin título"
-        val plot = document.selectFirst("div.desc")?.text() ?: ""
-        val statusText = document.select("div:containsOwn(Status) span").firstOrNull()?.text()
+        val plot = document.selectFirst("div.desc")?.text()
+            ?: document.selectFirst("meta[property=og:description]")?.attr("content")
 
-        val malid = document.select("div.watch-section").attr("data-mal-id")
-        val aniid = document.select("div.watch-section").attr("data-al-id")
+        // 2. IDs de Sincronización
+        val malid = document.select("div.watch-section").attr("data-mal-id").ifBlank { null }
+        val aniid = document.select("div.watch-section").attr("data-al-id").ifBlank { null }
 
-        // Extracción del ID numérico real desde los scripts de la página
+        // 3. Extracción de ID para Episodios (Múltiples métodos)
         val scriptData = document.select("script").map { it.data() }
         val animeId = scriptData.firstOrNull { it.contains("anime_id") }
             ?.substringAfter("anime_id = '")?.substringBefore("'")
             ?: document.selectFirst("#syncData")?.attr("data-id")
             ?: document.selectFirst(".watch-section")?.attr("data-id")
+            ?: url.split("-").lastOrNull()?.filter { it.isLetterOrDigit() }
 
-        Log.i("AnimeKai", "ID detectado: $animeId")
+        Log.i(TAG, "ID Final Detectado: $animeId")
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
         if (!animeId.isNullOrEmpty()) {
             try {
+                // Generar token de seguridad
                 val decodedToken = decode(animeId)
                 val finalToken = if (decodedToken.isNullOrBlank() || decodedToken == "null") animeId else decodedToken
 
-                val responseText = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$finalToken").text
-                val htmlResult = JSONObject(responseText).optString("result")
+                val epUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$finalToken"
+                Log.i(TAG, "Petición AJAX Episodios: $epUrl")
+
+                val epRes = app.get(epUrl).text
+                val htmlResult = JSONObject(epRes).optString("result")
 
                 if (htmlResult.isNotBlank()) {
                     val epDocument = Jsoup.parse(htmlResult)
-                    epDocument.select("div.eplist a").forEachIndexed { index, ep ->
+                    val items = epDocument.select("div.eplist a")
+                    Log.i(TAG, "Episodios encontrados en HTML: ${items.size}")
+
+                    items.forEachIndexed { index, ep ->
                         val episodeNum = index + 1
                         val token = ep.attr("token")
                         val epName = ep.selectFirst("span")?.text() ?: "Episodio $episodeNum"
@@ -194,24 +212,27 @@ class AnimekaiProvider : MainAPI() {
                             })
                         }
                     }
+                } else {
+                    Log.w(TAG, "El servidor devolvió un resultado vacío para episodios")
                 }
             } catch (e: Exception) {
-                Log.e("AnimeKai", "Error episodios: ${e.message}")
+                Log.e(TAG, "Error crítico en carga de episodios: ${e.message}")
             }
         }
 
-        // Recuperar recomendaciones
-        val recommendations = document.select("div.aitem-col a").map { it.toRecommendResult() }
+        // 4. Recomendaciones (Selector corregido)
+        val recommendations = document.select("div.aitem-col a, div.suggest-block a.aitem").mapNotNull {
+            try { it.toRecommendResult() } catch(e: Exception) { null }
+        }
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
             addEpisodes(DubStatus.Subbed, subEpisodes)
             addEpisodes(DubStatus.Dubbed, dubEpisodes)
             this.plot = plot
-            this.showStatus = getStatus(statusText)
             this.recommendations = recommendations
-            addMalId(malid.toIntOrNull())
-            addAniListId(aniid.toIntOrNull())
+            addMalId(malid?.toIntOrNull())
+            addAniListId(aniid?.toIntOrNull())
         }
     }
 
