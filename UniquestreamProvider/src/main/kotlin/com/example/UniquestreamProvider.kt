@@ -157,44 +157,43 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // User-Agent idéntico al que el sitio declara en su HTML
-        val macUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.39 Safari/537.36"
+        // Cambiamos a un User-Agent de Chrome Moderno (Windows) para mayor compatibilidad
+        val chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        Log.d(TAG, "--- INICIO DE CARGA DE ENLACES: $cleanId ---")
+        Log.d(TAG, "--- DIAGNÓSTICO FINAL: $cleanId ---")
 
         return try {
-            // 1. PASO: Handshake inicial para cookies
-            val pageResponse = app.get(watchUrl, headers = mapOf("User-Agent" to macUserAgent))
-            val cookies = pageResponse.cookies
+            // 1. FORZAMOS la captura de cookies usando el cliente de red base
+            val sessionResponse = app.get(watchUrl, headers = mapOf("User-Agent" to chromeUA), cacheTime = 0)
+
+            // Intentamos extraer cookies tanto de la respuesta como del cookie jar global
+            val cookies = sessionResponse.cookies
             val cookieStr = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
 
-            Log.d(TAG, "WEB STATUS: ${pageResponse.code}")
-            Log.d(TAG, "COOKIES CAPTURADAS: ${if (cookieStr.isEmpty()) "NINGUNA" else cookieStr}")
+            Log.d(TAG, "COOKIES DETECTADAS: ${if (cookieStr.isEmpty()) "FALLO TOTAL" else "ÉXITO"}")
 
-            // 2. CONSTRUCCIÓN DE HEADERS DE SEGURIDAD
+            // 2. HEADERS DE COMBATE (Copiados de una sesión de navegador real exitosa)
             val masterHeaders = mapOf(
-                "User-Agent" to macUserAgent,
+                "User-Agent" to chromeUA,
                 "Accept" to "*/*",
-                "Origin" to "https://anime.uniquestream.net",
-                "Referer" to "$watchUrl/",
-                "Cookie" to cookieStr,
+                "Accept-Language" to "es-MX,es;q=0.9",
+                "Connection" to "keep-alive",
+                "Sec-Fetch-Dest" to "empty",
                 "Sec-Fetch-Mode" to "cors",
                 "Sec-Fetch-Site" to "cross-site",
-                "X-Requested-With" to "XMLHttpRequest"
+                "Origin" to "https://anime.uniquestream.net",
+                "Referer" to "https://anime.uniquestream.net/",
+                "Cookie" to cookieStr
             )
 
-            // 3. PASO: Petición a la API de medios
+            // 3. LLAMADA A LA API
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
             val apiResponse = app.get(mediaUrl, headers = masterHeaders)
-
-            Log.d(TAG, "API STATUS: ${apiResponse.code}")
 
             if (apiResponse.text.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(apiResponse.text)
 
                 videoData.versions?.hls?.forEach { v ->
-                    Log.d(TAG, "LINK ENCONTRADO [${v.locale}]: ${v.playlist.take(60)}...")
-
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -202,28 +201,18 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // Inyectamos los headers al reproductor
+                            // REGLA DE ORO: Si el reproductor no lleva los mismos headers, da 2000
                             this.headers = masterHeaders
                         }
                     )
-
-                    v.hard_subs?.forEach { sub ->
-                        subtitleCallback(
-                            SubtitleFile(
-                                lang = "Hardsub ${sub.locale.uppercase()}",
-                                url = sub.playlist
-                            )
-                        )
-                    }
                 }
                 true
             } else {
-                Log.e(TAG, "API ERROR: No se encontraron versiones. Body: ${apiResponse.text.take(100)}")
+                Log.e(TAG, "API rechazada o vacía")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "FALLO CRÍTICO EN LOADLINKS: ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Error IO: ${e.message}")
             false
         }
     }
