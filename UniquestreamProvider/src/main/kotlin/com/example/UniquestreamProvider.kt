@@ -60,44 +60,45 @@ class UniqueStreamProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // 1. Limpiamos el ID: Si viene una URL completa, sacamos solo el código final
         val cleanId = url.split("/").lastOrNull { it.isNotBlank() } ?: url
         Log.d(TAG, "Cargando serie con ID: $cleanId")
 
+        // Headers completos para engañar a la protección del servidor
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Accept" to "application/json, text/plain, */*",
+            "Accept-Language" to "es-ES,es;q=0.9",
             "Referer" to "https://anime.uniquestream.net/series/$cleanId",
-            "Accept" to "application/json"
+            "Origin" to "https://anime.uniquestream.net",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "same-origin"
         )
 
-        // 2. Pedimos los detalles de la serie
         val seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
 
-        // Si la serie no existe como tal, es un episodio.
-        // Por ahora, enfoquémonos en que las series carguen sus episodios:
         if (seriesResponse.contains("Not Found")) {
-            Log.e(TAG, "La API no encontró la serie $cleanId. Verificando formato...")
             return newAnimeLoadResponse("Serie no encontrada", url, TvType.Anime) { }
         }
 
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
         val episodesList = mutableListOf<Episode>()
 
-        // 3. CARGA DE TEMPORADAS (Aquí es donde estaba el fallo)
-        // Usamos el ID de cada temporada para traer sus episodios
         details.seasons?.forEach { season ->
             try {
-                // Esta es la ruta que confirmamos con tu CURL
-                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=100&order_by=asc"
-                Log.d(TAG, "Cargando episodios de temporada: ${season.season_number} (ID: ${season.content_id})")
+                // Ajustamos la URL: quitamos el limit=100 por ahora para ver si el default funciona
+                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&order_by=asc"
+                Log.d(TAG, "Pidiendo episodios: $seasonUrl")
 
-                val seasonEpsText = app.get(seasonUrl, headers = apiHeaders).text
+                val response = app.get(seasonUrl, headers = apiHeaders)
+                val seasonEpsText = response.text
 
-                // Verificamos que sea una lista [...] y no un error {"detail"...}
-                if (seasonEpsText.trim().startsWith("[")) {
+                // Log para ver qué llega si falla
+                if (!seasonEpsText.trim().startsWith("[")) {
+                    Log.e(TAG, "Respuesta inesperada en temporada ${season.season_number}: ${seasonEpsText.take(100)}")
+                } else {
                     val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsText)
                     eps.forEach { ep ->
-                        // Agregamos solo si no es un clip/trailer
                         if (ep.is_clip != true) {
                             episodesList.add(newEpisode(ep.content_id) {
                                 this.name = ep.title
@@ -107,16 +108,13 @@ class UniqueStreamProvider : MainAPI() {
                             })
                         }
                     }
-                    Log.d(TAG, "Temporada ${season.season_number} cargada con ${eps.size} items")
-                } else {
-                    Log.e(TAG, "Error en temporada ${season.season_number}: Respuesta no válida")
+                    Log.d(TAG, "Temporada ${season.season_number} ok: ${eps.size} caps")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Fallo al procesar temporada ${season.season_number}: ${e.message}")
+                Log.e(TAG, "Error fatal en season ${season.season_number}: ${e.message}")
             }
         }
 
-        // 4. Armamos la respuesta final para CloudStream
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
             this.plot = details.description
