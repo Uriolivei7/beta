@@ -80,10 +80,14 @@ jobs:
           git init
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
+          
+          # ELIMINA EL ORIGIN SI YA EXISTE PARA EVITAR EL ERROR
+          git remote remove origin || true
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          git checkout -b builds
+          
+          git checkout -b builds || git checkout builds
           git add .
-          # Solo hace commit y push si hay archivos para subir
+          
           if git diff --staged --quiet; then
             echo "Nada que actualizar."
           else
