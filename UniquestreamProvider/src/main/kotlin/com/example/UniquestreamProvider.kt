@@ -15,9 +15,8 @@ class UniqueStreamProvider : MainAPI() {
     private val apiUrl = "https://anime.uniquestream.net/api/v1"
     private val TAG = "UniqueStream"
 
-    // Headers básicos y ligeros
     private val baseHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept" to "application/json"
     )
 
@@ -34,7 +33,7 @@ class UniqueStreamProvider : MainAPI() {
             val response = app.get(
                 "$apiUrl/search?query=&limit=20&order_by=popular",
                 headers = baseHeaders,
-                timeout = 30L // 30 segundos de timeout
+                timeout = 30L
             ).text
 
             val data = AppUtils.parseJson<SearchRoot>(response)
@@ -148,100 +147,122 @@ class UniqueStreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val episodeId = data.trim()
+        val episodeId = if (data.contains("/")) {
+            data.substringAfterLast("/").trim()
+        } else {
+            data.trim()
+        }
 
         Log.d(TAG, "========================================")
-        Log.d(TAG, "CARGANDO LINKS PARA: $episodeId")
+        Log.d(TAG, "Episode ID: $episodeId")
         Log.d(TAG, "========================================")
 
         return try {
-            // OPCIÓN 1: Primero intenta SIN visitar la página (más rápido)
-            val mediaUrl = "$apiUrl/episode/$episodeId/media"
+            val watchUrl = "$mainUrl/watch/$episodeId"
 
-            Log.d(TAG, "Intentando API directa...")
-
-            val response = app.get(
-                mediaUrl,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to "https://anime.uniquestream.net/",
-                    "Accept" to "application/json"
-                ),
-                timeout = 30L
+            // PASO 1: Visitar la página watch para obtener cookies de Cloudflare
+            Log.d(TAG, "Obteniendo cookies de Cloudflare...")
+            val watchHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "en-US,en;q=0.5",
+                "Referer" to mainUrl
             )
 
-            Log.d(TAG, "API Status: ${response.code}")
+            val watchPage = app.get(watchUrl, headers = watchHeaders, timeout = 30L)
+            Log.d(TAG, "Página watch cargada: ${watchPage.code}")
 
-            if (response.code != 200) {
-                Log.e(TAG, "Error HTTP: ${response.code}")
+            // Las cookies se guardan automáticamente por Cloudstream
+            // No necesitamos extraerlas manualmente
 
-                // OPCIÓN 2: Si falla, ENTONCES visitamos la página primero
-                Log.d(TAG, "Intentando con visita previa...")
-
-                val watchUrl = "https://anime.uniquestream.net/watch/$episodeId"
-                app.get(watchUrl, headers = baseHeaders, timeout = 20L)
-
-                // Reintentar la API después de visitar
-                val retryResponse = app.get(mediaUrl, headers = baseHeaders, timeout = 30L)
-
-                if (retryResponse.code != 200) {
-                    return false
-                }
-            }
-
-            val videoData = AppUtils.parseJson<VideoResponse>(response.text)
+            // PASO 2: Probar diferentes locales para obtener los links
+            val locales = listOf("es-419", "en-US", "ja-JP", "es-ES", "pt-BR")
             var linksEnviados = 0
 
-            videoData.versions?.hls?.forEach { hlsVersion ->
-                val playlistUrl = hlsVersion.playlist
+            for (locale in locales) {
+                try {
+                    val mediaUrl = "$apiUrl/episode/$episodeId/media/dash/$locale"
 
-                if (playlistUrl.isBlank()) {
-                    Log.w(TAG, "URL vacía: ${hlsVersion.locale}")
-                    return@forEach
-                }
+                    Log.d(TAG, "Intentando locale: $locale")
 
-                Log.d(TAG, "✓ ${hlsVersion.locale}: ${playlistUrl.take(60)}...")
+                    val apiHeaders = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
+                        "Accept-Language" to "en-US,en;q=0.9",
+                        "Referer" to watchUrl,
+                        "Origin" to mainUrl,
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "same-origin"
+                    )
 
-                callback(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                        url = playlistUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.quality = Qualities.Unknown.value
-                        this.referer = "https://anime.uniquestream.net/"
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "https://anime.uniquestream.net/",
-                            "Origin" to "https://anime.uniquestream.net",
-                            "Accept" to "*/*"
-                        )
+                    val response = app.get(mediaUrl, headers = apiHeaders, timeout = 30L)
+
+                    if (response.code == 200) {
+                        Log.d(TAG, "✓ API respondió 200 para $locale")
+
+                        val videoData = AppUtils.parseJson<VideoResponse>(response.text)
+
+                        // Procesar versiones HLS
+                        videoData.versions?.hls?.forEach { hlsVersion ->
+                            val playlistUrl = hlsVersion.playlist
+
+                            if (playlistUrl.isNotBlank()) {
+                                Log.d(TAG, "✓ Link encontrado: ${hlsVersion.locale}")
+
+                                callback(
+                                    newExtractorLink(
+                                        source = this.name,
+                                        name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                                        url = playlistUrl,
+                                        type = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.quality = Qualities.Unknown.value
+                                        this.referer = "$mainUrl/"
+                                        this.headers = mapOf(
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                            "Referer" to "$mainUrl/",
+                                            "Origin" to mainUrl,
+                                            "Accept" to "*/*",
+                                            "Accept-Language" to "en-US,en;q=0.9"
+                                        )
+                                    }
+                                )
+                                linksEnviados++
+
+                                // Procesar subtítulos
+                                hlsVersion.subtitles?.forEach { sub ->
+                                    if (sub.url.isNotBlank()) {
+                                        subtitleCallback(
+                                            SubtitleFile(
+                                                lang = sub.locale,
+                                                url = sub.url
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Si encontramos links, no necesitamos probar más locales
+                        if (linksEnviados > 0) break
+                    } else {
+                        Log.w(TAG, "API devolvió ${response.code} para $locale")
                     }
-                )
-                linksEnviados++
-
-                // Subtítulos
-                hlsVersion.subtitles?.forEach { sub ->
-                    if (sub.url.isNotBlank()) {
-                        subtitleCallback(
-                            SubtitleFile(
-                                lang = sub.locale,
-                                url = sub.url
-                            )
-                        )
-                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error con locale $locale: ${e.message}")
+                    continue
                 }
             }
 
             Log.d(TAG, "========================================")
-            Log.d(TAG, "LINKS ENVIADOS: $linksEnviados")
+            Log.d(TAG, "TOTAL LINKS: $linksEnviados")
             Log.d(TAG, "========================================")
 
             linksEnviados > 0
 
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR: ${e.message}")
+            Log.e(TAG, "ERROR CRÍTICO: ${e.message}")
             e.printStackTrace()
             false
         }
