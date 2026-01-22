@@ -157,36 +157,35 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // Cambiamos a un User-Agent de Chrome Moderno (Windows) para mayor compatibilidad
-        val chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-        Log.d(TAG, "--- DIAGNÓSTICO FINAL: $cleanId ---")
+        // Usamos el User-Agent exacto de un Android moderno para que no sospeche
+        val userAgent = "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
         return try {
-            // 1. FORZAMOS la captura de cookies usando el cliente de red base
-            val sessionResponse = app.get(watchUrl, headers = mapOf("User-Agent" to chromeUA), cacheTime = 0)
+            // 1. PRIMERA ENTRADA: Simulamos que el humano entra a la web
+            val firstStep = app.get(watchUrl, headers = mapOf("User-Agent" to userAgent))
 
-            // Intentamos extraer cookies tanto de la respuesta como del cookie jar global
-            val cookies = sessionResponse.cookies
-            val cookieStr = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+            // ESPERA ESTRATÉGICA: Damos tiempo a que el "servidor" crea que procesamos el JS
+            kotlinx.coroutines.delay(1200)
 
-            Log.d(TAG, "COOKIES DETECTADAS: ${if (cookieStr.isEmpty()) "FALLO TOTAL" else "ÉXITO"}")
+            // 2. CAPTURA DE COOKIES (Incluso las invisibles)
+            val cookies = firstStep.cookies
+            val cookieString = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
 
-            // 2. HEADERS DE COMBATE (Copiados de una sesión de navegador real exitosa)
+            Log.d(TAG, "DIAGNÓSTICO -> Cookies tras espera: ${if(cookieString.isEmpty()) "VACÍO" else "CAPTURADAS"}")
+
             val masterHeaders = mapOf(
-                "User-Agent" to chromeUA,
-                "Accept" to "*/*",
-                "Accept-Language" to "es-MX,es;q=0.9",
-                "Connection" to "keep-alive",
+                "User-Agent" to userAgent,
+                "Accept" to "application/json, text/plain, */*", // Más específico para API
+                "Accept-Language" to "es-MX,es;q=0.9,en;q=0.8",
+                "Referer" to "$watchUrl/",
+                "Origin" to "https://anime.uniquestream.net",
+                "Cookie" to cookieString,
                 "Sec-Fetch-Dest" to "empty",
                 "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "cross-site",
-                "Origin" to "https://anime.uniquestream.net",
-                "Referer" to "https://anime.uniquestream.net/",
-                "Cookie" to cookieStr
+                "Sec-Fetch-Site" to "same-origin" // Cambiamos a same-origin para la API
             )
 
-            // 3. LLAMADA A LA API
+            // 3. PEDIR LOS ENLACES A LA API
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
             val apiResponse = app.get(mediaUrl, headers = masterHeaders)
 
@@ -201,18 +200,20 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // REGLA DE ORO: Si el reproductor no lleva los mismos headers, da 2000
-                            this.headers = masterHeaders
+                            // IMPORTANTE: Para el video usamos 'cross-site' porque el dominio cambia
+                            val videoHeaders = masterHeaders.toMutableMap()
+                            videoHeaders["Sec-Fetch-Site"] = "cross-site"
+                            this.headers = videoHeaders
                         }
                     )
                 }
                 true
             } else {
-                Log.e(TAG, "API rechazada o vacía")
+                Log.e(TAG, "API rechazada. Status: ${apiResponse.code}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error IO: ${e.message}")
+            Log.e(TAG, "Error: ${e.message}")
             false
         }
     }
