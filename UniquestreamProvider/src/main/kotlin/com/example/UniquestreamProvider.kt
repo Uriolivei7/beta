@@ -155,23 +155,19 @@ class UniqueStreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val cleanId = data.split("/").last { it.isNotBlank() }
-        val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // Estos headers simulan exactamente el comportamiento del navegador que viste en el log
+        // HEADERS CRÍTICOS: Sin estos, mediacache.cc da Error 2000
         val masterHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept" to "*/*",
-            "Accept-Language" to "es-ES,es;q=0.9",
-            "Referer" to "https://anime.uniquestream.net/",
             "Origin" to "https://anime.uniquestream.net",
-            "Sec-Fetch-Dest" to "empty",
+            "Referer" to "https://anime.uniquestream.net/", // Debe terminar en /
             "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site", // Importante: la API y el video están en dominios distintos
-            "X-Requested-With" to "XMLHttpRequest"
+            "Sec-Fetch-Site" to "cross-site"
         )
 
         return try {
-            // Pedimos la API directamente ya que sabemos que el Status es 200
+            // 1. Obtener los enlaces de la API
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
             val response = app.get(mediaUrl, headers = masterHeaders).text
 
@@ -179,9 +175,7 @@ class UniqueStreamProvider : MainAPI() {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
 
                 videoData.versions?.hls?.forEach { v ->
-                    // LOG DE SEGURIDAD
-                    Log.d(TAG, "Cargando Pista: ${v.locale.uppercase()} -> ${v.playlist.take(40)}...")
-
+                    // Agregamos el enlace al reproductor
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -189,11 +183,12 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // REGLA DE ORO: El reproductor DEBE llevar estos headers para no dar Error 2000
+                            // INYECCIÓN MANUAL DE HEADERS AL REPRODUCTOR
                             this.headers = masterHeaders
                         }
                     )
 
+                    // Subtítulos
                     v.hard_subs?.forEach { sub ->
                         subtitleCallback(
                             newSubtitleFile(
@@ -208,7 +203,7 @@ class UniqueStreamProvider : MainAPI() {
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Fallo en reproducción: ${e.message}")
+            Log.e(TAG, "Error 2000: ${e.message}")
             false
         }
     }
