@@ -107,9 +107,12 @@ class UniqueStreamProvider : MainAPI() {
                             keepLoading = false
                         } else {
                             eps.forEach { ep ->
+                                // DENTRO DE eps.forEach en la función load:
                                 if (ep.is_clip != true) {
-                                    val cleanEpId = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
-                                    episodesList.add(newEpisode(cleanEpId) {
+                                    // PASAMOS EL ID COMPLETO (sin hacer split)
+                                    val idParaLink = ep.content_id
+
+                                    episodesList.add(newEpisode(idParaLink) {
                                         this.name = ep.title
                                         this.episode = ep.episode_number?.toInt()
                                         this.season = season.season_number
@@ -151,52 +154,43 @@ class UniqueStreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Limpiamos el ID por si acaso llega una URL
-        val cleanId = data.split("/").lastOrNull { it.isNotBlank() } ?: data
-        Log.d(TAG, "Iniciando loadLinks para ID: $cleanId")
+        // Si el ID viene como "episodio/YQfqAlbC", sacamos solo "YQfqAlbC"
+        val cleanId = data.substringAfterLast("/")
+        Log.d(TAG, "Iniciando loadLinks. Data original: $data | ID Limpio: $cleanId")
 
-        // Headers exactos para saltar protecciones de la API
         val videoHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
             "Accept" to "application/json, text/plain, */*",
-            "Referer" to "https://anime.uniquestream.net/watch/$cleanId",
+            "Referer" to "https://anime.uniquestream.net/",
             "Origin" to "https://anime.uniquestream.net",
             "X-Requested-With" to "XMLHttpRequest"
         )
 
         return try {
-            val videoUrl = "$apiUrl/video?content_id=$cleanId"
-            val response = app.get(videoUrl, headers = videoHeaders).text
+            // Intentamos obtener el video.
+            // Si el "Not Found" persiste, probaremos con el ID original sin limpiar.
+            val response = app.get("$apiUrl/video?content_id=$cleanId", headers = videoHeaders).text
 
-            Log.d(TAG, "Respuesta API Video: ${response.take(200)}")
+            Log.d(TAG, "Respuesta API Video: ${response.take(150)}")
 
             if (response.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
                 var linksFound = 0
 
-                // 1. PROCESAR HLS (Formatos .m3u8 - Los mejores para móvil)
                 videoData.versions?.hls?.forEach { v ->
-                    // Cada "locale" es un audio distinto (es-LA, ja-JP, etc)
                     callback(
                         newExtractorLink(
                             source = this.name,
-                            name = "${this.name} - Audio: ${v.locale.uppercase()}",
+                            name = "${this.name} - ${v.locale.uppercase()}",
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
-                        ) {
-                            this.headers = videoHeaders
-                        }
+                        ) { this.headers = videoHeaders }
                     )
                     linksFound++
-
-                    // Cargar subtítulos de esta versión si existen
-                    v.subtitles?.forEach { sub ->
-                        Log.d(TAG, "Subtítulo encontrado: ${sub.locale}")
-                        subtitleCallback(SubtitleFile(sub.locale, sub.url))
-                    }
+                    v.subtitles?.forEach { sub -> subtitleCallback(SubtitleFile(sub.locale, sub.url)) }
                 }
 
-                // 2. PROCESAR DASH (Formatos .mpd - Alternativa)
+                // Si hay DASH, también los añadimos
                 videoData.versions?.dash?.forEach { v ->
                     callback(
                         newExtractorLink(
@@ -204,17 +198,20 @@ class UniqueStreamProvider : MainAPI() {
                             name = "${this.name} DASH - ${v.locale.uppercase()}",
                             url = v.playlist,
                             type = ExtractorLinkType.DASH
-                        ) {
-                            this.headers = videoHeaders
-                        }
+                        ) { this.headers = videoHeaders }
                     )
                     linksFound++
                 }
 
-                Log.d(TAG, "Total de enlaces generados: $linksFound")
                 linksFound > 0
             } else {
-                Log.e(TAG, "La API no devolvió el campo 'versions'. Respuesta: $response")
+                // SEGUNDO INTENTO: Usando el ID original por si la API lo requiere completo
+                if (data.contains("/")) {
+                    Log.d(TAG, "Reintentando con ID original: $data")
+                    val retryResponse = app.get("$apiUrl/video?content_id=$data", headers = videoHeaders).text
+                    if (retryResponse.contains("versions")) {
+                    }
+                }
                 false
             }
         } catch (e: Exception) {
