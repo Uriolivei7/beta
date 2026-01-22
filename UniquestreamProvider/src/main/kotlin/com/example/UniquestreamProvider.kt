@@ -156,31 +156,24 @@ class UniqueStreamProvider : MainAPI() {
     ): Boolean {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
-
         val fixedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-
-        Log.d(TAG, "--- INICIANDO PRUEBA DE REPRODUCTOR: $cleanId ---")
 
         return try {
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
 
+            // Headers limpios para la API
             val apiHeaders = mapOf(
                 "User-Agent" to fixedUA,
-                "Accept" to "application/json",
                 "Referer" to watchUrl,
-                "Origin" to "https://anime.uniquestream.net",
                 "X-Requested-With" to "XMLHttpRequest"
             )
 
             val response = app.get(mediaUrl, headers = apiHeaders)
-            Log.d(TAG, "API STATUS: ${response.code}")
 
             if (response.text.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response.text)
 
                 videoData.versions?.hls?.forEach { v ->
-                    Log.d(TAG, "LINK OBTENIDO [${v.locale}]: ${v.playlist.take(50)}...")
-
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -188,26 +181,19 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // HEADERS QUE RECIBE EL REPRODUCTOR
+                            // SOLO ESTOS DOS. Si con esto no abre, el bloqueo es por Cookie obligatoria.
                             this.headers = mapOf(
                                 "User-Agent" to fixedUA,
-                                "Referer" to "https://anime.uniquestream.net/",
-                                "Origin" to "https://anime.uniquestream.net",
-                                "Accept" to "*/*",
-                                "Sec-Fetch-Dest" to "video",
-                                "Sec-Fetch-Mode" to "no-cors",
-                                "Sec-Fetch-Site" to "cross-site"
+                                "Referer" to "https://anime.uniquestream.net/"
                             )
                         }
                     )
                 }
                 true
             } else {
-                Log.e(TAG, "API NO DEVOLVIÓ VERSIONES. Body: ${response.text.take(100)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR EN LOADLINKS: ${e.message}")
             false
         }
     }
