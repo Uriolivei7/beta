@@ -157,29 +157,37 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        return try {
-            // 1. Visitamos la web primero para obtener las Cookies necesarias
-            val pageResponse = app.get(watchUrl)
-            val cookies = pageResponse.cookies
+        // Obtenemos el User-Agent que la app tiene configurado por defecto
+        val appUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-            // 2. Definimos los headers incluyendo las cookies capturadas
-            val videoHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+        return try {
+            // 1. PRIMER PASO: Petición a la web para obtener cookies frescas (Session Handshake)
+            val sessionResponse = app.get(
+                watchUrl,
+                headers = mapOf("User-Agent" to appUserAgent)
+            )
+            val sessionCookies = sessionResponse.cookies
+
+            // 2. CONSTRUCCIÓN DE HEADERS MAESTROS
+            // Estos headers DEBEN coincidir en la API y en el Reproductor
+            val masterHeaders = mapOf(
+                "User-Agent" to appUserAgent,
                 "Accept" to "*/*",
                 "Referer" to watchUrl,
                 "Origin" to "https://anime.uniquestream.net",
-                "Cookie" to cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+                "X-Requested-With" to "XMLHttpRequest",
+                "Cookie" to sessionCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
             )
 
-            // 3. Pedimos el JSON de medios con los headers de seguridad
+            // 3. OBTENCIÓN DE LINKS DE LA API
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
-            val response = app.get(mediaUrl, headers = videoHeaders).text
+            val response = app.get(mediaUrl, headers = masterHeaders).text
 
             if (response.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
 
                 videoData.versions?.hls?.forEach { v ->
-                    // AUDIO / VIDEO PRINCIPAL
+                    // VIDEO: Sincronizamos los headers del extractor con los de la sesión
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -187,16 +195,16 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // IMPORTANTE: Pasamos los headers con cookies al reproductor
-                            this.headers = videoHeaders
+                            // Esto fuerza al reproductor (ExoPlayer) a usar el User-Agent y Cookies exactas
+                            this.headers = masterHeaders
                         }
                     )
 
-                    // SUBTÍTULOS (Seccion aparte)
+                    // SUBTÍTULOS
                     v.hard_subs?.forEach { sub ->
                         subtitleCallback(
                             newSubtitleFile(
-                                lang = "${v.locale.uppercase()} (Hardsub ${sub.locale.uppercase()})",
+                                lang = "Hardsub ${sub.locale.uppercase()}",
                                 url = sub.playlist
                             )
                         )
@@ -207,7 +215,7 @@ class UniqueStreamProvider : MainAPI() {
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error final en loadLinks: ${e.message}")
+            Log.e(TAG, "Error de Seguridad/IO: ${e.message}")
             false
         }
     }
