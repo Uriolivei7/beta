@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
 
 class MediaCacheExtractor : ExtractorApi() {
@@ -50,19 +51,21 @@ class MediaCacheExtractor : ExtractorApi() {
 
             Log.d(TAG, "Encontradas ${variants.size} variantes")
 
-            // Agregar cada variante como link
             variants.forEach { variant ->
-                callback(
-                    ExtractorLink(
+
+                callback.invoke(
+                    newExtractorLink(
                         source = this.name,
                         name = "$name - ${variant.quality}",
                         url = variant.url,
-                        referer = referer ?: "https://anime.uniquestream.net/",
-                        quality = variant.qualityValue,
-                        type = ExtractorLinkType.M3U8,
-                        headers = headers
-                    )
+                        type = ExtractorLinkType.M3U8,   // ← aquí va el tipo
+                    ) {
+                        this.referer = referer ?: "https://anime.uniquestream.net/"
+                        this.quality = variant.qualityValue
+                        this.headers = headers
+                    }
                 )
+
                 Log.d(TAG, "✓ Agregado: ${variant.quality}")
             }
 
