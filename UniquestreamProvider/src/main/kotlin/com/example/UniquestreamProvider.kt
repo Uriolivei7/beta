@@ -157,37 +157,45 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = data.split("/").last { it.isNotBlank() }
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // Obtenemos el User-Agent que la app tiene configurado por defecto
-        val appUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
-
         return try {
-            // 1. PRIMER PASO: Petición a la web para obtener cookies frescas (Session Handshake)
-            val sessionResponse = app.get(
-                watchUrl,
-                headers = mapOf("User-Agent" to appUserAgent)
-            )
-            val sessionCookies = sessionResponse.cookies
+            // 1. Handshake inicial para capturar Cookies de sesión real
+            val sessionResponse = app.get(watchUrl)
+            val cookies = sessionResponse.cookies
+            val cookieString = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
 
-            // 2. CONSTRUCCIÓN DE HEADERS MAESTROS
-            // Estos headers DEBEN coincidir en la API y en el Reproductor
+            Log.d(TAG, "COOKIES CAPTURADAS: $cookieString")
+
+            // 2. HEADERS MAESTROS (Copiados de tu CURL exitoso)
             val masterHeaders = mapOf(
-                "User-Agent" to appUserAgent,
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
+                "Accept-Language" to "es-ES,es;q=0.9",
+                "Cache-Control" to "no-cache",
+                "Pragma" to "no-cache",
                 "Referer" to watchUrl,
                 "Origin" to "https://anime.uniquestream.net",
+                "Sec-Ch-Ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Brave\";v=\"144\"",
+                "Sec-Ch-Ua-Mobile" to "?0",
+                "Sec-Ch-Ua-Platform" to "\"Windows\"",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "same-origin",
                 "X-Requested-With" to "XMLHttpRequest",
-                "Cookie" to sessionCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+                "Cookie" to cookieString
             )
 
-            // 3. OBTENCIÓN DE LINKS DE LA API
+            // 3. Petición a la API usando los mismos headers
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
             val response = app.get(mediaUrl, headers = masterHeaders).text
 
             if (response.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
+                var count = 0
 
                 videoData.versions?.hls?.forEach { v ->
-                    // VIDEO: Sincronizamos los headers del extractor con los de la sesión
+                    // LOG DE SEGURIDAD: Verifica si la URL del playlist tiene el 'sign' y 'expires'
+                    Log.d(TAG, "PROCESANDO PLAYLIST: ${v.playlist}")
+
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -195,27 +203,29 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // Esto fuerza al reproductor (ExoPlayer) a usar el User-Agent y Cookies exactas
+                            // ESTO ES LO QUE ELIMINA EL ERROR 2000:
+                            // Fuerza al reproductor a usar EXACTAMENTE los mismos headers que el navegador
                             this.headers = masterHeaders
                         }
                     )
+                    count++
 
-                    // SUBTÍTULOS
                     v.hard_subs?.forEach { sub ->
                         subtitleCallback(
-                            newSubtitleFile(
+                            SubtitleFile(
                                 lang = "Hardsub ${sub.locale.uppercase()}",
                                 url = sub.playlist
                             )
                         )
                     }
                 }
-                true
+                count > 0
             } else {
+                Log.e(TAG, "RESPUESTA DE API SIN VERSIONES: $response")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error de Seguridad/IO: ${e.message}")
+            Log.e(TAG, "FALLO CRÍTICO EN LOADLINKS: ${e.message}")
             false
         }
     }
