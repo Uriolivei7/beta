@@ -24,23 +24,16 @@ class UniqueStreamProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
-            Log.d(TAG, "Cargando MainPage...")
-            val response = app.get("$apiUrl/search?query=a&limit=20").text
+            Log.d(TAG, "Cargando MainPage simplificada...")
+            val response = app.get("$apiUrl/search?query=a&limit=30").text
             val data = AppUtils.parseJson<SearchRoot>(response)
 
             val homeItems = mutableListOf<HomePageList>()
 
             data.series?.let { series ->
-                homeItems.add(HomePageList("Series Destacadas", series.map { it.toSearchResponse() }))
+                homeItems.add(HomePageList("Series Disponibles", series.map { it.toSearchResponse() }))
             }
 
-            data.episodes?.let { episodes ->
-                homeItems.add(HomePageList("Últimos Episodios", episodes.map {
-                    newAnimeSearchResponse(it.title ?: "Anime", it.content_id) {
-                        this.posterUrl = it.image
-                    }
-                }))
-            }
             newHomePageResponse(homeItems, homeItems.isNotEmpty())
         } catch (e: Exception) {
             Log.e(TAG, "Error en getMainPage: ${e.message}")
@@ -63,63 +56,41 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = url.split("/").lastOrNull { it.isNotBlank() } ?: url
         Log.d(TAG, "Cargando serie con ID: $cleanId")
 
-        // Headers completos para engañar a la protección del servidor
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Accept" to "application/json, text/plain, */*",
-            "Accept-Language" to "es-ES,es;q=0.9",
             "Referer" to "https://anime.uniquestream.net/series/$cleanId",
-            "Origin" to "https://anime.uniquestream.net",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "same-origin"
+            "Accept" to "application/json"
         )
 
         val seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
-
-        if (seriesResponse.contains("Not Found")) {
-            Log.d(TAG, "ID de episodio detectado en Home, buscando serie...")
-            val search = app.get("$apiUrl/search?query=$cleanId", headers = apiHeaders).text
-            val searchData = AppUtils.parseJson<SearchRoot>(search)
-            val realSeriesId = searchData.series?.firstOrNull()?.content_id
-            if (realSeriesId != null) {
-                // Si encontramos la serie, volvemos a intentar cargar pero con el ID bueno
-                return load("$mainUrl/series/$realSeriesId")
-            }
-        }
-
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
+
         val episodesList = mutableListOf<Episode>()
 
-        // Reemplaza el bloque dentro de details.seasons?.forEach en tu función load:
+        // Recorremos cada temporada
         details.seasons?.forEach { season ->
             try {
-                // AÑADIMOS limit=1000 para que no se corte en 5 episodios
                 val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=1000&order_by=asc"
-                Log.d(TAG, "Pidiendo episodios: $seasonUrl")
+                val response = app.get(seasonUrl, headers = apiHeaders).text
 
-                val response = app.get(seasonUrl, headers = apiHeaders)
-                val seasonEpsText = response.text
-
-                if (seasonEpsText.trim().startsWith("[")) {
-                    val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsText)
+                if (response.trim().startsWith("[")) {
+                    val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
                     eps.forEach { ep ->
                         if (ep.is_clip != true) {
-                            // LIMPIAMOS EL ID: Si ep.content_id es una URL, sacamos solo el ID
-                            val cleanEpId = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
+                            // Importante: Guardamos solo el ID para loadLinks
+                            val idParaLink = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
 
-                            episodesList.add(newEpisode(cleanEpId) { // <--- Usamos el ID limpio
+                            episodesList.add(newEpisode(idParaLink) {
                                 this.name = ep.title
                                 this.episode = ep.episode_number?.toInt()
                                 this.season = season.season_number
-                                this.posterUrl = ep.image
+                                this.posterUrl = ep.image ?: details.images?.find { it.type == "poster_tall" }?.url
                             })
                         }
                     }
-                    Log.d(TAG, "Temporada ${season.season_number} ok: ${episodesList.size} caps acumulados")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en season ${season.season_number}: ${e.message}")
+                Log.e(TAG, "Error cargando temporada ${season.season_number}")
             }
         }
 
@@ -137,12 +108,11 @@ class UniqueStreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // LIMPIEZA DEL ID (Fundamental para que la API responda)
         val cleanId = data.split("/").lastOrNull { it.isNotBlank() } ?: data
         Log.d(TAG, "Iniciando loadLinks para ID limpio: $cleanId")
 
         return try {
-            // Usamos el ID limpio aquí
+            // Hacemos la petición una sola vez
             val response = app.get("$apiUrl/video?content_id=$cleanId").text
             val videoData = AppUtils.parseJson<VideoResponse>(response)
             var linksFound = 0
