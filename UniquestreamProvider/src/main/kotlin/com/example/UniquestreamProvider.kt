@@ -172,8 +172,9 @@ class UniqueStreamProvider : MainAPI() {
             val watchPage = app.get(watchUrl, headers = watchHeaders, timeout = 30L)
             Log.d(TAG, "Página watch cargada: ${watchPage.code}")
 
-            // Las cookies se guardan automáticamente por Cloudstream
-            // No necesitamos extraerlas manualmente
+            // Extraer cookies importantes de la respuesta
+            val cookieHeader = watchPage.headers["set-cookie"] ?: ""
+            Log.d(TAG, "Cookies recibidas: ${if(cookieHeader.isNotEmpty()) "Sí" else "No"}")
 
             // PASO 2: Probar diferentes locales para obtener los links
             val locales = listOf("es-419", "en-US", "ja-JP", "es-ES", "pt-BR")
@@ -209,7 +210,10 @@ class UniqueStreamProvider : MainAPI() {
 
                             if (playlistUrl.isNotBlank()) {
                                 Log.d(TAG, "✓ Link encontrado: ${hlsVersion.locale}")
+                                Log.d(TAG, "  URL: ${playlistUrl.take(80)}...")
 
+                                // CRÍTICO: URLs HLS con tokens firmados
+                                // Dejar que el reproductor use sus headers por defecto
                                 callback(
                                     newExtractorLink(
                                         source = this.name,
@@ -218,14 +222,8 @@ class UniqueStreamProvider : MainAPI() {
                                         type = ExtractorLinkType.M3U8
                                     ) {
                                         this.quality = Qualities.Unknown.value
+                                        // Solo Referer, sin sobrescribir otros headers
                                         this.referer = "$mainUrl/"
-                                        this.headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                            "Referer" to "$mainUrl/",
-                                            "Origin" to mainUrl,
-                                            "Accept" to "*/*",
-                                            "Accept-Language" to "en-US,en;q=0.9"
-                                        )
                                     }
                                 )
                                 linksEnviados++
@@ -234,7 +232,7 @@ class UniqueStreamProvider : MainAPI() {
                                 hlsVersion.subtitles?.forEach { sub ->
                                     if (sub.url.isNotBlank()) {
                                         subtitleCallback(
-                                            SubtitleFile(
+                                            newSubtitleFile(
                                                 lang = sub.locale,
                                                 url = sub.url
                                             )
