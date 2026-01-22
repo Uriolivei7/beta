@@ -154,64 +154,59 @@ class UniqueStreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Si el ID viene como "episodio/YQfqAlbC", sacamos solo "YQfqAlbC"
-        val cleanId = data.substringAfterLast("/")
-        Log.d(TAG, "Iniciando loadLinks. Data original: $data | ID Limpio: $cleanId")
+        val cleanId = data.split("/").last { it.isNotBlank() }
+        Log.d(TAG, "Obteniendo enlaces para el episodio: $cleanId")
 
-        val videoHeaders = mapOf(
+        val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Accept" to "application/json, text/plain, */*",
-            "Referer" to "https://anime.uniquestream.net/",
-            "Origin" to "https://anime.uniquestream.net",
+            "Accept" to "application/json",
+            "Referer" to "https://anime.uniquestream.net/watch/$cleanId",
             "X-Requested-With" to "XMLHttpRequest"
         )
 
         return try {
-            // Intentamos obtener el video.
-            // Si el "Not Found" persiste, probaremos con el ID original sin limpiar.
-            val response = app.get("$apiUrl/video?content_id=$cleanId", headers = videoHeaders).text
-
-            Log.d(TAG, "Respuesta API Video: ${response.take(150)}")
+            // 1. Pedimos la info del episodio para sacar todas las versiones disponibles
+            // Usamos la ruta de tu segundo curl que es la que trae todo el JSON de versiones
+            val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP" // ja-JP es el trigger para que suelte el JSON
+            val response = app.get(mediaUrl, headers = headers).text
 
             if (response.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
                 var linksFound = 0
 
+                // 2. Recorremos las versiones HLS (Audio)
                 videoData.versions?.hls?.forEach { v ->
+                    // AUDIO ORIGINAL / DOBLADO
                     callback(
                         newExtractorLink(
-                            source = this.name,
-                            name = "${this.name} - ${v.locale.uppercase()}",
-                            url = v.playlist,
-                            type = ExtractorLinkType.M3U8
-                        ) { this.headers = videoHeaders }
+                            this.name,
+                            "${this.name} - Audio: ${v.locale.uppercase()}",
+                            v.playlist,
+                            "https://anime.uniquestream.net/",
+                            ExtractorLinkType.M3U8,
+                            headers = headers
+                        )
                     )
                     linksFound++
-                    v.subtitles?.forEach { sub -> subtitleCallback(SubtitleFile(sub.locale, sub.url)) }
-                }
 
-                // Si hay DASH, también los añadimos
-                videoData.versions?.dash?.forEach { v ->
-                    callback(
-                        newExtractorLink(
-                            source = this.name,
-                            name = "${this.name} DASH - ${v.locale.uppercase()}",
-                            url = v.playlist,
-                            type = ExtractorLinkType.DASH
-                        ) { this.headers = videoHeaders }
-                    )
-                    linksFound++
-                }
-
-                linksFound > 0
-            } else {
-                // SEGUNDO INTENTO: Usando el ID original por si la API lo requiere completo
-                if (data.contains("/")) {
-                    Log.d(TAG, "Reintentando con ID original: $data")
-                    val retryResponse = app.get("$apiUrl/video?content_id=$data", headers = videoHeaders).text
-                    if (retryResponse.contains("versions")) {
+                    // 3. HARDSUBS (Subtítulos pegados que el reproductor lee como una fuente más)
+                    v.hard_subs?.forEach { sub ->
+                        callback(
+                            newExtractorLink(
+                                this.name,
+                                "${this.name} - ${v.locale.uppercase()} (Subs: ${sub.locale.uppercase()})",
+                                sub.playlist,
+                                "https://anime.uniquestream.net/",
+                                ExtractorLinkType.M3U8,
+                                headers = headers
+                            )
+                        )
+                        linksFound++
                     }
                 }
+                linksFound > 0
+            } else {
+                Log.e(TAG, "No se encontraron versiones en la respuesta")
                 false
             }
         } catch (e: Exception) {
@@ -226,11 +221,6 @@ class UniqueStreamProvider : MainAPI() {
     data class SearchRoot(
         val series: List<SeriesItem>? = null,
         val episodes: List<EpisodeItem>? = null
-    )
-
-    @Serializable
-    data class VideoResponse(
-        val versions: VideoVersions? = null
     )
 
     @Serializable
@@ -284,5 +274,24 @@ class UniqueStreamProvider : MainAPI() {
     data class ImageItem(
         val url: String,
         val type: String
+    )
+
+    data class VideoResponse(
+        val versions: Versions? = null
+    )
+
+    data class Versions(
+        val hls: List<HlsVersion>? = null
+    )
+
+    data class HlsVersion(
+        val locale: String,
+        val playlist: String,
+        val hard_subs: List<HardSub>? = null // ¡AÑADE ESTA LÍNEA!
+    )
+
+    data class HardSub(
+        val locale: String,
+        val playlist: String
     )
 }
