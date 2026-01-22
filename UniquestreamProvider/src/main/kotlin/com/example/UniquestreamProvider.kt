@@ -198,47 +198,12 @@ class UniqueStreamProvider : MainAPI() {
                             if (playlistUrl.isNotBlank()) {
                                 Log.d(TAG, "Procesando: ${hlsVersion.locale}")
 
-                                // SOLUCIÓN: Descargar el master.m3u8 y extraer URLs directas
                                 try {
-                                    val m3u8Headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                        "Accept" to "*/*",
-                                        "Origin" to mainUrl,
-                                        "Referer" to "$mainUrl/"
-                                    )
+                                    Log.d(TAG, "Creando link directo para ${hlsVersion.locale}")
+                                    Log.d(TAG, "URL: $playlistUrl")
 
-                                    val m3u8Content = app.get(playlistUrl, headers = m3u8Headers, timeout = 20L).text
-
-                                    // Parsear el master.m3u8 para obtener las variantes
-                                    val variants = parseM3U8(m3u8Content, playlistUrl)
-
-                                    Log.d(TAG, "✓ Encontradas ${variants.size} variantes para ${hlsVersion.locale}")
-
-                                    // Agregar cada variante como un link separado
-                                    variants.forEachIndexed { index, variant ->
-                                        callback(
-                                            newExtractorLink(
-                                                source = this.name,
-                                                name = "${this.name} - ${hlsVersion.locale.uppercase()} (${variant.quality})",
-                                                url = variant.url,
-                                                type = ExtractorLinkType.M3U8
-                                            ) {
-                                                this.quality = variant.qualityValue
-                                                this.referer = "$mainUrl/"
-                                                this.headers = mapOf(
-                                                    "Accept" to "*/*",
-                                                    "Origin" to mainUrl,
-                                                    "Referer" to "$mainUrl/"
-                                                )
-                                            }
-                                        )
-                                    }
-
-                                    linksEnviados += variants.size
-
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "Error descargando m3u8: ${e.message}")
-                                    // Si falla, intentar con la URL directa
+                                    // Crear el link SIN headers personalizados
+                                    // Dejar que ExoPlayer use sus defaults
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
@@ -247,22 +212,21 @@ class UniqueStreamProvider : MainAPI() {
                                             type = ExtractorLinkType.M3U8
                                         ) {
                                             this.quality = Qualities.Unknown.value
-                                            this.referer = "$mainUrl/"
-                                            this.headers = mapOf(
-                                                "Accept" to "*/*",
-                                                "Origin" to mainUrl,
-                                                "Referer" to "$mainUrl/"
-                                            )
+                                            // NO establecer headers - dejar que el reproductor use defaults
                                         }
                                     )
                                     linksEnviados++
+                                    Log.d(TAG, "✓ Link agregado para ${hlsVersion.locale}")
+
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error agregando link: ${e.message}")
                                 }
 
                                 // Subtítulos
                                 hlsVersion.subtitles?.forEach { sub ->
                                     if (sub.url.isNotBlank()) {
                                         subtitleCallback(
-                                            SubtitleFile(
+                                            newSubtitleFile(
                                                 lang = sub.locale,
                                                 url = sub.url
                                             )
@@ -292,66 +256,6 @@ class UniqueStreamProvider : MainAPI() {
             false
         }
     }
-
-    // Función para parsear master.m3u8 y extraer variantes
-    private fun parseM3U8(content: String, baseUrl: String): List<M3U8Variant> {
-        val variants = mutableListOf<M3U8Variant>()
-        val lines = content.lines()
-        var currentQuality = "Unknown"
-        var currentResolution = ""
-
-        for (i in lines.indices) {
-            val line = lines[i].trim()
-
-            // Buscar información de calidad en #EXT-X-STREAM-INF
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                // Extraer resolución
-                val resolutionMatch = Regex("RESOLUTION=(\\d+x\\d+)").find(line)
-                currentResolution = resolutionMatch?.groupValues?.get(1) ?: ""
-
-                // Extraer bandwidth para determinar calidad
-                val bandwidthMatch = Regex("BANDWIDTH=(\\d+)").find(line)
-                val bandwidth = bandwidthMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-
-                currentQuality = when {
-                    currentResolution.contains("1920") -> "1080p"
-                    currentResolution.contains("1280") -> "720p"
-                    currentResolution.contains("854") || currentResolution.contains("848") -> "480p"
-                    currentResolution.contains("640") -> "360p"
-                    else -> currentResolution.ifEmpty { "Auto" }
-                }
-            }
-            // La siguiente línea después de #EXT-X-STREAM-INF es la URL
-            else if (!line.startsWith("#") && line.isNotEmpty() && currentQuality.isNotEmpty()) {
-                val variantUrl = if (line.startsWith("http")) {
-                    line
-                } else {
-                    // URL relativa - construir URL absoluta
-                    val base = baseUrl.substringBeforeLast("/")
-                    "$base/$line"
-                }
-
-                val qualityValue = when (currentQuality) {
-                    "1080p" -> Qualities.P1080.value
-                    "720p" -> Qualities.P720.value
-                    "480p" -> Qualities.P480.value
-                    "360p" -> Qualities.P360.value
-                    else -> Qualities.Unknown.value
-                }
-
-                variants.add(M3U8Variant(variantUrl, currentQuality, qualityValue))
-                currentQuality = ""
-            }
-        }
-
-        return variants
-    }
-
-    data class M3U8Variant(
-        val url: String,
-        val quality: String,
-        val qualityValue: Int
-    )
 
     @Serializable
     data class SeriesItem(
