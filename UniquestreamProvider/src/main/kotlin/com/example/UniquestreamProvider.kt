@@ -158,42 +158,72 @@ class UniqueStreamProvider : MainAPI() {
         val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
         val fixedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 
-        return try {
-            val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
+        Log.d(TAG, "--- INICIANDO CARGA DE LINKS ---")
+        Log.d(TAG, "ID de episodio: $cleanId")
 
-            // Headers limpios para la API
-            val apiHeaders = mapOf(
+        return try {
+            // Intentamos obtener el JSON de medios
+            val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
+            Log.d(TAG, "Solicitando API: $mediaUrl")
+
+            val response = app.get(mediaUrl, headers = mapOf(
                 "User-Agent" to fixedUA,
+                "Accept" to "application/json",
                 "Referer" to watchUrl,
                 "X-Requested-With" to "XMLHttpRequest"
-            )
+            ))
 
-            val response = app.get(mediaUrl, headers = apiHeaders)
+            Log.d(TAG, "Respuesta API Status: ${response.code}")
 
-            if (response.text.contains("versions")) {
-                val videoData = AppUtils.parseJson<VideoResponse>(response.text)
-
-                videoData.versions?.hls?.forEach { v ->
-                    callback(
-                        newExtractorLink(
-                            source = this.name,
-                            name = "${this.name} - ${v.locale.uppercase()}",
-                            url = v.playlist,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            // SOLO ESTOS DOS. Si con esto no abre, el bloqueo es por Cookie obligatoria.
-                            this.headers = mapOf(
-                                "User-Agent" to fixedUA,
-                                "Referer" to "https://anime.uniquestream.net/"
-                            )
-                        }
-                    )
-                }
-                true
-            } else {
-                false
+            if (response.text.isBlank()) {
+                Log.e(TAG, "La respuesta de la API está vacía")
+                return false
             }
+
+            // Intento de parseo
+            val videoData = try {
+                AppUtils.parseJson<VideoResponse>(response.text)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error parseando JSON: ${e.message}")
+                Log.d(TAG, "Cuerpo del JSON fallido: ${response.text.take(500)}")
+                null
+            }
+
+            val hlsVersions = videoData?.versions?.hls
+            if (hlsVersions.isNullOrEmpty()) {
+                Log.e(TAG, "No se encontraron versiones HLS en el JSON")
+                return false
+            }
+
+            Log.d(TAG, "Versiones encontradas: ${hlsVersions.size}")
+
+            hlsVersions.forEach { v ->
+                Log.d(TAG, "Procesando Link [${v.locale}]: ${v.playlist.take(60)}...")
+
+                callback(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "${this.name} - ${v.locale.uppercase()}",
+                        url = v.playlist,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        // Estos logs no se verán en consola (son internos),
+                        // pero los headers son vitales para evitar el ERROR 2000
+                        this.headers = mapOf(
+                            "User-Agent" to fixedUA,
+                            "Referer" to "https://anime.uniquestream.net/",
+                            "Origin" to "https://anime.uniquestream.net",
+                            "Accept" to "*/*"
+                        )
+                    }
+                )
+                Log.d(TAG, "Link enviado al callback correctamente")
+            }
+
+            true
         } catch (e: Exception) {
+            Log.e(TAG, "FALLO CRÍTICO en loadLinks: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -259,18 +289,20 @@ class UniqueStreamProvider : MainAPI() {
         val type: String
     )
 
+    @Serializable
     data class VideoResponse(
         val versions: Versions? = null
     )
 
+    @Serializable
     data class Versions(
         val hls: List<HlsVersion>? = null
     )
 
+    @Serializable
     data class HlsVersion(
         val locale: String,
-        val playlist: String,
-        val hard_subs: List<HardSub>? = null // ¡AÑADE ESTA LÍNEA!
+        val playlist: String
     )
 
     data class HardSub(
