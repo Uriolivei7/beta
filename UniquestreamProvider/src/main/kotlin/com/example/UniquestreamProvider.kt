@@ -144,72 +144,81 @@ class UniqueStreamProvider : MainAPI() {
             addEpisodes(DubStatus.Subbed, episodesList)
         }
     }
-    
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // Limpiamos el ID por si acaso llega una URL
         val cleanId = data.split("/").lastOrNull { it.isNotBlank() } ?: data
-        Log.d(TAG, "Iniciando loadLinks para ID limpio: $cleanId")
+        Log.d(TAG, "Iniciando loadLinks para ID: $cleanId")
+
+        // Headers exactos para saltar protecciones de la API
+        val videoHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Accept" to "application/json, text/plain, */*",
+            "Referer" to "https://anime.uniquestream.net/watch/$cleanId",
+            "Origin" to "https://anime.uniquestream.net",
+            "X-Requested-With" to "XMLHttpRequest"
+        )
 
         return try {
-            // Hacemos la petición una sola vez
-            val response = app.get("$apiUrl/video?content_id=$cleanId").text
-            val videoData = AppUtils.parseJson<VideoResponse>(response)
-            var linksFound = 0
+            val videoUrl = "$apiUrl/video?content_id=$cleanId"
+            val response = app.get(videoUrl, headers = videoHeaders).text
 
-            // Definimos los headers que vimos en tu CURL
-            val commonHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                "Referer" to "$mainUrl/",
-                "Accept" to "*/*"
-            )
+            Log.d(TAG, "Respuesta API Video: ${response.take(200)}")
 
-            // --- HLS ---
-            videoData.versions?.hls?.forEach { v ->
-                Log.d(TAG, "HLS encontrado: ${v.locale}")
-                callback(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "${this.name} HLS ${v.locale}",
-                        url = v.playlist,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        // Agregamos los headers aquí para que el reproductor los use
-                        this.headers = commonHeaders
+            if (response.contains("versions")) {
+                val videoData = AppUtils.parseJson<VideoResponse>(response)
+                var linksFound = 0
+
+                // 1. PROCESAR HLS (Formatos .m3u8 - Los mejores para móvil)
+                videoData.versions?.hls?.forEach { v ->
+                    // Cada "locale" es un audio distinto (es-LA, ja-JP, etc)
+                    callback(
+                        newExtractorLink(
+                            source = this.name,
+                            name = "${this.name} - Audio: ${v.locale.uppercase()}",
+                            url = v.playlist,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.headers = videoHeaders
+                        }
+                    )
+                    linksFound++
+
+                    // Cargar subtítulos de esta versión si existen
+                    v.subtitles?.forEach { sub ->
+                        Log.d(TAG, "Subtítulo encontrado: ${sub.locale}")
+                        subtitleCallback(SubtitleFile(sub.locale, sub.url))
                     }
-                )
-                linksFound++
-
-                // Si el JSON de video trae subtítulos, los cargamos aquí
-                v.subtitles?.forEach { sub ->
-                    Log.d(TAG, "Subtítulo detectado: ${sub.locale}")
-                    subtitleCallback(SubtitleFile(sub.locale, sub.url))
                 }
-            }
 
-            // --- DASH ---
-            videoData.versions?.dash?.forEach { v ->
-                Log.d(TAG, "DASH encontrado: ${v.locale}")
-                callback(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "${this.name} DASH ${v.locale}",
-                        url = v.playlist,
-                        type = ExtractorLinkType.DASH
-                    ) {
-                        this.headers = commonHeaders
-                    }
-                )
-                linksFound++
-            }
+                // 2. PROCESAR DASH (Formatos .mpd - Alternativa)
+                videoData.versions?.dash?.forEach { v ->
+                    callback(
+                        newExtractorLink(
+                            source = this.name,
+                            name = "${this.name} DASH - ${v.locale.uppercase()}",
+                            url = v.playlist,
+                            type = ExtractorLinkType.DASH
+                        ) {
+                            this.headers = videoHeaders
+                        }
+                    )
+                    linksFound++
+                }
 
-            if (linksFound == 0) Log.e(TAG, "La API no devolvió enlaces de video")
-            linksFound > 0
+                Log.d(TAG, "Total de enlaces generados: $linksFound")
+                linksFound > 0
+            } else {
+                Log.e(TAG, "La API no devolvió el campo 'versions'. Respuesta: $response")
+                false
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error crítico en loadLinks: ${e.message}")
+            Log.e(TAG, "Error en loadLinks: ${e.message}")
             false
         }
     }
