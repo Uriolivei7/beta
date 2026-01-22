@@ -73,12 +73,13 @@ class UniqueStreamProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val cleanId = url.split("/").lastOrNull { it.isNotBlank() } ?: url
-        Log.d(TAG, "Iniciando carga de serie: $cleanId")
+        Log.d(TAG, "Cargando serie con ID: $cleanId")
 
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
             "Referer" to "https://anime.uniquestream.net/series/$cleanId",
-            "Accept" to "application/json",
+            "Accept" to "application/json, text/plain, */*",
+            "Origin" to "https://anime.uniquestream.net",
             "X-Requested-With" to "XMLHttpRequest"
         )
 
@@ -86,7 +87,6 @@ class UniqueStreamProvider : MainAPI() {
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
         val episodesList = mutableListOf<Episode>()
 
-        // Usamos un Set para evitar cargar temporadas duplicadas (como esa temporada 7 y 8 repetida)
         val processedSeasonIds = mutableSetOf<String>()
 
         details.seasons?.forEach { season ->
@@ -94,11 +94,11 @@ class UniqueStreamProvider : MainAPI() {
             processedSeasonIds.add(season.content_id)
 
             try {
-                // BAJAMOS EL LÍMITE A 100 para que el servidor no nos bloquee
-                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=100&order_by=asc"
+                // BAJAMOS EL LÍMITE A 50 (Más seguro) y quitamos el order_by por si acaso
+                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=50"
                 val response = app.get(seasonUrl, headers = apiHeaders).text
 
-                Log.d(TAG, "Respuesta temporada ${season.season_number}: ${response.take(50)}...")
+                Log.d(TAG, "Respuesta temporada ${season.season_number}: ${response.take(100)}")
 
                 if (response.trim().startsWith("[")) {
                     val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
@@ -113,13 +113,16 @@ class UniqueStreamProvider : MainAPI() {
                             })
                         }
                     }
+                } else {
+                    // Si falla, imprimimos el error completo para ver el número exacto que pide
+                    Log.e(TAG, "Error servidor en Temp ${season.season_number}: $response")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error en temporada ${season.season_number}: ${e.message}")
             }
         }
 
-        Log.d(TAG, "Total episodios cargados final: ${episodesList.size}")
+        Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
 
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
