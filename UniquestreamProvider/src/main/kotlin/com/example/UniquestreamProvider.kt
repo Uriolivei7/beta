@@ -191,19 +191,59 @@ class UniqueStreamProvider : MainAPI() {
 
                         val videoData = AppUtils.parseJson<VideoResponse>(response.text)
 
-                        // Procesar versiones HLS
-                        videoData.versions?.hls?.forEach { hlsVersion ->
-                            val playlistUrl = hlsVersion.playlist
+                        // PRIORIZAR DASH sobre HLS (está en el mismo dominio)
+                        val dashVersions = videoData.versions?.dash ?: emptyList()
 
-                            if (playlistUrl.isNotBlank()) {
-                                Log.d(TAG, "Procesando: ${hlsVersion.locale}")
+                        if (dashVersions.isNotEmpty()) {
+                            Log.d(TAG, "Procesando ${dashVersions.size} versiones DASH")
 
-                                try {
-                                    Log.d(TAG, "Creando link directo para ${hlsVersion.locale}")
-                                    Log.d(TAG, "URL: $playlistUrl")
+                            dashVersions.forEach { dashVersion ->
+                                // Agregar playlist principal
+                                if (dashVersion.playlist.isNotBlank()) {
+                                    Log.d(TAG, "✓ DASH ${dashVersion.locale}: ${dashVersion.playlist.take(60)}...")
 
-                                    // Crear el link SIN headers personalizados
-                                    // Dejar que ExoPlayer use sus defaults
+                                    callback(
+                                        newExtractorLink(
+                                            source = this.name,
+                                            name = "${this.name} - ${dashVersion.locale.uppercase()}",
+                                            url = dashVersion.playlist,
+                                            type = ExtractorLinkType.DASH
+                                        ) {
+                                            this.quality = Qualities.Unknown.value
+                                        }
+                                    )
+                                    linksEnviados++
+                                }
+
+                                // Agregar hard_subs si existen
+                                dashVersion.hard_subs?.forEach { hardSub ->
+                                    if (hardSub.playlist.isNotBlank()) {
+                                        Log.d(TAG, "✓ DASH HardSub ${dashVersion.locale}-${hardSub.locale}")
+
+                                        callback(
+                                            newExtractorLink(
+                                                source = this.name,
+                                                name = "${this.name} - ${dashVersion.locale.uppercase()} (${hardSub.locale.uppercase()} subs)",
+                                                url = hardSub.playlist,
+                                                type = ExtractorLinkType.DASH
+                                            ) {
+                                                this.quality = Qualities.Unknown.value
+                                            }
+                                        )
+                                        linksEnviados++
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback a HLS si no hay DASH
+                        if (linksEnviados == 0) {
+                            videoData.versions?.hls?.forEach { hlsVersion ->
+                                val playlistUrl = hlsVersion.playlist
+
+                                if (playlistUrl.isNotBlank()) {
+                                    Log.d(TAG, "Procesando HLS: ${hlsVersion.locale}")
+
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
@@ -212,26 +252,9 @@ class UniqueStreamProvider : MainAPI() {
                                             type = ExtractorLinkType.M3U8
                                         ) {
                                             this.quality = Qualities.Unknown.value
-                                            // NO establecer headers - dejar que el reproductor use defaults
                                         }
                                     )
                                     linksEnviados++
-                                    Log.d(TAG, "✓ Link agregado para ${hlsVersion.locale}")
-
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error agregando link: ${e.message}")
-                                }
-
-                                // Subtítulos
-                                hlsVersion.subtitles?.forEach { sub ->
-                                    if (sub.url.isNotBlank()) {
-                                        subtitleCallback(
-                                            newSubtitleFile(
-                                                lang = sub.locale,
-                                                url = sub.url
-                                            )
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -324,6 +347,14 @@ class UniqueStreamProvider : MainAPI() {
 
     @Serializable
     data class DashVersion(
+        val locale: String,
+        val playlist: String,
+        val subtitles: List<SubtitleItem>? = null,
+        val hard_subs: List<HardSubItem>? = null
+    )
+
+    @Serializable
+    data class HardSubItem(
         val locale: String,
         val playlist: String
     )
