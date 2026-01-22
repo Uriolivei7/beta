@@ -78,29 +78,37 @@ class UniqueStreamProvider : MainAPI() {
         val seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
 
         if (seriesResponse.contains("Not Found")) {
-            return newAnimeLoadResponse("Serie no encontrada", url, TvType.Anime) { }
+            Log.d(TAG, "ID de episodio detectado en Home, buscando serie...")
+            val search = app.get("$apiUrl/search?query=$cleanId", headers = apiHeaders).text
+            val searchData = AppUtils.parseJson<SearchRoot>(search)
+            val realSeriesId = searchData.series?.firstOrNull()?.content_id
+            if (realSeriesId != null) {
+                // Si encontramos la serie, volvemos a intentar cargar pero con el ID bueno
+                return load("$mainUrl/series/$realSeriesId")
+            }
         }
 
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
         val episodesList = mutableListOf<Episode>()
 
+        // Reemplaza el bloque dentro de details.seasons?.forEach en tu función load:
         details.seasons?.forEach { season ->
             try {
-                // Ajustamos la URL: quitamos el limit=100 por ahora para ver si el default funciona
-                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&order_by=asc"
+                // AÑADIMOS limit=1000 para que no se corte en 5 episodios
+                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=1000&order_by=asc"
                 Log.d(TAG, "Pidiendo episodios: $seasonUrl")
 
                 val response = app.get(seasonUrl, headers = apiHeaders)
                 val seasonEpsText = response.text
 
-                // Log para ver qué llega si falla
-                if (!seasonEpsText.trim().startsWith("[")) {
-                    Log.e(TAG, "Respuesta inesperada en temporada ${season.season_number}: ${seasonEpsText.take(100)}")
-                } else {
+                if (seasonEpsText.trim().startsWith("[")) {
                     val eps = AppUtils.parseJson<List<EpisodeItem>>(seasonEpsText)
                     eps.forEach { ep ->
                         if (ep.is_clip != true) {
-                            episodesList.add(newEpisode(ep.content_id) {
+                            // LIMPIAMOS EL ID: Si ep.content_id es una URL, sacamos solo el ID
+                            val cleanEpId = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
+
+                            episodesList.add(newEpisode(cleanEpId) { // <--- Usamos el ID limpio
                                 this.name = ep.title
                                 this.episode = ep.episode_number?.toInt()
                                 this.season = season.season_number
@@ -108,10 +116,10 @@ class UniqueStreamProvider : MainAPI() {
                             })
                         }
                     }
-                    Log.d(TAG, "Temporada ${season.season_number} ok: ${eps.size} caps")
+                    Log.d(TAG, "Temporada ${season.season_number} ok: ${episodesList.size} caps acumulados")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error fatal en season ${season.season_number}: ${e.message}")
+                Log.e(TAG, "Error en season ${season.season_number}: ${e.message}")
             }
         }
 
@@ -129,10 +137,13 @@ class UniqueStreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Iniciando loadLinks para: $data")
+        // LIMPIEZA DEL ID (Fundamental para que la API responda)
+        val cleanId = data.split("/").lastOrNull { it.isNotBlank() } ?: data
+        Log.d(TAG, "Iniciando loadLinks para ID limpio: $cleanId")
+
         return try {
-            // Obtenemos los links de video
-            val response = app.get("$apiUrl/video?content_id=$data").text
+            // Usamos el ID limpio aquí
+            val response = app.get("$apiUrl/video?content_id=$cleanId").text
             val videoData = AppUtils.parseJson<VideoResponse>(response)
             var linksFound = 0
 
