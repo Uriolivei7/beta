@@ -155,18 +155,23 @@ class UniqueStreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val cleanId = data.split("/").last { it.isNotBlank() }
-
-        // Headers estrictos para evitar el Error 2000
-        val videoHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Accept" to "*/*",
-            "Referer" to "https://anime.uniquestream.net/",
-            "Origin" to "https://anime.uniquestream.net",
-            "X-Requested-With" to "XMLHttpRequest"
-        )
+        val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
         return try {
-            // Obtenemos el JSON de medios
+            // 1. Visitamos la web primero para obtener las Cookies necesarias
+            val pageResponse = app.get(watchUrl)
+            val cookies = pageResponse.cookies
+
+            // 2. Definimos los headers incluyendo las cookies capturadas
+            val videoHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Referer" to watchUrl,
+                "Origin" to "https://anime.uniquestream.net",
+                "Cookie" to cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+            )
+
+            // 3. Pedimos el JSON de medios con los headers de seguridad
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
             val response = app.get(mediaUrl, headers = videoHeaders).text
 
@@ -174,7 +179,7 @@ class UniqueStreamProvider : MainAPI() {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
 
                 videoData.versions?.hls?.forEach { v ->
-                    // AUDIO: Se envía al selector de pistas de audio/video
+                    // AUDIO / VIDEO PRINCIPAL
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -182,30 +187,19 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
+                            // IMPORTANTE: Pasamos los headers con cookies al reproductor
                             this.headers = videoHeaders
                         }
                     )
 
+                    // SUBTÍTULOS (Seccion aparte)
                     v.hard_subs?.forEach { sub ->
-                        // Si quieres que aparezcan en el menú de subtítulos de la app:
                         subtitleCallback(
-                            SubtitleFile(
+                            newSubtitleFile(
                                 lang = "${v.locale.uppercase()} (Hardsub ${sub.locale.uppercase()})",
                                 url = sub.playlist
                             )
                         )
-
-                        // OPCIONAL: Si también los quieres como una pista de video independiente:
-                        /*
-                        callback(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} - Subs: ${sub.locale.uppercase()}",
-                                url = sub.playlist,
-                                type = ExtractorLinkType.M3U8
-                            ) { this.headers = videoHeaders }
-                        )
-                        */
                     }
                 }
                 true
@@ -213,7 +207,7 @@ class UniqueStreamProvider : MainAPI() {
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Error final en loadLinks: ${e.message}")
             false
         }
     }
