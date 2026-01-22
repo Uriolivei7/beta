@@ -78,47 +78,60 @@ class UniqueStreamProvider : MainAPI() {
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
             "Referer" to "https://anime.uniquestream.net/series/$cleanId",
-            "Accept" to "application/json, text/plain, */*",
-            "Origin" to "https://anime.uniquestream.net",
+            "Accept" to "application/json",
             "X-Requested-With" to "XMLHttpRequest"
         )
 
         val seriesResponse = app.get("$apiUrl/series/$cleanId", headers = apiHeaders).text
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
         val episodesList = mutableListOf<Episode>()
-
         val processedSeasonIds = mutableSetOf<String>()
 
         details.seasons?.forEach { season ->
             if (processedSeasonIds.contains(season.content_id)) return@forEach
             processedSeasonIds.add(season.content_id)
 
-            try {
-                // BAJAMOS EL LÍMITE A 50 (Más seguro) y quitamos el order_by por si acaso
-                val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=1&limit=50"
-                val response = app.get(seasonUrl, headers = apiHeaders).text
+            // BUCLE DE PAGINACIÓN: Pedimos de 20 en 20
+            var page = 1
+            var keepLoading = true
 
-                Log.d(TAG, "Respuesta temporada ${season.season_number}: ${response.take(100)}")
+            while (keepLoading) {
+                try {
+                    val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$page&limit=20&order_by=asc"
+                    val response = app.get(seasonUrl, headers = apiHeaders).text
 
-                if (response.trim().startsWith("[")) {
-                    val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
-                    eps.forEach { ep ->
-                        if (ep.is_clip != true) {
-                            val cleanEpId = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
-                            episodesList.add(newEpisode(cleanEpId) {
-                                this.name = ep.title
-                                this.episode = ep.episode_number?.toInt()
-                                this.season = season.season_number
-                                this.posterUrl = ep.image
-                            })
+                    if (response.trim().startsWith("[")) {
+                        val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
+
+                        if (eps.isEmpty()) {
+                            keepLoading = false
+                        } else {
+                            eps.forEach { ep ->
+                                if (ep.is_clip != true) {
+                                    val cleanEpId = ep.content_id.split("/").lastOrNull { it.isNotBlank() } ?: ep.content_id
+                                    episodesList.add(newEpisode(cleanEpId) {
+                                        this.name = ep.title
+                                        this.episode = ep.episode_number?.toInt()
+                                        this.season = season.season_number
+                                        this.posterUrl = ep.image
+                                    })
+                                }
+                            }
+                            // Si recibimos menos de 20, es que ya no hay más páginas
+                            if (eps.size < 20) {
+                                keepLoading = false
+                            } else {
+                                page++ // Pedir la siguiente página
+                            }
                         }
+                    } else {
+                        keepLoading = false
+                        Log.e(TAG, "Respuesta no válida en Temp ${season.season_number} Pág $page")
                     }
-                } else {
-                    // Si falla, imprimimos el error completo para ver el número exacto que pide
-                    Log.e(TAG, "Error servidor en Temp ${season.season_number}: $response")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error en paginación: ${e.message}")
+                    keepLoading = false
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error en temporada ${season.season_number}: ${e.message}")
             }
         }
 
@@ -131,7 +144,7 @@ class UniqueStreamProvider : MainAPI() {
             addEpisodes(DubStatus.Subbed, episodesList)
         }
     }
-
+    
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
