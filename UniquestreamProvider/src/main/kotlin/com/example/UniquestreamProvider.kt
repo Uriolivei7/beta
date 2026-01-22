@@ -155,27 +155,40 @@ class UniqueStreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val cleanId = data.split("/").last { it.isNotBlank() }
+        val watchUrl = "https://anime.uniquestream.net/watch/$cleanId"
 
-        // HEADERS CRÍTICOS: Sin estos, mediacache.cc da Error 2000
+        // USAMOS EL AGENT QUE APARECE EN EL HTML DEL SITIO
+        val siteUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.39 Safari/537.36"
+
         val masterHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent" to siteUserAgent,
             "Accept" to "*/*",
             "Origin" to "https://anime.uniquestream.net",
-            "Referer" to "https://anime.uniquestream.net/", // Debe terminar en /
+            "Referer" to "$watchUrl/", // Referer directo al episodio
             "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site"
+            "Sec-Fetch-Site" to "cross-site",
+            "X-Requested-With" to "XMLHttpRequest"
         )
 
         return try {
-            // 1. Obtener los enlaces de la API
+            // 1. Visitamos la web para intentar "activar" el reto de Cloudflare
+            val pageResponse = app.get(watchUrl, headers = mapOf("User-Agent" to siteUserAgent))
+            val cookies = pageResponse.cookies
+
+            // Combinamos headers con las cookies capturadas (si las hay)
+            val authHeaders = masterHeaders.toMutableMap()
+            if (cookies.isNotEmpty()) {
+                authHeaders["Cookie"] = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+            }
+
+            // 2. Pedimos los links a la API
             val mediaUrl = "$apiUrl/episode/$cleanId/media/dash/ja-JP"
-            val response = app.get(mediaUrl, headers = masterHeaders).text
+            val response = app.get(mediaUrl, headers = authHeaders).text
 
             if (response.contains("versions")) {
                 val videoData = AppUtils.parseJson<VideoResponse>(response)
 
                 videoData.versions?.hls?.forEach { v ->
-                    // Agregamos el enlace al reproductor
                     callback(
                         newExtractorLink(
                             source = this.name,
@@ -183,12 +196,11 @@ class UniqueStreamProvider : MainAPI() {
                             url = v.playlist,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            // INYECCIÓN MANUAL DE HEADERS AL REPRODUCTOR
-                            this.headers = masterHeaders
+                            // ESTO ES CLAVE: Pasamos los headers exactos al reproductor
+                            this.headers = authHeaders
                         }
                     )
 
-                    // Subtítulos
                     v.hard_subs?.forEach { sub ->
                         subtitleCallback(
                             newSubtitleFile(
@@ -203,7 +215,7 @@ class UniqueStreamProvider : MainAPI() {
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error 2000: ${e.message}")
+            Log.e(TAG, "Error Final: ${e.message}")
             false
         }
     }
