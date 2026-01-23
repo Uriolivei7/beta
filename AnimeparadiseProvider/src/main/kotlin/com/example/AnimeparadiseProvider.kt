@@ -138,84 +138,93 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS ===")
+
         return try {
-            val epId = data.substringAfter("/watch/").substringBefore("?")
+            val epUid = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            // User-Agent exacto del curl para evitar discrepancias de seguridad
+            val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-            val actionHeaders = mapOf(
+            val baseHeaders = mapOf(
                 "User-Agent" to fixedUserAgent,
-                "Accept" to "text/x-component",
-                "Next-Action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
-                "Content-Type" to "text/plain;charset=UTF-8",
-                "Origin" to "https://www.animeparadise.moe",
-                "Referer" to "https://www.animeparadise.moe/"
+                "accept" to "text/x-component",
+                "content-type" to "text/plain;charset=UTF-8",
+                "origin" to "https://www.animeparadise.moe",
+                "referer" to watchUrl,
+                "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
+                "sec-ch-ua-platform" to "\"Windows\"",
+                "sec-fetch-dest" to "empty",
+                "sec-fetch-mode" to "cors",
+                "sec-fetch-site" to "same-origin"
             )
 
-            val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
-
-            // --- SUBTÍTULOS ---
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(response).forEach { match ->
-                val src = match.groupValues[1]
-                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(
-                    newSubtitleFile(lang = match.groupValues[2], url = subUrl) {
-                        this.headers = mapOf("User-Agent" to fixedUserAgent, "Referer" to "https://www.animeparadise.moe/")
-                    }
-                )
+            // PASO 1: Obtener el streamLink con el Next-Action específico
+            val actionHeaders = baseHeaders.toMutableMap().apply {
+                put("next-action", "00edb12c2d47127c458483c475a4b71040d121ca63")
             }
 
-            // --- VIDEO CON CAPTURA DE COOKIES ---
-            val streamRegex = Regex(""""streamLink":"(https://[^"]+)"""")
-            val streamMatch = streamRegex.find(response)
+            // El curl muestra que para obtener el stream se envía un body vacío "[]"
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = "[]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            )
 
-            if (streamMatch != null) {
-                val finalUrl = streamMatch.groupValues[1]
-                    .replace("\\u0026", "&")
-                    .replace("\\/", "/")
+            val resText = response.text
+            val cookies = response.cookies
 
-                Log.d("AnimeParadise", "Logs: [V] Intentando con cookies de sesión...")
+            // Extracción del streamLink principal y el de backup
+            val streamLink = resText.substringAfter("\"streamLink\":\"").substringBefore("\"")
+            val streamLinkBackup = resText.substringAfter("\"streamLinkBackup\":\"").substringBefore("\"")
 
-                // Intentamos obtener las cookies que nos dio el servidor en la última petición
-                val cookies = app.get(watchUrl).cookies
+            if (streamLink.isNotBlank() && streamLink.startsWith("http")) {
+                val finalUrl = streamLink.replace("\\u0026", "&").replace("\\/", "/")
+
+                Log.d("AnimeParadise", "Logs: [V] Link encontrado, inyectando headers de seguridad")
+
+                val playerHeaders = mutableMapOf(
+                    "User-Agent" to fixedUserAgent,
+                    "Origin" to "https://www.animeparadise.moe",
+                    "Referer" to "https://www.animeparadise.moe/",
+                    "Accept" to "*/*"
+                )
+
+                // Es crucial pasar la cookie de sesión exacta que usó el curl
+                if (cookies.isNotEmpty()) {
+                    playerHeaders["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                }
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise",
+                        name = "AnimeParadise (Main)",
                         source = "AnimeParadise",
                         url = finalUrl,
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        this.referer = "https://www.animeparadise.moe/"
-
-                        // Armamos los headers incluyendo las cookies si existen
-                        val headerMap = mutableMapOf(
-                            "User-Agent" to fixedUserAgent,
-                            "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/",
-                            "Accept" to "*/*"
-                        )
-
-                        if (cookies.isNotEmpty()) {
-                            headerMap["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                        }
-
-                        this.headers = headerMap
+                        this.headers = playerHeaders
                     }
                 )
-            } else {
-                Log.d("AnimeParadise", "Logs: [!] No se encontró streamLink")
+            }
+
+            // PASO 2: Extraer subtítulos del JSON de respuesta
+            val subDataArray = resText.substringAfter("\"subData\":[").substringBefore("]")
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+
+            subRegex.findAll(subDataArray).forEach { match ->
+                val src = match.groupValues[1]
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(
+                    newSubtitleFile(lang = match.groupValues[2], url = subUrl)
+                )
             }
 
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e("AnimeParadise", "Logs: ERROR: ${e.message}")
+            Log.e("AnimeParadise", "Logs: ERROR en loadLinks: ${e.message}")
             false
         }
     }
