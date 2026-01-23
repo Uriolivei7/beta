@@ -140,46 +140,38 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS === URL: $data")
 
         return try {
-            // 1. Extracción precisa de IDs usando URI
-            val uri = java.net.URI(data)
             val epUid = data.substringAfter("/watch/").substringBefore("?")
+            val originId = data.substringAfter("origin=").substringBefore("&")
 
-            // Extraer el query parameter 'origin'
-            val originId = uri.query.split("&")
-                .find { it.startsWith("origin=") }
-                ?.substringAfter("origin=")
-
-            if (originId == null) {
-                Log.d("AnimeParadise", "Logs: [!] No se pudo encontrar el originId en $data")
-                return false
-            }
-
-            // 2. Llamada a la API de Datos (JSON Puro)
+            // URL de la API de streaming
             val apiUrl = "https://api.animeparadise.moe/stream/$epUid/$originId"
-            Log.d("AnimeParadise", "Logs: Pidiendo stream a: $apiUrl")
+            Log.d("AnimeParadise", "Logs: Probando API con POST: $apiUrl")
 
-            val response = app.get(apiUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer" to "https://www.animeparadise.moe/",
-                "Accept" to "application/json"
-            ))
+            // Cambiamos app.get por app.post y enviamos un body vacío como el curl original
+            val response = app.post(apiUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to "https://www.animeparadise.moe/",
+                    "Origin" to "https://www.animeparadise.moe",
+                    "Accept" to "application/json",
+                    "Content-Type" to "application/json"
+                ),
+                requestBody = "{}".toRequestBody("application/json".toMediaTypeOrNull())
+            )
 
             val resText = response.text
+            Log.d("AnimeParadise", "Logs: Respuesta API (${response.code}): ${resText.take(200)}")
 
-            // 3. Extraer el link de video del JSON
             val streamLink = Regex("""\"streamLink\":\"(https:[^\"]+)\"""").find(resText)?.groupValues?.get(1)
                 ?.replace("\\/", "/")?.replace("\\u0026", "&")
 
             if (!streamLink.isNullOrBlank()) {
-                Log.d("AnimeParadise", "Logs: [V] Link original: $streamLink")
-
-                // 4. Codificar para el Proxy de AnimeParadise (Evita el 403)
                 val encodedUrl = java.net.URLEncoder.encode(streamLink, "UTF-8")
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise (Direct)",
+                        name = "AnimeParadise",
                         source = "AnimeParadise",
                         url = proxyUrl,
                     ).apply {
@@ -192,11 +184,9 @@ class AnimeParadiseProvider : MainAPI() {
                         )
                     }
                 )
-            } else {
-                Log.d("AnimeParadise", "Logs: [!] El JSON no contenía streamLink. Respuesta: $resText")
             }
 
-            // 5. Extraer Subtítulos
+            // Subtítulos
             Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""").findAll(resText).forEach { match ->
                 val src = match.groupValues[1]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
@@ -206,7 +196,7 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e("AnimeParadise", "Logs: ERROR Crítico: ${e.message}")
+            Log.e("AnimeParadise", "Logs: ERROR: ${e.message}")
             false
         }
     }
