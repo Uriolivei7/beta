@@ -77,41 +77,60 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load con corrección de orden para: $url")
+        Log.d(TAG, "Logs: Iniciando load híbrido para: $url")
         return try {
-            val slug = url.substringAfterLast("/")
+            val animeSlug = url.substringAfterLast("/")
 
-            val detailResponse = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
+            val apiPath = "$apiUrl/anime/$animeSlug"
+            val detailResponse = app.get(apiPath, headers = apiHeaders).text
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
-            val anime = wrapper.data ?: throw Exception("Data vacía")
+            val anime = wrapper.data
 
-            val episodesResponse = app.get("$apiUrl/anime/episodes/$slug", headers = apiHeaders).text
-            val epWrapper: EpisodeListResponse = mapper.readValue(episodesResponse)
+            val response = app.get(url)
+            val document = response.document
+            val nextData = document.selectFirst("script#__NEXT_DATA__")?.data()
 
-            val episodes = (epWrapper.data ?: emptyList())
-                .sortedBy { it.number?.toIntOrNull() ?: 0 }
-                .map { epEntry ->
-                    val num = epEntry.number?.toIntOrNull() ?: 0
-                    newEpisode("/watch/${epEntry.uid}?origin=${anime.id ?: slug}") {
-                        this.name = epEntry.title ?: "Episodio $num"
-                        this.episode = num
-                    }
+            if (nextData == null) throw Exception("No se encontró __NEXT_DATA__")
+
+            val json = mapper.readTree(nextData)
+            val animeJson = json.get("props")?.get("pageProps")?.get("anime")
+
+            val episodes = animeJson?.get("ep")?.map { ep ->
+                val id = ep.get("id")?.asText() ?: ""
+                val num = ep.get("number")?.asText()?.toIntOrNull() ?: 0
+                val title = ep.get("title")?.asText() ?: "Episodio $num"
+                val thumb = ep.get("image")?.asText()
+
+                newEpisode("/watch/$id?origin=$animeSlug") {
+                    this.name = title
+                    this.episode = num
+                    this.posterUrl = thumb
                 }
+            }?.sortedBy { it.episode } ?: emptyList()
 
-            Log.d(TAG, "Logs: Episodios ordenados correctamente: ${episodes.size}")
+            Log.d(TAG, "Logs: Extraídos ${episodes.size} episodios ordenados.")
 
-            newAnimeLoadResponse(anime.title ?: "Sin título", url, TvType.Anime) {
-                this.plot = anime.synopsys
-                this.tags = anime.genres
-                this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
-                this.year = anime.animeSeason?.year
-                this.showStatus = if (anime.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
+            newAnimeLoadResponse(anime?.title ?: "Sin título", url, TvType.Anime) {
+                this.plot = anime?.synopsys
+                this.tags = anime?.genres
+                this.posterUrl = anime?.posterImage?.large
+                this.year = anime?.animeSeason?.year
+                this.showStatus = if (anime?.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
 
                 addEpisodes(DubStatus.Subbed, episodes)
-                if (!anime.trailer.isNullOrBlank()) addTrailer(anime.trailer)
+
+                this.recommendations = json.get("props")?.get("pageProps")?.get("recommendations")?.map { rec ->
+                    newAnimeSearchResponse(
+                        rec.get("title")?.asText() ?: "",
+                        rec.get("link")?.asText() ?: "",
+                        TvType.Anime
+                    ) {
+                        this.posterUrl = rec.get("posterImage")?.get("large")?.asText()
+                    }
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
+            Log.e(TAG, "Logs: Error en load híbrido: ${e.message}")
             null
         }
     }
