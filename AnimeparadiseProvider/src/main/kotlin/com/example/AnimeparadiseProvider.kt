@@ -77,58 +77,68 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load híbrido para: $url")
+        Log.d(TAG, "Logs: Iniciando load seguro para: $url")
         return try {
-            val slug = url.substringAfterLast("/")
+            val animeSlug = url.substringAfterLast("/")
+
             val response = app.get(url)
             val document = response.document
 
-            val nextData = document.selectFirst("script#__NEXT_DATA__")?.data()
-            val json = mapper.readTree(nextData)
-            val pageProps = json.get("props")?.get("pageProps")
+            val nextDataElement = document.selectFirst("script#__NEXT_DATA__")
+            if (nextDataElement == null) {
+                Log.e(TAG, "Logs: No se encontró el script __NEXT_DATA__")
+                return null
+            }
+
+            val json = mapper.readTree(nextDataElement.data())
+            val pageProps = json?.get("props")?.get("pageProps")
             val animeData = pageProps?.get("anime")
 
-            val episodes = animeData?.get("ep")?.map { ep ->
-                val id = ep.get("id")?.asText() ?: ""
-                val title = ep.get("title")?.asText() ?: "Episodio ${ep.get("number")?.asText()}"
-                val num = ep.get("number")?.asText()?.toIntOrNull()
-                val img = ep.get("image")?.asText()
+            if (animeData == null) {
+                Log.e(TAG, "Logs: No se encontraron datos del anime en el JSON")
+                return null
+            }
 
-                newEpisode("/watch/$id?origin=$slug") {
-                    this.name = title
-                    this.episode = num
-                    this.posterUrl = img
+            val episodes = animeData.get("ep")?.map { ep ->
+                val epId = ep.get("id")?.asText() ?: ""
+                val epTitle = ep.get("title")?.asText() ?: "Episodio ${ep.get("number")?.asText()}"
+                val epNum = ep.get("number")?.asText()?.toIntOrNull()
+                val epThumb = ep.get("image")?.asText()
+
+                newEpisode("/watch/$epId?origin=$animeSlug") {
+                    this.name = epTitle
+                    this.episode = epNum
+                    this.posterUrl = epThumb
                 }
             } ?: emptyList()
 
-            Log.d(TAG, "Logs: Extraídos ${episodes.size} episodios del JSON interno")
+            Log.d(TAG, "Logs: Extraídos ${episodes.size} episodios para $animeSlug")
 
-            val recommendations = pageProps?.get("recommendations")?.map { rec ->
-                newAnimeSearchResponse(
-                    rec.get("title")?.asText() ?: "",
-                    rec.get("link")?.asText() ?: "",
-                    TvType.Anime
-                ) {
+            val recommendations = pageProps.get("recommendations")?.mapNotNull { rec ->
+                val recTitle = rec.get("title")?.asText() ?: return@mapNotNull null
+                val recLink = rec.get("link")?.asText() ?: ""
+                newAnimeSearchResponse(recTitle, recLink, TvType.Anime) {
                     this.posterUrl = rec.get("posterImage")?.get("large")?.asText()
                 }
             }
 
-            val title = animeData?.get("title")?.asText() ?: "Sin título"
-            val poster = animeData?.get("posterImage")?.get("large")?.asText()
-            val description = animeData?.get("synopsys")?.asText()
+            val mainTitle = animeData.get("title")?.asText() ?: "Sin título"
 
-            newAnimeLoadResponse(title, url, TvType.Anime) {
-                this.plot = description
-                this.posterUrl = poster
-                this.year = animeData?.get("animeSeason")?.get("year")?.asInt()
-                this.showStatus = if (animeData?.get("status")?.asText() == "finished")
+            newAnimeLoadResponse(mainTitle, url, TvType.Anime) {
+                this.plot = animeData.get("synopsys")?.asText()
+                this.posterUrl = animeData.get("posterImage")?.get("large")?.asText()
+                this.year = animeData.get("animeSeason")?.get("year")?.asInt()
+                this.showStatus = if (animeData.get("status")?.asText() == "finished")
                     ShowStatus.Completed else ShowStatus.Ongoing
 
                 addEpisodes(DubStatus.Subbed, episodes)
                 this.recommendations = recommendations
+
+                val trailer = animeData.get("trailer")?.asText()
+                if (!trailer.isNullOrBlank()) addTrailer(trailer)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load híbrido: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
             null
         }
     }
