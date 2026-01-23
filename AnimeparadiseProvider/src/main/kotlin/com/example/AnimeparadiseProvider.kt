@@ -90,7 +90,8 @@ class AnimeParadiseProvider : MainAPI() {
             // Mapeamos al envoltorio "data"
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
-            val anime = wrapper.data ?: throw Exception("La API respondió pero el campo 'data' está vacío para: $slug")
+            val anime = wrapper.data
+                ?: throw Exception("La API respondió pero el campo 'data' está vacío para: $slug")
 
             Log.d(TAG, "Logs: Datos obtenidos exitosamente para: ${anime.title}")
 
@@ -111,7 +112,7 @@ class AnimeParadiseProvider : MainAPI() {
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 this.year = anime.animeSeason?.year
 
-                this.showStatus = when(anime.status) {
+                this.showStatus = when (anime.status) {
                     "finished" -> ShowStatus.Completed
                     "ongoing" -> ShowStatus.Ongoing
                     else -> null
@@ -134,24 +135,30 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d(TAG, "Logs: Iniciando loadLinks para: $data")
         return try {
-            val doc = Jsoup.parse(app.get(mainUrl + data).text)
-            val nextData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return false
-            val videoProps: NextDataVideo = mapper.readValue(nextData)
-            val pageProps = videoProps.props.pageProps
+            val epId = data.substringAfter("/watch/").substringBefore("?")
+            val streamApiUrl = "https://api.animeparadise.moe/watch/$epId"
 
-            pageProps.subtitles?.forEach {
-                subtitleCallback(newSubtitleFile(it.label, it.src))
-            }
+            Log.d(TAG, "Logs: Pidiendo fuentes a: $streamApiUrl")
+            val response = app.get(streamApiUrl, headers = apiHeaders).text
+            val videoData: VideoDirectList = mapper.readValue(response)
 
-            val storageUrl = "$apiUrl/storage/${pageProps.animeData.title}/${pageProps.episode.number}"
-            val videoResponse = app.get(storageUrl, headers = apiHeaders).text
-            val videoList: VideoDirectList = mapper.readValue(videoResponse)
+            videoData.directUrl?.forEach { video ->
+                Log.d(TAG, "Logs: Fuente encontrada: ${video.label} -> ${video.src}")
 
-            videoList.directUrl?.forEach { video ->
-                callback(
-                    newExtractorLink(this.name, "${this.name} ${video.label}", video.src) {
-                        this.referer = "$mainUrl/"
+                val isM3u8 = video.src.contains("m3u8")
+
+                callback.invoke(
+                    newExtractorLink(
+                        name = "AnimeParadise - ${video.label}",
+                        source = "AnimeParadise",
+                        url = video.src,
+                    ) {
+                        // AQUÍ ES DONDE SE PONEN LOS PARÁMETROS EN TU VERSIÓN
+                        this.quality = getQualityFromName(video.label)
+                        this.referer = "https://www.animeparadise.moe/"
+                        this.type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     }
                 )
             }
@@ -159,6 +166,16 @@ class AnimeParadiseProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
+        }
+    }
+
+    private fun getQualityFromName(name: String): Int {
+        return when {
+            name.contains("1080") -> 1080
+            name.contains("720") -> 720
+            name.contains("480") -> 480
+            name.contains("360") -> 360
+            else -> 0 // Calidad desconocida
         }
     }
 }
@@ -197,11 +214,17 @@ data class SubtitleEntry(val src: String, val label: String)
 data class SimpleAnime(val title: String)
 data class SimpleEpisode(val number: String)
 
-data class VideoDirectList(val directUrl: List<VideoSource>? = null)
-data class VideoSource(val src: String, val label: String)
-
 // Esta clase representa el sobre/envoltorio de la API
 data class AnimeDetailResponse(
     val data: AnimeObject? = null,
     val error: Boolean? = null
+)
+
+data class VideoDirectList(
+    val directUrl: List<VideoSource>? = null
+)
+
+data class VideoSource(
+    val src: String,
+    val label: String
 )
