@@ -158,44 +158,45 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- SCANNER DE SUBTÍTULOS (Sintaxis moderna) ---
-            Log.d("AnimeParadise", "Logs: === INICIO ESCANEO DE SUBS ===")
-
+            // --- PROCESAMIENTO DE RESPUESTA NEXT.JS ---
+            // Eliminamos los prefijos de stream (ej: 1:I{"id"...) para que el JSON sea legible
             val cleanResponse = response
+                .replace(Regex("""^[0-9]+:[A-Z]"""), "")
                 .replace("\\u0022", "\"")
                 .replace("\\\"", "\"")
                 .replace("\\/", "/")
 
-            val idPattern = Regex("""(?:"id"|"file"|"subtitles")\s*:\s*"([a-zA-Z0-9_-]{25,})"""")
-            val allPossibleIds = idPattern.findAll(cleanResponse).map { it.groupValues[1] }.distinct().toList()
+            Log.d("AnimeParadise", "Logs: === INICIO ESCANEO DE SUBS ===")
 
-            if (allPossibleIds.isNotEmpty()) {
-                allPossibleIds.forEachIndexed { index, subId ->
-                    val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
+            // Buscamos el objeto de subtítulos: {"id":"UUID","lang":"Idioma"}
+            // El ID de subtítulos suele ser un UUID (letras-números-guiones)
+            val subRegex = Regex("""\{"id":"([a-f0-9-]{36})","lang":"([^"]+)"\}""")
+            val subMatches = subRegex.findAll(cleanResponse).toList()
 
-                    // Buscamos el nombre del idioma en el JSON
-                    val langRegex = Regex("""\{"id":"$subId"[^}]+"lang":"([^"]+)"\}""")
-                    val langMatch = langRegex.find(cleanResponse)
-                    val langName = langMatch?.groupValues?.get(1) ?: "Subtítulo ${index + 1}"
+            if (subMatches.isNotEmpty()) {
+                subMatches.forEach { match ->
+                    val sId = match.groupValues[1]
+                    val sLang = match.groupValues[2]
+                    val sUrl = "https://api.animeparadise.moe/stream/file/$sId"
 
-                    // Log para verificar la URL en el navegador si es necesario
-                    Log.d("AnimeParadise", "Logs: [+] Detectado: $langName -> URL: $subUrl")
+                    Log.d("AnimeParadise", "Logs: [+] SUB ENCONTRADO: $sLang -> URL: $sUrl")
 
                     subtitleCallback.invoke(
-                        newSubtitleFile(
-                            lang = langName,
-                            url = subUrl
-                        ) {
+                        newSubtitleFile(lang = sLang, url = sUrl) {
                             this.headers = mapOf(
                                 "referer" to "https://www.animeparadise.moe/",
                                 "origin" to "https://www.animeparadise.moe",
-                                "accept" to "*/*"
+                                "accept" to "text/plain, */*",
+                                "connection" to "keep-alive"
                             )
                         }
                     )
                 }
             } else {
-                Log.d("AnimeParadise", "Logs: [!] No se hallaron IDs de subtítulos en la respuesta.")
+                Log.d("AnimeParadise", "Logs: [!] No se hallaron subtítulos estructurados. Reintentando búsqueda genérica...")
+                // Búsqueda de respaldo por si el formato UUID cambia
+                val backupIds = Regex("""(?:"id")\s*:\s*"([a-zA-Z0-9_-]{25,})"""").findAll(cleanResponse)
+                backupIds.forEach { Log.d("AnimeParadise", "Logs: [?] ID Genérico hallado: ${it.groupValues[1]}") }
             }
 
             // --- RASTREO DE VIDEO ---
