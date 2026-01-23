@@ -42,7 +42,8 @@ class AnimeParadiseProvider : MainAPI() {
             val resData: AnimeListResponse = mapper.readValue(response)
 
             val animeList = resData.data.map {
-                newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
+                // Usamos ?: "" para asegurar que el String no sea nulo
+                newAnimeSearchResponse(it.title ?: "Sin título", "${it.id ?: ""}|${it.link ?: ""}", TvType.Anime) {
                     this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
             }
@@ -60,8 +61,8 @@ class AnimeParadiseProvider : MainAPI() {
             val resData: AnimeListResponse = mapper.readValue(response)
 
             resData.data.map {
-                newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
-                    this.posterUrl = it.posterImage?.large
+                newAnimeSearchResponse(it.title ?: "Sin título", "${it.id ?: ""}|${it.link ?: ""}", TvType.Anime) {
+                    this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
             }
         } catch (e: Exception) {
@@ -73,31 +74,27 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         return try {
             val parts = url.split("|")
-            // Extraemos solo el ID. Si viene la URL completa, nos quedamos con lo último
             val rawId = parts[0]
             val id = if (rawId.contains("/")) rawId.substringAfterLast("/") else rawId
-            val slug = parts[1]
 
-            Log.d(TAG, "Logs: Pidiendo ID limpio: $id")
+            Log.d(TAG, "Logs: Pidiendo a API: $apiUrl/anime/$id")
 
-            // Ahora la URL de la API será correcta: https://api.animeparadise.moe/anime/6700659...
             val detailResponse = app.get("$apiUrl/anime/$id", headers = apiHeaders).text
 
-            // Si la API responde 404, esto lanzará error antes de llegar a Jackson
-            if (detailResponse.contains("Not Found")) {
-                throw Exception("La API devolvió 404 para el ID: $id")
-            }
+            // Mapeamos primero al envoltorio
+            val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
-            val anime: AnimeObject = mapper.readValue(detailResponse)
+            // Extraemos el objeto anime del campo "data"
+            val anime = wrapper.data ?: throw Exception("El campo data vino nulo")
 
             val episodes = anime.ep?.mapIndexed { index, epId ->
                 newEpisode("/watch/$epId?origin=${anime.id}") {
-                    this.name = "Episode ${index + 1}"
+                    this.name = "Episodio ${index + 1}"
                     this.episode = index + 1
                 }
             } ?: emptyList()
 
-            newAnimeLoadResponse(anime.title, url, TvType.Anime) {
+            newAnimeLoadResponse(anime.title ?: "Sin título", url, TvType.Anime) {
                 this.plot = anime.synopsys
                 this.tags = anime.genres
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
@@ -159,13 +156,13 @@ data class AnimeListResponse(val data: List<AnimeObject>)
 
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
-    val title: String,
-    val link: String,
+    val title: String? = null, // Cambiado a opcional para evitar el crash
+    val link: String? = null,
     val status: String? = null,
     val synopsys: String? = null,
     val genres: List<String>? = null,
     val trailer: String? = null,
-    val ep: List<String>? = null, // La lista de IDs de episodios que encontraste
+    val ep: List<String>? = null,
     val animeSeason: SeasonInfo? = null,
     val posterImage: ImageInfo? = null
 )
@@ -191,3 +188,9 @@ data class SimpleEpisode(val number: String)
 
 data class VideoDirectList(val directUrl: List<VideoSource>? = null)
 data class VideoSource(val src: String, val label: String)
+
+// Esta clase representa el sobre/envoltorio de la API
+data class AnimeDetailResponse(
+    val data: AnimeObject? = null,
+    val error: Boolean? = null
+)
