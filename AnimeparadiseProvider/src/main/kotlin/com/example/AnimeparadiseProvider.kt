@@ -77,42 +77,41 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load para URL/Slug: $url")
+        Log.d(TAG, "Logs: Iniciando load con corrección de orden para: $url")
         return try {
-            val slug = if (url.contains("/")) url.substringAfterLast("/") else url
-            val apiPath = "$apiUrl/anime/$slug"
+            val slug = url.substringAfterLast("/")
 
-            val detailResponse = app.get(apiPath, headers = apiHeaders).text
+            val detailResponse = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
             val anime = wrapper.data ?: throw Exception("Data vacía")
 
-            val episodes = anime.ep?.reversed()?.mapIndexed { index, epId ->
-                val episodeNumber = index + 1
+            val episodesResponse = app.get("$apiUrl/anime/episodes/$slug", headers = apiHeaders).text
+            val epWrapper: EpisodeListResponse = mapper.readValue(episodesResponse)
 
-                newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
-                    this.name = "Episodio $episodeNumber"
-                    this.episode = episodeNumber
-                    this.posterUrl = anime.posterImage?.large
+            val episodes = (epWrapper.data ?: emptyList())
+                .sortedBy { it.number?.toIntOrNull() ?: 0 }
+                .map { epEntry ->
+                    val num = epEntry.number?.toIntOrNull() ?: 0
+                    newEpisode("/watch/${epEntry.uid}?origin=${anime.id ?: slug}") {
+                        this.name = epEntry.title ?: "Episodio $num"
+                        this.episode = num
+                    }
                 }
-            } ?: emptyList()
 
-            Log.d(TAG, "Logs: Se procesaron ${episodes.size} episodios")
+            Log.d(TAG, "Logs: Episodios ordenados correctamente: ${episodes.size}")
 
             newAnimeLoadResponse(anime.title ?: "Sin título", url, TvType.Anime) {
                 this.plot = anime.synopsys
                 this.tags = anime.genres
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 this.year = anime.animeSeason?.year
-                this.showStatus = when (anime.status) {
-                    "finished" -> ShowStatus.Completed
-                    "ongoing" -> ShowStatus.Ongoing
-                    else -> null
-                }
+                this.showStatus = if (anime.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
+
                 addEpisodes(DubStatus.Subbed, episodes)
                 if (!anime.trailer.isNullOrBlank()) addTrailer(anime.trailer)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
+            Log.e(TAG, "Logs: Error en load: ${e.message}")
             null
         }
     }
