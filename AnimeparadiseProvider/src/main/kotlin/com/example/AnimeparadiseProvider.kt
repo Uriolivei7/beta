@@ -137,7 +137,7 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: Iniciando loadLinks con Subtítulos API para: $data")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
         return try {
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
@@ -158,21 +158,33 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- EXTRACCIÓN DINÁMICA DE SUBTÍTULOS ---
-            // Buscamos patrones tipo "stream/file/ID_DE_SUB"
-            val subIdRegex = Regex("""stream/file/([a-zA-Z0-9_-]+)""")
-            subIdRegex.findAll(response).forEach { match ->
-                val subId = match.groupValues[1]
-                val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
+            // --- RASTREO DE SUBTÍTULOS ---
+            Log.d(TAG, "Logs: Buscando subtítulos en la respuesta...")
 
-                // Etiquetamos como Spanish por defecto (puedes ajustar si detectas otros)
-                Log.d(TAG, "Logs: Subtítulo API detectado: $subUrl")
-                subtitleCallback.invoke(
-                    SubtitleFile("Spanish", subUrl)
-                )
+            // Buscamos el patrón que encontraste en tu cURL: /stream/file/ID
+            val subIdRegex = Regex("""stream/file/([a-zA-Z0-9_-]+)""")
+            val subMatches = subIdRegex.findAll(response).toList()
+
+            if (subMatches.isEmpty()) {
+                Log.d(TAG, "Logs: [!] No se encontraron IDs de subtítulos en la respuesta.")
+            } else {
+                Log.d(TAG, "Logs: Se encontraron ${subMatches.size} posibles pistas de subtítulos.")
+                subMatches.forEachIndexed { index, match ->
+                    val subId = match.groupValues[1]
+                    val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
+
+                    Log.d(TAG, "Logs: [+] Subtítulo [$index] detectado: $subUrl")
+
+                    subtitleCallback.invoke(
+                        newSubtitleFile(
+                            lang = "Spanish (Track ${index + 1})",
+                            url = subUrl
+                        )
+                    )
+                }
             }
 
-            // --- EXTRACCIÓN DE VIDEO ---
+            // --- RASTREO DE VIDEO ---
             val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+""")
             val videoMatch = lightningRegex.find(response)
 
@@ -180,21 +192,27 @@ class AnimeParadiseProvider : MainAPI() {
                 val rawLightningUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
                 val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawLightningUrl"
 
+                Log.d(TAG, "Logs: [V] Video enviado al reproductor: $finalUrl")
+
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise Multi",
+                        name = "AnimeParadise",
                         source = "AnimeParadise",
                         url = finalUrl,
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        this.headers = commonHeaders + mapOf("accept" to "*/*")
+                        this.headers = commonHeaders
                     }
                 )
+            } else {
+                Log.d(TAG, "Logs: [!] Error: No se encontró la URL del video (LightningFlash).")
             }
+
+            Log.d(TAG, "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: ERROR CRÍTICO: ${e.message}")
             false
         }
     }
