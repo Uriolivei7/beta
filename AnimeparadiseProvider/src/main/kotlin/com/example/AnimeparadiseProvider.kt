@@ -70,17 +70,25 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "Logs: Cargando detalles de $url")
         return try {
             val parts = url.split("|")
             val id = parts[0]
             val slug = parts[1]
 
-            val document = Jsoup.parse(app.get("$mainUrl/anime/$slug").text)
-            val jsonData = document.selectFirst("script#__NEXT_DATA__")?.data() ?: throw Exception("No DATA")
+            // Usamos una petición limpia a la página del anime
+            val fullUrl = "$mainUrl/anime/$slug"
+            val response = app.get(fullUrl, headers = apiHeaders).text
+            val document = Jsoup.parse(response)
+
+            // Selector más flexible para el script de datos
+            val jsonData = document.select("script#__NEXT_DATA__").firstOrNull()?.data()
+                ?: throw Exception("No se encontró __NEXT_DATA__ en la página")
 
             val details: NextDataResponse = mapper.readValue(jsonData)
             val data = details.props.pageProps.data
 
+            // Obtener episodios de la API
             val epResponse = app.get("$apiUrl/anime/$id/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
@@ -91,13 +99,18 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }.reversed()
 
-            newAnimeLoadResponse(slug.replace("-", " "), url, TvType.Anime) {
+            newAnimeLoadResponse(slug.replace("-", " ").capitalize(), url, TvType.Anime) {
                 this.plot = data.synopsys
                 this.tags = data.genres
+                this.posterUrl = document.select("meta[property=og:image]").attr("content")
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en load: ${e.message}")
+            // Log extra para depurar si falla el HTML
+            if (e.message?.contains("No se encontró") == true) {
+                Log.d(TAG, "Logs: Estructura HTML detectada: " + (if(url.contains("anime")) "Es página de anime" else "URL sospechosa"))
+            }
             null
         }
     }
