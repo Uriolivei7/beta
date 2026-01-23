@@ -77,90 +77,58 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load para: $url")
+        Log.d(TAG, "Logs: Iniciando load híbrido para: $url")
         return try {
-            val slug = if (url.contains("/")) url.substringAfterLast("/") else url
-            val apiPath = "$apiUrl/anime/$slug"
+            val slug = url.substringAfterLast("/")
+            val response = app.get(url)
+            val document = response.document
 
-            val document = app.get(url).document
-            val detailResponse = app.get(apiPath, headers = apiHeaders).text
-            val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
-            val anime = wrapper.data ?: throw Exception("El campo 'data' está vacío")
+            val nextData = document.selectFirst("script#__NEXT_DATA__")?.data()
+            val json = mapper.readTree(nextData)
+            val pageProps = json.get("props")?.get("pageProps")
+            val animeData = pageProps?.get("anime")
 
-            Log.d(TAG, "Logs: Anime API: ${anime.title}. Iniciando extracción híbrida.")
+            val episodes = animeData?.get("ep")?.map { ep ->
+                val id = ep.get("id")?.asText() ?: ""
+                val title = ep.get("title")?.asText() ?: "Episodio ${ep.get("number")?.asText()}"
+                val num = ep.get("number")?.asText()?.toIntOrNull()
+                val img = ep.get("image")?.asText()
 
-            val htmlEpisodes = document.select("div.style-module__jZC1OG__embla__slide")
-            val episodes = if (htmlEpisodes.isNotEmpty()) {
-                Log.d(TAG, "Logs: Extrayendo ${htmlEpisodes.size} episodios desde el HTML")
-                htmlEpisodes.map { element ->
-                    val title = element.selectFirst(".styles-module__GYwvDG__anime_title_container")?.text()
-                    val thumb = element.selectFirst("img")?.attr("src")?.let {
-                        if (it.contains("url=")) it.substringAfter("url=").substringBefore("&") else it
-                    }
-                    val epNumStr = element.selectFirst(".styles-module__GYwvDG__number_container")?.text()
-                    val watchLink = element.selectFirst("a")?.attr("href") ?: ""
-
-                    newEpisode(watchLink) {
-                        this.name = title
-                        this.episode = epNumStr?.toIntOrNull()
-                        this.posterUrl = java.net.URLDecoder.decode(thumb ?: "", "UTF-8")
-                    }
+                newEpisode("/watch/$id?origin=$slug") {
+                    this.name = title
+                    this.episode = num
+                    this.posterUrl = img
                 }
-            } else {
-                Log.d(TAG, "Logs: HTML vacío, usando episodios de la API")
-                (anime.ep ?: emptyList()).mapIndexed { index, epData ->
-                    newEpisode("/watch/${epData.id}?origin=${anime.id ?: slug}") {
-                        this.name = epData.title ?: "Episodio ${index + 1}"
-                        this.episode = epData.number?.toIntOrNull() ?: (index + 1)
-                        this.posterUrl = epData.image
-                    }
+            } ?: emptyList()
+
+            Log.d(TAG, "Logs: Extraídos ${episodes.size} episodios del JSON interno")
+
+            val recommendations = pageProps?.get("recommendations")?.map { rec ->
+                newAnimeSearchResponse(
+                    rec.get("title")?.asText() ?: "",
+                    rec.get("link")?.asText() ?: "",
+                    TvType.Anime
+                ) {
+                    this.posterUrl = rec.get("posterImage")?.get("large")?.asText()
                 }
             }
 
-            val recommendations = try {
-                val htmlRecs = document.select("div.style-module__1f_A5G__slide")
-                if (htmlRecs.isNotEmpty()) {
-                    htmlRecs.mapNotNull { element ->
-                        val aTag = element.selectFirst("a")
-                        val recTitle = aTag?.attr("title") ?: ""
-                        val recLink = aTag?.attr("href") ?: ""
-                        val recPoster = element.selectFirst("img")?.attr("src")?.let {
-                            if (it.contains("url=")) it.substringAfter("url=").substringBefore("&") else it
-                        }
-                        if (recLink.isNotEmpty()) {
-                            newAnimeSearchResponse(recTitle, recLink, TvType.Anime) {
-                                this.posterUrl = java.net.URLDecoder.decode(recPoster ?: "", "UTF-8")
-                            }
-                        } else null
-                    }
-                } else {
-                    val recsResponse = app.get("$apiUrl/anime/related/$slug", headers = apiHeaders).text
-                    val recsData: AnimeListResponse = mapper.readValue(recsResponse)
-                    recsData.data?.map {
-                        newAnimeSearchResponse(it.title ?: "", it.link ?: "", TvType.Anime) {
-                            this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "Logs: Error en recomendados: ${e.message}")
-                null
-            }
+            val title = animeData?.get("title")?.asText() ?: "Sin título"
+            val poster = animeData?.get("posterImage")?.get("large")?.asText()
+            val description = animeData?.get("synopsys")?.asText()
 
-            newAnimeLoadResponse(anime.title ?: "Sin título", "$mainUrl/anime/$slug", TvType.Anime) {
-                this.plot = anime.synopsys
-                this.tags = anime.genres
-                this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
-                this.year = anime.animeSeason?.year
-                this.showStatus = if (anime.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
+            newAnimeLoadResponse(title, url, TvType.Anime) {
+                this.plot = description
+                this.posterUrl = poster
+                this.year = animeData?.get("animeSeason")?.get("year")?.asInt()
+                this.showStatus = if (animeData?.get("status")?.asText() == "finished")
+                    ShowStatus.Completed else ShowStatus.Ongoing
 
                 addEpisodes(DubStatus.Subbed, episodes)
                 this.recommendations = recommendations
-
-                if (!anime.trailer.isNullOrBlank()) addTrailer(anime.trailer)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
+            Log.e(TAG, "Logs: Error en load híbrido: ${e.message}")
             null
         }
     }
