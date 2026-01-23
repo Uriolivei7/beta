@@ -169,14 +169,19 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            // --- VIDEO ---
+            // --- VIDEO CON CAPTURA DE COOKIES ---
             val streamRegex = Regex(""""streamLink":"(https://[^"]+)"""")
             val streamMatch = streamRegex.find(response)
 
             if (streamMatch != null) {
-                val finalUrl = streamMatch.groupValues[1].replace("\\u0026", "&").replace("\\/", "/")
+                val finalUrl = streamMatch.groupValues[1]
+                    .replace("\\u0026", "&")
+                    .replace("\\/", "/")
 
-                Log.d("AnimeParadise", "Logs: [V] Video detectado, enviando con headers reforzados")
+                Log.d("AnimeParadise", "Logs: [V] Intentando con cookies de sesión...")
+
+                // Intentamos obtener las cookies que nos dio el servidor en la última petición
+                val cookies = app.get(watchUrl).cookies
 
                 callback.invoke(
                     newExtractorLink(
@@ -186,17 +191,21 @@ class AnimeParadiseProvider : MainAPI() {
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        // Definimos el referer aquí adentro, que es donde la propiedad existe
                         this.referer = "https://www.animeparadise.moe/"
 
-                        this.headers = mapOf(
+                        // Armamos los headers incluyendo las cookies si existen
+                        val headerMap = mutableMapOf(
                             "User-Agent" to fixedUserAgent,
                             "Origin" to "https://www.animeparadise.moe",
                             "Referer" to "https://www.animeparadise.moe/",
-                            "Accept" to "*/*",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "cross-site"
+                            "Accept" to "*/*"
                         )
+
+                        if (cookies.isNotEmpty()) {
+                            headerMap["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                        }
+
+                        this.headers = headerMap
                     }
                 )
             } else {
