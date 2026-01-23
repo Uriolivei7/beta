@@ -139,70 +139,54 @@ class AnimeParadiseProvider : MainAPI() {
     ): Boolean {
         Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS ===")
         return try {
+            // Extraemos IDs necesarios
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            val commonHeaders = mapOf(
-                "origin" to "https://www.animeparadise.moe",
-                "referer" to "https://www.animeparadise.moe/",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
-            )
+            // UNIFICAMOS EL USER AGENT: Esto es vital para evitar el Error 403
+            val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-            val actionHeaders = commonHeaders + mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "accept" to "text/x-component",
-                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
-                "content-type" to "text/plain;charset=UTF-8"
+            // Headers para el POST (obtención del link)
+            val actionHeaders = mapOf(
+                "User-Agent" to fixedUserAgent,
+                "Accept" to "text/x-component",
+                "Next-Action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
+                "Content-Type" to "text/plain;charset=UTF-8",
+                "Origin" to mainUrl,
+                "Referer" to watchUrl
             )
 
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+
+            // Hacemos la petición POST
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- ESCANEO DE SUBTÍTULOS (Basado en subData) ---
+            // --- ESCANEO DE SUBTÍTULOS ---
             Log.d("AnimeParadise", "Logs: === ESCANEANDO subData ===")
-
-            // Buscamos el patrón {"src":"ID_O_URL","label":"Idioma","type":"tipo"}
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val matches = subRegex.findAll(response)
-
-            matches.forEach { match ->
+            subRegex.findAll(response).forEach { match ->
                 val src = match.groupValues[1]
-                val label = match.groupValues[2]
-                val type = match.groupValues[3]
-
-                // Si el src no empieza con http, es un ID interno de la API
-                val subUrl = if (src.startsWith("http")) {
-                    src
-                } else {
-                    "https://api.animeparadise.moe/stream/file/$src"
-                }
-
-                Log.d("AnimeParadise", "Logs: [+] Sub Encontrado: $label ($type) -> $subUrl")
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
 
                 subtitleCallback.invoke(
-                    newSubtitleFile(
-                        lang = label,
-                        url = subUrl
-                    ) {
-                        this.headers = commonHeaders
+                    newSubtitleFile(lang = match.groupValues[2], url = subUrl) {
+                        this.headers = mapOf("User-Agent" to fixedUserAgent, "Referer" to mainUrl)
                     }
                 )
             }
 
             // --- RASTREO DE VIDEO ---
-            // Buscamos el streamLink principal
             val streamRegex = Regex(""""streamLink":"(https://[^"]+)"""")
             val streamMatch = streamRegex.find(response)
 
             if (streamMatch != null) {
                 val finalUrl = streamMatch.groupValues[1]
                     .replace("\\u0026", "&")
-                    .replace("\\/", "/") // Desescapar barras si existen
+                    .replace("\\/", "/")
 
                 Log.d("AnimeParadise", "Logs: [V] Video enviado: $finalUrl")
 
-                // Cambia esto dentro del callback.invoke de loadLinks
                 callback.invoke(
                     newExtractorLink(
                         name = "AnimeParadise",
@@ -211,11 +195,12 @@ class AnimeParadiseProvider : MainAPI() {
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        // Forzamos el Referer a la URL de "watch" en lugar de la home
+                        // CREDENCIALES PARA EL REPRODUCTOR: Deben coincidir con las del POST
                         this.headers = mapOf(
-                            "Referer" to watchUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Origin" to mainUrl
+                            "User-Agent" to fixedUserAgent,
+                            "Referer" to "https://www.animeparadise.moe/",
+                            "Origin" to "https://www.animeparadise.moe",
+                            "Accept" to "*/*"
                         )
                     }
                 )
