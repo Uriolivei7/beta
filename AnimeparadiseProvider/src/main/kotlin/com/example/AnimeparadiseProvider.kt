@@ -140,32 +140,47 @@ class AnimeParadiseProvider : MainAPI() {
         val currentEpId = data.substringAfter("/watch/").substringBefore("?")
         val currentOriginId = data.substringAfter("origin=").substringBefore("&")
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS SELECTOR === ID: $currentEpId")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId")
 
         return try {
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
+            // Usamos headers más limpios
             val actionHeaders = mapOf(
-                "accept" to "text/x-component",
+                "accept" to "*/*",
                 "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to "https://www.animeparadise.moe",
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val body = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
 
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
+            // IMPORTANTE: Realizamos la petición con un tiempo de espera definido
+            val responseData = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull()),
+                timeout = 15 // 15 segundos es suficiente si el server responde
+            )
 
-            // --- 1. EXTRACCIÓN DE VIDEO POR PROXIMIDAD ---
-            // Buscamos el ID del episodio y tomamos los 2000 caracteres siguientes
+            val response = responseData.text
+
+            if (response.isBlank()) {
+                Log.e(TAG, "Logs: Respuesta vacía")
+                return false
+            }
+
+            // --- 1. EXTRACCIÓN POR PROXIMIDAD MEJORADA ---
+            // Aumentamos el rango de búsqueda para no perder el video
             val index = response.indexOf(currentEpId)
             val searchArea = if (index != -1) {
-                response.substring(index, (index + 3000).coerceAtMost(response.length))
+                // Buscamos en un rango más amplio (6000 chars) por si el video está lejos del ID
+                response.substring(index, (index + 6000).coerceAtMost(response.length))
             } else {
-                response // Si no lo encuentra, busca en todo (fallback)
+                Log.w(TAG, "Logs: ID no encontrado en respuesta, buscando en todo el texto")
+                response
             }
 
             val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8""")
@@ -173,7 +188,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             if (videoMatch != null) {
                 val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
-                Log.d(TAG, "Logs: Video correcto encontrado cerca del ID: $rawUrl")
+                Log.d(TAG, "Logs: Video encontrado para el ID actual: $rawUrl")
 
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
 
@@ -188,14 +203,13 @@ class AnimeParadiseProvider : MainAPI() {
                     }
                 )
             } else {
-                Log.e(TAG, "Logs: No se encontró ningún video en el área del ID $currentEpId")
+                Log.e(TAG, "Logs: No se encontró link de video cerca del ID")
             }
 
-            // --- 2. EXTRACCIÓN DE SUBTÍTULOS (Mantenemos la lógica que funcionó) ---
+            // --- 2. SUBTÍTULOS FILTRADOS ---
             val addedSubs = mutableSetOf<String>()
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
 
-            // Buscamos solo en el área cercana al ID para ser aún más precisos
             subRegex.findAll(searchArea).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val label = match.groupValues[2]
@@ -207,10 +221,10 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }
 
-            Log.d(TAG, "Logs: Finalizado con ${addedSubs.size} subtítulos.")
+            Log.d(TAG, "Logs: Finalizado. Subs: ${addedSubs.size}")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico: ${e.message}")
+            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
         }
     }
