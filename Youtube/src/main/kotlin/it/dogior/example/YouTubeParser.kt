@@ -340,11 +340,20 @@ class YouTubeParser(override var name: String) : MainAPI() {
                 url = video.url
             ).apply {
                 this.name = video.name
-                this.posterUrl = video.thumbnails.last().url
+                this.posterUrl = video.thumbnails.lastOrNull()?.url
                 this.runTime = (video.duration / 60).toInt()
-                video.uploadDate?.let { addDate(Date(it.date().timeInMillis)) }
+
+                video.uploadDate?.let { dateWrapper ->
+                    try {
+                        val instant = dateWrapper.offsetDateTime().toInstant()
+                        this.addDate(Date(instant.toEpochMilli()))
+                    } catch (e: Exception) {
+                        Log.e("YouTubeParser", "Error en fecha: ${e.message}")
+                    }
+                }
             }
         }
         return episodes
     }
+
 }
