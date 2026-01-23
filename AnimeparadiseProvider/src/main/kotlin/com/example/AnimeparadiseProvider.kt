@@ -137,35 +137,27 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS ===")
+        Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS === URL: $data")
 
         return try {
-            val epUid = data.substringAfter("/watch/").substringBefore("?")
-            val originId = data.substringAfter("origin=").substringBefore("&")
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            // User-Agent exacto del curl para evitar discrepancias de seguridad
+            // User-Agent exacto del curl para consistencia
             val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-            val baseHeaders = mapOf(
+            // Cabeceras para la petición Next.js
+            val actionHeaders = mapOf(
                 "User-Agent" to fixedUserAgent,
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
+                "next-action" to "00edb12c2d47127c458483c475a4b71040d121ca63",
                 "origin" to "https://www.animeparadise.moe",
                 "referer" to watchUrl,
                 "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
-                "sec-ch-ua-platform" to "\"Windows\"",
-                "sec-fetch-dest" to "empty",
-                "sec-fetch-mode" to "cors",
-                "sec-fetch-site" to "same-origin"
+                "sec-ch-ua-platform" to "\"Windows\""
             )
 
-            // PASO 1: Obtener el streamLink con el Next-Action específico
-            val actionHeaders = baseHeaders.toMutableMap().apply {
-                put("next-action", "00edb12c2d47127c458483c475a4b71040d121ca63")
-            }
-
-            // El curl muestra que para obtener el stream se envía un body vacío "[]"
+            // Paso 1: Pedir los datos del episodio
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
@@ -173,34 +165,30 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val resText = response.text
-            val cookies = response.cookies
 
-            // Extracción del streamLink principal y el de backup
-            val streamLink = resText.substringAfter("\"streamLink\":\"").substringBefore("\"")
-            val streamLinkBackup = resText.substringAfter("\"streamLinkBackup\":\"").substringBefore("\"")
+            // Paso 2: Extraer y procesar el streamLink con el PROXY
+            val rawStreamLink = Regex("""\"streamLink\":\"(https:[^\"]+)\"""").find(resText)?.groupValues?.get(1)
+                ?.replace("\\u0026", "&")?.replace("\\/", "/")
 
-            if (streamLink.isNotBlank() && streamLink.startsWith("http")) {
-                val finalUrl = streamLink.replace("\\u0026", "&").replace("\\/", "/")
+            if (!rawStreamLink.isNullOrBlank()) {
+                // CODIFICACIÓN PARA EL PROXY (Lo que vimos en el último curl)
+                val encodedUrl = java.net.URLEncoder.encode(rawStreamLink, "UTF-8")
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
 
-                Log.d("AnimeParadise", "Logs: [V] Link encontrado, inyectando headers de seguridad")
+                Log.d("AnimeParadise", "Logs: [V] Link con Proxy generado")
 
-                val playerHeaders = mutableMapOf(
+                val playerHeaders = mapOf(
                     "User-Agent" to fixedUserAgent,
                     "Origin" to "https://www.animeparadise.moe",
                     "Referer" to "https://www.animeparadise.moe/",
                     "Accept" to "*/*"
                 )
 
-                // Es crucial pasar la cookie de sesión exacta que usó el curl
-                if (cookies.isNotEmpty()) {
-                    playerHeaders["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                }
-
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise (Main)",
+                        name = "AnimeParadise (Proxy)",
                         source = "AnimeParadise",
-                        url = finalUrl,
+                        url = proxyUrl,
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
@@ -209,7 +197,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            // PASO 2: Extraer subtítulos del JSON de respuesta
+            // Paso 3: Extraer subtítulos (Sin cambios, ya que funcionan bien)
             val subDataArray = resText.substringAfter("\"subData\":[").substringBefore("]")
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
 
