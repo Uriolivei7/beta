@@ -86,33 +86,43 @@ class AnimeParadiseProvider : MainAPI() {
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
             val anime = wrapper.data ?: throw Exception("El campo 'data' está vacío")
+            Log.d(TAG, "Logs: Anime cargado: ${anime.title}. Episodios en 'ep': ${anime.ep?.size ?: 0}")
 
             var epList = anime.ep ?: emptyList()
 
             if (epList.isNotEmpty() && epList[0].title == null) {
-                Log.d(TAG, "Logs: Títulos nulos detectados, pidiendo detalles a /anime/episodes/")
+                Log.d(TAG, "Logs: Títulos null, intentando fallback a /anime/episodes/$slug")
                 try {
                     val epDetailsResponse = app.get("$apiUrl/anime/episodes/$slug", headers = apiHeaders).text
                     val epWrapper: AnimeListResponse = mapper.readValue(epDetailsResponse)
-                    if (!epWrapper.data.isNullOrEmpty()) {
-                        epList = epWrapper.data[0].ep ?: epList
-                    }
+                    val fallbackEp = epWrapper.data?.firstOrNull { it.link == slug }?.ep
+                        ?: epWrapper.data?.firstOrNull()?.ep
+                    if (fallbackEp != null) epList = fallbackEp
                 } catch (e: Exception) {
-                    Log.e(TAG, "Logs: Error cargando detalles de episodios: ${e.message}")
+                    Log.e(TAG, "Logs: Error en fallback de episodios: ${e.message}")
                 }
             }
 
             val episodes = epList.mapIndexed { index, epData ->
-                Log.d(TAG, "Logs: Mapeando Ep $index -> ID: ${epData.id}, Title: ${epData.title}")
-
-                val epId = epData.id ?: ""
-                val epTitle = epData.title ?: "Episodio ${index + 1}"
-
-                newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
-                    this.name = epTitle
+                Log.d(TAG, "Logs: Procesando Ep $index -> ID: ${epData.id}, Title: ${epData.title}")
+                newEpisode("/watch/${epData.id}?origin=${anime.id ?: slug}") {
+                    this.name = epData.title ?: "Episodio ${index + 1}"
                     this.episode = epData.number?.toIntOrNull() ?: (index + 1)
                     this.posterUrl = epData.image
                 }
+            }
+
+            val recommendations = try {
+                val recsResponse = app.get("$apiUrl/anime/related/$slug", headers = apiHeaders).text
+                val recsData: AnimeListResponse = mapper.readValue(recsResponse)
+                recsData.data?.map {
+                    newAnimeSearchResponse(it.title ?: "", it.link ?: "", TvType.Anime) {
+                        this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Logs: No se encontraron recomendados para este anime")
+                null
             }
 
             newAnimeLoadResponse(anime.title ?: "Sin título", "$mainUrl/anime/$slug", TvType.Anime) {
@@ -121,7 +131,11 @@ class AnimeParadiseProvider : MainAPI() {
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 this.year = anime.animeSeason?.year
                 this.showStatus = if (anime.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
+
                 addEpisodes(DubStatus.Subbed, episodes)
+
+                this.recommendations = recommendations
+
                 if (!anime.trailer.isNullOrBlank()) addTrailer(anime.trailer)
             }
         } catch (e: Exception) {
