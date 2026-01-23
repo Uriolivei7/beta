@@ -137,16 +137,19 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIO LOADLINKS COMBINADO === URL: $data")
+        // Importante: Usamos una variable local para los IDs para evitar cruces
+        val currentEpId = data.substringAfter("/watch/").substringBefore("?")
+        val currentOriginId = data.substringAfter("origin=").substringBefore("&")
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === Ep: $currentEpId | Origin: $currentOriginId")
 
         return try {
-            val epId = data.substringAfter("/watch/").substringBefore("?")
-            val originId = data.substringAfter("origin=").substringBefore("&")
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            // Headers necesarios para el Next-Action (Lógica de reproducción 1)
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
+                // Este action debe ser dinámico si el sitio lo cambia,
+                // pero por ahora usamos el que te funciona
                 "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to "https://www.animeparadise.moe",
@@ -154,14 +157,15 @@ class AnimeParadiseProvider : MainAPI() {
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
             )
 
-            val requestBodyString = "[\"$epId\",\"$originId\"]"
+            // Enviamos EXACTAMENTE los IDs del episodio seleccionado
+            val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
             val body = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
 
-            // Hacemos el POST que ya sabemos que funciona para el video
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- 1. LÓGICA DE VIDEO (Basada en tu primera lógica exitosa) ---
-            val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+""")
+            // --- EXTRACCIÓN DE VIDEO ---
+            // Buscamos la URL de lightningflash específica de esta respuesta
+            val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8""")
             val videoMatch = lightningRegex.find(response)
 
             if (videoMatch != null) {
@@ -170,47 +174,43 @@ class AnimeParadiseProvider : MainAPI() {
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise Multi",
+                        name = "AnimeParadise",
                         source = "AnimeParadise",
                         url = proxyUrl,
-                    ) {
-                        this.quality = 1080
+                    ).apply {
+                        this.quality = Qualities.P1080.value
                         this.type = ExtractorLinkType.M3U8
                         this.headers = mapOf(
                             "referer" to "https://www.animeparadise.moe/",
                             "origin" to "https://www.animeparadise.moe",
-                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
                     }
                 )
-                Log.d(TAG, "Logs: Video inyectado exitosamente")
             }
 
-            // --- 2. LÓGICA DE SUBTÍTULOS (Adaptada de la segunda lógica) ---
-            // Buscamos el patrón de subtítulos dentro de la respuesta del POST
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val matches = subRegex.findAll(response)
+            // --- EXTRACCIÓN DE SUBTÍTULOS ---
+            // Usamos un Set para evitar subtítulos duplicados en la lista
+            val addedSubs = mutableSetOf<String>()
 
-            var subsCount = 0
-            matches.forEach { match ->
-                val src = match.groupValues[1]
+            // Buscamos el bloque de subtítulos solo en esta respuesta
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            subRegex.findAll(response).forEach { match ->
+                val src = match.groupValues[1].replace("\\/", "/")
                 val label = match.groupValues[2]
 
-                // Limpiamos la URL del subtítulo si viene escapada
-                val cleanSrc = src.replace("\\/", "/")
-                val subUrl = if (cleanSrc.startsWith("http")) cleanSrc else "https://api.animeparadise.moe/stream/file/$cleanSrc"
-
-                subtitleCallback.invoke(
-                    newSubtitleFile(label, subUrl)
-                )
-                subsCount++
+                // Solo añadir si no lo hemos añadido ya en esta tanda
+                if (!addedSubs.contains(src)) {
+                    val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                    addedSubs.add(src)
+                }
             }
 
-            Log.d(TAG, "Logs: Se encontraron $subsCount subtítulos")
-            Log.d(TAG, "Logs: === FIN LOADLINKS ===")
+            Log.d(TAG, "Logs: Video y ${addedSubs.size} subtítulos cargados para $currentEpId")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
