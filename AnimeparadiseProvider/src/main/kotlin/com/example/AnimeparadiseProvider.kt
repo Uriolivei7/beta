@@ -86,21 +86,34 @@ class AnimeParadiseProvider : MainAPI() {
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
             val anime = wrapper.data ?: throw Exception("El campo 'data' está vacío")
-            Log.d(TAG, "Logs: Anime cargado: ${anime.title}. Cantidad de episodios en 'ep': ${anime.ep?.size ?: 0}")
 
-            val episodes = anime.ep?.mapIndexed { index, epData ->
-                // LOG DE CADA EPISODIO PARA VER QUÉ DATOS TIENE
-                Log.d(TAG, "Logs: Procesando Ep $index -> ID: ${epData.id}, Title: ${epData.title}, Image: ${epData.image}")
+            var epList = anime.ep ?: emptyList()
+
+            if (epList.isNotEmpty() && epList[0].title == null) {
+                Log.d(TAG, "Logs: Títulos nulos detectados, pidiendo detalles a /anime/episodes/")
+                try {
+                    val epDetailsResponse = app.get("$apiUrl/anime/episodes/$slug", headers = apiHeaders).text
+                    val epWrapper: AnimeListResponse = mapper.readValue(epDetailsResponse)
+                    if (!epWrapper.data.isNullOrEmpty()) {
+                        epList = epWrapper.data[0].ep ?: epList
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Logs: Error cargando detalles de episodios: ${e.message}")
+                }
+            }
+
+            val episodes = epList.mapIndexed { index, epData ->
+                Log.d(TAG, "Logs: Mapeando Ep $index -> ID: ${epData.id}, Title: ${epData.title}")
 
                 val epId = epData.id ?: ""
-                val epTitle = if (!epData.title.isNullOrBlank()) epData.title else "Episodio ${index + 1}"
+                val epTitle = epData.title ?: "Episodio ${index + 1}"
 
                 newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
                     this.name = epTitle
                     this.episode = epData.number?.toIntOrNull() ?: (index + 1)
                     this.posterUrl = epData.image
                 }
-            } ?: emptyList()
+            }
 
             newAnimeLoadResponse(anime.title ?: "Sin título", "$mainUrl/anime/$slug", TvType.Anime) {
                 this.plot = anime.synopsys
@@ -165,8 +178,6 @@ class AnimeParadiseProvider : MainAPI() {
     }
 }
 
-// --- CLASES DE DATOS ---
-
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
 data class AnimeDetailResponse(val data: AnimeObject? = null)
 
@@ -198,15 +209,15 @@ class EpisodeDeserializer : JsonDeserializer<EpisodeDetail>() {
     override fun deserialize(p: JsonParser, ctxt: DeserializationContext): EpisodeDetail {
         val node = p.codec.readTree<com.fasterxml.jackson.databind.JsonNode>(p)
         return if (node.isTextual) {
+            // Si es un String (como en tus logs), lo guardamos como ID
             EpisodeDetail(id = node.asText())
         } else {
-            // Buscamos uid o _id para el ID, y title para el nombre
-            val id = node.get("uid")?.asText() ?: node.get("_id")?.asText()
-            val title = node.get("title")?.asText()
-            val image = node.get("image")?.asText()
-            val number = node.get("number")?.asText()
-
-            EpisodeDetail(id, title, image, number)
+            EpisodeDetail(
+                id = node.get("uid")?.asText() ?: node.get("_id")?.asText() ?: node.get("id")?.asText(),
+                title = node.get("title")?.asText(),
+                image = node.get("image")?.asText(),
+                number = node.get("number")?.asText()
+            )
         }
     }
 }
