@@ -8,6 +8,7 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -70,38 +71,41 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Cargando detalles vía API para $url")
         return try {
             val parts = url.split("|")
             val id = parts[0]
             val slug = parts[1]
 
-            // En lugar de parsear HTML, pedimos los datos directamente a la API de detalles
-            // Usamos el ID que ya tenemos
+            // Pedimos los datos a la API de detalle
             val detailResponse = app.get("$apiUrl/anime/$id", headers = apiHeaders).text
-
-            // Usamos una clase temporal para mapear la respuesta directa de la API
             val anime: AnimeObject = mapper.readValue(detailResponse)
 
-            // Obtener episodios (esto ya funcionaba bien)
-            val epResponse = app.get("$apiUrl/anime/$id/episode", headers = apiHeaders).text
-            val epData: EpisodeListResponse = mapper.readValue(epResponse)
-
-            val episodes = epData.data.map {
-                newEpisode("/watch/${it.uid}?origin=${it.origin}") {
-                    this.name = it.title ?: "Episode ${it.number}"
-                    this.episode = it.number?.toIntOrNull()
+            // Los episodios en esta API vienen como una lista de IDs en el campo "ep"
+            val episodes = anime.ep?.mapIndexed { index, epId ->
+                newEpisode("/watch/$epId?origin=${anime.id}") {
+                    this.name = "Episode ${index + 1}"
+                    this.episode = index + 1
                 }
-            }.reversed()
+            } ?: emptyList()
 
             newAnimeLoadResponse(anime.title, url, TvType.Anime) {
-                this.plot = anime.synopsys // Ahora viene directo del objeto anime
+                this.plot = anime.synopsys
                 this.tags = anime.genres
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
+                this.year = anime.animeSeason?.year
+
+                // Añadimos el estado del anime
+                this.showStatus = when(anime.status) {
+                    "finished" -> ShowStatus.Completed
+                    "ongoing" -> ShowStatus.Ongoing
+                    else -> null
+                }
+
                 addEpisodes(DubStatus.Subbed, episodes)
+                addTrailer(anime.trailer)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load (API): ${e.message}")
+            Log.e(TAG, "Logs: Error en load: ${e.message}")
             null
         }
     }
@@ -141,16 +145,23 @@ class AnimeParadiseProvider : MainAPI() {
     }
 }
 
-// Modelos para Jackson (Sin @Serializable)
 data class AnimeListResponse(val data: List<AnimeObject>)
+
 data class AnimeObject(
     @JsonProperty("_id") val id: String,
     val title: String,
     val link: String,
-    val posterImage: ImageInfo? = null,
-    val synopsys: String? = null, // Añadido
-    val genres: List<String>? = null // Añadido
+    val status: String? = null,
+    val synopsys: String? = null,
+    val genres: List<String>? = null,
+    val trailer: String? = null,
+    val ep: List<String>? = null, // La lista de IDs de episodios que encontraste
+    val animeSeason: SeasonInfo? = null,
+    val posterImage: ImageInfo? = null
 )
+
+data class SeasonInfo(val season: String? = null, val year: Int? = null)
+
 data class ImageInfo(val original: String? = null, val large: String? = null)
 
 data class NextDataResponse(val props: NextProps)
