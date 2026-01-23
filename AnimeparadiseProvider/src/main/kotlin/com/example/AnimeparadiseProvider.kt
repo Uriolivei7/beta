@@ -137,66 +137,72 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS === URL: $data")
-
+        Log.d(TAG, "Logs: Iniciando loadLinks (Fix RequestBody) para: $data")
         return try {
-            val epUid = data.substringAfter("/watch/").substringBefore("?")
+            val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
+            val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            // URL de la API de streaming
-            val apiUrl = "https://api.animeparadise.moe/stream/$epUid/$originId"
-            Log.d("AnimeParadise", "Logs: Probando API con POST: $apiUrl")
-
-            // Cambiamos app.get por app.post y enviamos un body vacío como el curl original
-            val response = app.post(apiUrl,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to "https://www.animeparadise.moe/",
-                    "Origin" to "https://www.animeparadise.moe",
-                    "Accept" to "application/json",
-                    "Content-Type" to "application/json"
-                ),
-                requestBody = "{}".toRequestBody("application/json".toMediaTypeOrNull())
+            val actionHeaders = mapOf(
+                "accept" to "text/x-component",
+                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
+                "content-type" to "text/plain;charset=UTF-8",
+                "origin" to mainUrl,
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "sec-fetch-mode" to "cors",
+                "sec-fetch-site" to "same-origin"
             )
 
-            val resText = response.text
-            Log.d("AnimeParadise", "Logs: Respuesta API (${response.code}): ${resText.take(200)}")
+            // SOLUCIÓN AL ERROR DE TIPO: Convertimos el String a RequestBody
+            val requestBodyString = "[\"$epId\",\"$originId\"]"
+            val mediaType = "text/plain;charset=UTF-8".toMediaTypeOrNull()
+            val body = requestBodyString.toRequestBody(mediaType)
 
-            val streamLink = Regex("""\"streamLink\":\"(https:[^\"]+)\"""").find(resText)?.groupValues?.get(1)
-                ?.replace("\\/", "/")?.replace("\\u0026", "&")
+            Log.d(TAG, "Logs: Enviando POST a: $watchUrl")
 
-            if (!streamLink.isNullOrBlank()) {
-                val encodedUrl = java.net.URLEncoder.encode(streamLink, "UTF-8")
-                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = body // Ahora 'body' es de tipo RequestBody
+            ).text
+
+            val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+""")
+            val match = lightningRegex.find(response)
+
+            if (match != null) {
+                val rawLightningUrl = match.value.replace("\\", "").replace("u0026", "&")
+                // Usamos el proxy de AnimeParadise que vimos en tu cURL
+                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawLightningUrl"
+
+                Log.d(TAG, "Logs: URL Final construida: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise",
+                        name = "AnimeParadise Multi",
                         source = "AnimeParadise",
-                        url = proxyUrl,
-                    ).apply {
-                        this.quality = Qualities.P1080.value
+                        url = finalUrl,
+                    ) {
+                        this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
                         this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/"
+                            "referer" to "https://www.animeparadise.moe/",
+                            "origin" to "https://www.animeparadise.moe",
+                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                            "accept" to "*/*",
+                            "sec-ch-ua-platform" to "\"Windows\"",
+                            "sec-fetch-dest" to "empty",
+                            "sec-fetch-mode" to "cors",
+                            "sec-fetch-site" to "same-site"
                         )
                     }
                 )
+            } else {
+                Log.d(TAG, "Logs: No se encontró link en la respuesta.")
             }
-
-            // Subtítulos
-            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""").findAll(resText).forEach { match ->
-                val src = match.groupValues[1]
-                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
-            }
-
-            Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e("AnimeParadise", "Logs: ERROR: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
