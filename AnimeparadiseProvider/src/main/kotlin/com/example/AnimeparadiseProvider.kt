@@ -137,7 +137,7 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: Iniciando loadLinks (Server Action) para: $data")
+        Log.d(TAG, "Logs: Iniciando loadLinks (Fix RequestBody) para: $data")
         return try {
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
@@ -149,30 +149,33 @@ class AnimeParadiseProvider : MainAPI() {
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to mainUrl,
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "sec-fetch-mode" to "cors",
+                "sec-fetch-site" to "same-origin"
             )
 
+            // SOLUCIÓN AL ERROR DE TIPO: Convertimos el String a RequestBody
             val requestBodyString = "[\"$epId\",\"$originId\"]"
             val mediaType = "text/plain;charset=UTF-8".toMediaTypeOrNull()
             val body = requestBodyString.toRequestBody(mediaType)
 
             Log.d(TAG, "Logs: Enviando POST a: $watchUrl")
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // 1. Intentamos extraer con Regex el link de stream directo
-            val streamRegex = Regex("""https://stream\.animeparadise\.moe/m3u8\?url=[^"\\\s]+""")
-            val match = streamRegex.find(response)
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = body // Ahora 'body' es de tipo RequestBody
+            ).text
 
-            val finalUrl = if (match != null) {
-                match.value.replace("\\", "")
-            } else {
-                // 2. Si falla, buscamos el backup de lightningflash que vimos en tus logs
-                val backupPart = response.substringAfter("https://lightningflash", "").substringBefore("\"")
-                if (backupPart.isNotEmpty()) "https://lightningflash" + backupPart.replace("\\u0026", "&").replace("\\", "") else ""
-            }
+            val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+""")
+            val match = lightningRegex.find(response)
 
-            if (finalUrl.isNotEmpty()) {
-                Log.d(TAG, "Logs: URL de video detectada: $finalUrl")
+            if (match != null) {
+                val rawLightningUrl = match.value.replace("\\", "").replace("u0026", "&")
+                // Usamos el proxy de AnimeParadise que vimos en tu cURL
+                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawLightningUrl"
+
+                Log.d(TAG, "Logs: URL Final construida: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
@@ -180,24 +183,26 @@ class AnimeParadiseProvider : MainAPI() {
                         source = "AnimeParadise",
                         url = finalUrl,
                     ) {
-                        this.quality = Qualities.P1080.value
+                        this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        // AGREGAMOS LOS HEADERS AQUÍ PARA EVITAR EL ERROR 403
                         this.headers = mapOf(
-                            "Referer" to "https://www.animeparadise.moe/",
-                            "Origin" to "https://www.animeparadise.moe",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+                            "referer" to "https://www.animeparadise.moe/",
+                            "origin" to "https://www.animeparadise.moe",
+                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                            "accept" to "*/*",
+                            "sec-ch-ua-platform" to "\"Windows\"",
+                            "sec-fetch-dest" to "empty",
+                            "sec-fetch-mode" to "cors",
+                            "sec-fetch-site" to "same-site"
                         )
                     }
                 )
             } else {
-                Log.d(TAG, "Logs: No se encontró ningún enlace válido en la respuesta del servidor.")
-                Log.d(TAG, "Logs: Inicio de respuesta para análisis: ${response.take(200)}")
+                Log.d(TAG, "Logs: No se encontró link en la respuesta.")
             }
-
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
