@@ -150,6 +150,7 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val actionHeaders = commonHeaders + mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "accept" to "text/x-component",
                 "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "content-type" to "text/plain;charset=UTF-8"
@@ -195,10 +196,13 @@ class AnimeParadiseProvider : MainAPI() {
             val streamMatch = streamRegex.find(response)
 
             if (streamMatch != null) {
-                val finalUrl = streamMatch.groupValues[1].replace("\\u0026", "&")
+                val finalUrl = streamMatch.groupValues[1]
+                    .replace("\\u0026", "&")
+                    .replace("\\/", "/") // Desescapar barras si existen
 
                 Log.d("AnimeParadise", "Logs: [V] Video enviado: $finalUrl")
 
+                // Cambia esto dentro del callback.invoke de loadLinks
                 callback.invoke(
                     newExtractorLink(
                         name = "AnimeParadise",
@@ -207,7 +211,12 @@ class AnimeParadiseProvider : MainAPI() {
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        this.headers = commonHeaders
+                        // Forzamos el Referer a la URL de "watch" en lugar de la home
+                        this.headers = mapOf(
+                            "Referer" to watchUrl,
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Origin" to mainUrl
+                        )
                     }
                 )
             } else {
