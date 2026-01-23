@@ -158,25 +158,27 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- RASTREO DE SUBTÍTULOS ---
+            // --- RASTREO DE SUBTÍTULOS REFORZADO ---
             Log.d(TAG, "Logs: Buscando subtítulos en la respuesta...")
 
-            val subIdRegex = Regex("""stream/file/([a-zA-Z0-9_-]+)""")
+            // Regex mejorado para capturar el ID incluso si hay escapes tipo stream\/file\/ o comillas
+            val subIdRegex = Regex("""stream(?:\\/|/)file(?:\\/|/)([a-zA-Z0-9_-]+)""")
             val subMatches = subIdRegex.findAll(response).toList()
 
             if (subMatches.isEmpty()) {
-                Log.d(TAG, "Logs: [!] No se encontraron subtítulos en el texto.")
+                Log.d(TAG, "Logs: [!] No se hallaron IDs. Verificando estructura de respuesta...")
+                // Esto nos dirá si la respuesta cambió de formato
+                Log.d(TAG, "Logs: Fragmento de respuesta: ${response.take(1000)}")
             } else {
+                Log.d(TAG, "Logs: Se encontraron ${subMatches.size} pistas.")
                 subMatches.forEachIndexed { index, match ->
                     val subId = match.groupValues[1]
                     val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
 
-                    Log.d(TAG, "Logs: [+] Cargando subtítulo ASS: $subUrl")
+                    Log.d(TAG, "Logs: [+] Subtítulo [$index] vinculado: $subUrl")
 
-                    // Usamos SubtitleFile indicando que es Español
-                    // Cloudstream intentará procesar el contenido SSA/ASS que enviaste
                     subtitleCallback.invoke(
-                        newSubtitleFile(
+                        SubtitleFile(
                             lang = "Español ${index + 1}",
                             url = subUrl
                         )
