@@ -73,14 +73,23 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         return try {
             val parts = url.split("|")
-            val id = parts[0]
+            // Extraemos solo el ID. Si viene la URL completa, nos quedamos con lo último
+            val rawId = parts[0]
+            val id = if (rawId.contains("/")) rawId.substringAfterLast("/") else rawId
             val slug = parts[1]
 
-            // Pedimos los datos a la API de detalle
+            Log.d(TAG, "Logs: Pidiendo ID limpio: $id")
+
+            // Ahora la URL de la API será correcta: https://api.animeparadise.moe/anime/6700659...
             val detailResponse = app.get("$apiUrl/anime/$id", headers = apiHeaders).text
+
+            // Si la API responde 404, esto lanzará error antes de llegar a Jackson
+            if (detailResponse.contains("Not Found")) {
+                throw Exception("La API devolvió 404 para el ID: $id")
+            }
+
             val anime: AnimeObject = mapper.readValue(detailResponse)
 
-            // Los episodios en esta API vienen como una lista de IDs en el campo "ep"
             val episodes = anime.ep?.mapIndexed { index, epId ->
                 newEpisode("/watch/$epId?origin=${anime.id}") {
                     this.name = "Episode ${index + 1}"
@@ -94,7 +103,6 @@ class AnimeParadiseProvider : MainAPI() {
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 this.year = anime.animeSeason?.year
 
-                // Añadimos el estado del anime
                 this.showStatus = when(anime.status) {
                     "finished" -> ShowStatus.Completed
                     "ongoing" -> ShowStatus.Ongoing
@@ -102,7 +110,9 @@ class AnimeParadiseProvider : MainAPI() {
                 }
 
                 addEpisodes(DubStatus.Subbed, episodes)
-                addTrailer(anime.trailer)
+                if (!anime.trailer.isNullOrBlank()) {
+                    addTrailer(anime.trailer)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en load: ${e.message}")
@@ -148,7 +158,7 @@ class AnimeParadiseProvider : MainAPI() {
 data class AnimeListResponse(val data: List<AnimeObject>)
 
 data class AnimeObject(
-    @JsonProperty("_id") val id: String,
+    @JsonProperty("_id") val id: String? = null,
     val title: String,
     val link: String,
     val status: String? = null,
