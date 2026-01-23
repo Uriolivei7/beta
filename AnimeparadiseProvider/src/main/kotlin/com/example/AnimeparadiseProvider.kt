@@ -70,25 +70,20 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Cargando detalles de $url")
+        Log.d(TAG, "Logs: Cargando detalles vía API para $url")
         return try {
             val parts = url.split("|")
             val id = parts[0]
             val slug = parts[1]
 
-            // Usamos una petición limpia a la página del anime
-            val fullUrl = "$mainUrl/anime/$slug"
-            val response = app.get(fullUrl, headers = apiHeaders).text
-            val document = Jsoup.parse(response)
+            // En lugar de parsear HTML, pedimos los datos directamente a la API de detalles
+            // Usamos el ID que ya tenemos
+            val detailResponse = app.get("$apiUrl/anime/$id", headers = apiHeaders).text
 
-            // Selector más flexible para el script de datos
-            val jsonData = document.select("script#__NEXT_DATA__").firstOrNull()?.data()
-                ?: throw Exception("No se encontró __NEXT_DATA__ en la página")
+            // Usamos una clase temporal para mapear la respuesta directa de la API
+            val anime: AnimeObject = mapper.readValue(detailResponse)
 
-            val details: NextDataResponse = mapper.readValue(jsonData)
-            val data = details.props.pageProps.data
-
-            // Obtener episodios de la API
+            // Obtener episodios (esto ya funcionaba bien)
             val epResponse = app.get("$apiUrl/anime/$id/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
@@ -99,18 +94,14 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }.reversed()
 
-            newAnimeLoadResponse(slug.replace("-", " ").capitalize(), url, TvType.Anime) {
-                this.plot = data.synopsys
-                this.tags = data.genres
-                this.posterUrl = document.select("meta[property=og:image]").attr("content")
+            newAnimeLoadResponse(anime.title, url, TvType.Anime) {
+                this.plot = anime.synopsys // Ahora viene directo del objeto anime
+                this.tags = anime.genres
+                this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
-            // Log extra para depurar si falla el HTML
-            if (e.message?.contains("No se encontró") == true) {
-                Log.d(TAG, "Logs: Estructura HTML detectada: " + (if(url.contains("anime")) "Es página de anime" else "URL sospechosa"))
-            }
+            Log.e(TAG, "Logs: Error en load (API): ${e.message}")
             null
         }
     }
@@ -156,7 +147,9 @@ data class AnimeObject(
     @JsonProperty("_id") val id: String,
     val title: String,
     val link: String,
-    val posterImage: ImageInfo? = null
+    val posterImage: ImageInfo? = null,
+    val synopsys: String? = null, // Añadido
+    val genres: List<String>? = null // Añadido
 )
 data class ImageInfo(val original: String? = null, val large: String? = null)
 
