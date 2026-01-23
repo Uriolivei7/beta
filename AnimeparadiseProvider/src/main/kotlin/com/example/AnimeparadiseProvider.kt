@@ -137,72 +137,80 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: Iniciando loadLinks (Fix RequestBody) para: $data")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS COMBINADO === URL: $data")
+
         return try {
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
+            // Headers necesarios para el Next-Action (Lógica de reproducción 1)
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "content-type" to "text/plain;charset=UTF-8",
-                "origin" to mainUrl,
+                "origin" to "https://www.animeparadise.moe",
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                "sec-fetch-mode" to "cors",
-                "sec-fetch-site" to "same-origin"
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
             )
 
-            // SOLUCIÓN AL ERROR DE TIPO: Convertimos el String a RequestBody
             val requestBodyString = "[\"$epId\",\"$originId\"]"
-            val mediaType = "text/plain;charset=UTF-8".toMediaTypeOrNull()
-            val body = requestBodyString.toRequestBody(mediaType)
+            val body = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
 
-            Log.d(TAG, "Logs: Enviando POST a: $watchUrl")
+            // Hacemos el POST que ya sabemos que funciona para el video
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            val response = app.post(
-                watchUrl,
-                headers = actionHeaders,
-                requestBody = body // Ahora 'body' es de tipo RequestBody
-            ).text
-
+            // --- 1. LÓGICA DE VIDEO (Basada en tu primera lógica exitosa) ---
             val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+""")
-            val match = lightningRegex.find(response)
+            val videoMatch = lightningRegex.find(response)
 
-            if (match != null) {
-                val rawLightningUrl = match.value.replace("\\", "").replace("u0026", "&")
-                // Usamos el proxy de AnimeParadise que vimos en tu cURL
-                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawLightningUrl"
-
-                Log.d(TAG, "Logs: URL Final construida: $finalUrl")
+            if (videoMatch != null) {
+                val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
 
                 callback.invoke(
                     newExtractorLink(
                         name = "AnimeParadise Multi",
                         source = "AnimeParadise",
-                        url = finalUrl,
+                        url = proxyUrl,
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
                         this.headers = mapOf(
                             "referer" to "https://www.animeparadise.moe/",
                             "origin" to "https://www.animeparadise.moe",
-                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                            "accept" to "*/*",
-                            "sec-ch-ua-platform" to "\"Windows\"",
-                            "sec-fetch-dest" to "empty",
-                            "sec-fetch-mode" to "cors",
-                            "sec-fetch-site" to "same-site"
+                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
                         )
                     }
                 )
-            } else {
-                Log.d(TAG, "Logs: No se encontró link en la respuesta.")
+                Log.d(TAG, "Logs: Video inyectado exitosamente")
             }
+
+            // --- 2. LÓGICA DE SUBTÍTULOS (Adaptada de la segunda lógica) ---
+            // Buscamos el patrón de subtítulos dentro de la respuesta del POST
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            val matches = subRegex.findAll(response)
+
+            var subsCount = 0
+            matches.forEach { match ->
+                val src = match.groupValues[1]
+                val label = match.groupValues[2]
+
+                // Limpiamos la URL del subtítulo si viene escapada
+                val cleanSrc = src.replace("\\/", "/")
+                val subUrl = if (cleanSrc.startsWith("http")) cleanSrc else "https://api.animeparadise.moe/stream/file/$cleanSrc"
+
+                subtitleCallback.invoke(
+                    newSubtitleFile(label, subUrl)
+                )
+                subsCount++
+            }
+
+            Log.d(TAG, "Logs: Se encontraron $subsCount subtítulos")
+            Log.d(TAG, "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
             false
         }
     }
