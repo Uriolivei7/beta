@@ -16,9 +16,10 @@ class AnimeParadiseProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val TAG = "AnimeParadise"
-    private val json = Json {
+    private val jsonParser = Json {
         isLenient = true
         ignoreUnknownKeys = true
+        explicitNulls = false
     }
 
     private val apiHeaders = mapOf(
@@ -31,18 +32,23 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "Logs: Iniciando getMainPage")
         return try {
-            val url = "$apiUrl/?sort={\"rate\": -1}"
+            val url = "$apiUrl/?sort=%7B%22rate%22:-1%7D" // URL Encode de {"rate":-1}
             val response = app.get(url, headers = apiHeaders).text
-            val resData = json.decodeFromString(AnimeListResponse.serializer(), response)
+            Log.d(TAG, "Logs: API Responde (puros): ${response.take(100)}")
 
-            val animeList = resData.data.map {
-                newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
-                    this.posterUrl = it.posterImage.large ?: it.posterImage.original
-                }
+            val resData = jsonParser.decodeFromString(AnimeListResponse.serializer(), response)
+
+            val animeList = resData.data.mapNotNull {
+                try {
+                    newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
+                        this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
+                    }
+                } catch(e: Exception) { null }
             }
             newHomePageResponse(listOf(HomePageList("Popular Anime", animeList)), true)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
+            Log.e(TAG, "Logs: Error Fatal en getMainPage: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
@@ -51,15 +57,17 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: Buscando $query")
         return try {
             val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
-            val resData = json.decodeFromString(AnimeListResponse.serializer(), response)
+            val resData = jsonParser.decodeFromString(AnimeListResponse.serializer(), response)
 
-            resData.data.map {
-                newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
-                    this.posterUrl = it.posterImage.large
-                }
+            resData.data.mapNotNull {
+                try {
+                    newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
+                        this.posterUrl = it.posterImage?.large
+                    }
+                } catch(e: Exception) { null }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en search: ${e.message}")
+            Log.e(TAG, "Logs: Error Fatal en search: ${e.message}")
             emptyList()
         }
     }
@@ -71,14 +79,15 @@ class AnimeParadiseProvider : MainAPI() {
             val id = parts[0]
             val slug = parts[1]
 
-            val document = Jsoup.parse(app.get("$mainUrl/anime/$slug").text)
+            val htmlResponse = app.get("$mainUrl/anime/$slug").text
+            val document = Jsoup.parse(htmlResponse)
             val jsonData = document.selectFirst("script#__NEXT_DATA__")?.data()
-                ?: throw Exception("No NEXT_DATA")
+                ?: throw Exception("No NEXT_DATA found")
 
-            val details = json.decodeFromString(AnimeDetails.serializer(), jsonData).props.pageProps.data
+            val details = jsonParser.decodeFromString(NextDataResponse.serializer(), jsonData).props.pageProps.data
 
             val epResponse = app.get("$apiUrl/anime/$id/episode", headers = apiHeaders).text
-            val epData = json.decodeFromString(EpisodeListResponse.serializer(), epResponse)
+            val epData = jsonParser.decodeFromString(EpisodeListResponse.serializer(), epResponse)
 
             val episodes = epData.data.map {
                 newEpisode("/watch/${it.uid}?origin=${it.origin}") {
@@ -87,13 +96,13 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }.reversed()
 
-            newAnimeLoadResponse(slug, url, TvType.Anime) {
+            newAnimeLoadResponse(slug.replace("-", " "), url, TvType.Anime) {
                 this.plot = details.synopsys
                 this.tags = details.genres
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
+            Log.e(TAG, "Logs: Error Fatal en load: ${e.message}")
             null
         }
     }
@@ -104,21 +113,21 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d(TAG, "Logs: Iniciando loadLinks para: $data")
         return try {
-            Log.d(TAG, "Logs: Cargando links para $data")
             val doc = Jsoup.parse(app.get(mainUrl + data).text)
             val nextData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return false
-            val videoData = json.decodeFromString(VideoData.serializer(), nextData).props.pageProps
+            val videoProps = jsonParser.decodeFromString(NextDataVideo.serializer(), nextData).props.pageProps
 
-            videoData.subtitles?.forEach {
-                subtitleCallback(newSubtitleFile(it.label, it.src))
+            videoProps.subtitles?.forEach {
+                subtitleCallback(SubtitleFile(it.label, it.src))
             }
 
-            val storageUrl = "$apiUrl/storage/${videoData.animeData.title}/${videoData.episode.number}"
+            val storageUrl = "$apiUrl/storage/${videoProps.animeData.title}/${videoProps.episode.number}"
             val videoResponse = app.get(storageUrl, headers = apiHeaders).text
-            val videoObjectList = json.decodeFromString(VideoList.serializer(), videoResponse)
+            val videoList = jsonParser.decodeFromString(VideoDirectList.serializer(), videoResponse)
 
-            videoObjectList.directUrl?.forEach { video ->
+            videoList.directUrl?.forEach { video ->
                 callback(
                     newExtractorLink(
                         source = this.name,
@@ -126,94 +135,49 @@ class AnimeParadiseProvider : MainAPI() {
                         url = video.src
                     ) {
                         this.referer = "$mainUrl/"
-                        this.quality = getQualityFromName(video.label)
+                        this.quality = when {
+                            video.label.contains("1080") -> Qualities.P1080.value
+                            video.label.contains("720") -> Qualities.P720.value
+                            else -> Qualities.Unknown.value
+                        }
                     }
                 )
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error Fatal en loadLinks: ${e.message}")
             false
-        }
-    }
-
-    private fun getQualityFromName(qualityName: String): Int {
-        return when {
-            qualityName.contains("1080") -> Qualities.P1080.value
-            qualityName.contains("720") -> Qualities.P720.value
-            qualityName.contains("480") -> Qualities.P480.value
-            qualityName.contains("360") -> Qualities.P360.value
-            else -> Qualities.Unknown.value
         }
     }
 }
 
 // ===========================================================================
-// CLASES DE DATOS (FUERA DE LA CLASE PRINCIPAL)
-// Esto soluciona el error "typeParametersSerializers"
+// MODELOS EXTERNOS (PLANOS PARA MÁXIMA COMPATIBILIDAD)
 // ===========================================================================
 
-@Serializable
-data class AnimeListResponse(val data: List<AnimeObject>)
-
-@Serializable
-data class AnimeObject(
+@Serializable data class AnimeListResponse(val data: List<AnimeObject>)
+@Serializable data class AnimeObject(
     @SerialName("_id") val id: String,
     val title: String,
     val link: String,
-    val posterImage: ImageObject
+    val posterImage: ImageInfo? = null
 )
+@Serializable data class ImageInfo(val original: String? = null, val large: String? = null)
 
-@Serializable
-data class ImageObject(val original: String? = null, val large: String? = null)
+@Serializable data class NextDataResponse(val props: NextProps)
+@Serializable data class NextProps(val pageProps: NextPageProps)
+@Serializable data class NextPageProps(val data: DetailedAnimeData)
+@Serializable data class DetailedAnimeData(val synopsys: String? = null, val genres: List<String>? = null)
 
-@Serializable
-data class AnimeDetails(val props: DetailsProps)
+@Serializable data class EpisodeListResponse(val data: List<EpisodeEntry>)
+@Serializable data class EpisodeEntry(val uid: String, val origin: String, val number: String? = null, val title: String? = null)
 
-@Serializable
-data class DetailsProps(val pageProps: DetailsPageProps)
+@Serializable data class NextDataVideo(val props: VideoNextProps)
+@Serializable data class VideoNextProps(val pageProps: VideoPageData)
+@Serializable data class VideoPageData(val subtitles: List<SubtitleEntry>? = null, val animeData: SimpleAnime, val episode: SimpleEpisode)
+@Serializable data class SubtitleEntry(val src: String, val label: String)
+@Serializable data class SimpleAnime(val title: String)
+@Serializable data class SimpleEpisode(val number: String)
 
-@Serializable
-data class DetailsPageProps(val data: DetailsData)
-
-@Serializable
-data class DetailsData(val synopsys: String? = null, val genres: List<String>? = null)
-
-@Serializable
-data class EpisodeListResponse(val data: List<EpisodeObject>)
-
-@Serializable
-data class EpisodeObject(
-    val uid: String,
-    val origin: String,
-    val number: String? = null,
-    val title: String? = null
-)
-
-@Serializable
-data class VideoData(val props: VideoProps)
-
-@Serializable
-data class VideoProps(val pageProps: VideoPageProps)
-
-@Serializable
-data class VideoPageProps(
-    val subtitles: List<SubtitleObject>? = null,
-    val animeData: AnimeInfo,
-    val episode: EpisodeInfo
-)
-
-@Serializable
-data class SubtitleObject(val src: String, val label: String)
-
-@Serializable
-data class AnimeInfo(val title: String)
-
-@Serializable
-data class EpisodeInfo(val number: String)
-
-@Serializable
-data class VideoList(val directUrl: List<VideoObject>? = null, val message: String? = null)
-
-@Serializable
-data class VideoObject(val src: String, val label: String)
+@Serializable data class VideoDirectList(val directUrl: List<VideoSource>? = null)
+@Serializable data class VideoSource(val src: String, val label: String)
