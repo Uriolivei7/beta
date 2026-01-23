@@ -158,24 +158,18 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- RASTREO DE SUBTÍTULOS REFORZADO ---
-            Log.d(TAG, "Logs: Buscando subtítulos en la respuesta...")
+            Log.d(TAG, "Logs: Buscando subtítulos en respuesta de tamaño: ${response.length}")
 
-            // Regex mejorado para capturar el ID incluso si hay escapes tipo stream\/file\/ o comillas
             val subIdRegex = Regex("""stream(?:\\/|/)file(?:\\/|/)([a-zA-Z0-9_-]+)""")
             val subMatches = subIdRegex.findAll(response).toList()
 
-            if (subMatches.isEmpty()) {
-                Log.d(TAG, "Logs: [!] No se hallaron IDs. Verificando estructura de respuesta...")
-                // Esto nos dirá si la respuesta cambió de formato
-                Log.d(TAG, "Logs: Fragmento de respuesta: ${response.take(1000)}")
-            } else {
-                Log.d(TAG, "Logs: Se encontraron ${subMatches.size} pistas.")
+            if (subMatches.isNotEmpty()) {
+                Log.d(TAG, "Logs: ¡Éxito! Se encontraron ${subMatches.size} subtítulos.")
                 subMatches.forEachIndexed { index, match ->
                     val subId = match.groupValues[1]
                     val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
 
-                    Log.d(TAG, "Logs: [+] Subtítulo [$index] vinculado: $subUrl")
+                    Log.d(TAG, "Logs: [+] Subtítulo detectado: $subUrl")
 
                     subtitleCallback.invoke(
                         SubtitleFile(
@@ -183,6 +177,12 @@ class AnimeParadiseProvider : MainAPI() {
                             url = subUrl
                         )
                     )
+                }
+            } else {
+                Log.d(TAG, "Logs: [!] Seguimos sin hallar IDs en este fragmento.")
+                // Si tienes curiosidad de ver el final de la respuesta (donde suelen estar los datos)
+                if (response.length > 2000) {
+                    Log.d(TAG, "Logs: Final de la respuesta: ${response.takeLast(1000)}")
                 }
             }
 
