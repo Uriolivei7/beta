@@ -158,54 +158,44 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- PROCESAMIENTO DE RESPUESTA NEXT.JS ---
-            // Eliminamos los prefijos de stream (ej: 1:I{"id"...) para que el JSON sea legible
-            val cleanResponse = response
-                .replace(Regex("""^[0-9]+:[A-Z]"""), "")
-                .replace("\\u0022", "\"")
-                .replace("\\\"", "\"")
-                .replace("\\/", "/")
+            // --- ESCANEO DE SUBTÍTULOS (Basado en subData) ---
+            Log.d("AnimeParadise", "Logs: === ESCANEANDO subData ===")
 
-            Log.d("AnimeParadise", "Logs: === INICIO ESCANEO DE SUBS ===")
+            // Buscamos el patrón {"src":"ID_O_URL","label":"Idioma","type":"tipo"}
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            val matches = subRegex.findAll(response)
 
-            // Buscamos el objeto de subtítulos: {"id":"UUID","lang":"Idioma"}
-            // El ID de subtítulos suele ser un UUID (letras-números-guiones)
-            val subRegex = Regex("""\{"id":"([a-f0-9-]{36})","lang":"([^"]+)"\}""")
-            val subMatches = subRegex.findAll(cleanResponse).toList()
+            matches.forEach { match ->
+                val src = match.groupValues[1]
+                val label = match.groupValues[2]
+                val type = match.groupValues[3]
 
-            if (subMatches.isNotEmpty()) {
-                subMatches.forEach { match ->
-                    val sId = match.groupValues[1]
-                    val sLang = match.groupValues[2]
-                    val sUrl = "https://api.animeparadise.moe/stream/file/$sId"
-
-                    Log.d("AnimeParadise", "Logs: [+] SUB ENCONTRADO: $sLang -> URL: $sUrl")
-
-                    subtitleCallback.invoke(
-                        newSubtitleFile(lang = sLang, url = sUrl) {
-                            this.headers = mapOf(
-                                "referer" to "https://www.animeparadise.moe/",
-                                "origin" to "https://www.animeparadise.moe",
-                                "accept" to "text/plain, */*",
-                                "connection" to "keep-alive"
-                            )
-                        }
-                    )
+                // Si el src no empieza con http, es un ID interno de la API
+                val subUrl = if (src.startsWith("http")) {
+                    src
+                } else {
+                    "https://api.animeparadise.moe/stream/file/$src"
                 }
-            } else {
-                Log.d("AnimeParadise", "Logs: [!] No se hallaron subtítulos estructurados. Reintentando búsqueda genérica...")
-                // Búsqueda de respaldo por si el formato UUID cambia
-                val backupIds = Regex("""(?:"id")\s*:\s*"([a-zA-Z0-9_-]{25,})"""").findAll(cleanResponse)
-                backupIds.forEach { Log.d("AnimeParadise", "Logs: [?] ID Genérico hallado: ${it.groupValues[1]}") }
+
+                Log.d("AnimeParadise", "Logs: [+] Sub Encontrado: $label ($type) -> $subUrl")
+
+                subtitleCallback.invoke(
+                    newSubtitleFile(
+                        lang = label,
+                        url = subUrl
+                    ) {
+                        this.headers = commonHeaders
+                    }
+                )
             }
 
             // --- RASTREO DE VIDEO ---
-            val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+""")
-            val videoMatch = lightningRegex.find(response)
+            // Buscamos el streamLink principal
+            val streamRegex = Regex(""""streamLink":"(https://[^"]+)"""")
+            val streamMatch = streamRegex.find(response)
 
-            if (videoMatch != null) {
-                val rawLightningUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
-                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawLightningUrl"
+            if (streamMatch != null) {
+                val finalUrl = streamMatch.groupValues[1].replace("\\u0026", "&")
 
                 Log.d("AnimeParadise", "Logs: [V] Video enviado: $finalUrl")
 
@@ -221,7 +211,7 @@ class AnimeParadiseProvider : MainAPI() {
                     }
                 )
             } else {
-                Log.d("AnimeParadise", "Logs: [!] Error: Video no encontrado.")
+                Log.d("AnimeParadise", "Logs: [!] Error: No se encontró streamLink")
             }
 
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
