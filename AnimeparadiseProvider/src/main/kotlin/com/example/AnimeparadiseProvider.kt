@@ -28,14 +28,13 @@ class AnimeParadiseProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
-    // ============================== MAIN PAGE ===============================
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "Logs: Iniciando getMainPage")
         return try {
             val url = "$apiUrl/?sort={\"rate\": -1}"
             val response = app.get(url, headers = apiHeaders).text
-            val resData = json.decodeFromString<AnimeListResponse>(response)
+            // Cambio: Uso explícito del serializador
+            val resData = json.decodeFromString(AnimeListResponse.serializer(), response)
 
             val animeList = resData.data.map {
                 newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
@@ -49,13 +48,12 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
-    // =============================== SEARCH ===============================
-
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: Buscando $query")
         return try {
             val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
-            val resData = json.decodeFromString<AnimeListResponse>(response)
+            // Cambio: Uso explícito del serializador
+            val resData = json.decodeFromString(AnimeListResponse.serializer(), response)
 
             resData.data.map {
                 newAnimeSearchResponse(it.title, "${it.id}|${it.link}", TvType.Anime) {
@@ -68,9 +66,8 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
-    // =============================== LOAD ===============================
-
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "Logs: Iniciando load para $url")
         return try {
             val parts = url.split("|")
             val id = parts[0]
@@ -80,10 +77,12 @@ class AnimeParadiseProvider : MainAPI() {
             val jsonData = document.selectFirst("script#__NEXT_DATA__")?.data()
                 ?: throw Exception("No NEXT_DATA")
 
-            val details = json.decodeFromString<AnimeDetails>(jsonData).props.pageProps.data
+            // Cambio: Uso explícito del serializador
+            val details = json.decodeFromString(AnimeDetails.serializer(), jsonData).props.pageProps.data
 
             val epResponse = app.get("$apiUrl/anime/$id/episode", headers = apiHeaders).text
-            val epData = json.decodeFromString<EpisodeListResponse>(epResponse)
+            // Cambio: Uso explícito del serializador
+            val epData = json.decodeFromString(EpisodeListResponse.serializer(), epResponse)
 
             val episodes = epData.data.map {
                 newEpisode("/watch/${it.uid}?origin=${it.origin}") {
@@ -113,7 +112,8 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: Cargando links para $data")
             val doc = Jsoup.parse(app.get(mainUrl + data).text)
             val nextData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return false
-            val videoData = json.decodeFromString<VideoData>(nextData).props.pageProps
+            // Cambio: Uso explícito del serializador
+            val videoData = json.decodeFromString(VideoData.serializer(), nextData).props.pageProps
 
             videoData.subtitles?.forEach {
                 subtitleCallback(newSubtitleFile(it.label, it.src))
@@ -121,7 +121,8 @@ class AnimeParadiseProvider : MainAPI() {
 
             val storageUrl = "$apiUrl/storage/${videoData.animeData.title}/${videoData.episode.number}"
             val videoResponse = app.get(storageUrl, headers = apiHeaders).text
-            val videoObjectList = json.decodeFromString<VideoList>(videoResponse)
+            // Cambio: Uso explícito del serializador
+            val videoObjectList = json.decodeFromString(VideoList.serializer(), videoResponse)
 
             videoObjectList.directUrl?.forEach { video ->
                 callback(
@@ -142,7 +143,6 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
-    // Función auxiliar para mapear calidad (opcional pero recomendada)
     private fun getQualityFromName(qualityName: String): Int {
         return when {
             qualityName.contains("1080") -> Qualities.P1080.value
@@ -153,71 +153,22 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
-    // ============================== MODELOS (DATA CLASSES) ==============================
-    // Estos deben estar dentro del archivo para que no den error de "Unresolved reference"
-
-    @Serializable
-    data class AnimeListResponse(val data: List<AnimeObject>)
-
-    @Serializable
-    data class AnimeObject(
-        @SerialName("_id") val id: String,
-        val title: String,
-        val link: String,
-        val posterImage: ImageObject
-    )
-
-    @Serializable
-    data class ImageObject(val original: String? = null, val large: String? = null)
-
-    @Serializable
-    data class AnimeDetails(val props: DetailsProps)
-
-    @Serializable
-    data class DetailsProps(val pageProps: DetailsPageProps)
-
-    @Serializable
-    data class DetailsPageProps(val data: DetailsData)
-
-    @Serializable
-    data class DetailsData(val synopsys: String? = null, val genres: List<String>? = null)
-
-    @Serializable
-    data class EpisodeListResponse(val data: List<EpisodeObject>)
-
-    @Serializable
-    data class EpisodeObject(
-        val uid: String,
-        val origin: String,
-        val number: String? = null,
-        val title: String? = null
-    )
-
-    @Serializable
-    data class VideoData(val props: VideoProps)
-
-    @Serializable
-    data class VideoProps(val pageProps: VideoPageProps)
-
-    @Serializable
-    data class VideoPageProps(
-        val subtitles: List<SubtitleObject>? = null,
-        val animeData: AnimeInfo,
-        val episode: EpisodeInfo
-    )
-
-    @Serializable
-    data class SubtitleObject(val src: String, val label: String)
-
-    @Serializable
-    data class AnimeInfo(val title: String)
-
-    @Serializable
-    data class EpisodeInfo(val number: String)
-
-    @Serializable
-    data class VideoList(val directUrl: List<VideoObject>? = null, val message: String? = null)
-
-    @Serializable
-    data class VideoObject(val src: String, val label: String)
+    // --- Modelos ---
+    @Serializable data class AnimeListResponse(val data: List<AnimeObject>)
+    @Serializable data class AnimeObject(@SerialName("_id") val id: String, val title: String, val link: String, val posterImage: ImageObject)
+    @Serializable data class ImageObject(val original: String? = null, val large: String? = null)
+    @Serializable data class AnimeDetails(val props: DetailsProps)
+    @Serializable data class DetailsProps(val pageProps: DetailsPageProps)
+    @Serializable data class DetailsPageProps(val data: DetailsData)
+    @Serializable data class DetailsData(val synopsys: String? = null, val genres: List<String>? = null)
+    @Serializable data class EpisodeListResponse(val data: List<EpisodeObject>)
+    @Serializable data class EpisodeObject(val uid: String, val origin: String, val number: String? = null, val title: String? = null)
+    @Serializable data class VideoData(val props: VideoProps)
+    @Serializable data class VideoProps(val pageProps: VideoPageProps)
+    @Serializable data class VideoPageProps(val subtitles: List<SubtitleObject>? = null, val animeData: AnimeInfo, val episode: EpisodeInfo)
+    @Serializable data class SubtitleObject(val src: String, val label: String)
+    @Serializable data class AnimeInfo(val title: String)
+    @Serializable data class EpisodeInfo(val number: String)
+    @Serializable data class VideoList(val directUrl: List<VideoObject>? = null, val message: String? = null)
+    @Serializable data class VideoObject(val src: String, val label: String)
 }
