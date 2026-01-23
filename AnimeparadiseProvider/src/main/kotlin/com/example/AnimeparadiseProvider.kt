@@ -3,7 +3,6 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.Jsoup
 import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.databind.DeserializationContext
@@ -26,7 +25,6 @@ class AnimeParadiseProvider : MainAPI() {
 
     private val TAG = "AnimeParadise"
 
-    // Código actualizado
     private val mapper = jacksonObjectMapper().apply {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL)
@@ -40,97 +38,72 @@ class AnimeParadiseProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: Iniciando getMainPage")
         return try {
             val url = "$apiUrl/?sort=%7B%22rate%22:-1%7D"
             val response = app.get(url, headers = apiHeaders).text
-
             val resData: AnimeListResponse = mapper.readValue(response)
 
-            val animeList = resData.data.map {
-                // USAMOS EL SLUG (it.link) COMO IDENTIFICADOR ÚNICO
-                val slug = it.link ?: ""
-                newAnimeSearchResponse(it.title ?: "Sin título", slug, TvType.Anime) {
+            val animeList = resData.data?.map {
+                newAnimeSearchResponse(it.title ?: "Sin título", it.link ?: "", TvType.Anime) {
                     this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
-            }
-            Log.d(TAG, "Logs: getMainPage exitoso, encontrados ${animeList.size} animes")
-            newHomePageResponse(listOf(HomePageList("Popular Anime", animeList)), true)
+            } ?: emptyList()
+            newHomePageResponse(listOf(HomePageList("Animes Populares", animeList)), true)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
+            Log.e(TAG, "Error getMainPage: ${e.message}")
             null
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: Buscando anime: $query")
         return try {
             val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
             val resData: AnimeListResponse = mapper.readValue(response)
 
-            val results = resData.data.map {
-                val slug = it.link ?: ""
-                newAnimeSearchResponse(it.title ?: "Sin título", slug, TvType.Anime) {
+            resData.data?.map {
+                newAnimeSearchResponse(it.title ?: "Sin título", it.link ?: "", TvType.Anime) {
                     this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
-            }
-            Log.d(TAG, "Logs: Búsqueda exitosa para '$query', ${results.size} resultados")
-            results
+            } ?: emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en search: ${e.message}")
+            Log.e(TAG, "Error search: ${e.message}")
             emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load para URL/Slug: $url")
         return try {
             val slug = if (url.contains("/")) url.substringAfterLast("/") else url
             val apiPath = "$apiUrl/anime/$slug"
 
-            Log.d(TAG, "Logs: Pidiendo datos a la API: $apiPath")
             val detailResponse = app.get(apiPath, headers = apiHeaders).text
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
-            val anime = wrapper.data
-                ?: throw Exception("La API respondió pero el campo 'data' está vacío para: $slug")
+            val anime = wrapper.data ?: throw Exception("Data null")
 
-            Log.d(TAG, "Logs: Datos obtenidos exitosamente para: ${anime.title}")
-
-            // --- MAPEO DE EPISODIOS ---
+            // IMPORTANTE: Según tu JSON, los episodios vienen en wrapper.data.ep
             val episodes = anime.ep?.mapIndexed { index, epData ->
                 val epId = epData.id ?: ""
                 val epTitle = epData.title ?: "Episodio ${index + 1}"
-                val epThumb = epData.image // Es un String directo según tu JSON
 
                 newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
                     this.name = epTitle
                     this.episode = epData.number?.toIntOrNull() ?: (index + 1)
-                    this.posterUrl = epThumb
+                    this.posterUrl = epData.image // String directo de TMDB
                 }
             } ?: emptyList()
 
-            val publicUrl = "$mainUrl/anime/$slug"
-
-            newAnimeLoadResponse(anime.title ?: "Sin título", publicUrl, TvType.Anime) {
+            newAnimeLoadResponse(anime.title ?: "Sin título", "$mainUrl/anime/$slug", TvType.Anime) {
                 this.plot = anime.synopsys
                 this.tags = anime.genres
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 this.year = anime.animeSeason?.year
-
-                this.showStatus = when (anime.status) {
-                    "finished" -> ShowStatus.Completed
-                    "ongoing" -> ShowStatus.Ongoing
-                    else -> null
-                }
-
+                this.showStatus = if (anime.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
                 addEpisodes(DubStatus.Subbed, episodes)
-                if (!anime.trailer.isNullOrBlank()) {
-                    addTrailer(anime.trailer)
-                }
+                if (!anime.trailer.isNullOrBlank()) addTrailer(anime.trailer)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
+            Log.e(TAG, "Error load: ${e.message}")
             null
         }
     }
@@ -142,81 +115,54 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val currentEpId = data.substringAfter("/watch/").substringBefore("?")
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId")
-
         return try {
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
+            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
+
             val actionHeaders = mapOf(
-                "accept" to "*/*",
                 "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "content-type" to "text/plain;charset=UTF-8",
-                "origin" to "https://www.animeparadise.moe",
-                "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "referer" to watchUrl
             )
 
-            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
-            val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())).text
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody()).text
 
-            // --- 1. EXTRACCIÓN UNIVERSAL DE VIDEO ---
-            // Este Regex atrapa: lightningflash, frostywinds, y cualquier subdominio nuevo
+            // Regex Universal para atrapar cualquier servidor (frostywinds, lightningflash, windflash, etc)
             val videoRegex = Regex("""https://[a-zA-Z0-9.-]+\.[a-z]{2,}/_v7/[^"\\\s]+master\.m3u8""")
-
             val index = response.indexOf(currentEpId)
             val searchArea = if (index != -1) {
-                // Ventana balanceada: busca 5000 caracteres antes y 5000 después del ID
-                val start = (index - 5000).coerceAtLeast(0)
-                val end = (index + 5000).coerceAtMost(response.length)
-                response.substring(start, end)
-            } else {
-                response
-            }
+                response.substring((index - 5000).coerceAtLeast(0), (index + 5000).coerceAtMost(response.length))
+            } else response
 
             val videoMatch = videoRegex.find(searchArea) ?: videoRegex.find(response)
 
-            if (videoMatch != null) {
-                val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
-                Log.d(TAG, "Logs: Video encontrado (Servidor: ${rawUrl.substringAfter("https://").substringBefore("/")}): $rawUrl")
-
-                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
-
+            videoMatch?.let {
+                val rawUrl = it.value.replace("\\", "").replace("u0026", "&")
                 callback.invoke(
-                    newExtractorLink("AnimeParadise", "AnimeParadise", proxyUrl).apply {
+                    newExtractorLink("AnimeParadise", "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=$rawUrl").apply {
                         this.quality = Qualities.P1080.value
                         this.type = ExtractorLinkType.M3U8
-                        this.headers = mapOf(
-                            "referer" to "https://www.animeparadise.moe/",
-                            "origin" to "https://www.animeparadise.moe",
-                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        )
+                        this.headers = mapOf("referer" to "https://www.animeparadise.moe/")
                     }
                 )
-            } else {
-                Log.e(TAG, "Logs: No se encontró ningún link de video (Ni lightning ni frosty)")
             }
 
-            // 3. SUBTÍTULOS
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val addedSubs = mutableSetOf<String>()
-            subRegex.findAll(searchArea).forEach { match ->
-                val src = match.groupValues[1].replace("\\/", "/")
-                if (addedSubs.add(src)) {
-                    val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                    subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
-                }
+            // Subtítulos
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""").findAll(searchArea).forEach {
+                val src = it.groupValues[1].replace("\\/", "/")
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(it.groupValues[2], subUrl))
             }
-
             true
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
-            false
-        }
+        } catch (e: Exception) { false }
     }
-
 }
 
-data class AnimeListResponse(val data: List<AnimeObject>)
+// --- CLASES DE DATOS UNIFICADAS ---
+
+data class AnimeListResponse(val data: List<AnimeObject>? = null)
+
+data class AnimeDetailResponse(val data: AnimeObject? = null)
 
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
@@ -228,31 +174,28 @@ data class AnimeObject(
     val trailer: String? = null,
     val animeSeason: SeasonInfo? = null,
     val posterImage: ImageInfo? = null,
-
-    // Esta anotación permite que 'ep' sea una lista de IDs (Strings) o de Objetos
     @JsonDeserialize(contentUsing = EpisodeDeserializer::class)
     val ep: List<EpisodeDetail>? = null
 )
 
 data class EpisodeDetail(
-    @JsonAlias("uid") val id: String? = null, // La API usa 'uid' en el load
+    val id: String? = null,
     val title: String? = null,
-    val image: String? = null, // En tu JSON 'image' es un String directo, no un objeto
+    val image: String? = null,
     val number: String? = null
 )
 
-// --- EL DESERIALIZADOR MÁGICO ---
-// Esto permite que el buscador NO explote cuando recibe solo un ID
+data class SeasonInfo(val year: Int? = null)
+data class ImageInfo(val original: String? = null, val large: String? = null)
+
 class EpisodeDeserializer : JsonDeserializer<EpisodeDetail>() {
     override fun deserialize(p: JsonParser, ctxt: DeserializationContext): EpisodeDetail {
         val node = p.codec.readTree<com.fasterxml.jackson.databind.JsonNode>(p)
         return if (node.isTextual) {
-            // Si es un String (Búsqueda), creamos un objeto solo con el ID
             EpisodeDetail(id = node.asText())
         } else {
-            // Si es un Objeto (Load), leemos todos los campos
             EpisodeDetail(
-                id = node.get("uid")?.asText() ?: node.get("id")?.asText(),
+                id = node.get("uid")?.asText() ?: node.get("_id")?.asText(),
                 title = node.get("title")?.asText(),
                 image = node.get("image")?.asText(),
                 number = node.get("number")?.asText()
@@ -260,61 +203,3 @@ class EpisodeDeserializer : JsonDeserializer<EpisodeDetail>() {
         }
     }
 }
-
-// 3. El envoltorio se mantiene igual pero ahora AnimeObject ya es compatible
-data class AnimeDetailResponse(
-    val data: AnimeObject? = null,
-    val error: Boolean? = null
-)
-
-data class SeasonInfo(val season: String? = null, val year: Int? = null)
-
-data class ImageInfo(val original: String? = null, val large: String? = null)
-
-data class NextDataResponse(val props: NextProps)
-data class NextProps(val pageProps: NextPageProps)
-data class NextPageProps(val data: DetailedAnimeData)
-data class DetailedAnimeData(val synopsys: String? = null, val genres: List<String>? = null)
-
-data class EpisodeListResponse(val data: List<EpisodeEntry>)
-data class EpisodeEntry(val uid: String, val origin: String, val number: String? = null, val title: String? = null)
-
-data class NextDataVideo(val props: VideoNextProps)
-data class VideoNextProps(val pageProps: VideoPageData)
-data class VideoPageData(val subtitles: List<SubtitleEntry>? = null, val animeData: SimpleAnime, val episode: SimpleEpisode)
-data class SubtitleEntry(val src: String, val label: String)
-data class SimpleAnime(val title: String)
-data class SimpleEpisode(val number: String)
-
-data class VideoDirectList(
-    val directUrl: List<VideoSource>? = null
-)
-
-data class VideoSource(
-    val src: String,
-    val label: String
-)
-
-// Los datos del Anime
-data class AnimeData(
-    val id: String? = null,
-    val title: String? = null,
-    val synopsys: String? = null,
-    val genres: List<String>? = null,
-    val posterImage: ImageContainer? = null,
-    val animeSeason: Season? = null,
-    val status: String? = null,
-    val trailer: String? = null,
-    val ep: List<EpisodeDetail>? = null // <--- IMPORTANTE: Debe ser una lista de EpisodeDetail
-)
-
-// Clase genérica para imágenes
-data class ImageContainer(
-    val original: String? = null,
-    val large: String? = null,
-    val medium: String? = null
-)
-
-data class Season(
-    val year: Int? = null
-)
