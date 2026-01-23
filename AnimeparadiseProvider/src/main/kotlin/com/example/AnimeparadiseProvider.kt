@@ -87,14 +87,17 @@ class AnimeParadiseProvider : MainAPI() {
 
             val anime = wrapper.data ?: throw Exception("El campo 'data' está vacío")
 
+            // --- NUEVA LÓGICA: CARGA DE EPISODIOS DETALLADA ---
             var epList = anime.ep ?: emptyList()
 
+            // Si el primer episodio no tiene título, pedimos la lista completa a la API de episodios
             if (epList.isNotEmpty() && epList[0].title == null) {
                 Log.d(TAG, "Logs: Títulos nulos detectados, pidiendo detalles a /anime/episodes/")
                 try {
                     val epDetailsResponse = app.get("$apiUrl/anime/episodes/$slug", headers = apiHeaders).text
                     val epWrapper: AnimeListResponse = mapper.readValue(epDetailsResponse)
                     if (!epWrapper.data.isNullOrEmpty()) {
+                        // La API de episodios suele devolver los objetos completos
                         epList = epWrapper.data[0].ep ?: epList
                     }
                 } catch (e: Exception) {
@@ -177,6 +180,8 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 }
+
+// --- CLASES DE DATOS ---
 
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
 data class AnimeDetailResponse(val data: AnimeObject? = null)
