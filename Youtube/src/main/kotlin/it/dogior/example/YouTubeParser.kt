@@ -211,13 +211,17 @@ class YouTubeParser(override var name: String) : MainAPI() {
 
     suspend fun videoToLoadResponse(videoUrl: String): LoadResponse {
         val CURRENT_TAG = "YT_REC"
-        Log.e(CURRENT_TAG, "--- INICIO Carga LoadResponse para URL: $videoUrl ---")
 
         val videoInfo = try {
             StreamInfo.getInfo(videoUrl)
         } catch (e: Exception) {
-            Log.e(CURRENT_TAG, "ERROR CRÍTICO en StreamInfo.getInfo: ${e.message}")
-            throw e
+            if (e.message?.contains("reloaded") == true) {
+                kotlinx.coroutines.delay(500)
+                StreamInfo.getInfo(videoUrl)
+            } else {
+                Log.e(CURRENT_TAG, "ERROR CRÍTICO: ${e.message}")
+                throw e
+            }
         }
 
         val views = "Views: ${videoInfo.viewCount}"

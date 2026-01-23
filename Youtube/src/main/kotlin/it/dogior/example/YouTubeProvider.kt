@@ -37,7 +37,9 @@ class YoutubeProvider(
     companion object {
         const val MAIN_URL = "https://www.youtube.com"
         const val TAG = "Youtube"
-        const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        //const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+
+        const val ANDROID_USER_AGENT = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
     }
 
     private var youtubeCookie: String?
@@ -49,11 +51,11 @@ class YoutubeProvider(
     init {
         try {
             val downloader = NewPipe.getDownloader()
-
             val fields = downloader.javaClass.declaredFields
+
             val uaField = fields.find { it.name == "userAgent" }
             uaField?.isAccessible = true
-            uaField?.set(downloader, PC_USER_AGENT)
+            uaField?.set(downloader, ANDROID_USER_AGENT)
 
             youtubeCookie?.let { cookie ->
                 val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" }
