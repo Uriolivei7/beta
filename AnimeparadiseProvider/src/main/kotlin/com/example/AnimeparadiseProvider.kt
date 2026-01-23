@@ -143,7 +143,6 @@ class AnimeParadiseProvider : MainAPI() {
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
             val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-            // 1. Petición POST con el Next-Action
             val response = app.post(
                 watchUrl,
                 headers = mapOf(
@@ -158,56 +157,60 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val resText = response.text
-            Log.d("AnimeParadise", "Logs: Respuesta recibida (Tamaño: ${resText.length})")
+            Log.d("AnimeParadise", "Logs: Respuesta recibida (${resText.length} bytes)")
 
-            // 2. Extracción Robusta con Regex (Busca el patrón del link de video)
-            val streamRegex = Regex("""\"streamLink\":\"(https:[^\"]+)\"""")
-            val match = streamRegex.find(resText)
-            val rawStreamLink = match?.groupValues?.get(1)
+            // --- EXTRACCIÓN REFORZADA ---
+            // Buscamos cualquier URL que empiece por https y termine en .m3u8 dentro del texto sucio
+            val m3u8Regex = Regex("""https?%3A%2F%2F[^\s"\\,]+master\.m3u8|https?://[^\s"\\,]+master\.m3u8""")
+            val rawMatch = m3u8Regex.find(resText)?.value
                 ?.replace("\\u0026", "&")
                 ?.replace("\\/", "/")
 
-            if (!rawStreamLink.isNullOrBlank()) {
-                val encodedUrl = java.net.URLEncoder.encode(rawStreamLink, "UTF-8")
-                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
+            // Si no lo encuentra así, buscamos por la palabra clave "streamLink" pero más flexible
+            val backupLink = if (rawMatch == null) {
+                resText.substringAfter("\"streamLink\":\"", "").substringBefore("\"", "")
+                    .replace("\\u0026", "&").replace("\\/", "/")
+            } else rawMatch
 
-                Log.d("AnimeParadise", "Logs: [V] Link con Proxy generado: $proxyUrl")
+            if (!backupLink.isNullOrBlank() && backupLink.contains("http")) {
+                Log.d("AnimeParadise", "Logs: [V] Link detectado: $backupLink")
+
+                // Codificamos para el proxy de AnimeParadise
+                val encodedUrl = java.net.URLEncoder.encode(backupLink, "UTF-8")
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise",
+                        name = "AnimeParadise (Proxy)",
                         source = "AnimeParadise",
                         url = proxyUrl,
-                    ).apply { // Usamos .apply para asignar los valores sin errores de constructor
+                    ).apply {
                         this.quality = Qualities.P1080.value
                         this.type = ExtractorLinkType.M3U8
                         this.headers = mapOf(
                             "User-Agent" to fixedUserAgent,
                             "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/"
+                            "Referer" to "https://www.animeparadise.moe/",
+                            "Accept" to "*/*"
                         )
                     }
                 )
             } else {
-                Log.d("AnimeParadise", "Logs: [!] No se pudo extraer streamLink. ¿Estará el next-action desactualizado?")
+                // Log de emergencia: Ver los primeros 500 caracteres para ver qué está llegando
+                Log.d("AnimeParadise", "Logs: [!] Falló extracción. Muestra del texto: ${resText.take(500)}")
             }
 
-            // 3. Extracción de Subtítulos (También con Regex por seguridad)
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(resText).forEach { subMatch ->
-                val src = subMatch.groupValues[1]
-                val label = subMatch.groupValues[2]
+            // --- SUBTÍTULOS ---
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""").findAll(resText).forEach { match ->
+                val src = match.groupValues[1]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-
-                subtitleCallback.invoke(
-                    newSubtitleFile(label, subUrl)
-                )
+                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
             }
 
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e("AnimeParadise", "Logs: ERROR Crítico: ${e.message}")
+            Log.e("AnimeParadise", "Logs: ERROR: ${e.message}")
             false
         }
     }
