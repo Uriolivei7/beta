@@ -137,7 +137,7 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
+        Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS ===")
         return try {
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
@@ -158,39 +158,38 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- EXTRACTOR MULTI-IDIOMA ---
-            Log.d(TAG, "Logs: Iniciando búsqueda de subtítulos multi-idioma...")
+            // --- SCANNER DE SUBTÍTULOS ---
+            Log.d("AnimeParadise", "Logs: Iniciando escaneo de subtítulos...")
 
-            val subObjectRegex = Regex("""\{"id":"([a-zA-Z0-9_-]{20,})","lang":"([^"]+)"\}""")
-            val matches = subObjectRegex.findAll(response).toList()
+            // Limpieza profunda de la respuesta para evitar fallos de Regex
+            val cleanResponse = response
+                .replace("\\u0022", "\"")
+                .replace("\\\"", "\"")
+                .replace("\\/", "/")
 
-            if (matches.isNotEmpty()) {
-                Log.d(TAG, "Logs: Se encontraron ${matches.size} pistas de subtítulos.")
+            // Buscamos el ID del archivo de subtítulos
+            val idPattern = Regex("""(?:"id"|"file"|"subtitles")\s*:\s*"([a-zA-Z0-9_-]{25,})"""")
+            val allPossibleIds = idPattern.findAll(cleanResponse).map { it.groupValues[1] }.distinct().toList()
 
-                matches.forEach { match ->
-                    val id = match.groupValues[1]
-                    val language = match.groupValues[2]
-                    val finalUrl = "https://api.animeparadise.moe/stream/file/$id"
+            if (allPossibleIds.isNotEmpty()) {
+                Log.d("AnimeParadise", "Logs: Se encontraron ${allPossibleIds.size} IDs candidatos.")
+                allPossibleIds.forEachIndexed { index, subId ->
+                    val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
 
-                    Log.d(TAG, "Logs: [+] Subtítulo detectado: $language -> $finalUrl")
+                    // Buscamos el lenguaje cerca del ID en la respuesta original
+                    val chunk = cleanResponse.substringAfter(subId).take(100)
+                    val lang = when {
+                        chunk.contains("Spanish") || chunk.contains("Español") -> "Español"
+                        chunk.contains("English") || chunk.contains("Inglés") -> "English"
+                        chunk.contains("Portuguese") || chunk.contains("Português") -> "Português"
+                        else -> "Subtítulo ${index + 1}"
+                    }
 
-                    subtitleCallback.invoke(
-                        newSubtitleFile(
-                            lang = language,
-                            url = finalUrl
-                        )
-                    )
+                    Log.d("AnimeParadise", "Logs: [+] Añadiendo subtítulo: $lang")
+                    subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
                 }
             } else {
-                // Si el Regex de objeto falla, intentamos el de ID puro que mencionamos antes
-                Log.d(TAG, "Logs: [!] No se detectó el objeto completo, probando escaneo de IDs huérfanos...")
-                val fallbackRegex = Regex("""stream(?:\\/|/)file(?:\\/|/)([a-zA-Z0-9_-]{20,})""")
-                fallbackRegex.findAll(response).forEachIndexed { index, m ->
-                    val id = m.groupValues[1]
-                    subtitleCallback.invoke(
-                        newSubtitleFile(lang = "Español (Alt) ${index + 1}", url = "https://api.animeparadise.moe/stream/file/$id")
-                    )
-                }
+                Log.d("AnimeParadise", "Logs: [!] No se hallaron subtítulos en el texto.")
             }
 
             // --- RASTREO DE VIDEO ---
@@ -201,7 +200,7 @@ class AnimeParadiseProvider : MainAPI() {
                 val rawLightningUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
                 val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawLightningUrl"
 
-                Log.d(TAG, "Logs: [V] Video enviado al reproductor: $finalUrl")
+                Log.d("AnimeParadise", "Logs: [V] Video enviado: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
@@ -215,13 +214,13 @@ class AnimeParadiseProvider : MainAPI() {
                     }
                 )
             } else {
-                Log.d(TAG, "Logs: [!] Error: No se encontró la URL del video (LightningFlash).")
+                Log.d("AnimeParadise", "Logs: [!] Error: Video no encontrado.")
             }
 
-            Log.d(TAG, "Logs: === FIN LOADLINKS ===")
+            Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: ERROR CRÍTICO: ${e.message}")
+            Log.e("AnimeParadise", "Logs: ERROR CRÍTICO: ${e.message}")
             false
         }
     }
