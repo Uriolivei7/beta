@@ -139,30 +139,28 @@ class AnimeParadiseProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "Logs: Iniciando loadLinks (Server Action) para: $data")
         return try {
-            // 1. Extraemos los IDs necesarios de la URL
-            // data es: /watch/cf700438-a21c-4c07-bcb7-45b94c9e6fc5?origin=a49n4AuZawoJY7Wl
+            // 1. Extraemos los IDs necesarios
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
 
-            // 2. Preparamos la URL de la web (donde ocurre la acción)
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            // 3. Encabezados necesarios para engañar a Next.js y que suelte los links
+            // 2. Encabezados para emular el navegador y Next.js
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
-                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24", // El ID de la acción que viste en el curl
+                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to mainUrl,
-                "referer" to watchUrl
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
             )
 
-            // 4. El cuerpo de la petición (JSON Raw como en tu curl)
-            val requestBody = "[\"$epId\",\"$originId\"]"
-
-            Log.d(TAG, "Logs: Enviando Server Action POST a: $watchUrl con body: $requestBody")
-
+            // 3. Cuerpo de la petición (JSON Array como String)
+            val requestBodyString = "[\"$epId\",\"$originId\"]"
             val mediaType = "text/plain;charset=UTF-8".toMediaTypeOrNull()
-            val body = requestBody.toRequestBody(mediaType)
+            val body = requestBodyString.toRequestBody(mediaType)
+
+            Log.d(TAG, "Logs: Enviando POST a: $watchUrl")
 
             val response = app.post(
                 watchUrl,
@@ -170,29 +168,49 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = body
             ).text
 
-            // 5. El formato de respuesta de Next.js es extraño (mezcla de texto y JSON)
-            // Buscamos el link directo que empiece por https e incluya .m3u8 o stream
-            val videoUrl = response.substringAfter("https://stream.animeparadise.moe/m3u8?url=", "")
-                .substringBefore("\"")
+            // LOG DE DEBUG: Mostramos el inicio de la respuesta para ver el formato
+            Log.d(TAG, "Logs: Respuesta recibida (primeros 300 caps): ${response.take(300)}")
 
-            if (videoUrl.isNotEmpty()) {
-                val fullStreamUrl = "https://stream.animeparadise.moe/m3u8?url=$videoUrl"
-                Log.d(TAG, "Logs: URL Maestra encontrada: $fullStreamUrl")
+            // 4. Extracción mediante Regex (Busca la URL de stream entre el desorden de Next.js)
+            val streamRegex = Regex("""https://stream\.animeparadise\.moe/m3u8\?url=[^"\\\s]+""")
+            val match = streamRegex.find(response)
+
+            if (match != null) {
+                val cleanUrl = match.value
+                Log.d(TAG, "Logs: ¡URL Encontrada!: $cleanUrl")
 
                 callback.invoke(
                     newExtractorLink(
                         name = "AnimeParadise Multi",
                         source = "AnimeParadise",
-                        url = fullStreamUrl,
+                        url = cleanUrl,
                     ) {
                         this.quality = Qualities.P1080.value
-                        this.referer = "$mainUrl/"
+                        this.referer = "https://www.animeparadise.moe/"
                         this.type = ExtractorLinkType.M3U8
                     }
                 )
             } else {
-                // Si el substring falló, busquemos cualquier URL de LightningFlash o Stream
-                Log.d(TAG, "Logs: No se encontró URL directa, revisando respuesta completa...")
+                // BACKUP: Buscar enlace directo a lightningflash si el m3u8 de stream no aparece
+                val backupUrl = response.substringAfter("https://lightningflash", "").substringBefore("\"")
+                if (backupUrl.isNotEmpty()) {
+                    val fullBackup = "https://lightningflash" + backupUrl.replace("\\u0026", "&")
+                    Log.d(TAG, "Logs: Link de backup encontrado: $fullBackup")
+
+                    callback.invoke(
+                        newExtractorLink(
+                            "AnimeParadise Backup",
+                            "AnimeParadise",
+                            fullBackup,
+                        ) {
+                            this.quality = Qualities.P1080.value
+                            this.referer = "https://www.animeparadise.moe/"
+                            this.type = ExtractorLinkType.M3U8
+                        }
+                    )
+                } else {
+                    Log.d(TAG, "Logs: No se encontró ningún enlace de video en la respuesta.")
+                }
             }
 
             true
@@ -201,16 +219,7 @@ class AnimeParadiseProvider : MainAPI() {
             false
         }
     }
-
-    private fun getQualityFromName(name: String): Int {
-        return when {
-            name.contains("1080") -> 1080
-            name.contains("720") -> 720
-            name.contains("480") -> 480
-            name.contains("360") -> 360
-            else -> 0 // Calidad desconocida
-        }
-    }
+    
 }
 
 data class AnimeListResponse(val data: List<AnimeObject>)
