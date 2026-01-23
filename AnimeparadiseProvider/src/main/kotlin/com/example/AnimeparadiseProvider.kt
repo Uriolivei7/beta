@@ -140,85 +140,67 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS === URL: $data")
 
         return try {
-            val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-            val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+            // 1. Extracción precisa de IDs usando URI
+            val uri = java.net.URI(data)
+            val epUid = data.substringAfter("/watch/").substringBefore("?")
 
-            val response = app.post(
-                watchUrl,
-                headers = mapOf(
-                    "User-Agent" to fixedUserAgent,
-                    "accept" to "text/x-component",
-                    "content-type" to "text/plain;charset=UTF-8",
-                    "next-action" to "00edb12c2d47127c458483c475a4b71040d121ca63",
-                    "origin" to "https://www.animeparadise.moe",
-                    "referer" to watchUrl
-                ),
-                requestBody = "[]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            )
+            // Extraer el query parameter 'origin'
+            val originId = uri.query.split("&")
+                .find { it.startsWith("origin=") }
+                ?.substringAfter("origin=")
 
-            val resText = response.text
-            Log.d("AnimeParadise", "Logs: Respuesta recibida (${resText.length} bytes)")
-
-            // --- NUEVA ESTRATEGIA DE EXTRACCIÓN ---
-            // Buscamos cualquier cosa que parezca una URL de LightningFlash o que tenga .m3u8
-            // El formato de Next.js suele escapar las URLs como "https:\/\/..." o "https%3A%2F%2F"
-            val videoUrlRegex = Regex("""https?[:%2F\\/]+[^\s"\\,]+master\.m3u8[^\s"\\,]*""")
-            val match = videoUrlRegex.find(resText)?.value
-
-            var finalStreamUrl: String? = null
-
-            if (match != null) {
-                // Limpiamos la URL de caracteres de escape de JSON y de URL Encoding
-                finalStreamUrl = match
-                    .replace("\\/", "/")
-                    .replace("\\u0026", "&")
-
-                // Si la URL está encodeada (con %3A, %2F), la decodificamos
-                if (finalStreamUrl.contains("%3A")) {
-                    finalStreamUrl = java.net.URLDecoder.decode(finalStreamUrl, "UTF-8")
-                }
+            if (originId == null) {
+                Log.d("AnimeParadise", "Logs: [!] No se pudo encontrar el originId en $data")
+                return false
             }
 
-            if (!finalStreamUrl.isNullOrBlank()) {
-                Log.d("AnimeParadise", "Logs: [V] URL de video extraída: $finalStreamUrl")
+            // 2. Llamada a la API de Datos (JSON Puro)
+            val apiUrl = "https://api.animeparadise.moe/stream/$epUid/$originId"
+            Log.d("AnimeParadise", "Logs: Pidiendo stream a: $apiUrl")
 
-                // Aplicamos el proxy de AnimeParadise
-                val encodedProxyParam = java.net.URLEncoder.encode(finalStreamUrl, "UTF-8")
-                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedProxyParam"
+            val response = app.get(apiUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to "https://www.animeparadise.moe/",
+                "Accept" to "application/json"
+            ))
+
+            val resText = response.text
+
+            // 3. Extraer el link de video del JSON
+            val streamLink = Regex("""\"streamLink\":\"(https:[^\"]+)\"""").find(resText)?.groupValues?.get(1)
+                ?.replace("\\/", "/")?.replace("\\u0026", "&")
+
+            if (!streamLink.isNullOrBlank()) {
+                Log.d("AnimeParadise", "Logs: [V] Link original: $streamLink")
+
+                // 4. Codificar para el Proxy de AnimeParadise (Evita el 403)
+                val encodedUrl = java.net.URLEncoder.encode(streamLink, "UTF-8")
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise (Proxy)",
+                        name = "AnimeParadise (Direct)",
                         source = "AnimeParadise",
                         url = proxyUrl,
                     ).apply {
                         this.quality = Qualities.P1080.value
                         this.type = ExtractorLinkType.M3U8
                         this.headers = mapOf(
-                            "User-Agent" to fixedUserAgent,
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                             "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/",
-                            "Accept" to "*/*"
+                            "Referer" to "https://www.animeparadise.moe/"
                         )
                     }
                 )
             } else {
-                // Si falla el Regex, intentamos buscar el fragmento de texto donde suele estar el JSON
-                val possibleJson = resText.substringAfterLast("\"streamLink\":\"", "").substringBefore("\"", "")
-                if (possibleJson.isNotBlank()) {
-                    val fixedUrl = possibleJson.replace("\\/", "/").replace("\\u0026", "&")
-                    Log.d("AnimeParadise", "Logs: [V] URL encontrada por Fallback: $fixedUrl")
-                    // (Aquí podrías repetir la lógica del callback.invoke si quieres ser extra redundante)
-                }
-                Log.d("AnimeParadise", "Logs: [!] No se encontró el link. Últimos 200 caracteres: ${resText.takeLast(200)}")
+                Log.d("AnimeParadise", "Logs: [!] El JSON no contenía streamLink. Respuesta: $resText")
             }
 
-            // --- SUBTÍTULOS (Ahora buscamos en todo el texto) ---
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(resText).forEach { subMatch ->
-                val src = subMatch.groupValues[1]
+            // 5. Extraer Subtítulos
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""").findAll(resText).forEach { match ->
+                val src = match.groupValues[1]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(subMatch.groupValues[2], subUrl))
+                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
             }
 
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
