@@ -34,7 +34,7 @@ class AnimeParadiseProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: Iniciando getMainPage con Jackson")
+        Log.d(TAG, "Logs: Iniciando getMainPage")
         return try {
             val url = "$apiUrl/?sort=%7B%22rate%22:-1%7D"
             val response = app.get(url, headers = apiHeaders).text
@@ -42,11 +42,13 @@ class AnimeParadiseProvider : MainAPI() {
             val resData: AnimeListResponse = mapper.readValue(response)
 
             val animeList = resData.data.map {
-                // Usamos ?: "" para asegurar que el String no sea nulo
-                newAnimeSearchResponse(it.title ?: "Sin título", "${it.id ?: ""}|${it.link ?: ""}", TvType.Anime) {
+                // USAMOS EL SLUG (it.link) COMO IDENTIFICADOR ÚNICO
+                val slug = it.link ?: ""
+                newAnimeSearchResponse(it.title ?: "Sin título", slug, TvType.Anime) {
                     this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
             }
+            Log.d(TAG, "Logs: getMainPage exitoso, encontrados ${animeList.size} animes")
             newHomePageResponse(listOf(HomePageList("Popular Anime", animeList)), true)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
@@ -55,16 +57,19 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: Buscando $query")
+        Log.d(TAG, "Logs: Buscando anime: $query")
         return try {
             val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
             val resData: AnimeListResponse = mapper.readValue(response)
 
-            resData.data.map {
-                newAnimeSearchResponse(it.title ?: "Sin título", "${it.id ?: ""}|${it.link ?: ""}", TvType.Anime) {
+            val results = resData.data.map {
+                val slug = it.link ?: ""
+                newAnimeSearchResponse(it.title ?: "Sin título", slug, TvType.Anime) {
                     this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
             }
+            Log.d(TAG, "Logs: Búsqueda exitosa para '$query', ${results.size} resultados")
+            results
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
@@ -72,29 +77,35 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "Logs: Iniciando load para URL/Slug: $url")
         return try {
-            val parts = url.split("|")
-            val rawId = parts[0]
-            val id = if (rawId.contains("/")) rawId.substringAfterLast("/") else rawId
+            // La URL ahora es directamente el slug (ej: "kimetsu-no-yaiba")
+            val slug = if (url.contains("/")) url.substringAfterLast("/") else url
 
-            Log.d(TAG, "Logs: Pidiendo a API: $apiUrl/anime/$id")
+            val apiPath = "$apiUrl/anime/$slug"
+            Log.d(TAG, "Logs: Pidiendo datos a la API: $apiPath")
 
-            val detailResponse = app.get("$apiUrl/anime/$id", headers = apiHeaders).text
+            val detailResponse = app.get(apiPath, headers = apiHeaders).text
 
-            // Mapeamos primero al envoltorio
+            // Mapeamos al envoltorio "data"
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
-            // Extraemos el objeto anime del campo "data"
-            val anime = wrapper.data ?: throw Exception("El campo data vino nulo")
+            val anime = wrapper.data ?: throw Exception("La API respondió pero el campo 'data' está vacío para: $slug")
+
+            Log.d(TAG, "Logs: Datos obtenidos exitosamente para: ${anime.title}")
 
             val episodes = anime.ep?.mapIndexed { index, epId ->
-                newEpisode("/watch/$epId?origin=${anime.id}") {
+                // Usamos el ID de episodio y mantenemos el origen para el extractor
+                newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
                     this.name = "Episodio ${index + 1}"
                     this.episode = index + 1
                 }
             } ?: emptyList()
 
-            newAnimeLoadResponse(anime.title ?: "Sin título", url, TvType.Anime) {
+            // Generamos la URL pública real para que no de 404 al compartir
+            val publicUrl = "$mainUrl/anime/$slug"
+
+            newAnimeLoadResponse(anime.title ?: "Sin título", publicUrl, TvType.Anime) {
                 this.plot = anime.synopsys
                 this.tags = anime.genres
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
@@ -112,7 +123,7 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
             null
         }
     }
