@@ -72,22 +72,24 @@ class CinehdplusProvider : MainAPI() {
         val tags = doc.selectFirst(".details__list li")?.text()?.substringAfter(":")?.split(",")
         val trailer = doc.selectFirst("#OptYt iframe")?.attr("data-src")?.replaceFirst("https://www.youtube.com/embed/","https://www.youtube.com/watch?v=")
         val recommendations = doc.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
-        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap {
-            val season = it.attr("id").replaceFirst("season-", "").toIntOrNull()
-            it.select(".episodios_list li").mapIndexed { idx, it ->
-                val url = it.selectFirst("a")?.attr("href")
-                val title = it.selectFirst("figure img")?.attr("alt")
-                val img = it.selectFirst("figure img")?.attr("src")
-                newEpisode(url){
-                        this.name = title
-                        this.season = season
-                        this.episode = idx+1
-                        this.posterUrl = img
-                    }
+
+        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonElement ->
+            val seasonNum = seasonElement.attr("id").replaceFirst("season-", "").toIntOrNull()
+            seasonElement.select(".episodios_list li").mapIndexed { idx, epi ->
+                val epUrl = epi.selectFirst("a")?.attr("href") ?: ""
+                val epTitle = epi.selectFirst("figure img")?.attr("alt")
+                val epImg = epi.selectFirst("figure img")?.attr("src")
+                newEpisode(epUrl) {
+                    this.name = epTitle
+                    this.season = seasonNum
+                    this.episode = idx + 1
+                    this.posterUrl = epImg
+                }
             }
         }
+
         return when (tvType) {
-            TvType.Movie -> newMovieLoadResponse(title!!, url, TvType.Movie, url) {
+            TvType.Movie -> newMovieLoadResponse(title ?: "", url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backimage ?: poster
                 this.plot = plot
@@ -97,7 +99,7 @@ class CinehdplusProvider : MainAPI() {
                 addTrailer(trailer)
             }
             TvType.TvSeries -> newTvSeriesLoadResponse(
-                title!!,
+                title ?: "",
                 url, tvType, episodes,
             ) {
                 this.posterUrl = poster
@@ -119,59 +121,49 @@ class CinehdplusProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data).document
-        doc.select("li.clili").amap {
-            val lang = it.attr("data-lang")
-            val optId = it.attr("data-tplayernv")
+        doc.select("li.clili").amap { element ->
+            val lang = element.attr("data-lang")
+            val optId = element.attr("data-tplayernv")
             val frame = doc.selectFirst("div#$optId")?.selectFirst("iframe")?.attr("data-src")
                 ?.substringAfter("player.php?h=")?.substringBefore("&")
-            val doc = app.get(
-                "${
-                    mainUrl.replaceFirst(
-                        "https://",
-                        "https://api."
-                    )
-                }/ir/goto.php?h=$frame"
-            ).document
-            val form = doc.selectFirst("form")
-            val url = form?.selectFirst("input#url")?.attr("value")
-            if (url != null) {
-                val doc = app.post(
-                    "${mainUrl.replaceFirst("https://", "https://api.")}/ir/rd.php",
-                    data = mapOf("url" to url)
-                ).document
-                val form = doc.selectFirst("form")
-                val url = form?.selectFirst("input#url")?.attr("value")
-                if (url != null) {
-                    val doc = app.post(
-                        "${
-                            mainUrl.replaceFirst(
-                                "https://",
-                                "https://api."
-                            )
-                        }/ir/redir_ddh.php", data = mapOf("url" to url, "dl" to "0")
-                    ).document
-                    val form = doc.selectFirst("form")
-                    val url = form?.attr("action")
 
-                    val vid = form?.selectFirst("input#vid")?.attr("value")
-                    val hash = form?.selectFirst("input#hash")?.attr("value")
-                    if (url != null) {
-                        val doc =
-                            app.post(url, data = mapOf("vid" to vid!!, "hash" to hash!!)).document
-                        val encoded = doc.selectFirst("script:containsData(link =)")?.html()
-                            ?.substringAfter("link = '")?.substringBefore("';")
-                        val link = base64Decode(encoded!!)
-                        loadSourceNameExtractor(
-                            lang,
-                            fixHostsLinks(link),
-                            "$mainUrl/",
-                            subtitleCallback,
-                            callback
-                        )
+            if (frame != null) {
+                val apiBase = mainUrl.replaceFirst("https://", "https://api.")
+                val gotoDoc = app.get("$apiBase/ir/goto.php?h=$frame").document
+                val form1 = gotoDoc.selectFirst("form")
+                val url1 = form1?.selectFirst("input#url")?.attr("value")
+
+                if (url1 != null) {
+                    val rdDoc = app.post("$apiBase/ir/rd.php", data = mapOf("url" to url1)).document
+                    val form2 = rdDoc.selectFirst("form")
+                    val url2 = form2?.selectFirst("input#url")?.attr("value")
+
+                    if (url2 != null) {
+                        val ddhDoc = app.post("$apiBase/ir/redir_ddh.php", data = mapOf("url" to url2, "dl" to "0")).document
+                        val form3 = ddhDoc.selectFirst("form")
+                        val actionUrl = form3?.attr("action")
+                        val vid = form3?.selectFirst("input#vid")?.attr("value")
+                        val hash = form3?.selectFirst("input#hash")?.attr("value")
+
+                        if (actionUrl != null && vid != null && hash != null) {
+                            val finalDoc = app.post(actionUrl, data = mapOf("vid" to vid, "hash" to hash)).document
+                            val script = finalDoc.selectFirst("script:containsData(link =)")?.html()
+                            val encoded = script?.substringAfter("link = '")?.substringBefore("';")
+
+                            if (encoded != null) {
+                                val link = base64Decode(encoded)
+                                loadSourceNameExtractor(
+                                    lang,
+                                    fixHostsLinks(link),
+                                    "$mainUrl/",
+                                    subtitleCallback,
+                                    callback
+                                )
+                            }
+                        }
                     }
                 }
             }
-
         }
         return true
     }
@@ -200,7 +192,6 @@ suspend fun loadSourceNameExtractor(
         }
 
         val calidadLabel = if (link.quality > 0) "${link.quality}p" else ""
-
         val nombreFinal = "$idiomaLabel [${link.source}] $calidadLabel".trim()
 
         CoroutineScope(Dispatchers.IO).launch {
