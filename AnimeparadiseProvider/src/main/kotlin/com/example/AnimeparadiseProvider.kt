@@ -141,78 +141,73 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-
-            // User-Agent exacto del curl para consistencia
             val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-            // Cabeceras para la petición Next.js
-            val actionHeaders = mapOf(
-                "User-Agent" to fixedUserAgent,
-                "accept" to "text/x-component",
-                "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "00edb12c2d47127c458483c475a4b71040d121ca63",
-                "origin" to "https://www.animeparadise.moe",
-                "referer" to watchUrl,
-                "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
-                "sec-ch-ua-platform" to "\"Windows\""
-            )
-
-            // Paso 1: Pedir los datos del episodio
+            // 1. Petición POST con el Next-Action
             val response = app.post(
                 watchUrl,
-                headers = actionHeaders,
+                headers = mapOf(
+                    "User-Agent" to fixedUserAgent,
+                    "accept" to "text/x-component",
+                    "content-type" to "text/plain;charset=UTF-8",
+                    "next-action" to "00edb12c2d47127c458483c475a4b71040d121ca63",
+                    "origin" to "https://www.animeparadise.moe",
+                    "referer" to watchUrl
+                ),
                 requestBody = "[]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
             val resText = response.text
+            Log.d("AnimeParadise", "Logs: Respuesta recibida (Tamaño: ${resText.length})")
 
-            // Paso 2: Extraer y procesar el streamLink con el PROXY
-            val rawStreamLink = Regex("""\"streamLink\":\"(https:[^\"]+)\"""").find(resText)?.groupValues?.get(1)
-                ?.replace("\\u0026", "&")?.replace("\\/", "/")
+            // 2. Extracción Robusta con Regex (Busca el patrón del link de video)
+            val streamRegex = Regex("""\"streamLink\":\"(https:[^\"]+)\"""")
+            val match = streamRegex.find(resText)
+            val rawStreamLink = match?.groupValues?.get(1)
+                ?.replace("\\u0026", "&")
+                ?.replace("\\/", "/")
 
             if (!rawStreamLink.isNullOrBlank()) {
-                // CODIFICACIÓN PARA EL PROXY (Lo que vimos en el último curl)
                 val encodedUrl = java.net.URLEncoder.encode(rawStreamLink, "UTF-8")
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
 
-                Log.d("AnimeParadise", "Logs: [V] Link con Proxy generado")
-
-                val playerHeaders = mapOf(
-                    "User-Agent" to fixedUserAgent,
-                    "Origin" to "https://www.animeparadise.moe",
-                    "Referer" to "https://www.animeparadise.moe/",
-                    "Accept" to "*/*"
-                )
+                Log.d("AnimeParadise", "Logs: [V] Link con Proxy generado: $proxyUrl")
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise (Proxy)",
+                        name = "AnimeParadise",
                         source = "AnimeParadise",
                         url = proxyUrl,
-                    ) {
-                        this.quality = 1080
+                    ).apply { // Usamos .apply para asignar los valores sin errores de constructor
+                        this.quality = Qualities.P1080.value
                         this.type = ExtractorLinkType.M3U8
-                        this.headers = playerHeaders
+                        this.headers = mapOf(
+                            "User-Agent" to fixedUserAgent,
+                            "Origin" to "https://www.animeparadise.moe",
+                            "Referer" to "https://www.animeparadise.moe/"
+                        )
                     }
                 )
+            } else {
+                Log.d("AnimeParadise", "Logs: [!] No se pudo extraer streamLink. ¿Estará el next-action desactualizado?")
             }
 
-            // Paso 3: Extraer subtítulos (Sin cambios, ya que funcionan bien)
-            val subDataArray = resText.substringAfter("\"subData\":[").substringBefore("]")
+            // 3. Extracción de Subtítulos (También con Regex por seguridad)
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-
-            subRegex.findAll(subDataArray).forEach { match ->
-                val src = match.groupValues[1]
+            subRegex.findAll(resText).forEach { subMatch ->
+                val src = subMatch.groupValues[1]
+                val label = subMatch.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+
                 subtitleCallback.invoke(
-                    newSubtitleFile(lang = match.groupValues[2], url = subUrl)
+                    newSubtitleFile(label, subUrl)
                 )
             }
 
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e("AnimeParadise", "Logs: ERROR en loadLinks: ${e.message}")
+            Log.e("AnimeParadise", "Logs: ERROR Crítico: ${e.message}")
             false
         }
     }
