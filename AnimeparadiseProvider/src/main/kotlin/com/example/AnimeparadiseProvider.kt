@@ -158,31 +158,38 @@ class AnimeParadiseProvider : MainAPI() {
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            Log.d(TAG, "Logs: Buscando subtítulos en respuesta de tamaño: ${response.length}")
+            // --- EXTRACTOR MULTI-IDIOMA ---
+            Log.d(TAG, "Logs: Iniciando búsqueda de subtítulos multi-idioma...")
 
-            val subIdRegex = Regex("""stream(?:\\/|/)file(?:\\/|/)([a-zA-Z0-9_-]+)""")
-            val subMatches = subIdRegex.findAll(response).toList()
+            val subObjectRegex = Regex("""\{"id":"([a-zA-Z0-9_-]{20,})","lang":"([^"]+)"\}""")
+            val matches = subObjectRegex.findAll(response).toList()
 
-            if (subMatches.isNotEmpty()) {
-                Log.d(TAG, "Logs: ¡Éxito! Se encontraron ${subMatches.size} subtítulos.")
-                subMatches.forEachIndexed { index, match ->
-                    val subId = match.groupValues[1]
-                    val subUrl = "https://api.animeparadise.moe/stream/file/$subId"
+            if (matches.isNotEmpty()) {
+                Log.d(TAG, "Logs: Se encontraron ${matches.size} pistas de subtítulos.")
 
-                    Log.d(TAG, "Logs: [+] Subtítulo detectado: $subUrl")
+                matches.forEach { match ->
+                    val id = match.groupValues[1]
+                    val language = match.groupValues[2]
+                    val finalUrl = "https://api.animeparadise.moe/stream/file/$id"
+
+                    Log.d(TAG, "Logs: [+] Subtítulo detectado: $language -> $finalUrl")
 
                     subtitleCallback.invoke(
-                        SubtitleFile(
-                            lang = "Español ${index + 1}",
-                            url = subUrl
+                        newSubtitleFile(
+                            lang = language,
+                            url = finalUrl
                         )
                     )
                 }
             } else {
-                Log.d(TAG, "Logs: [!] Seguimos sin hallar IDs en este fragmento.")
-                // Si tienes curiosidad de ver el final de la respuesta (donde suelen estar los datos)
-                if (response.length > 2000) {
-                    Log.d(TAG, "Logs: Final de la respuesta: ${response.takeLast(1000)}")
+                // Si el Regex de objeto falla, intentamos el de ID puro que mencionamos antes
+                Log.d(TAG, "Logs: [!] No se detectó el objeto completo, probando escaneo de IDs huérfanos...")
+                val fallbackRegex = Regex("""stream(?:\\/|/)file(?:\\/|/)([a-zA-Z0-9_-]{20,})""")
+                fallbackRegex.findAll(response).forEachIndexed { index, m ->
+                    val id = m.groupValues[1]
+                    subtitleCallback.invoke(
+                        newSubtitleFile(lang = "Español (Alt) ${index + 1}", url = "https://api.animeparadise.moe/stream/file/$id")
+                    )
                 }
             }
 
