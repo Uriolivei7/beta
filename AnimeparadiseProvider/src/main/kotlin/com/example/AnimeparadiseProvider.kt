@@ -33,7 +33,6 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val url = "$apiUrl/?sort={\"rate\": -1}"
             val response = app.get(url, headers = apiHeaders).text
-            // Cambio: Uso explícito del serializador
             val resData = json.decodeFromString(AnimeListResponse.serializer(), response)
 
             val animeList = resData.data.map {
@@ -52,7 +51,6 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: Buscando $query")
         return try {
             val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
-            // Cambio: Uso explícito del serializador
             val resData = json.decodeFromString(AnimeListResponse.serializer(), response)
 
             resData.data.map {
@@ -67,7 +65,7 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load para $url")
+        Log.d(TAG, "Logs: Cargando serie: $url")
         return try {
             val parts = url.split("|")
             val id = parts[0]
@@ -77,11 +75,9 @@ class AnimeParadiseProvider : MainAPI() {
             val jsonData = document.selectFirst("script#__NEXT_DATA__")?.data()
                 ?: throw Exception("No NEXT_DATA")
 
-            // Cambio: Uso explícito del serializador
             val details = json.decodeFromString(AnimeDetails.serializer(), jsonData).props.pageProps.data
 
             val epResponse = app.get("$apiUrl/anime/$id/episode", headers = apiHeaders).text
-            // Cambio: Uso explícito del serializador
             val epData = json.decodeFromString(EpisodeListResponse.serializer(), epResponse)
 
             val episodes = epData.data.map {
@@ -112,7 +108,6 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: Cargando links para $data")
             val doc = Jsoup.parse(app.get(mainUrl + data).text)
             val nextData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return false
-            // Cambio: Uso explícito del serializador
             val videoData = json.decodeFromString(VideoData.serializer(), nextData).props.pageProps
 
             videoData.subtitles?.forEach {
@@ -121,7 +116,6 @@ class AnimeParadiseProvider : MainAPI() {
 
             val storageUrl = "$apiUrl/storage/${videoData.animeData.title}/${videoData.episode.number}"
             val videoResponse = app.get(storageUrl, headers = apiHeaders).text
-            // Cambio: Uso explícito del serializador
             val videoObjectList = json.decodeFromString(VideoList.serializer(), videoResponse)
 
             videoObjectList.directUrl?.forEach { video ->
@@ -152,23 +146,74 @@ class AnimeParadiseProvider : MainAPI() {
             else -> Qualities.Unknown.value
         }
     }
-
-    // --- Modelos ---
-    @Serializable data class AnimeListResponse(val data: List<AnimeObject>)
-    @Serializable data class AnimeObject(@SerialName("_id") val id: String, val title: String, val link: String, val posterImage: ImageObject)
-    @Serializable data class ImageObject(val original: String? = null, val large: String? = null)
-    @Serializable data class AnimeDetails(val props: DetailsProps)
-    @Serializable data class DetailsProps(val pageProps: DetailsPageProps)
-    @Serializable data class DetailsPageProps(val data: DetailsData)
-    @Serializable data class DetailsData(val synopsys: String? = null, val genres: List<String>? = null)
-    @Serializable data class EpisodeListResponse(val data: List<EpisodeObject>)
-    @Serializable data class EpisodeObject(val uid: String, val origin: String, val number: String? = null, val title: String? = null)
-    @Serializable data class VideoData(val props: VideoProps)
-    @Serializable data class VideoProps(val pageProps: VideoPageProps)
-    @Serializable data class VideoPageProps(val subtitles: List<SubtitleObject>? = null, val animeData: AnimeInfo, val episode: EpisodeInfo)
-    @Serializable data class SubtitleObject(val src: String, val label: String)
-    @Serializable data class AnimeInfo(val title: String)
-    @Serializable data class EpisodeInfo(val number: String)
-    @Serializable data class VideoList(val directUrl: List<VideoObject>? = null, val message: String? = null)
-    @Serializable data class VideoObject(val src: String, val label: String)
 }
+
+// ===========================================================================
+// CLASES DE DATOS (FUERA DE LA CLASE PRINCIPAL)
+// Esto soluciona el error "typeParametersSerializers"
+// ===========================================================================
+
+@Serializable
+data class AnimeListResponse(val data: List<AnimeObject>)
+
+@Serializable
+data class AnimeObject(
+    @SerialName("_id") val id: String,
+    val title: String,
+    val link: String,
+    val posterImage: ImageObject
+)
+
+@Serializable
+data class ImageObject(val original: String? = null, val large: String? = null)
+
+@Serializable
+data class AnimeDetails(val props: DetailsProps)
+
+@Serializable
+data class DetailsProps(val pageProps: DetailsPageProps)
+
+@Serializable
+data class DetailsPageProps(val data: DetailsData)
+
+@Serializable
+data class DetailsData(val synopsys: String? = null, val genres: List<String>? = null)
+
+@Serializable
+data class EpisodeListResponse(val data: List<EpisodeObject>)
+
+@Serializable
+data class EpisodeObject(
+    val uid: String,
+    val origin: String,
+    val number: String? = null,
+    val title: String? = null
+)
+
+@Serializable
+data class VideoData(val props: VideoProps)
+
+@Serializable
+data class VideoProps(val pageProps: VideoPageProps)
+
+@Serializable
+data class VideoPageProps(
+    val subtitles: List<SubtitleObject>? = null,
+    val animeData: AnimeInfo,
+    val episode: EpisodeInfo
+)
+
+@Serializable
+data class SubtitleObject(val src: String, val label: String)
+
+@Serializable
+data class AnimeInfo(val title: String)
+
+@Serializable
+data class EpisodeInfo(val number: String)
+
+@Serializable
+data class VideoList(val directUrl: List<VideoObject>? = null, val message: String? = null)
+
+@Serializable
+data class VideoObject(val src: String, val label: String)
