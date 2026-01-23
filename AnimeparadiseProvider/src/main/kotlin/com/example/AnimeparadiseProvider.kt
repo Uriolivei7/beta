@@ -170,27 +170,20 @@ class AnimeParadiseProvider : MainAPI() {
                 return false
             }
 
-            // --- 1. EXTRACCIÓN POR PROXIMIDAD BIDIRECCIONAL ---
-            // Miramos 4000 caracteres antes y 4000 después del ID del episodio
             val index = response.indexOf(currentEpId)
             val searchArea = if (index != -1) {
-                val start = (index - 4000).coerceAtLeast(0)
-                val end = (index + 4000).coerceAtMost(response.length)
-                response.substring(start, end)
+                response.substring(index, (index + 15000).coerceAtMost(response.length))
             } else {
-                Log.w(TAG, "Logs: ID no encontrado, buscando en todo el texto")
+                Log.w(TAG, "Logs: ID no encontrado en posición específica, usando respuesta completa")
                 response
             }
 
             val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8""")
+            val videoMatch = lightningRegex.find(searchArea)
 
-            // Buscamos todos los links en esa zona
-            val videoMatches = lightningRegex.findAll(searchArea).toList()
-
-            if (videoMatches.isNotEmpty()) {
-                // Tomamos el primero que aparezca en el área del ID (soluciona el Ep 1)
-                val rawUrl = videoMatches.first().value.replace("\\", "").replace("u0026", "&")
-                Log.d(TAG, "Logs: Video encontrado (Posible Ep 1 o actual): $rawUrl")
+            if (videoMatch != null) {
+                val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
+                Log.d(TAG, "Logs: Video encontrado: $rawUrl")
 
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
 
@@ -205,10 +198,10 @@ class AnimeParadiseProvider : MainAPI() {
                     }
                 )
             } else {
-                Log.e(TAG, "Logs: No se encontró link de video cerca del ID")
+                Log.e(TAG, "Logs: No se encontró link de video en el área del ID")
             }
 
-            // --- 2. SUBTÍTULOS FILTRADOS (En el área del ID) ---
+            // --- 2. SUBTÍTULOS FILTRADOS ---
             val addedSubs = mutableSetOf<String>()
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
 
