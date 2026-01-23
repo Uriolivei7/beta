@@ -81,15 +81,11 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "Logs: Iniciando load para URL/Slug: $url")
         return try {
-            // La URL ahora es directamente el slug (ej: "kimetsu-no-yaiba")
             val slug = if (url.contains("/")) url.substringAfterLast("/") else url
-
             val apiPath = "$apiUrl/anime/$slug"
+
             Log.d(TAG, "Logs: Pidiendo datos a la API: $apiPath")
-
             val detailResponse = app.get(apiPath, headers = apiHeaders).text
-
-            // Mapeamos al envoltorio "data"
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
 
             val anime = wrapper.data
@@ -97,15 +93,21 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: Datos obtenidos exitosamente para: ${anime.title}")
 
-            val episodes = anime.ep?.mapIndexed { index, epId ->
-                // Usamos el ID de episodio y mantenemos el origen para el extractor
+            // --- MAPEO DE EPISODIOS CON NOMBRE Y POSTER ---
+            val episodes = anime.ep?.mapIndexed { index, epData ->
+                // Ahora epData es un objeto EpisodeDetail
+                val epId = epData.id ?: ""
+                val epTitle = epData.title ?: "Episodio ${index + 1}"
+                // Usamos ImageInfo (original o large)
+                val epThumb = epData.image?.large ?: epData.image?.original
+
                 newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
-                    this.name = "Episodio ${index + 1}"
+                    this.name = epTitle
                     this.episode = index + 1
+                    this.posterUrl = epThumb
                 }
             } ?: emptyList()
 
-            // Generamos la URL pública real para que no de 404 al compartir
             val publicUrl = "$mainUrl/anime/$slug"
 
             newAnimeLoadResponse(anime.title ?: "Sin título", publicUrl, TvType.Anime) {
@@ -168,7 +170,7 @@ class AnimeParadiseProvider : MainAPI() {
             } else {
                 response
             }
- 
+
             val videoMatch = videoRegex.find(searchArea) ?: videoRegex.find(response)
 
             if (videoMatch != null) {
@@ -214,17 +216,32 @@ class AnimeParadiseProvider : MainAPI() {
 
 data class AnimeListResponse(val data: List<AnimeObject>)
 
+// 1. Modificamos AnimeObject para que sus episodios sean objetos, no strings
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
-    val title: String? = null, // Cambiado a opcional para evitar el crash
+    val title: String? = null,
     val link: String? = null,
     val status: String? = null,
     val synopsys: String? = null,
     val genres: List<String>? = null,
     val trailer: String? = null,
-    val ep: List<String>? = null,
+    val ep: List<EpisodeDetail>? = null, // <--- CAMBIADO: De List<String> a List<EpisodeDetail>
     val animeSeason: SeasonInfo? = null,
     val posterImage: ImageInfo? = null
+)
+
+// 2. Definimos bien la estructura del episodio
+data class EpisodeDetail(
+    val id: String? = null,
+    val title: String? = null,
+    val image: ImageInfo? = null, // Usamos ImageInfo que ya tienes definida para reusar
+    val number: Int? = null
+)
+
+// 3. El envoltorio se mantiene igual pero ahora AnimeObject ya es compatible
+data class AnimeDetailResponse(
+    val data: AnimeObject? = null,
+    val error: Boolean? = null
 )
 
 data class SeasonInfo(val season: String? = null, val year: Int? = null)
@@ -246,12 +263,6 @@ data class SubtitleEntry(val src: String, val label: String)
 data class SimpleAnime(val title: String)
 data class SimpleEpisode(val number: String)
 
-// Esta clase representa el sobre/envoltorio de la API
-data class AnimeDetailResponse(
-    val data: AnimeObject? = null,
-    val error: Boolean? = null
-)
-
 data class VideoDirectList(
     val directUrl: List<VideoSource>? = null
 )
@@ -259,4 +270,28 @@ data class VideoDirectList(
 data class VideoSource(
     val src: String,
     val label: String
+)
+
+// Los datos del Anime
+data class AnimeData(
+    val id: String? = null,
+    val title: String? = null,
+    val synopsys: String? = null,
+    val genres: List<String>? = null,
+    val posterImage: ImageContainer? = null,
+    val animeSeason: Season? = null,
+    val status: String? = null,
+    val trailer: String? = null,
+    val ep: List<EpisodeDetail>? = null // <--- IMPORTANTE: Debe ser una lista de EpisodeDetail
+)
+
+// Clase genérica para imágenes
+data class ImageContainer(
+    val original: String? = null,
+    val large: String? = null,
+    val medium: String? = null
+)
+
+data class Season(
+    val year: Int? = null
 )
