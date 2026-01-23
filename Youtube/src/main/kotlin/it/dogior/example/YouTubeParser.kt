@@ -216,12 +216,9 @@ class YouTubeParser(override var name: String) : MainAPI() {
             StreamInfo.getInfo(videoUrl)
         } catch (e: Exception) {
             if (e.message?.contains("reloaded") == true) {
-                kotlinx.coroutines.delay(500)
+                kotlinx.coroutines.delay(1000)
                 StreamInfo.getInfo(videoUrl)
-            } else {
-                Log.e(CURRENT_TAG, "ERROR CRÍTICO: ${e.message}")
-                throw e
-            }
+            } else throw e
         }
 
         val views = "Views: ${videoInfo.viewCount}"
@@ -339,25 +336,21 @@ class YouTubeParser(override var name: String) : MainAPI() {
     }
 
     private fun getPlaylistVideos(videos: List<StreamInfoItem>): List<Episode> {
-        val episodes = videos.map { video ->
-            newEpisode(
-                url = video.url
-            ).apply {
+        return videos.map { video ->
+            newEpisode(url = video.url).apply {
                 this.name = video.name
                 this.posterUrl = video.thumbnails.lastOrNull()?.url
-                this.runTime = (video.duration / 60).toInt()
 
                 video.uploadDate?.let { dateWrapper ->
                     try {
                         val instant = dateWrapper.offsetDateTime().toInstant()
                         this.addDate(Date(instant.toEpochMilli()))
                     } catch (e: Exception) {
-                        Log.e("YouTubeParser", "Error en fecha: ${e.message}")
+                        Log.e("YT", "Error fecha: ${e.message}")
                     }
                 }
             }
         }
-        return episodes
     }
 
 }

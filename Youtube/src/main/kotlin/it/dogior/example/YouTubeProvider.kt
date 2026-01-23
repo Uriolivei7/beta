@@ -140,10 +140,18 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         return try {
-            val linkHandler = org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeStreamLinkHandlerFactory.getInstance().fromUrl(data)
-            val extractor = ServiceList.YouTube.getStreamExtractor(linkHandler)
+            val service = ServiceList.YouTube
+            val linkHandler = service.streamLHFactory.fromUrl(data)
+            val extractor = service.getStreamExtractor(linkHandler)
 
-            extractor.fetchPage()
+            try {
+                extractor.fetchPage()
+            } catch (e: Exception) {
+                if (e.message?.contains("reloaded") == true) {
+                    kotlinx.coroutines.delay(1000) 
+                    extractor.fetchPage()
+                } else throw e
+            }
 
             val refererUrl = extractor.url
 
