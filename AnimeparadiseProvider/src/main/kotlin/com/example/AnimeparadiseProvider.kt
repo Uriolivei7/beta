@@ -139,53 +139,44 @@ class AnimeParadiseProvider : MainAPI() {
     ): Boolean {
         Log.d("AnimeParadise", "Logs: === INICIO LOADLINKS ===")
         return try {
-            // Extraemos IDs necesarios
             val epId = data.substringAfter("/watch/").substringBefore("?")
             val originId = data.substringAfter("origin=").substringBefore("&")
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            // UNIFICAMOS EL USER AGENT: Esto es vital para evitar el Error 403
             val fixedUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-            // Headers para el POST (obtención del link)
             val actionHeaders = mapOf(
                 "User-Agent" to fixedUserAgent,
                 "Accept" to "text/x-component",
                 "Next-Action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
                 "Content-Type" to "text/plain;charset=UTF-8",
-                "Origin" to mainUrl,
-                "Referer" to watchUrl
+                "Origin" to "https://www.animeparadise.moe",
+                "Referer" to "https://www.animeparadise.moe/"
             )
 
             val body = "[\"$epId\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-
-            // Hacemos la petición POST
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body).text
 
-            // --- ESCANEO DE SUBTÍTULOS ---
-            Log.d("AnimeParadise", "Logs: === ESCANEANDO subData ===")
+            // --- SUBTÍTULOS ---
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
             subRegex.findAll(response).forEach { match ->
                 val src = match.groupValues[1]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-
                 subtitleCallback.invoke(
                     newSubtitleFile(lang = match.groupValues[2], url = subUrl) {
-                        this.headers = mapOf("User-Agent" to fixedUserAgent, "Referer" to mainUrl)
+                        this.headers = mapOf("User-Agent" to fixedUserAgent, "Referer" to "https://www.animeparadise.moe/")
                     }
                 )
             }
 
-            // --- RASTREO DE VIDEO ---
+            // --- VIDEO ---
             val streamRegex = Regex(""""streamLink":"(https://[^"]+)"""")
             val streamMatch = streamRegex.find(response)
 
             if (streamMatch != null) {
-                val finalUrl = streamMatch.groupValues[1]
-                    .replace("\\u0026", "&")
-                    .replace("\\/", "/")
+                val finalUrl = streamMatch.groupValues[1].replace("\\u0026", "&").replace("\\/", "/")
 
-                Log.d("AnimeParadise", "Logs: [V] Video enviado: $finalUrl")
+                Log.d("AnimeParadise", "Logs: [V] Video detectado, enviando con headers reforzados")
 
                 callback.invoke(
                     newExtractorLink(
@@ -195,23 +186,27 @@ class AnimeParadiseProvider : MainAPI() {
                     ) {
                         this.quality = 1080
                         this.type = ExtractorLinkType.M3U8
-                        // CREDENCIALES PARA EL REPRODUCTOR: Deben coincidir con las del POST
+                        // Definimos el referer aquí adentro, que es donde la propiedad existe
+                        this.referer = "https://www.animeparadise.moe/"
+
                         this.headers = mapOf(
                             "User-Agent" to fixedUserAgent,
-                            "Referer" to "https://www.animeparadise.moe/",
                             "Origin" to "https://www.animeparadise.moe",
-                            "Accept" to "*/*"
+                            "Referer" to "https://www.animeparadise.moe/",
+                            "Accept" to "*/*",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "cross-site"
                         )
                     }
                 )
             } else {
-                Log.d("AnimeParadise", "Logs: [!] Error: No se encontró streamLink")
+                Log.d("AnimeParadise", "Logs: [!] No se encontró streamLink")
             }
 
             Log.d("AnimeParadise", "Logs: === FIN LOADLINKS ===")
             true
         } catch (e: Exception) {
-            Log.e("AnimeParadise", "Logs: ERROR CRÍTICO: ${e.message}")
+            Log.e("AnimeParadise", "Logs: ERROR: ${e.message}")
             false
         }
     }
