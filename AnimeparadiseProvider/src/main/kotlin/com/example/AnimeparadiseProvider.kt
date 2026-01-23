@@ -9,6 +9,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -135,33 +137,64 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: Iniciando loadLinks para: $data")
+        Log.d(TAG, "Logs: Iniciando loadLinks (Server Action) para: $data")
         return try {
+            // 1. Extraemos los IDs necesarios de la URL
+            // data es: /watch/cf700438-a21c-4c07-bcb7-45b94c9e6fc5?origin=a49n4AuZawoJY7Wl
             val epId = data.substringAfter("/watch/").substringBefore("?")
-            val streamApiUrl = "https://api.animeparadise.moe/watch/$epId"
+            val originId = data.substringAfter("origin=").substringBefore("&")
 
-            Log.d(TAG, "Logs: Pidiendo fuentes a: $streamApiUrl")
-            val response = app.get(streamApiUrl, headers = apiHeaders).text
-            val videoData: VideoDirectList = mapper.readValue(response)
+            // 2. Preparamos la URL de la web (donde ocurre la acción)
+            val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-            videoData.directUrl?.forEach { video ->
-                Log.d(TAG, "Logs: Fuente encontrada: ${video.label} -> ${video.src}")
+            // 3. Encabezados necesarios para engañar a Next.js y que suelte los links
+            val actionHeaders = mapOf(
+                "accept" to "text/x-component",
+                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24", // El ID de la acción que viste en el curl
+                "content-type" to "text/plain;charset=UTF-8",
+                "origin" to mainUrl,
+                "referer" to watchUrl
+            )
 
-                val isM3u8 = video.src.contains("m3u8")
+            // 4. El cuerpo de la petición (JSON Raw como en tu curl)
+            val requestBody = "[\"$epId\",\"$originId\"]"
+
+            Log.d(TAG, "Logs: Enviando Server Action POST a: $watchUrl con body: $requestBody")
+
+            val mediaType = "text/plain;charset=UTF-8".toMediaTypeOrNull()
+            val body = requestBody.toRequestBody(mediaType)
+
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = body
+            ).text
+
+            // 5. El formato de respuesta de Next.js es extraño (mezcla de texto y JSON)
+            // Buscamos el link directo que empiece por https e incluya .m3u8 o stream
+            val videoUrl = response.substringAfter("https://stream.animeparadise.moe/m3u8?url=", "")
+                .substringBefore("\"")
+
+            if (videoUrl.isNotEmpty()) {
+                val fullStreamUrl = "https://stream.animeparadise.moe/m3u8?url=$videoUrl"
+                Log.d(TAG, "Logs: URL Maestra encontrada: $fullStreamUrl")
 
                 callback.invoke(
                     newExtractorLink(
-                        name = "AnimeParadise - ${video.label}",
+                        name = "AnimeParadise Multi",
                         source = "AnimeParadise",
-                        url = video.src,
+                        url = fullStreamUrl,
                     ) {
-                        // AQUÍ ES DONDE SE PONEN LOS PARÁMETROS EN TU VERSIÓN
-                        this.quality = getQualityFromName(video.label)
-                        this.referer = "https://www.animeparadise.moe/"
-                        this.type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        this.quality = Qualities.P1080.value
+                        this.referer = "$mainUrl/"
+                        this.type = ExtractorLinkType.M3U8
                     }
                 )
+            } else {
+                // Si el substring falló, busquemos cualquier URL de LightningFlash o Stream
+                Log.d(TAG, "Logs: No se encontró URL directa, revisando respuesta completa...")
             }
+
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
