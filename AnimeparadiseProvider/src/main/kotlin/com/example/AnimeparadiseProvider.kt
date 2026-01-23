@@ -5,7 +5,11 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import com.fasterxml.jackson.annotation.*
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.DeserializationContext
 import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.JsonDeserializer
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
@@ -93,17 +97,15 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: Datos obtenidos exitosamente para: ${anime.title}")
 
-            // --- MAPEO DE EPISODIOS CON NOMBRE Y POSTER ---
+            // --- MAPEO DE EPISODIOS ---
             val episodes = anime.ep?.mapIndexed { index, epData ->
-                // Ahora epData es un objeto EpisodeDetail
                 val epId = epData.id ?: ""
                 val epTitle = epData.title ?: "Episodio ${index + 1}"
-                // Usamos ImageInfo (original o large)
-                val epThumb = epData.image?.large ?: epData.image?.original
+                val epThumb = epData.image // Es un String directo según tu JSON
 
                 newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
                     this.name = epTitle
-                    this.episode = index + 1
+                    this.episode = epData.number?.toIntOrNull() ?: (index + 1)
                     this.posterUrl = epThumb
                 }
             } ?: emptyList()
@@ -216,7 +218,6 @@ class AnimeParadiseProvider : MainAPI() {
 
 data class AnimeListResponse(val data: List<AnimeObject>)
 
-// 1. Modificamos AnimeObject para que sus episodios sean objetos, no strings
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
     val title: String? = null,
@@ -225,18 +226,40 @@ data class AnimeObject(
     val synopsys: String? = null,
     val genres: List<String>? = null,
     val trailer: String? = null,
-    val ep: List<EpisodeDetail>? = null, // <--- CAMBIADO: De List<String> a List<EpisodeDetail>
     val animeSeason: SeasonInfo? = null,
-    val posterImage: ImageInfo? = null
+    val posterImage: ImageInfo? = null,
+
+    // Esta anotación permite que 'ep' sea una lista de IDs (Strings) o de Objetos
+    @JsonDeserialize(contentUsing = EpisodeDeserializer::class)
+    val ep: List<EpisodeDetail>? = null
 )
 
-// 2. Definimos bien la estructura del episodio
 data class EpisodeDetail(
-    val id: String? = null,
+    @JsonAlias("uid") val id: String? = null, // La API usa 'uid' en el load
     val title: String? = null,
-    val image: ImageInfo? = null, // Usamos ImageInfo que ya tienes definida para reusar
-    val number: Int? = null
+    val image: String? = null, // En tu JSON 'image' es un String directo, no un objeto
+    val number: String? = null
 )
+
+// --- EL DESERIALIZADOR MÁGICO ---
+// Esto permite que el buscador NO explote cuando recibe solo un ID
+class EpisodeDeserializer : JsonDeserializer<EpisodeDetail>() {
+    override fun deserialize(p: JsonParser, ctxt: DeserializationContext): EpisodeDetail {
+        val node = p.codec.readTree<com.fasterxml.jackson.databind.JsonNode>(p)
+        return if (node.isTextual) {
+            // Si es un String (Búsqueda), creamos un objeto solo con el ID
+            EpisodeDetail(id = node.asText())
+        } else {
+            // Si es un Objeto (Load), leemos todos los campos
+            EpisodeDetail(
+                id = node.get("uid")?.asText() ?: node.get("id")?.asText(),
+                title = node.get("title")?.asText(),
+                image = node.get("image")?.asText(),
+                number = node.get("number")?.asText()
+            )
+        }
+    }
+}
 
 // 3. El envoltorio se mantiene igual pero ahora AnimeObject ya es compatible
 data class AnimeDetailResponse(
