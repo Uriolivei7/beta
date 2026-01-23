@@ -138,13 +138,14 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val currentEpId = data.substringAfter("/watch/").substringBefore("?")
-        val currentOriginId = data.substringAfter("origin=").substringBefore("&")
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId")
+        // Intentamos obtener el número de episodio de la URL para saber cuál link elegir
+        val epIndex = data.substringAfterLast("-").substringBefore("?").toIntOrNull() ?: 1
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId | Ep: $epIndex")
 
         return try {
             val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-
             val actionHeaders = mapOf(
                 "accept" to "*/*",
                 "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
@@ -154,72 +155,50 @@ class AnimeParadiseProvider : MainAPI() {
                 "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
             )
 
+            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())).text
 
-            val responseData = app.post(
-                watchUrl,
-                headers = actionHeaders,
-                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull()),
-                timeout = 15
-            )
+            // 1. EXTRAEMOS TODOS LOS LINKS DE VIDEO POSIBLES (Aceptamos más servidores para las películas)
+            val videoRegex = Regex("""https://(lightningflash|stream|api)[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8""")
+            val allVideos = videoRegex.findAll(response).map { it.value.replace("\\", "").replace("u0026", "&") }.distinct().toList()
 
-            val response = responseData.text
+            Log.d(TAG, "Logs: Encontrados ${allVideos.size} links de video en total")
 
-            if (response.isBlank()) {
-                Log.e(TAG, "Logs: Respuesta vacía")
-                return false
-            }
+            // 2. SELECCIONAMOS EL VIDEO CORRECTO
+            // Si es el Ep 1, debería ser el primero. Si es Jujutsu 0 (película), suele haber solo uno.
+            val finalVideoUrl = if (allVideos.isNotEmpty()) {
+                if (allVideos.size >= epIndex) allVideos[epIndex - 1] else allVideos.first()
+            } else null
 
-            val index = response.indexOf(currentEpId)
-            val searchArea = if (index != -1) {
-                response.substring(index, (index + 15000).coerceAtMost(response.length))
-            } else {
-                Log.w(TAG, "Logs: ID no encontrado en posición específica, usando respuesta completa")
-                response
-            }
-
-            val lightningRegex = Regex("""https://lightningflash[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8""")
-            val videoMatch = lightningRegex.find(searchArea)
-
-            if (videoMatch != null) {
-                val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
-                Log.d(TAG, "Logs: Video encontrado: $rawUrl")
-
-                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
-
+            if (finalVideoUrl != null) {
+                Log.d(TAG, "Logs: Video seleccionado para reproducir: $finalVideoUrl")
                 callback.invoke(
-                    newExtractorLink("AnimeParadise", "AnimeParadise", proxyUrl).apply {
+                    newExtractorLink("AnimeParadise", "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=$finalVideoUrl").apply {
                         this.quality = Qualities.P1080.value
                         this.type = ExtractorLinkType.M3U8
-                        this.headers = mapOf(
-                            "referer" to "https://www.animeparadise.moe/",
-                            "origin" to "https://www.animeparadise.moe"
-                        )
+                        this.headers = mapOf("referer" to "https://www.animeparadise.moe/", "origin" to "https://www.animeparadise.moe")
                     }
                 )
             } else {
-                Log.e(TAG, "Logs: No se encontró link de video en el área del ID")
+                Log.e(TAG, "Logs: No se encontró ningún link compatible en toda la respuesta.")
             }
 
-            // --- 2. SUBTÍTULOS FILTRADOS ---
+            // 3. SUBTÍTULOS (Buscamos en toda la respuesta para no perder nada)
             val addedSubs = mutableSetOf<String>()
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-
-            subRegex.findAll(searchArea).forEach { match ->
+            subRegex.findAll(response).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val label = match.groupValues[2]
-
-                if (!addedSubs.contains(src)) {
+                if (addedSubs.add(src)) {
                     val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                     subtitleCallback.invoke(newSubtitleFile(label, subUrl))
-                    addedSubs.add(src)
                 }
             }
 
-            Log.d(TAG, "Logs: Finalizado. Subs: ${addedSubs.size}")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico: ${e.message}")
             false
         }
     }
