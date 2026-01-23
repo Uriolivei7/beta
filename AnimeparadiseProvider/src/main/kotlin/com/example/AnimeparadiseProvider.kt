@@ -80,44 +80,36 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: Iniciando load para URL/Slug: $url")
         return try {
             val slug = if (url.contains("/")) url.substringAfterLast("/") else url
-
             val apiPath = "$apiUrl/anime/$slug"
-            Log.d(TAG, "Logs: Pidiendo datos a la API: $apiPath")
 
             val detailResponse = app.get(apiPath, headers = apiHeaders).text
-
             val wrapper: AnimeDetailResponse = mapper.readValue(detailResponse)
+            val anime = wrapper.data ?: throw Exception("Data vacía")
 
-            val anime = wrapper.data
-                ?: throw Exception("La API respondió pero el campo 'data' está vacío para: $slug")
+            val episodes = anime.ep?.reversed()?.mapIndexed { index, epId ->
+                val episodeNumber = index + 1
 
-            Log.d(TAG, "Logs: Datos obtenidos exitosamente para: ${anime.title}")
-
-            val episodes = anime.ep?.mapIndexed { index, epId ->
                 newEpisode("/watch/$epId?origin=${anime.id ?: slug}") {
-                    this.name = "Episodio ${index + 1}"
-                    this.episode = index + 1
+                    this.name = "Episodio $episodeNumber"
+                    this.episode = episodeNumber
+                    this.posterUrl = anime.posterImage?.large
                 }
             } ?: emptyList()
 
-            val publicUrl = "$mainUrl/anime/$slug"
+            Log.d(TAG, "Logs: Se procesaron ${episodes.size} episodios")
 
-            newAnimeLoadResponse(anime.title ?: "Sin título", publicUrl, TvType.Anime) {
+            newAnimeLoadResponse(anime.title ?: "Sin título", url, TvType.Anime) {
                 this.plot = anime.synopsys
                 this.tags = anime.genres
                 this.posterUrl = anime.posterImage?.large ?: anime.posterImage?.original
                 this.year = anime.animeSeason?.year
-
                 this.showStatus = when (anime.status) {
                     "finished" -> ShowStatus.Completed
                     "ongoing" -> ShowStatus.Ongoing
                     else -> null
                 }
-
                 addEpisodes(DubStatus.Subbed, episodes)
-                if (!anime.trailer.isNullOrBlank()) {
-                    addTrailer(anime.trailer)
-                }
+                if (!anime.trailer.isNullOrBlank()) addTrailer(anime.trailer)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
