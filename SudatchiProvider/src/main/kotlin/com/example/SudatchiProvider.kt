@@ -32,7 +32,7 @@ class SudatchiProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$apiUrl/series?page=1&sort=POPULARITY_DESC" to "Más Popularesr",
+        "$apiUrl/series?page=1&sort=POPULARITY_DESC" to "Más Populares",
         "$apiUrl/series?page=1&sort=TRENDING_DESC" to "En Tendencia"
     )
 
@@ -129,40 +129,50 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIO LOADLINKS SUDATCHI === URL: $data")
+        Log.d(TAG, "Logs: === INICIANDO CARGA CON NEWEXTRACTORLINK ===")
 
         return try {
-            val response = app.get(data, headers = apiHeaders).text
-            val streamData: StreamResponse = mapper.readValue(response)
-
-            streamData.subtitles?.forEach { sub ->
-                val subUrl = if (sub.src.startsWith("http")) sub.src else "$mainUrl${sub.src}"
-                Log.d(TAG, "Logs: Subtítulo encontrado: ${sub.label} -> $subUrl")
-                subtitleCallback.invoke(
-                    newSubtitleFile(sub.label ?: "English", subUrl)
-                )
-            }
-
-            val videoUrl = streamData.uri ?: ""
-
-            if (videoUrl.isNotEmpty()) {
-                Log.d(TAG, "Logs: URL de video detectada: $videoUrl")
-
-                M3u8Helper.generateM3u8(
-                    name,
-                    videoUrl,
-                    mainUrl,
-                    headers = apiHeaders
-                ).forEach { link ->
-                    callback.invoke(link)
+            // 1. Obtener subtítulos (Regex para mayor compatibilidad)
+            val episodeId = data.substringAfter("episodeId=").substringBefore("&")
+            try {
+                val epResponse = app.get("$mainUrl/api/episode/$episodeId", headers = apiHeaders).text
+                val vttRegex = """"/api/vtt/[\w/-]+\.vtt"""".toRegex()
+                vttRegex.findAll(epResponse).forEach { match ->
+                    val subPath = match.value.replace("\"", "")
+                    val lang = if (subPath.contains("spanish", ignoreCase = true)) "Spanish" else "English"
+                    subtitleCallback.invoke(newSubtitleFile(lang, "$mainUrl$subPath"))
                 }
-            } else {
-                Log.e(TAG, "Logs: No se encontró URI de video en la respuesta")
+            } catch (e: Exception) {
+                Log.e(TAG, "Logs: Error en subs: ${e.message}")
             }
 
+            // 2. Obtener y parchar M3U8 para el Audio
+            val response = app.get(data, headers = apiHeaders).text
+
+            if (response.startsWith("#EXTM3U")) {
+                val patchedM3u8 = response.replace("/api/proxy/", "$mainUrl/api/proxy/")
+                val base64M3u8 = android.util.Base64.encodeToString(
+                    patchedM3u8.toByteArray(),
+                    android.util.Base64.NO_WRAP
+                )
+                val finalUrl = "data:application/vnd.apple.mpegurl;base64,$base64M3u8"
+
+                callback.invoke(
+                    newExtractorLink(
+                        name, // source
+                        "Sudatchi HD (Audio Fix)",
+                        finalUrl
+                    ) {
+                        this.quality = Qualities.P1080.value
+                        this.referer = "$mainUrl/"
+                        this.headers = apiHeaders
+                    }
+                )
+                Log.d(TAG, "Logs: Enlace enviado con newExtractorLink")
+            }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks de Sudatchi: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
