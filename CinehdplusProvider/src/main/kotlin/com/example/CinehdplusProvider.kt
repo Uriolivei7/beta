@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
@@ -73,12 +74,14 @@ class CinehdplusProvider : MainAPI() {
         val trailer = doc.selectFirst("#OptYt iframe")?.attr("data-src")?.replaceFirst("https://www.youtube.com/embed/","https://www.youtube.com/watch?v=")
         val recommendations = doc.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
 
-        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonElement ->
+        // CORRECCIÓN: Se especifica el tipo Element para evitar ambigüedad en flatMap
+        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonElement: Element ->
             val seasonNum = seasonElement.attr("id").replaceFirst("season-", "").toIntOrNull()
-            seasonElement.select(".episodios_list li").mapIndexed { idx, epi ->
+            seasonElement.select(".episodios_list li").mapIndexed { idx, epi: Element ->
                 val epUrl = epi.selectFirst("a")?.attr("href") ?: ""
-                val epTitle = epi.selectFirst("figure img")?.attr("alt")
-                val epImg = epi.selectFirst("figure img")?.attr("src")
+                val epImgElement = epi.selectFirst("figure img")
+                val epTitle = epImgElement?.attr("alt")
+                val epImg = epImgElement?.attr("src")
                 newEpisode(epUrl) {
                     this.name = epTitle
                     this.season = seasonNum
@@ -121,7 +124,8 @@ class CinehdplusProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data).document
-        doc.select("li.clili").amap { element ->
+        // Usamos map para evitar problemas de iteración sobre Elements
+        doc.select("li.clili").map { element: Element ->
             val lang = element.attr("data-lang")
             val optId = element.attr("data-tplayernv")
             val frame = doc.selectFirst("div#$optId")?.selectFirst("iframe")?.attr("data-src")
@@ -129,38 +133,45 @@ class CinehdplusProvider : MainAPI() {
 
             if (frame != null) {
                 val apiBase = mainUrl.replaceFirst("https://", "https://api.")
-                val gotoDoc = app.get("$apiBase/ir/goto.php?h=$frame").document
-                val form1 = gotoDoc.selectFirst("form")
-                val url1 = form1?.selectFirst("input#url")?.attr("value")
+                // Nota: se recomienda manejar esto en un try-catch o scope separado si es suspendido
+                // Aquí mantenemos la lógica pero aseguramos que el compilador entienda los tipos
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val gotoDoc = app.get("$apiBase/ir/goto.php?h=$frame").document
+                        val form1 = gotoDoc.selectFirst("form")
+                        val url1 = form1?.selectFirst("input#url")?.attr("value")
 
-                if (url1 != null) {
-                    val rdDoc = app.post("$apiBase/ir/rd.php", data = mapOf("url" to url1)).document
-                    val form2 = rdDoc.selectFirst("form")
-                    val url2 = form2?.selectFirst("input#url")?.attr("value")
+                        if (url1 != null) {
+                            val rdDoc = app.post("$apiBase/ir/rd.php", data = mapOf("url" to url1)).document
+                            val form2 = rdDoc.selectFirst("form")
+                            val url2 = form2?.selectFirst("input#url")?.attr("value")
 
-                    if (url2 != null) {
-                        val ddhDoc = app.post("$apiBase/ir/redir_ddh.php", data = mapOf("url" to url2, "dl" to "0")).document
-                        val form3 = ddhDoc.selectFirst("form")
-                        val actionUrl = form3?.attr("action")
-                        val vid = form3?.selectFirst("input#vid")?.attr("value")
-                        val hash = form3?.selectFirst("input#hash")?.attr("value")
+                            if (url2 != null) {
+                                val ddhDoc = app.post("$apiBase/ir/redir_ddh.php", data = mapOf("url" to url2, "dl" to "0")).document
+                                val form3 = ddhDoc.selectFirst("form")
+                                val actionUrl = form3?.attr("action")
+                                val vid = form3?.selectFirst("input#vid")?.attr("value")
+                                val hash = form3?.selectFirst("input#hash")?.attr("value")
 
-                        if (actionUrl != null && vid != null && hash != null) {
-                            val finalDoc = app.post(actionUrl, data = mapOf("vid" to vid, "hash" to hash)).document
-                            val script = finalDoc.selectFirst("script:containsData(link =)")?.html()
-                            val encoded = script?.substringAfter("link = '")?.substringBefore("';")
+                                if (actionUrl != null && vid != null && hash != null) {
+                                    val finalDoc = app.post(actionUrl, data = mapOf("vid" to vid, "hash" to hash)).document
+                                    val script = finalDoc.selectFirst("script:containsData(link =)")?.html()
+                                    val encoded = script?.substringAfter("link = '")?.substringBefore("';")
 
-                            if (encoded != null) {
-                                val link = base64Decode(encoded)
-                                loadSourceNameExtractor(
-                                    lang,
-                                    fixHostsLinks(link),
-                                    "$mainUrl/",
-                                    subtitleCallback,
-                                    callback
-                                )
+                                    if (encoded != null) {
+                                        val link = base64Decode(encoded)
+                                        loadSourceNameExtractor(
+                                            lang,
+                                            fixHostsLinks(link),
+                                            "$mainUrl/",
+                                            subtitleCallback,
+                                            callback
+                                        )
+                                    }
+                                }
                             }
                         }
+                    } catch (e: Exception) {
                     }
                 }
             }
@@ -184,30 +195,45 @@ suspend fun loadSourceNameExtractor(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit,
 ) {
+    Log.d("CineHD", "Logs: Iniciando extracción para fuente: $source")
+
     loadExtractor(url, referer, subtitleCallback) { link ->
+        val sUrl = link.url
+        val sName = link.name
+        val sSource = link.source
+        val sQuality = link.quality
+        val sType = link.type
+        val sHeaders = link.headers
+        val sReferer = link.referer
+        val sData = link.extractorData
+
         val idiomaLabel = when {
             source.lowercase().contains("lat") -> "Español Latino "
             source.lowercase().contains("es") || source.lowercase().contains("cast") -> "Español de España "
             else -> source
         }
-
-        val calidadLabel = if (link.quality > 0) "${link.quality}p" else ""
-        val nombreFinal = "$idiomaLabel [${link.source}] $calidadLabel".trim()
+        val calidadLabel = if (sQuality > 0) "${sQuality}p" else ""
+        val nombreFinal = "$idiomaLabel [$sSource] $calidadLabel".trim()
 
         CoroutineScope(Dispatchers.IO).launch {
-            callback.invoke(
-                newExtractorLink(
+            try {
+                val extractorLink = newExtractorLink(
                     nombreFinal,
                     nombreFinal,
-                    link.url,
+                    sUrl,
                 ) {
-                    this.quality = link.quality
-                    this.type = link.type
-                    this.referer = link.referer
-                    this.headers = link.headers
-                    this.extractorData = link.extractorData
+                    this.quality = sQuality
+                    this.type = sType
+                    this.referer = sReferer
+                    this.headers = sHeaders
+                    this.extractorData = sData
                 }
-            )
+
+                callback.invoke(extractorLink)
+                Log.d("CineHD", "Logs: Link generado y enviado: $nombreFinal")
+            } catch (e: Exception) {
+                Log.e("CineHD", "Logs: Error en el body de la corrutina: ${e.message}")
+            }
         }
     }
 }
