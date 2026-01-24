@@ -3,13 +3,11 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import okhttp3.Request
-import okhttp3.Response
+import java.net.URLEncoder
 
 class SudatchiProvider : MainAPI() {
     override var mainUrl = "https://sudatchi.com"
@@ -23,7 +21,6 @@ class SudatchiProvider : MainAPI() {
 
     private val mapper = jacksonObjectMapper().apply {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-        setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL)
     }
 
     private val apiHeaders = mapOf(
@@ -39,31 +36,19 @@ class SudatchiProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: Iniciando getMainPage para ${request.name}")
         return try {
             val response = app.get(request.data, headers = apiHeaders).text
             val homeItems = mutableListOf<SearchResponse>()
 
-            if (request.data.contains("/home")) {
-                val data: HomePageDto = mapper.readValue(response)
-                data.latestEpisodes?.forEach { ep ->
-                    val title = ep.animeTitle?.english ?: ep.animeTitle?.romaji ?: ep.title ?: "Unknown"
-                    homeItems.add(newAnimeSearchResponse(title, "$mainUrl/anime/${ep.animeId}") {
-                        this.posterUrl = if (ep.coverImage?.startsWith("http") == true) ep.coverImage else "$mainUrl${ep.coverImage}"
-                    })
-                }
-            } else {
-                val data: SeriesDto = mapper.readValue(response)
-                data.results?.forEach { anime ->
-                    val title = anime.title?.english ?: anime.title?.romaji ?: "Unknown"
-                    homeItems.add(newAnimeSearchResponse(title, "$mainUrl/anime/${anime.id}") {
-                        this.posterUrl = anime.coverImage
-                    })
-                }
+            val data: SeriesDto = mapper.readValue(response)
+            data.results?.forEach { anime ->
+                val title = anime.title?.english ?: anime.title?.romaji ?: "Unknown"
+                homeItems.add(newAnimeSearchResponse(title, "$mainUrl/anime/${anime.id}") {
+                    this.posterUrl = anime.coverImage
+                })
             }
 
-            val list = HomePageList(request.name, homeItems)
-            newHomePageResponse(listOf(list), true)
+            newHomePageResponse(listOf(HomePageList(request.name, homeItems)), true)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
             null
@@ -72,8 +57,6 @@ class SudatchiProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val id = url.substringAfterLast("/")
-        Log.d(TAG, "Logs: Cargando detalles de ID: $id")
-
         return try {
             val response = app.get("$apiUrl/anime/$id", headers = apiHeaders).text
             val data: AnimeDetailDto = mapper.readValue(response)
@@ -86,42 +69,23 @@ class SudatchiProvider : MainAPI() {
                 this.plot = data.description
                 this.tags = data.genres
 
-                val episodes = data.episodes?.map { ep ->
-                    newEpisode("$apiUrl/streams?episodeId=${ep.id}") {
+                val episodesList = data.episodes?.map { ep ->
+                    val subsToSerialize = ep.subtitlesDto ?: ep.subtitles ?: emptyList<SubtitleDto>()
+                    val subsJson = mapper.writeValueAsString(subsToSerialize)
+                    val encodedSubs = URLEncoder.encode(subsJson, "UTF-8")
+
+                    newEpisode("$apiUrl/streams?episodeId=${ep.id ?: 0}&subs=$encodedSubs") {
                         this.name = ep.title
                         this.episode = ep.number
                         this.posterUrl = if (ep.coverImage?.startsWith("http") == true) ep.coverImage else "$mainUrl${ep.coverImage}"
                     }
                 }?.sortedBy { it.episode } ?: emptyList()
 
-                addEpisodes(DubStatus.Subbed, episodes)
-
-                data.trailer?.let {
-                    if (it.site == "youtube") addTrailer("https://www.youtube.com/watch?v=${it.id}")
-                }
+                addEpisodes(DubStatus.Subbed, episodesList)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en load: ${e.message}")
             null
-        }
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: Buscando anime: $query")
-        return try {
-            val url = "$apiUrl/series?search=$query&page=1"
-            val response = app.get(url, headers = apiHeaders).text
-            val data: SeriesDto = mapper.readValue(response)
-
-            data.results?.map { anime ->
-                val title = anime.title?.english ?: anime.title?.romaji ?: "Unknown"
-                newAnimeSearchResponse(title, "$mainUrl/anime/${anime.id}") {
-                    this.posterUrl = anime.coverImage
-                }
-            } ?: emptyList()
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en búsqueda: ${e.message}")
-            emptyList()
         }
     }
 
@@ -131,51 +95,39 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V5.1 (SUB FIX) ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V7 (SUB-DATA METHOD) ===")
 
         return try {
-            // 1. Extraer e inspeccionar Subtítulos
-            val episodeId = data.substringAfter("episodeId=").substringBefore("&")
-            val epApiUrl = "$mainUrl/api/episode/$episodeId"
-            Log.d(TAG, "Logs: Llamando a API de episodio: $epApiUrl")
+            val encodedSubs = data.substringAfter("&subs=", "")
+            if (encodedSubs.isNotEmpty()) {
+                val decodedSubs = java.net.URLDecoder.decode(encodedSubs, "UTF-8")
+                val subs: List<SubtitleDto> = mapper.readValue(decodedSubs)
 
-            val epResponse = app.get(epApiUrl, headers = apiHeaders).text
+                subs.forEach { sub ->
+                    val subUrl = if (sub.url.startsWith("http")) {
+                        sub.url
+                    } else {
+                        "$mainUrl/api/proxy/${sub.url.removePrefix("/ipfs/")}"
+                    }
 
-            // Log para ver el JSON real (Cuidado: puede ser largo, mira las primeras partes)
-            Log.d(TAG, "Logs: Respuesta API Episodio (recortada): ${epResponse.take(500)}")
-
-            val vttRegex = """"/api/vtt/[^"]+\.vtt"""".toRegex()
-            val matches = vttRegex.findAll(epResponse).toList()
-
-            if (matches.isEmpty()) {
-                Log.w(TAG, "Logs: ¡No se encontraron archivos VTT en el JSON!")
-            }
-
-            matches.forEach { match ->
-                val subPath = match.value.replace("\"", "")
-                val subUrl = "$mainUrl$subPath"
-
-                val lang = when {
-                    subPath.contains("spanish", true) -> "Español"
-                    subPath.contains("latino", true) -> "Español Latino"
-                    subPath.contains("english", true) -> "English"
-                    else -> "Sub: ${subPath.substringAfterLast("/")}"
+                    val lang = sub.subtitleLang?.name ?: sub.language ?: "Sub"
+                    Log.d(TAG, "Logs: Subtítulo inyectado: $lang -> $subUrl")
+                    subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
                 }
-
-                Log.d(TAG, "Logs: Subtítulo cargado: $lang -> $subUrl")
-                subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
             }
+
+            val cleanVideoUrl = data.substringBefore("&subs=")
 
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "Sudatchi",
-                    url = data,
+                    name = "Sudatchi HD",
+                    url = cleanVideoUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.referer = "$mainUrl/"
-                    this.quality = Qualities.P1080.value
                     this.headers = apiHeaders
+                    this.quality = Qualities.P1080.value
                 }
             )
 
@@ -186,21 +138,19 @@ class SudatchiProvider : MainAPI() {
         }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class StreamResponse(
-        val uri: String? = null,
-        val subtitles: List<SubtitleEntry>? = null
-    )
+    override suspend fun search(query: String): List<SearchResponse> {
+        return try {
+            val response = app.get("$apiUrl/series?search=$query&page=1", headers = apiHeaders).text
+            val data: SeriesDto = mapper.readValue(response)
+            data.results?.map { anime ->
+                newAnimeSearchResponse(anime.title?.english ?: anime.title?.romaji ?: "Unknown", "$mainUrl/anime/${anime.id}") {
+                    this.posterUrl = anime.coverImage
+                }
+            } ?: emptyList()
+        } catch (e: Exception) { emptyList() }
+    }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SubtitleEntry(
-        val src: String,
-        val label: String? = null,
-        val kind: String? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class HomePageDto(val latestEpisodes: List<EpisodeDto>? = null)
+    // --- DTOs actualizados con soporte para Subtítulos ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SeriesDto(val results: List<AnimeDto>? = null)
@@ -221,11 +171,9 @@ class SudatchiProvider : MainAPI() {
         val description: String? = null,
         val coverImage: CoverDto? = null,
         val bannerImage: String? = null,
-        @JsonProperty("genres") val genres: List<String>? = null,
+        val genres: List<String>? = null,
         val year: Int? = null,
-        val studio: String? = null,
-        val episodes: List<EpisodeDto>? = null,
-        val trailer: TrailerDto? = null
+        val episodes: List<EpisodeDto>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -233,14 +181,22 @@ class SudatchiProvider : MainAPI() {
         val id: Int? = null,
         val number: Int? = null,
         val title: String? = null,
-        val animeId: Int? = null,
         val coverImage: String? = null,
-        val animeTitle: TitleDto? = null
+        // Aquí es donde Tachiyomi encuentra los subtítulos
+        val subtitlesDto: List<SubtitleDto>? = null,
+        val subtitles: List<SubtitleDto>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class CoverDto(val extraLarge: String? = null)
+    data class SubtitleDto(
+        val url: String,
+        val subtitleLang: LangDto? = null,
+        val language: String? = null
+    )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class TrailerDto(val id: String? = null, val site: String? = null)
+    data class LangDto(val name: String? = null)
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class CoverDto(val extraLarge: String? = null)
 }
