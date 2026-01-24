@@ -40,7 +40,8 @@ class YoutubeProvider(
         const val TAG = "Youtube"
         //const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 
-        const val ANDROID_USER_AGENT = "com.google.android.youtube/19.29.37 (Linux; U; Android 11) gzip"
+        // Cambia esto en el companion object
+        const val ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
     }
 
     private var youtubeCookie: String?
@@ -169,7 +170,7 @@ class YoutubeProvider(
                         url = streamUrl,
                         type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = refererUrl
+                        this.referer = "https://www.youtube.com/"
                     }
                 )
             }

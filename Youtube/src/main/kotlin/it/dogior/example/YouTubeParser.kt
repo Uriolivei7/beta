@@ -210,7 +210,7 @@ class YouTubeParser(override var name: String) : MainAPI() {
             StreamInfo.getInfo(videoUrl)
         } catch (e: Exception) {
             if (e.message?.contains("reloaded") == true) {
-                kotlinx.coroutines.delay(1000)
+                kotlinx.coroutines.delay(2000)
                 StreamInfo.getInfo(videoUrl)
             } else throw e
         }
