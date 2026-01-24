@@ -14,7 +14,7 @@ class SudatchiProvider : MainAPI() {
     private val apiUrl = "https://sudatchi.com/api"
     override var name = "Sudatchi"
     override val hasMainPage = true
-    override var lang = "all"
+    override var lang = "en"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val TAG = "Sudatchi"
@@ -32,9 +32,8 @@ class SudatchiProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$apiUrl/home?matureMode=false" to "Latest Episodes",
-        "$apiUrl/series?page=1&sort=POPULARITY_DESC" to "Most Popular",
-        "$apiUrl/series?page=1&sort=TRENDING_DESC" to "Trending Now"
+        "$apiUrl/series?page=1&sort=POPULARITY_DESC" to "Más Popularesr",
+        "$apiUrl/series?page=1&sort=TRENDING_DESC" to "En Tendencia"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -130,23 +129,56 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: Extrayendo links de: $data")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS SUDATCHI === URL: $data")
 
         return try {
+            val response = app.get(data, headers = apiHeaders).text
+            val streamData: StreamResponse = mapper.readValue(response)
 
-            M3u8Helper.generateM3u8(
-                name,
-                data,
-                mainUrl,
-                headers = apiHeaders
-            ).forEach(callback)
+            streamData.subtitles?.forEach { sub ->
+                val subUrl = if (sub.src.startsWith("http")) sub.src else "$mainUrl${sub.src}"
+                Log.d(TAG, "Logs: Subtítulo encontrado: ${sub.label} -> $subUrl")
+                subtitleCallback.invoke(
+                    newSubtitleFile(sub.label ?: "English", subUrl)
+                )
+            }
+
+            val videoUrl = streamData.uri ?: ""
+
+            if (videoUrl.isNotEmpty()) {
+                Log.d(TAG, "Logs: URL de video detectada: $videoUrl")
+
+                M3u8Helper.generateM3u8(
+                    name,
+                    videoUrl,
+                    mainUrl,
+                    headers = apiHeaders
+                ).forEach { link ->
+                    callback.invoke(link)
+                }
+            } else {
+                Log.e(TAG, "Logs: No se encontró URI de video en la respuesta")
+            }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en LoadLinks de Sudatchi: ${e.message}")
             false
         }
     }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class StreamResponse(
+        val uri: String? = null,
+        val subtitles: List<SubtitleEntry>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class SubtitleEntry(
+        val src: String,
+        val label: String? = null,
+        val kind: String? = null
+    )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class HomePageDto(val latestEpisodes: List<EpisodeDto>? = null)
