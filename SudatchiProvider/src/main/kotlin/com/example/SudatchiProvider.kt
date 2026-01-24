@@ -8,6 +8,8 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import okhttp3.Request
+import okhttp3.Response
 
 class SudatchiProvider : MainAPI() {
     override var mainUrl = "https://sudatchi.com"
@@ -129,47 +131,41 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO CARGA CON NEWEXTRACTORLINK ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS SUDATCHI V4 ===")
 
         return try {
-            // 1. Obtener subtítulos (Regex para mayor compatibilidad)
+            // 1. Extraer Subtítulos
             val episodeId = data.substringAfter("episodeId=").substringBefore("&")
-            try {
-                val epResponse = app.get("$mainUrl/api/episode/$episodeId", headers = apiHeaders).text
-                val vttRegex = """"/api/vtt/[\w/-]+\.vtt"""".toRegex()
-                vttRegex.findAll(epResponse).forEach { match ->
-                    val subPath = match.value.replace("\"", "")
-                    val lang = if (subPath.contains("spanish", ignoreCase = true)) "Spanish" else "English"
-                    subtitleCallback.invoke(newSubtitleFile(lang, "$mainUrl$subPath"))
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Logs: Error en subs: ${e.message}")
+            val epResponse = app.get("$mainUrl/api/episode/$episodeId", headers = apiHeaders).text
+
+            """/api/vtt/[\w/-]+\.vtt""".toRegex().findAll(epResponse).forEach { match ->
+                val subUrl = "$mainUrl${match.value}"
+                val lang = if (match.value.contains("spanish", true)) "Español" else "English"
+                subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
             }
 
-            // 2. Obtener y parchar M3U8 para el Audio
-            val response = app.get(data, headers = apiHeaders).text
-
-            if (response.startsWith("#EXTM3U")) {
-                val patchedM3u8 = response.replace("/api/proxy/", "$mainUrl/api/proxy/")
-                val base64M3u8 = android.util.Base64.encodeToString(
-                    patchedM3u8.toByteArray(),
-                    android.util.Base64.NO_WRAP
-                )
-                val finalUrl = "data:application/vnd.apple.mpegurl;base64,$base64M3u8"
+            M3u8Helper.generateM3u8(
+                name,
+                data,
+                "$mainUrl/",
+                null,     
+                apiHeaders
+            ).forEach { link ->
+                val finalUrl = if (link.url.startsWith("/")) "$mainUrl${link.url}" else link.url
 
                 callback.invoke(
                     newExtractorLink(
-                        name, // source
-                        "Sudatchi HD (Audio Fix)",
+                        link.source,
+                        "${link.name} (Sudatchi)",
                         finalUrl
                     ) {
-                        this.quality = Qualities.P1080.value
-                        this.referer = "$mainUrl/"
+                        this.quality = link.quality
                         this.headers = apiHeaders
+                        this.referer = "$mainUrl/"
                     }
                 )
-                Log.d(TAG, "Logs: Enlace enviado con newExtractorLink")
             }
+
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
