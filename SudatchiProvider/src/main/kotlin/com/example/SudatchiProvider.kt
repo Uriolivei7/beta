@@ -131,22 +131,45 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS SUDATCHI V5 ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V5.1 (SUB FIX) ===")
 
         return try {
+            // 1. Extraer e inspeccionar Subtítulos
             val episodeId = data.substringAfter("episodeId=").substringBefore("&")
-            val epResponse = app.get("$mainUrl/api/episode/$episodeId", headers = apiHeaders).text
+            val epApiUrl = "$mainUrl/api/episode/$episodeId"
+            Log.d(TAG, "Logs: Llamando a API de episodio: $epApiUrl")
 
-            """/api/vtt/[\w/-]+\.vtt""".toRegex().findAll(epResponse).forEach { match ->
-                val subUrl = "$mainUrl${match.value}"
-                val lang = if (match.value.contains("spanish", true)) "Español" else "English"
+            val epResponse = app.get(epApiUrl, headers = apiHeaders).text
+
+            // Log para ver el JSON real (Cuidado: puede ser largo, mira las primeras partes)
+            Log.d(TAG, "Logs: Respuesta API Episodio (recortada): ${epResponse.take(500)}")
+
+            val vttRegex = """"/api/vtt/[^"]+\.vtt"""".toRegex()
+            val matches = vttRegex.findAll(epResponse).toList()
+
+            if (matches.isEmpty()) {
+                Log.w(TAG, "Logs: ¡No se encontraron archivos VTT en el JSON!")
+            }
+
+            matches.forEach { match ->
+                val subPath = match.value.replace("\"", "")
+                val subUrl = "$mainUrl$subPath"
+
+                val lang = when {
+                    subPath.contains("spanish", true) -> "Español"
+                    subPath.contains("latino", true) -> "Español Latino"
+                    subPath.contains("english", true) -> "English"
+                    else -> "Sub: ${subPath.substringAfterLast("/")}"
+                }
+
+                Log.d(TAG, "Logs: Subtítulo cargado: $lang -> $subUrl")
                 subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
             }
 
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "Sudatchi HD (Audio Fixed)",
+                    name = "Sudatchi",
                     url = data,
                     type = ExtractorLinkType.M3U8
                 ) {
