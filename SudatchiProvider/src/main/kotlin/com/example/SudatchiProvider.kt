@@ -24,10 +24,13 @@ class SudatchiProvider : MainAPI() {
     }
 
     private val apiHeaders = mapOf(
-        "Accept" to "application/json, text/plain, */*",
+        "Accept" to "*/*",
         "Origin" to mainUrl,
         "Referer" to "$mainUrl/",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+        "Accept-Language" to "es-ES,es;q=0.9",
+        "Cache-Control" to "no-cache",
+        "Pragma" to "no-cache"
     )
 
     override val mainPage = mainPageOf(
@@ -95,23 +98,17 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V7 (SUB-DATA METHOD) ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V7.2 (ESTABLE) ===")
 
         return try {
             val encodedSubs = data.substringAfter("&subs=", "")
             if (encodedSubs.isNotEmpty()) {
                 val decodedSubs = java.net.URLDecoder.decode(encodedSubs, "UTF-8")
                 val subs: List<SubtitleDto> = mapper.readValue(decodedSubs)
-
                 subs.forEach { sub ->
-                    val subUrl = if (sub.url.startsWith("http")) {
-                        sub.url
-                    } else {
-                        "$mainUrl/api/proxy/${sub.url.removePrefix("/ipfs/")}"
-                    }
-
+                    val subUrl = if (sub.url.startsWith("http")) sub.url
+                    else "$mainUrl/api/proxy/${sub.url.removePrefix("/ipfs/")}"
                     val lang = sub.subtitleLang?.name ?: sub.language ?: "Sub"
-                    Log.d(TAG, "Logs: Subtítulo inyectado: $lang -> $subUrl")
                     subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
                 }
             }
@@ -121,7 +118,7 @@ class SudatchiProvider : MainAPI() {
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "Sudatchi HD",
+                    name = "Sudatchi",
                     url = cleanVideoUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
@@ -130,7 +127,6 @@ class SudatchiProvider : MainAPI() {
                     this.quality = Qualities.P1080.value
                 }
             )
-
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
@@ -149,8 +145,6 @@ class SudatchiProvider : MainAPI() {
             } ?: emptyList()
         } catch (e: Exception) { emptyList() }
     }
-
-    // --- DTOs actualizados con soporte para Subtítulos ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SeriesDto(val results: List<AnimeDto>? = null)
@@ -182,7 +176,6 @@ class SudatchiProvider : MainAPI() {
         val number: Int? = null,
         val title: String? = null,
         val coverImage: String? = null,
-        // Aquí es donde Tachiyomi encuentra los subtítulos
         val subtitlesDto: List<SubtitleDto>? = null,
         val subtitles: List<SubtitleDto>? = null
     )
