@@ -124,8 +124,11 @@ class CinehdplusProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data).document
-        // Usamos map para evitar problemas de iteración sobre Elements
-        doc.select("li.clili").map { element: Element ->
+
+        // Obtenemos la lista de opciones (li.clili)
+        val options = doc.select("li.clili")
+
+        options.forEach { element ->
             val lang = element.attr("data-lang")
             val optId = element.attr("data-tplayernv")
             val frame = doc.selectFirst("div#$optId")?.selectFirst("iframe")?.attr("data-src")
@@ -133,60 +136,51 @@ class CinehdplusProvider : MainAPI() {
 
             if (frame != null) {
                 val apiBase = mainUrl.replaceFirst("https://", "https://api.")
-                // Nota: se recomienda manejar esto en un try-catch o scope separado si es suspendido
-                // Aquí mantenemos la lógica pero aseguramos que el compilador entienda los tipos
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val gotoDoc = app.get("$apiBase/ir/goto.php?h=$frame").document
-                        val form1 = gotoDoc.selectFirst("form")
-                        val url1 = form1?.selectFirst("input#url")?.attr("value")
+                try {
+                    // EJECUCIÓN SECUENCIAL (Suspendida): Eliminamos el CoroutineScope.launch
+                    val gotoDoc = app.get("$apiBase/ir/goto.php?h=$frame").document
+                    val form1 = gotoDoc.selectFirst("form")
+                    val url1 = form1?.selectFirst("input#url")?.attr("value")
 
-                        if (url1 != null) {
-                            val rdDoc = app.post("$apiBase/ir/rd.php", data = mapOf("url" to url1)).document
-                            val form2 = rdDoc.selectFirst("form")
-                            val url2 = form2?.selectFirst("input#url")?.attr("value")
+                    if (url1 != null) {
+                        val rdDoc = app.post("$apiBase/ir/rd.php", data = mapOf("url" to url1)).document
+                        val form2 = rdDoc.selectFirst("form")
+                        val url2 = form2?.selectFirst("input#url")?.attr("value")
 
-                            if (url2 != null) {
-                                val ddhDoc = app.post("$apiBase/ir/redir_ddh.php", data = mapOf("url" to url2, "dl" to "0")).document
-                                val form3 = ddhDoc.selectFirst("form")
-                                val actionUrl = form3?.attr("action")
-                                val vid = form3?.selectFirst("input#vid")?.attr("value")
-                                val hash = form3?.selectFirst("input#hash")?.attr("value")
+                        if (url2 != null) {
+                            val ddhDoc = app.post("$apiBase/ir/redir_ddh.php", data = mapOf("url" to url2, "dl" to "0")).document
+                            val form3 = ddhDoc.selectFirst("form")
+                            val actionUrl = form3?.attr("action")
+                            val vid = form3?.selectFirst("input#vid")?.attr("value")
+                            val hash = form3?.selectFirst("input#hash")?.attr("value")
 
-                                if (actionUrl != null && vid != null && hash != null) {
-                                    val finalDoc = app.post(actionUrl, data = mapOf("vid" to vid, "hash" to hash)).document
-                                    val script = finalDoc.selectFirst("script:containsData(link =)")?.html()
-                                    val encoded = script?.substringAfter("link = '")?.substringBefore("';")
+                            if (actionUrl != null && vid != null && hash != null) {
+                                val finalDoc = app.post(actionUrl, data = mapOf("vid" to vid, "hash" to hash)).document
+                                val script = finalDoc.selectFirst("script:containsData(link =)")?.html()
+                                val encoded = script?.substringAfter("link = '")?.substringBefore("';")
 
-                                    if (encoded != null) {
-                                        val link = base64Decode(encoded)
-                                        loadSourceNameExtractor(
-                                            lang,
-                                            fixHostsLinks(link),
-                                            "$mainUrl/",
-                                            subtitleCallback,
-                                            callback
-                                        )
-                                    }
+                                if (encoded != null) {
+                                    val link = base64Decode(encoded)
+                                    // Llamamos directamente a la función suspendida
+                                    loadSourceNameExtractor(
+                                        lang,
+                                        fixHostsLinks(link),
+                                        "$mainUrl/",
+                                        subtitleCallback,
+                                        callback
+                                    )
                                 }
                             }
                         }
-                    } catch (e: Exception) {
                     }
+                } catch (e: Exception) {
+                    Log.e("CineHD", "Error extrayendo link de $lang: ${e.message}")
                 }
             }
         }
         return true
     }
 }
-
-data class LinkData(
-    @JsonProperty("movieName") val title: String? = null,
-    @JsonProperty("imdbID") val imdbId: String? = null,
-    @JsonProperty("tmdbID") val tmdbId: Int? = null,
-    @JsonProperty("season") val season: Int? = null,
-    @JsonProperty("episode") val episode: Int? = null,
-)
 
 suspend fun loadSourceNameExtractor(
     source: String,
@@ -198,45 +192,41 @@ suspend fun loadSourceNameExtractor(
     Log.d("CineHD", "Logs: Iniciando extracción para fuente: $source")
 
     loadExtractor(url, referer, subtitleCallback) { link ->
-        val sUrl = link.url
-        val sName = link.name
-        val sSource = link.source
-        val sQuality = link.quality
-        val sType = link.type
-        val sHeaders = link.headers
-        val sReferer = link.referer
-        val sData = link.extractorData
-
         val idiomaLabel = when {
-            source.lowercase().contains("lat") -> "Español Latino "
-            source.lowercase().contains("es") || source.lowercase().contains("cast") -> "Español de España "
+            source.lowercase().contains("lat") -> "Latino"
+            source.lowercase().contains("es") || source.lowercase().contains("cast") -> "Castellano"
             else -> source
         }
-        val calidadLabel = if (sQuality > 0) "${sQuality}p" else ""
-        val nombreFinal = "$idiomaLabel [$sSource] $calidadLabel".trim()
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val extractorLink = newExtractorLink(
-                    nombreFinal,
-                    nombreFinal,
-                    sUrl,
-                ) {
-                    this.quality = sQuality
-                    this.type = sType
-                    this.referer = sReferer
-                    this.headers = sHeaders
-                    this.extractorData = sData
-                }
+        val calidadLabel = if (link.quality > 0) "${link.quality}p" else ""
+        val nombreFinal = "CineHD+ $idiomaLabel [${link.source}] $calidadLabel".trim()
 
-                callback.invoke(extractorLink)
-                Log.d("CineHD", "Logs: Link generado y enviado: $nombreFinal")
-            } catch (e: Exception) {
-                Log.e("CineHD", "Logs: Error en el body de la corrutina: ${e.message}")
+        kotlinx.coroutines.runBlocking {
+            val extractorLink = newExtractorLink(
+                source = nombreFinal,
+                name = nombreFinal,
+                url = link.url,
+                type = link.type
+            ) {
+                this.quality = link.quality
+                this.referer = link.referer
+                this.headers = link.headers
+                this.extractorData = link.extractorData
             }
+            callback.invoke(extractorLink)
         }
+
+        Log.d("CineHD", "Logs: Link enviado: $nombreFinal")
     }
 }
+
+data class LinkData(
+    @JsonProperty("movieName") val title: String? = null,
+    @JsonProperty("imdbID") val imdbId: String? = null,
+    @JsonProperty("tmdbID") val tmdbId: Int? = null,
+    @JsonProperty("season") val season: Int? = null,
+    @JsonProperty("episode") val episode: Int? = null,
+)
 
 fun fixHostsLinks(url: String): String {
     return url
