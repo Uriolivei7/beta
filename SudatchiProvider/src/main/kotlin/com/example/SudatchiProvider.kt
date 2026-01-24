@@ -131,10 +131,9 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS SUDATCHI V4 ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS SUDATCHI V5 ===")
 
         return try {
-            // 1. Extraer Subtítulos
             val episodeId = data.substringAfter("episodeId=").substringBefore("&")
             val epResponse = app.get("$mainUrl/api/episode/$episodeId", headers = apiHeaders).text
 
@@ -144,27 +143,18 @@ class SudatchiProvider : MainAPI() {
                 subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
             }
 
-            M3u8Helper.generateM3u8(
-                name,
-                data,
-                "$mainUrl/",
-                null,     
-                apiHeaders
-            ).forEach { link ->
-                val finalUrl = if (link.url.startsWith("/")) "$mainUrl${link.url}" else link.url
-
-                callback.invoke(
-                    newExtractorLink(
-                        link.source,
-                        "${link.name} (Sudatchi)",
-                        finalUrl
-                    ) {
-                        this.quality = link.quality
-                        this.headers = apiHeaders
-                        this.referer = "$mainUrl/"
-                    }
-                )
-            }
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "Sudatchi HD (Audio Fixed)",
+                    url = data,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.P1080.value
+                    this.headers = apiHeaders
+                }
+            )
 
             true
         } catch (e: Exception) {
