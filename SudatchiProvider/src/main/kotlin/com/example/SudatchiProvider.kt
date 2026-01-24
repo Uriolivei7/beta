@@ -147,7 +147,7 @@ class SudatchiProvider : MainAPI() {
             false
         }
     }
-    
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class HomePageDto(val latestEpisodes: List<EpisodeDto>? = null)
 
