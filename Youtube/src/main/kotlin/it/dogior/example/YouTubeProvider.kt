@@ -16,6 +16,7 @@ import com.lagradost.cloudstream3.amap
 import android.util.Log
 import com.lagradost.cloudstream3.MovieSearchResponse
 import com.lagradost.cloudstream3.newSubtitleFile
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
@@ -148,7 +149,7 @@ class YoutubeProvider(
                 extractor.fetchPage()
             } catch (e: Exception) {
                 if (e.message?.contains("reloaded") == true) {
-                    kotlinx.coroutines.delay(1000) 
+                    kotlinx.coroutines.delay(1000)
                     extractor.fetchPage()
                 } else throw e
             }
@@ -156,14 +157,17 @@ class YoutubeProvider(
             val refererUrl = extractor.url
 
             extractor.videoStreams?.filterNotNull()?.forEach { stream ->
-                val streamUrl = stream.url ?: return@forEach
-                val resolutionName = stream.resolution ?: return@forEach
+                val streamUrl = stream.content ?: stream.url ?: return@forEach
+                val resolutionName = stream.resolution ?: "Unknown"
+
+                val isHls = streamUrl.contains(".m3u8") || streamUrl.contains("manifest")
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = "Video - $resolutionName",
-                        url = streamUrl
+                        url = streamUrl,
+                        type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
                         this.referer = refererUrl
                     }

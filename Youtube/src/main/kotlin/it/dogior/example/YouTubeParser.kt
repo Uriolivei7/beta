@@ -29,6 +29,7 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
 import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
+import org.schabi.newpipe.extractor.stream.StreamType
 
 class YouTubeParser(override var name: String) : MainAPI() {
 
@@ -163,29 +164,22 @@ class YouTubeParser(override var name: String) : MainAPI() {
         )
     }
 
-    fun parseSearch(
-        query: String,
-    ): List<SearchResponse> {
-
+    fun parseSearch(query: String): List<SearchResponse> {
         val handlerFactory = ServiceList.YouTube.searchQHFactory
-
-        val searchHandler = handlerFactory.fromQuery(
-            query,
-            emptyList(),
-            null
-        )
-
+        val searchHandler = handlerFactory.fromQuery(query, emptyList(), null)
         val searchInfo = SearchInfo.getInfo(ServiceList.YouTube, SearchQueryHandler(searchHandler))
 
-        val finalResults = searchInfo.getRelatedItems()?.mapNotNull { item ->
+        val finalResults = searchInfo.relatedItems?.mapNotNull { item ->
             val name = item.name.toString()
             val url = item.url
             val poster = item.thumbnails.lastOrNull()?.url
 
             when (item) {
                 is StreamInfoItem -> {
+                    val isLive = item.streamType == StreamType.LIVE_STREAM
+
                     newMovieSearchResponse(
-                        name = name,
+                        name = if (isLive) "🔴 LIVE: $name" else name,
                         url = url,
                     ).apply {
                         this.type = TvType.Others
@@ -292,16 +286,30 @@ class YouTubeParser(override var name: String) : MainAPI() {
     private fun getChannelVideos(channel: ChannelInfo): List<Episode> {
         val tabsLinkHandlers = channel.tabs
         val tabs = tabsLinkHandlers.map { ChannelTabInfo.getInfo(ServiceList.YouTube, it) }
-        val videoTab = tabs.first { it.name == "videos" }
-        val videos = videoTab.relatedItems.mapNotNull { video ->
-            newEpisode(
-                url = video.url
-            ).apply {
-                this.name = video.name
-                this.posterUrl = video.thumbnails.last().url
+
+        val videoTab = tabs.firstOrNull { it.name == "videos" }
+        val liveTab = tabs.firstOrNull { it.name == "live" }
+
+        val allItems = mutableListOf<InfoItem>()
+
+        liveTab?.relatedItems?.let { allItems.addAll(it) }
+        videoTab?.relatedItems?.let { allItems.addAll(it) }
+
+        val episodes = allItems.filterIsInstance<StreamInfoItem>().map { video ->
+            newEpisode(url = video.url).apply {
+                val isLive = video.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM
+                this.name = if (isLive) "🔴 LIVE: ${video.name}" else video.name
+                this.posterUrl = video.thumbnails.lastOrNull()?.url
+
+                video.uploadDate?.let { dateWrapper ->
+                    try {
+                        val instant = dateWrapper.offsetDateTime().toInstant()
+                        this.addDate(Date(instant.toEpochMilli()))
+                    } catch (e: Exception) { }
+                }
             }
         }
-        return videos.reversed()
+        return episodes.reversed()
     }
 
     suspend fun playlistToLoadResponse(url: String): LoadResponse {
