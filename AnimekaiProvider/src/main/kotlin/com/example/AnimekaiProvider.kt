@@ -6,11 +6,11 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.mvvm.safeApiCall
 import com.fasterxml.jackson.annotation.*
 import com.lagradost.cloudstream3.mvvm.Resource
-import com.lagradost.cloudstream3.syncproviders.providers.SimklApi
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import kotlinx.coroutines.delay
 
 class AnimeKaiProvider : MainAPI() {
     override var mainUrl = "https://animekai.to"
@@ -26,6 +26,35 @@ class AnimeKaiProvider : MainAPI() {
         "Referer" to "$mainUrl/",
         "Accept" to "application/json, text/plain, */*"
     )
+
+    // Función auxiliar para limpiar tokens y manejar errores 500/525 de la API
+    private suspend fun getCleanToken(text: String): String? {
+        var result = ""
+        repeat(2) { attempt ->
+            try {
+                val raw = app.get("$decryptionApi/enc-kai?text=$text").text
+                result = if (raw.contains("result\":\"")) {
+                    raw.substringAfter("result\":\"").substringBefore("\"")
+                } else {
+                    raw.replace("\"", "").trim()
+                }
+
+                // Si no es basura (HTML), lo devolvemos
+                if (result.isNotEmpty() && !result.contains("<html") && !result.contains("error code:")) {
+                    return result
+                }
+
+                Log.e(
+                    TAG,
+                    "Logs: Intento ${attempt + 1} fallido (API offline o Error 500). Reintentando..."
+                )
+                if (attempt == 0) delay(1000) // Esperar 1 segundo antes del reintento
+            } catch (e: Exception) {
+                Log.e(TAG, "Logs: Error en petición de token: ${e.message}")
+            }
+        }
+        return null
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = listOf(
@@ -69,37 +98,32 @@ class AnimeKaiProvider : MainAPI() {
 
         val response = app.get(url, headers = apiHeaders)
         val document = response.document
-
         val animeId = document.selectFirst("div[data-id]")?.attr("data-id") ?: return null
 
-        // Metadatos
         val title = document.selectFirst("h1.title")?.text() ?: "Unknown"
-        val poster = document.selectFirst(".poster img")?.attr("src") ?: document.selectFirst(".poster img")?.attr("data-src")
+        val poster =
+            document.selectFirst(".poster img")?.attr("src") ?: document.selectFirst(".poster img")
+                ?.attr("data-src")
         val description = document.selectFirst(".desc, .synopsis, .description")?.text()
-        val year = document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
+        val year =
+            document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()
+                ?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
         val genres = document.select(".detail a[href*='genre']").map { it.text() }
 
-        // --- CORRECCIÓN AQUÍ: Usamos .text y limpiamos el resultado ---
-        val encRaw = app.get("$decryptionApi/enc-kai?text=$animeId").text
-        // Limpiamos el token por si la API devuelve el JSON como texto o tiene comillas
-        val cleanToken = if (encRaw.contains("result\":\"")) {
-            encRaw.substringAfter("result\":\"").substringBefore("\"")
-        } else {
-            encRaw.replace("\"", "").trim()
-        }
-
-        if (cleanToken.isEmpty()) {
-            Log.e(TAG, "Logs: Token vacío de la API")
+        // Obtenemos token con reintento y validación
+        val cleanToken = getCleanToken(animeId)
+        if (cleanToken == null) {
+            Log.e(TAG, "Logs: Falló validación de token tras reintentos (API Offline)")
             return null
         }
 
         Log.d(TAG, "Logs: Token obtenido con éxito: $cleanToken")
 
-        // Petición de episodios usando el token limpio
-        val resJson = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
-
-        val epDocument = resJson?.toDocument()
-        val episodes = epDocument?.select("div.eplist a")?.map { element ->
+        val resJson = app.get(
+            "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken",
+            headers = apiHeaders
+        ).parsedSafe<ResultResponse>()
+        val episodes = resJson?.toDocument()?.select("div.eplist a")?.map { element ->
             val token = element.attr("token")
             val epNum = element.attr("num").toIntOrNull() ?: 0
             val epTitle = element.selectFirst("span")?.text() ?: "Episode $epNum"
@@ -130,16 +154,9 @@ class AnimeKaiProvider : MainAPI() {
         val cleanId = if (data.contains("/")) data.split("/").last() else data
         Log.d(TAG, "Logs: Iniciando loadLinks para ID limpio: $cleanId")
 
+        // Guardamos el resultado de la llamada segura en una variable
         val resource = safeApiCall {
-            // --- LIMPIEZA DE TOKEN 1 ---
-            val encRaw = app.get("$decryptionApi/enc-kai?text=$cleanId").text
-            val cleanToken = if (encRaw.contains("result\":\"")) {
-                encRaw.substringAfter("result\":\"").substringBefore("\"")
-            } else {
-                encRaw.replace("\"", "").trim()
-            }
-
-            if (cleanToken.isEmpty()) return@safeApiCall false
+            val cleanToken = getCleanToken(cleanId) ?: return@safeApiCall false
 
             val serverRes = app.get("$mainUrl/ajax/links/list?token=$cleanId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
             val serverDoc = serverRes?.toDocument() ?: return@safeApiCall false
@@ -148,16 +165,7 @@ class AnimeKaiProvider : MainAPI() {
                 val lid = serverElm.attr("data-lid")
                 val serverName = serverElm.text()
 
-                // --- LIMPIEZA DE TOKEN 2 (para cada servidor) ---
-                val lidEncRaw = app.get("$decryptionApi/enc-kai?text=$lid").text
-                val lidEnc = if (lidEncRaw.contains("result\":\"")) {
-                    lidEncRaw.substringAfter("result\":\"").substringBefore("\"")
-                } else {
-                    lidEncRaw.replace("\"", "").trim()
-                }
-
-                if (lidEnc.isEmpty()) continue
-
+                val lidEnc = getCleanToken(lid) ?: continue
                 val viewRes = app.get("$mainUrl/ajax/links/view?id=$lid&_=$lidEnc", headers = apiHeaders).parsedSafe<ResultResponse>()
                 val encodedLink = viewRes?.result ?: continue
 
@@ -172,7 +180,11 @@ class AnimeKaiProvider : MainAPI() {
             }
             true
         }
-        return resource is Resource.Success
+
+        return when (resource) {
+            is Resource.Success -> resource.value
+            else -> false
+        }
     }
 
     private suspend fun loadMegaUpSource(
@@ -186,18 +198,20 @@ class AnimeKaiProvider : MainAPI() {
             val token = parsedUrl.pathSegments.lastOrNull() ?: return
             val megaUrl = "${parsedUrl.scheme}://${parsedUrl.host}/media/$token"
 
-            // Obtenemos el token de la página del servidor
-            val megaToken = app.get(megaUrl, headers = apiHeaders).parsedSafe<ResultResponse>()?.result ?: return
+            val megaTokenRaw = app.get(megaUrl, headers = apiHeaders).text
+            val megaToken = if (megaTokenRaw.contains("result\":\"")) {
+                megaTokenRaw.substringAfter("result\":\"").substringBefore("\"")
+            } else {
+                megaTokenRaw.replace("\"", "").trim()
+            }
 
-            // IMPORTANTE: El 'agent' debe ser EXACTAMENTE el mismo que está en apiHeaders
+            if (megaToken.isEmpty() || megaToken.contains("<html")) return
+
             val megaUpResult = app.post("$decryptionApi/dec-mega",
-                json = mapOf(
-                    "text" to megaToken,
-                    "agent" to apiHeaders["User-Agent"]
-                )
+                json = mapOf("text" to megaToken, "agent" to apiHeaders["User-Agent"])
             ).parsedSafe<MegaUpResponse>()?.result ?: return
 
-            megaUpResult.tracks.forEach { track: MegaUpTrack ->
+            megaUpResult.tracks.forEach { track ->
                 if (track.kind == "captions") {
                     subtitleCallback.invoke(newSubtitleFile(track.label ?: "English", track.file))
                 }
@@ -220,9 +234,9 @@ class AnimeKaiProvider : MainAPI() {
             Log.e(TAG, "Logs: Error en loadMegaUpSource: ${e.message}")
         }
     }
-
 }
 
+// DATA CLASSES (Sin cambios, robustas)
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ResultResponse(
     @JsonProperty("result") val result: String? = null,
@@ -240,15 +254,17 @@ data class IframeUrl(val url: String = "")
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpResponse(
-    @JsonProperty("result") val result: MegaUpResult? = null // Añadido ? y = null
+    @JsonProperty("result") val result: MegaUpResult? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpResult(
-    @JsonProperty("sources") val sources: List<MegaUpSource> = emptyList(), // Valor por defecto
-    @JsonProperty("tracks") val tracks: List<MegaUpTrack> = emptyList()     // Valor por defecto
+    @JsonProperty("sources") val sources: List<MegaUpSource> = emptyList(),
+    @JsonProperty("tracks") val tracks: List<MegaUpTrack> = emptyList()
 )
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpSource(val file: String)
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpTrack(val file: String, val label: String?, val kind: String)
