@@ -362,5 +362,19 @@
     "iconUrl": "https://sudatchi.com/favicon.ico",
     "language": "en",
     "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AniemkaiProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "AnimeKai",
+    "internalName": "AniemkaiProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para animes",
+    "tvTypes": ["Anime"],
+    "iconUrl": "https://sudatchi.com/favicon.ico",
+    "language": "en",
+    "fileSize": 20000
   }
 ]
