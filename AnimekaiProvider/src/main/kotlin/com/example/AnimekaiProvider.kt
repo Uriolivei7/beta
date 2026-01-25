@@ -65,15 +65,9 @@ class AnimeKaiProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Intentando cargar con Headers de PC: $url")
-
-        // Headers de un navegador real de escritorio para mayor compatibilidad
         val desktopHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "Accept" to "application/json, text/plain, */*",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Cache-Control" to "no-cache",
-            "Pragma" to "no-cache",
             "Referer" to "$mainUrl/"
         )
 
@@ -81,27 +75,46 @@ class AnimeKaiProvider : MainAPI() {
         val document = response.document
 
         val animeId = document.selectFirst("div[data-id]")?.attr("data-id")
-            ?: throw Exception("Anime ID no encontrado en el HTML")
+            ?: throw Exception("Anime ID no encontrado")
 
-        // Llamada a la API de desencriptación (esta no necesita headers especiales generalmente)
-        val encToken = app.get("$decryptionApi/enc-kai?text=$animeId").text
+        // 1. Obtenemos la respuesta
+        val encResponse = app.get("$decryptionApi/enc-kai?text=$animeId").parsedSafe<ResultResponse>()
 
-        // URL de episodios con el token
-        val apiUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$encToken"
+        // 2. Extraemos el token limpio
+        val cleanToken = encResponse?.result
+
+        if (cleanToken == null) {
+            // CORRECCIÓN: Cambiamos $encToken por $cleanToken (o simplemente quitamos la variable)
+            Log.e(TAG, "Logs: Falló validación de token. Token obtenido es nulo.")
+            return null
+        }
+
+        Log.d(TAG, "Logs: Token limpio: $cleanToken")
+
+        // 3. Usamos el token limpio en la URL
+        val apiUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken"
+
+        Log.d(TAG, "Logs: Token extraído correctamente: $cleanToken")
 
         val resJson = app.get(
             apiUrl,
             headers = desktopHeaders.toMutableMap().apply {
                 put("X-Requested-With", "XMLHttpRequest")
-                put("Referer", url) // Referer obligatorio: la página del anime
+                put("Referer", url)
             }
-        ).parsedSafe<ResultResponse>() // Usamos parsedSafe para evitar errores si viene vacío
+        ).parsedSafe<ResultResponse>()
 
         if (resJson?.result == null) {
-            Log.e(TAG, "Logs: Falló validación de token. Token usado: $encToken")
-            // Como último recurso, podrías imprimir la respuesta cruda para ver si hay un captcha
+            Log.e(TAG, "Logs: El servidor sigue rechazando el token limpio. 403 persistente.")
+            return null
+        }
+
+        if (resJson?.result == null) {
+            // CORREGIDO: Cambiado $encToken por $cleanToken
+            Log.e(TAG, "Logs: El servidor rechazó el token limpio: $cleanToken")
+
             val rawResponse = app.get(apiUrl, headers = desktopHeaders).text
-            Log.d(TAG, "Logs: Respuesta cruda del servidor: $rawResponse")
+            Log.d(TAG, "Logs: Respuesta cruda (Cuerpo completo): $rawResponse")
             return null
         }
 
@@ -109,17 +122,14 @@ class AnimeKaiProvider : MainAPI() {
         val episodes = epDocument.select("div.eplist a").map { element: Element ->
             val token = element.attr("token")
             val epNum = element.attr("num").toIntOrNull() ?: 0
-            val epTitle = element.selectFirst("span")?.text() ?: "Episode $epNum"
-
             newEpisode(token) {
-                this.name = epTitle
+                this.name = "Episode $epNum"
                 this.episode = epNum
             }
         }.reversed()
 
-        return newAnimeLoadResponse(document.selectFirst("h1.title")?.text() ?: "Unknown", url, TvType.Anime) {
+        return newAnimeLoadResponse(document.selectFirst("h1.title")?.text() ?: "Anime", url, TvType.Anime) {
             this.posterUrl = document.selectFirst(".poster img")?.attr("src")
-            this.plot = document.selectFirst(".desc")?.text()
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
@@ -133,8 +143,10 @@ class AnimeKaiProvider : MainAPI() {
         Log.d(TAG, "Logs: Iniciando loadLinks para ID $data")
 
         val resource = safeApiCall {
-            val encToken = app.get("$decryptionApi/enc-kai?text=$data", headers = apiHeaders).text
-            val serverRes = app.get("$mainUrl/ajax/links/list?token=$data&_=$encToken", headers = apiHeaders).parsed<ResultResponse>()
+            val encResponse = app.get("$decryptionApi/enc-kai?text=$data", headers = apiHeaders).parsedSafe<ResultResponse>()
+            val cleanToken = encResponse?.result ?: return@safeApiCall false
+
+            val serverRes = app.get("$mainUrl/ajax/links/list?token=$data&_=$cleanToken", headers = apiHeaders).parsed<ResultResponse>()
             val serverDoc = serverRes.toDocument()
 
             for (serverElm in serverDoc.select("span.server[data-lid]")) {
