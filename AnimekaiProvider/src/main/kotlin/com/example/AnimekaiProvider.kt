@@ -65,33 +65,51 @@ class AnimeKaiProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "Logs: Iniciando load para $url")
+
         val response = app.get(url, headers = apiHeaders)
         val document = response.document
 
         val animeId = document.selectFirst("div[data-id]")?.attr("data-id") ?: return null
 
-        // Extracción de metadatos mejorada
+        // Metadatos
         val title = document.selectFirst("h1.title")?.text() ?: "Unknown"
         val poster = document.selectFirst(".poster img")?.attr("src") ?: document.selectFirst(".poster img")?.attr("data-src")
         val description = document.selectFirst(".desc, .synopsis, .description")?.text()
         val year = document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
-
         val genres = document.select(".detail a[href*='genre']").map { it.text() }
 
-        // (Aquí va tu lógica del cleanToken que ya funciona...)
+        // Lógica del Token
         val encResponse = app.get("$decryptionApi/enc-kai?text=$animeId").parsedSafe<ResultResponse>()
-        val cleanToken = encResponse?.result ?: return null
+        val cleanToken = encResponse?.result
 
+        if (cleanToken == null) {
+            Log.e(TAG, "Logs: Error al obtener token para episodios")
+            return null
+        }
+
+        // Petición de episodios
         val resJson = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
 
-        val episodes = resJson?.toDocument()?.select("div.eplist a")?.map { element ->
+        if (resJson?.result == null) {
+            Log.e(TAG, "Logs: El servidor devolvió episodios nulos (Posible 403)")
+            return null
+        }
+
+        // --- ESTA ES LA PARTE QUE FALTABA: PROCESAR LOS EPISODIOS ---
+        val epDocument = resJson.toDocument()
+        val episodes = epDocument.select("div.eplist a").map { element ->
             val token = element.attr("token")
             val epNum = element.attr("num").toIntOrNull() ?: 0
+            val epTitle = element.selectFirst("span")?.text() ?: "Episode $epNum"
+
             newEpisode(token) {
-                this.name = "Episode $epNum"
+                this.name = epTitle
                 this.episode = epNum
             }
-        }?.reversed() ?: emptyList()
+        }.reversed()
+
+        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios correctamente")
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
@@ -191,7 +209,7 @@ class AnimeKaiProvider : MainAPI() {
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ResultResponse(
-    @JsonProperty("result") val result: String? = null, // Ahora permite nulos
+    @JsonProperty("result") val result: String? = null,
     @JsonProperty("message") val message: String? = null,
     @JsonProperty("status") val status: Int? = null
 ) {
