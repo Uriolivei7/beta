@@ -65,14 +65,34 @@ class AnimeKaiProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "Logs: Iniciando load para $url")
+
         val response = app.get(url, headers = apiHeaders)
         val document = response.document
 
+        // Extraemos el ID del anime
         val animeId = document.selectFirst("div[data-id]")?.attr("data-id")
             ?: throw Exception("Anime ID no encontrado")
 
+        // Obtenemos el token de desencriptación
         val encToken = app.get("$decryptionApi/enc-kai?text=$animeId", headers = apiHeaders).text
-        val resJson = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$encToken", headers = apiHeaders).parsed<ResultResponse>()
+
+        // PETICIÓN MEJORADA: Añadimos X-Requested-With para evitar el 403
+        val ajaxHeaders = apiHeaders.toMutableMap().apply {
+            put("X-Requested-With", "XMLHttpRequest")
+            put("Referer", url) // El referer debe ser la página del anime actual
+        }
+
+        val resJson = app.get(
+            "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$encToken",
+            headers = ajaxHeaders
+        ).parsed<ResultResponse>()
+
+        // Verificamos si la respuesta es válida antes de continuar
+        if (resJson.result == null) {
+            Log.e(TAG, "Logs: Error 403 o respuesta vacía: ${resJson.message}")
+            return null
+        }
 
         val epDocument = resJson.toDocument()
         val episodes = epDocument.select("div.eplist a").map { element: Element ->
@@ -86,9 +106,24 @@ class AnimeKaiProvider : MainAPI() {
             }
         }.reversed()
 
-        return newAnimeLoadResponse(document.selectFirst("h1.title")?.text() ?: "Unknown", url, TvType.Anime) {
-            this.posterUrl = document.select(".poster img").attr("src")
+        Log.d(TAG, "Logs: Se encontraron ${episodes.size} episodios")
+
+        return newAnimeLoadResponse(
+            document.selectFirst("h1.title")?.text() ?: "Unknown",
+            url,
+            TvType.Anime
+        ) {
+            // Intentamos obtener el poster de varias formas por si cambia el HTML
+            this.posterUrl = document.selectFirst(".poster img")?.attr("src")
+                ?: document.selectFirst(".poster img")?.attr("data-src")
+
             this.plot = document.selectFirst(".desc")?.text()
+
+            // Estado del anime (Opcional)
+            if (document.select(".detail").text().contains("Completed", ignoreCase = true)) {
+                this.showStatus = ShowStatus.Completed
+            }
+
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
@@ -179,8 +214,12 @@ class AnimeKaiProvider : MainAPI() {
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class ResultResponse(val result: String) {
-    fun toDocument(): Document = Jsoup.parseBodyFragment(result)
+data class ResultResponse(
+    @JsonProperty("result") val result: String? = null, // Ahora permite nulos
+    @JsonProperty("message") val message: String? = null,
+    @JsonProperty("status") val status: Int? = null
+) {
+    fun toDocument(): Document = Jsoup.parseBodyFragment(result ?: "")
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
