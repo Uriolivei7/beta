@@ -154,37 +154,46 @@ class AnimeKaiProvider : MainAPI() {
         val cleanId = if (data.contains("/")) data.split("/").last() else data
         Log.d(TAG, "Logs: Iniciando loadLinks para ID limpio: $cleanId")
 
-        // Guardamos el resultado de la llamada segura en una variable
         val resource = safeApiCall {
             val cleanToken = getCleanToken(cleanId) ?: return@safeApiCall false
 
+            // 1. Obtenemos la lista de servidores
             val serverRes = app.get("$mainUrl/ajax/links/list?token=$cleanId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
             val serverDoc = serverRes?.toDocument() ?: return@safeApiCall false
 
-            for (serverElm in serverDoc.select("span.server[data-lid]")) {
-                val lid = serverElm.attr("data-lid")
-                val serverName = serverElm.text()
+            // 2. Buscamos por categorías como hace Aniyomi
+            // data-id puede ser: "sub" (Hardsub), "softsub" (Subtítulos aparte), "dub" (Doblaje)
+            serverDoc.select("div.server-items[data-id]").forEach { typeGroup ->
+                val type = typeGroup.attr("data-id")
+                val typeSuffix = when (type) {
+                    "sub" -> "HardSub"
+                    "softsub" -> "SoftSub"
+                    "dub" -> "Dub"
+                    else -> type.uppercase()
+                }
 
-                val lidEnc = getCleanToken(lid) ?: continue
-                val viewRes = app.get("$mainUrl/ajax/links/view?id=$lid&_=$lidEnc", headers = apiHeaders).parsedSafe<ResultResponse>()
-                val encodedLink = viewRes?.result ?: continue
+                typeGroup.select("span.server[data-lid]").forEach { serverElm ->
+                    val lid = serverElm.attr("data-lid")
+                    val serverName = serverElm.text()
 
-                val iframeRes = app.post("$decryptionApi/dec-kai", json = mapOf("text" to encodedLink)).parsedSafe<IframeResponse>()
-                val iframeUrl = iframeRes?.result?.url ?: continue
+                    val lidEnc = getCleanToken(lid) ?: return@forEach
+                    val viewRes = app.get("$mainUrl/ajax/links/view?id=$lid&_=$lidEnc", headers = apiHeaders).parsedSafe<ResultResponse>()
+                    val encodedLink = viewRes?.result ?: return@forEach
 
-                Log.d(TAG, "Logs: Servidor encontrado: $serverName -> $iframeUrl")
+                    // Desencriptamos el iframe
+                    val iframeRes = app.post("$decryptionApi/dec-kai", json = mapOf("text" to encodedLink)).parsedSafe<IframeResponse>()
+                    val iframeUrl = iframeRes?.result?.url ?: return@forEach
 
-                if (iframeUrl.contains("megaup") || iframeUrl.contains("site")) {
-                    loadMegaUpSource(iframeUrl, serverName, callback, subtitleCallback)
+                    Log.d(TAG, "Logs: Cargando $typeSuffix: $serverName -> $iframeUrl")
+
+                    if (iframeUrl.contains("megaup") || iframeUrl.contains("site")) {
+                        loadMegaUpSource(iframeUrl, "$serverName ($typeSuffix)", callback, subtitleCallback)
+                    }
                 }
             }
             true
         }
-
-        return when (resource) {
-            is Resource.Success -> resource.value
-            else -> false
-        }
+        return resource is Resource.Success
     }
 
     private suspend fun loadMegaUpSource(
@@ -198,34 +207,41 @@ class AnimeKaiProvider : MainAPI() {
             val token = parsedUrl.pathSegments.lastOrNull() ?: return
             val megaUrl = "${parsedUrl.scheme}://${parsedUrl.host}/media/$token"
 
-            val megaTokenRaw = app.get(megaUrl, headers = apiHeaders).text
-            val megaToken = if (megaTokenRaw.contains("result\":\"")) {
-                megaTokenRaw.substringAfter("result\":\"").substringBefore("\"")
-            } else {
-                megaTokenRaw.replace("\"", "").trim()
-            }
+            val megaToken = app.get(megaUrl, headers = apiHeaders).parsedSafe<ResultResponse>()?.result ?: return
 
-            if (megaToken.isEmpty() || megaToken.contains("<html")) return
-
+            // La API de desencriptación necesita el User-Agent exacto para validar
             val megaUpResult = app.post("$decryptionApi/dec-mega",
-                json = mapOf("text" to megaToken, "agent" to apiHeaders["User-Agent"])
+                json = mapOf(
+                    "text" to megaToken,
+                    "agent" to apiHeaders["User-Agent"]
+                )
             ).parsedSafe<MegaUpResponse>()?.result ?: return
 
+            // 1. EXTRAER SUBTÍTULOS (SoftSub)
             megaUpResult.tracks.forEach { track ->
-                if (track.kind == "captions") {
-                    subtitleCallback.invoke(newSubtitleFile(track.label ?: "English", track.file))
+                // Filtramos por .vtt para evitar archivos basura
+                if (track.kind == "captions" && track.file.endsWith(".vtt")) {
+                    Log.d(TAG, "Logs: Subtítulo Softsub detectado: ${track.label}")
+                    subtitleCallback.invoke(
+                        newSubtitleFile(
+                            track.label ?: "English",
+                            track.file
+                        )
+                    )
                 }
             }
 
+            // 2. EXTRAER LINKS DE VIDEO
             megaUpResult.sources.forEach { source ->
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "$name - MegaUp",
+                        name = name,
                         url = source.file,
                         type = if (source.file.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = "$mainUrl/"
+                        this.referer = "https://megaup.live/"
+                        // Agregamos calidad por defecto para que Cloudstream lo ordene mejor
                         this.quality = Qualities.P1080.value
                     }
                 )
