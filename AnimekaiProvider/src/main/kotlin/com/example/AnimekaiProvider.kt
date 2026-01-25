@@ -22,7 +22,7 @@ class AnimeKaiProvider : MainAPI() {
     private val decryptionApi = "https://enc-dec.app/api"
 
     private val apiHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         "Referer" to "$mainUrl/",
         "Accept" to "application/json, text/plain, */*"
     )
@@ -152,10 +152,16 @@ class AnimeKaiProvider : MainAPI() {
             val token = parsedUrl.pathSegments.lastOrNull() ?: return
             val megaUrl = "${parsedUrl.scheme}://${parsedUrl.host}/media/$token"
 
-            val megaToken = app.get(megaUrl, headers = apiHeaders).text
+            // Obtenemos el token de la página del servidor
+            val megaToken = app.get(megaUrl, headers = apiHeaders).parsedSafe<ResultResponse>()?.result ?: return
+
+            // IMPORTANTE: El 'agent' debe ser EXACTAMENTE el mismo que está en apiHeaders
             val megaUpResult = app.post("$decryptionApi/dec-mega",
-                json = mapOf("text" to megaToken, "agent" to apiHeaders["User-Agent"])
-            ).parsed<MegaUpResponse>().result
+                json = mapOf(
+                    "text" to megaToken,
+                    "agent" to apiHeaders["User-Agent"]
+                )
+            ).parsedSafe<MegaUpResponse>()?.result ?: return
 
             megaUpResult.tracks.forEach { track: MegaUpTrack ->
                 if (track.kind == "captions") {
@@ -163,19 +169,18 @@ class AnimeKaiProvider : MainAPI() {
                 }
             }
 
-            megaUpResult.sources.forEach { source: MegaUpSource ->
-                val link = newExtractorLink(
-                    source = this.name,
-                    name = "$name - MegaUp",
-                    url = source.file,
-                    type = if (source.file.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.P1080.value
-                }
-
-                Log.d(TAG, "Logs: Link generado: ${link.name} -> ${link.url}")
-                callback.invoke(link)
+            megaUpResult.sources.forEach { source ->
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "$name - MegaUp",
+                        url = source.file,
+                        type = if (source.file.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.P1080.value
+                    }
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadMegaUpSource: ${e.message}")
@@ -199,9 +204,15 @@ data class IframeResponse(val result: IframeUrl)
 data class IframeUrl(val url: String)
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class MegaUpResponse(val result: MegaUpResult)
+data class MegaUpResponse(
+    @JsonProperty("result") val result: MegaUpResult? = null // Añadido ? y = null
+)
+
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class MegaUpResult(val sources: List<MegaUpSource>, val tracks: List<MegaUpTrack>)
+data class MegaUpResult(
+    @JsonProperty("sources") val sources: List<MegaUpSource> = emptyList(), // Valor por defecto
+    @JsonProperty("tracks") val tracks: List<MegaUpTrack> = emptyList()     // Valor por defecto
+)
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpSource(val file: String)
 @JsonIgnoreProperties(ignoreUnknown = true)
