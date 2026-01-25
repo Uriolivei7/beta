@@ -79,26 +79,27 @@ class AnimeKaiProvider : MainAPI() {
         val year = document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
         val genres = document.select(".detail a[href*='genre']").map { it.text() }
 
-        // Lógica del Token
-        val encResponse = app.get("$decryptionApi/enc-kai?text=$animeId").parsedSafe<ResultResponse>()
-        val cleanToken = encResponse?.result
+        // --- CORRECCIÓN AQUÍ: Usamos .text y limpiamos el resultado ---
+        val encRaw = app.get("$decryptionApi/enc-kai?text=$animeId").text
+        // Limpiamos el token por si la API devuelve el JSON como texto o tiene comillas
+        val cleanToken = if (encRaw.contains("result\":\"")) {
+            encRaw.substringAfter("result\":\"").substringBefore("\"")
+        } else {
+            encRaw.replace("\"", "").trim()
+        }
 
-        if (cleanToken == null) {
-            Log.e(TAG, "Logs: Error al obtener token para episodios")
+        if (cleanToken.isEmpty()) {
+            Log.e(TAG, "Logs: Token vacío de la API")
             return null
         }
 
-        // Petición de episodios
+        Log.d(TAG, "Logs: Token obtenido con éxito: $cleanToken")
+
+        // Petición de episodios usando el token limpio
         val resJson = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
 
-        if (resJson?.result == null) {
-            Log.e(TAG, "Logs: El servidor devolvió episodios nulos (Posible 403)")
-            return null
-        }
-
-        // --- ESTA ES LA PARTE QUE FALTABA: PROCESAR LOS EPISODIOS ---
-        val epDocument = resJson.toDocument()
-        val episodes = epDocument.select("div.eplist a").map { element ->
+        val epDocument = resJson?.toDocument()
+        val episodes = epDocument?.select("div.eplist a")?.map { element ->
             val token = element.attr("token")
             val epNum = element.attr("num").toIntOrNull() ?: 0
             val epTitle = element.selectFirst("span")?.text() ?: "Episode $epNum"
@@ -107,9 +108,9 @@ class AnimeKaiProvider : MainAPI() {
                 this.name = epTitle
                 this.episode = epNum
             }
-        }.reversed()
+        }?.reversed() ?: emptyList()
 
-        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios correctamente")
+        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios")
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
@@ -126,29 +127,44 @@ class AnimeKaiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Si data es una URL completa, extraemos solo el ID final para la API
         val cleanId = if (data.contains("/")) data.split("/").last() else data
         Log.d(TAG, "Logs: Iniciando loadLinks para ID limpio: $cleanId")
 
         val resource = safeApiCall {
-            // Usamos parsedSafe para obtener el token de desencriptación limpio
-            val encResponse = app.get("$decryptionApi/enc-kai?text=$cleanId").parsedSafe<ResultResponse>()
-            val cleanToken = encResponse?.result ?: return@safeApiCall false
+            // --- LIMPIEZA DE TOKEN 1 ---
+            val encRaw = app.get("$decryptionApi/enc-kai?text=$cleanId").text
+            val cleanToken = if (encRaw.contains("result\":\"")) {
+                encRaw.substringAfter("result\":\"").substringBefore("\"")
+            } else {
+                encRaw.replace("\"", "").trim()
+            }
 
-            val serverRes = app.get("$mainUrl/ajax/links/list?token=$cleanId&_=$cleanToken", headers = apiHeaders).parsed<ResultResponse>()
-            val serverDoc = serverRes.toDocument()
+            if (cleanToken.isEmpty()) return@safeApiCall false
+
+            val serverRes = app.get("$mainUrl/ajax/links/list?token=$cleanId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
+            val serverDoc = serverRes?.toDocument() ?: return@safeApiCall false
 
             for (serverElm in serverDoc.select("span.server[data-lid]")) {
                 val lid = serverElm.attr("data-lid")
                 val serverName = serverElm.text()
 
-                val lidEncResponse = app.get("$decryptionApi/enc-kai?text=$lid").parsedSafe<ResultResponse>()
-                val lidEnc = lidEncResponse?.result ?: continue
+                // --- LIMPIEZA DE TOKEN 2 (para cada servidor) ---
+                val lidEncRaw = app.get("$decryptionApi/enc-kai?text=$lid").text
+                val lidEnc = if (lidEncRaw.contains("result\":\"")) {
+                    lidEncRaw.substringAfter("result\":\"").substringBefore("\"")
+                } else {
+                    lidEncRaw.replace("\"", "").trim()
+                }
 
-                val encodedLink = app.get("$mainUrl/ajax/links/view?id=$lid&_=$lidEnc", headers = apiHeaders).parsed<ResultResponse>().result ?: continue
+                if (lidEnc.isEmpty()) continue
 
-                val iframeRes = app.post("$decryptionApi/dec-kai", json = mapOf("text" to encodedLink)).parsed<IframeResponse>()
-                val iframeUrl = iframeRes.result.url
+                val viewRes = app.get("$mainUrl/ajax/links/view?id=$lid&_=$lidEnc", headers = apiHeaders).parsedSafe<ResultResponse>()
+                val encodedLink = viewRes?.result ?: continue
+
+                val iframeRes = app.post("$decryptionApi/dec-kai", json = mapOf("text" to encodedLink)).parsedSafe<IframeResponse>()
+                val iframeUrl = iframeRes?.result?.url ?: continue
+
+                Log.d(TAG, "Logs: Servidor encontrado: $serverName -> $iframeUrl")
 
                 if (iframeUrl.contains("megaup") || iframeUrl.contains("site")) {
                     loadMegaUpSource(iframeUrl, serverName, callback, subtitleCallback)
@@ -217,9 +233,10 @@ data class ResultResponse(
 }
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class IframeResponse(val result: IframeUrl)
+data class IframeResponse(val result: IframeUrl? = null)
+
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class IframeUrl(val url: String)
+data class IframeUrl(val url: String = "")
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpResponse(
