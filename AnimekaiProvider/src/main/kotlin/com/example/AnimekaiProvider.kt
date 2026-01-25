@@ -14,7 +14,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class AnimeKaiProvider : MainAPI() {
     override var mainUrl = "https://animekai.to"
-    override var name = "AnimeKai"
+    override var name = "AnimeKAI"
     override val hasMainPage = true
     override var lang = "en"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
@@ -65,32 +65,43 @@ class AnimeKaiProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: Iniciando load para $url")
+        Log.d(TAG, "Logs: Intentando cargar con Headers de PC: $url")
 
-        val response = app.get(url, headers = apiHeaders)
+        // Headers de un navegador real de escritorio para mayor compatibilidad
+        val desktopHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            "Accept" to "application/json, text/plain, */*",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Cache-Control" to "no-cache",
+            "Pragma" to "no-cache",
+            "Referer" to "$mainUrl/"
+        )
+
+        val response = app.get(url, headers = desktopHeaders)
         val document = response.document
 
-        // Extraemos el ID del anime
         val animeId = document.selectFirst("div[data-id]")?.attr("data-id")
-            ?: throw Exception("Anime ID no encontrado")
+            ?: throw Exception("Anime ID no encontrado en el HTML")
 
-        // Obtenemos el token de desencriptación
-        val encToken = app.get("$decryptionApi/enc-kai?text=$animeId", headers = apiHeaders).text
+        // Llamada a la API de desencriptación (esta no necesita headers especiales generalmente)
+        val encToken = app.get("$decryptionApi/enc-kai?text=$animeId").text
 
-        // PETICIÓN MEJORADA: Añadimos X-Requested-With para evitar el 403
-        val ajaxHeaders = apiHeaders.toMutableMap().apply {
-            put("X-Requested-With", "XMLHttpRequest")
-            put("Referer", url) // El referer debe ser la página del anime actual
-        }
+        // URL de episodios con el token
+        val apiUrl = "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$encToken"
 
         val resJson = app.get(
-            "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$encToken",
-            headers = ajaxHeaders
-        ).parsed<ResultResponse>()
+            apiUrl,
+            headers = desktopHeaders.toMutableMap().apply {
+                put("X-Requested-With", "XMLHttpRequest")
+                put("Referer", url) // Referer obligatorio: la página del anime
+            }
+        ).parsedSafe<ResultResponse>() // Usamos parsedSafe para evitar errores si viene vacío
 
-        // Verificamos si la respuesta es válida antes de continuar
-        if (resJson.result == null) {
-            Log.e(TAG, "Logs: Error 403 o respuesta vacía: ${resJson.message}")
+        if (resJson?.result == null) {
+            Log.e(TAG, "Logs: Falló validación de token. Token usado: $encToken")
+            // Como último recurso, podrías imprimir la respuesta cruda para ver si hay un captcha
+            val rawResponse = app.get(apiUrl, headers = desktopHeaders).text
+            Log.d(TAG, "Logs: Respuesta cruda del servidor: $rawResponse")
             return null
         }
 
@@ -106,24 +117,9 @@ class AnimeKaiProvider : MainAPI() {
             }
         }.reversed()
 
-        Log.d(TAG, "Logs: Se encontraron ${episodes.size} episodios")
-
-        return newAnimeLoadResponse(
-            document.selectFirst("h1.title")?.text() ?: "Unknown",
-            url,
-            TvType.Anime
-        ) {
-            // Intentamos obtener el poster de varias formas por si cambia el HTML
+        return newAnimeLoadResponse(document.selectFirst("h1.title")?.text() ?: "Unknown", url, TvType.Anime) {
             this.posterUrl = document.selectFirst(".poster img")?.attr("src")
-                ?: document.selectFirst(".poster img")?.attr("data-src")
-
             this.plot = document.selectFirst(".desc")?.text()
-
-            // Estado del anime (Opcional)
-            if (document.select(".detail").text().contains("Completed", ignoreCase = true)) {
-                this.showStatus = ShowStatus.Completed
-            }
-
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
