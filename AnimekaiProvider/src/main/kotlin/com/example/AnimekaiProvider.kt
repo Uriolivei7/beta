@@ -101,19 +101,24 @@ class AnimeKaiProvider : MainAPI() {
 
         val details = document.select(".detail")
 
-        val year = details.filter { it.text().contains("Released", true) }
-            .firstOrNull()?.text()?.replace(Regex("(?i)Released:\\s*"), "")?.trim()?.toIntOrNull()
+        val fullDateText = details.filter {
+            it.text().contains("Released", true) || it.text().contains("Date aired", true)
+        }.firstOrNull()?.text() ?: ""
+
+        val yearRegex = Regex("\\b(19|20)\\d{2}\\b")
+        val year = yearRegex.find(fullDateText)?.value?.toIntOrNull()
 
         val statusText = details.filter { it.text().contains("Status", true) }
             .firstOrNull()?.text()?.lowercase() ?: ""
 
         val status = when {
             statusText.contains("completed") || statusText.contains("finished") -> ShowStatus.Completed
-            statusText.contains("ongoing") || statusText.contains("releasing") -> ShowStatus.Ongoing
+            statusText.contains("ongoing") || statusText.contains("releasing") || statusText.contains("airing") -> ShowStatus.Ongoing
             else -> null
         }
 
-        Log.d(TAG, "Logs: Data extraída -> Año: $year, Estado: $statusText")
+        Log.d(TAG, "Logs: Texto fecha: '$fullDateText' -> Año extraído: $year")
+        Log.d(TAG, "Logs: Texto status: '$statusText' -> Estado asignado: $status")
 
         val genres = document.select(".detail a[href*='genre']").map { it.text() }
 
