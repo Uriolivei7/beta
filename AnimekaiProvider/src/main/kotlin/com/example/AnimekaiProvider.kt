@@ -98,8 +98,23 @@ class AnimeKaiProvider : MainAPI() {
         val title = document.selectFirst("h1.title")?.text() ?: "Unknown"
         val poster = document.selectFirst(".poster img")?.attr("src") ?: document.selectFirst(".poster img")?.attr("data-src")
         val description = document.selectFirst(".desc, .synopsis, .description")?.text()
-        val year = document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()
-            ?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
+
+        val details = document.select(".detail")
+
+        val year = details.filter { it.text().contains("Released", true) }
+            .firstOrNull()?.text()?.replace(Regex("(?i)Released:\\s*"), "")?.trim()?.toIntOrNull()
+
+        val statusText = details.filter { it.text().contains("Status", true) }
+            .firstOrNull()?.text()?.lowercase() ?: ""
+
+        val status = when {
+            statusText.contains("completed") || statusText.contains("finished") -> ShowStatus.Completed
+            statusText.contains("ongoing") || statusText.contains("releasing") -> ShowStatus.Ongoing
+            else -> null
+        }
+
+        Log.d(TAG, "Logs: Data extraída -> Año: $year, Estado: $statusText")
+
         val genres = document.select(".detail a[href*='genre']").map { it.text() }
 
         val cleanToken = getCleanToken(animeId) ?: return null
@@ -117,12 +132,13 @@ class AnimeKaiProvider : MainAPI() {
             }
         } ?: emptyList()
 
-        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios en orden normal.")
+        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios.")
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
             this.plot = description
             this.year = year
+            this.showStatus = status
             this.tags = genres
             addEpisodes(DubStatus.Subbed, episodes)
         }
