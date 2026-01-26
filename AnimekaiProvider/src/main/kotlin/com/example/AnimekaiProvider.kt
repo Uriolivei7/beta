@@ -27,7 +27,6 @@ class AnimeKaiProvider : MainAPI() {
         "Accept" to "application/json, text/plain, */*"
     )
 
-    // Función auxiliar para limpiar tokens y manejar errores 500/525 de la API
     private suspend fun getCleanToken(text: String): String? {
         var result = ""
         repeat(2) { attempt ->
@@ -39,16 +38,12 @@ class AnimeKaiProvider : MainAPI() {
                     raw.replace("\"", "").trim()
                 }
 
-                // Si no es basura (HTML), lo devolvemos
                 if (result.isNotEmpty() && !result.contains("<html") && !result.contains("error code:")) {
                     return result
                 }
 
-                Log.e(
-                    TAG,
-                    "Logs: Intento ${attempt + 1} fallido (API offline o Error 500). Reintentando..."
-                )
-                if (attempt == 0) delay(1000) // Esperar 1 segundo antes del reintento
+                Log.e(TAG, "Logs: Intento ${attempt + 1} fallido (API offline). Reintentando...")
+                if (attempt == 0) delay(1000)
             } catch (e: Exception) {
                 Log.e(TAG, "Logs: Error en petición de token: ${e.message}")
             }
@@ -101,28 +96,16 @@ class AnimeKaiProvider : MainAPI() {
         val animeId = document.selectFirst("div[data-id]")?.attr("data-id") ?: return null
 
         val title = document.selectFirst("h1.title")?.text() ?: "Unknown"
-        val poster =
-            document.selectFirst(".poster img")?.attr("src") ?: document.selectFirst(".poster img")
-                ?.attr("data-src")
+        val poster = document.selectFirst(".poster img")?.attr("src") ?: document.selectFirst(".poster img")?.attr("data-src")
         val description = document.selectFirst(".desc, .synopsis, .description")?.text()
-        val year =
-            document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()
-                ?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
+        val year = document.select(".detail").filter { it.text().contains("Released") }.firstOrNull()
+            ?.text()?.replace("Released:", "")?.trim()?.toIntOrNull()
         val genres = document.select(".detail a[href*='genre']").map { it.text() }
 
-        // Obtenemos token con reintento y validación
-        val cleanToken = getCleanToken(animeId)
-        if (cleanToken == null) {
-            Log.e(TAG, "Logs: Falló validación de token tras reintentos (API Offline)")
-            return null
-        }
+        val cleanToken = getCleanToken(animeId) ?: return null
 
-        Log.d(TAG, "Logs: Token obtenido con éxito: $cleanToken")
+        val resJson = app.get("$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
 
-        val resJson = app.get(
-            "$mainUrl/ajax/episodes/list?ani_id=$animeId&_=$cleanToken",
-            headers = apiHeaders
-        ).parsedSafe<ResultResponse>()
         val episodes = resJson?.toDocument()?.select("div.eplist a")?.map { element ->
             val token = element.attr("token")
             val epNum = element.attr("num").toIntOrNull() ?: 0
@@ -132,9 +115,9 @@ class AnimeKaiProvider : MainAPI() {
                 this.name = epTitle
                 this.episode = epNum
             }
-        }?.reversed() ?: emptyList()
+        } ?: emptyList()
 
-        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios")
+        Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios en orden normal.")
 
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
@@ -152,18 +135,25 @@ class AnimeKaiProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val cleanId = if (data.contains("/")) data.split("/").last() else data
-        Log.d(TAG, "Logs: Iniciando loadLinks para ID limpio: $cleanId")
+        Log.d(TAG, "Logs: Cargando links para: $cleanId")
 
         val resource = safeApiCall {
             val cleanToken = getCleanToken(cleanId) ?: return@safeApiCall false
 
-            // 1. Obtenemos la lista de servidores
             val serverRes = app.get("$mainUrl/ajax/links/list?token=$cleanId&_=$cleanToken", headers = apiHeaders).parsedSafe<ResultResponse>()
             val serverDoc = serverRes?.toDocument() ?: return@safeApiCall false
 
-            // 2. Buscamos por categorías como hace Aniyomi
-            // data-id puede ser: "sub" (Hardsub), "softsub" (Subtítulos aparte), "dub" (Doblaje)
-            serverDoc.select("div.server-items[data-id]").forEach { typeGroup ->
+            val priorityOrder = listOf("softsub", "sub", "dub")
+
+            val typeGroups = serverDoc.select("div.server-items[data-id]")
+
+            val sortedGroups = typeGroups.sortedBy { group ->
+                val type = group.attr("data-id")
+                val index = priorityOrder.indexOf(type)
+                if (index == -1) 99 else index
+            }
+
+            sortedGroups.forEach { typeGroup ->
                 val type = typeGroup.attr("data-id")
                 val typeSuffix = when (type) {
                     "sub" -> "HardSub"
@@ -180,11 +170,10 @@ class AnimeKaiProvider : MainAPI() {
                     val viewRes = app.get("$mainUrl/ajax/links/view?id=$lid&_=$lidEnc", headers = apiHeaders).parsedSafe<ResultResponse>()
                     val encodedLink = viewRes?.result ?: return@forEach
 
-                    // Desencriptamos el iframe
                     val iframeRes = app.post("$decryptionApi/dec-kai", json = mapOf("text" to encodedLink)).parsedSafe<IframeResponse>()
                     val iframeUrl = iframeRes?.result?.url ?: return@forEach
 
-                    Log.d(TAG, "Logs: Cargando $typeSuffix: $serverName -> $iframeUrl")
+                    Log.d(TAG, "Logs: Procesando ($typeSuffix) $serverName")
 
                     if (iframeUrl.contains("megaup") || iframeUrl.contains("site")) {
                         loadMegaUpSource(iframeUrl, "$serverName ($typeSuffix)", callback, subtitleCallback)
@@ -209,29 +198,16 @@ class AnimeKaiProvider : MainAPI() {
 
             val megaToken = app.get(megaUrl, headers = apiHeaders).parsedSafe<ResultResponse>()?.result ?: return
 
-            // La API de desencriptación necesita el User-Agent exacto para validar
             val megaUpResult = app.post("$decryptionApi/dec-mega",
-                json = mapOf(
-                    "text" to megaToken,
-                    "agent" to apiHeaders["User-Agent"]
-                )
+                json = mapOf("text" to megaToken, "agent" to apiHeaders["User-Agent"])
             ).parsedSafe<MegaUpResponse>()?.result ?: return
 
-            // 1. EXTRAER SUBTÍTULOS (SoftSub)
             megaUpResult.tracks.forEach { track ->
-                // Filtramos por .vtt para evitar archivos basura
-                if (track.kind == "captions" && track.file.endsWith(".vtt")) {
-                    Log.d(TAG, "Logs: Subtítulo Softsub detectado: ${track.label}")
-                    subtitleCallback.invoke(
-                        newSubtitleFile(
-                            track.label ?: "English",
-                            track.file
-                        )
-                    )
+                if (track.kind == "captions") {
+                    subtitleCallback.invoke(newSubtitleFile(track.label ?: "English", track.file))
                 }
             }
 
-            // 2. EXTRAER LINKS DE VIDEO
             megaUpResult.sources.forEach { source ->
                 callback.invoke(
                     newExtractorLink(
@@ -241,18 +217,17 @@ class AnimeKaiProvider : MainAPI() {
                         type = if (source.file.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
                         this.referer = "https://megaup.live/"
-                        // Agregamos calidad por defecto para que Cloudstream lo ordene mejor
                         this.quality = Qualities.P1080.value
                     }
                 )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadMegaUpSource: ${e.message}")
+            Log.e(TAG, "Logs: Error en MegaUp: ${e.message}")
         }
     }
 }
 
-// DATA CLASSES (Sin cambios, robustas)
+// Las data classes se mantienen igual...
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class ResultResponse(
     @JsonProperty("result") val result: String? = null,
@@ -269,14 +244,12 @@ data class IframeResponse(val result: IframeUrl? = null)
 data class IframeUrl(val url: String = "")
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class MegaUpResponse(
-    @JsonProperty("result") val result: MegaUpResult? = null
-)
+data class MegaUpResponse(val result: MegaUpResult? = null)
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MegaUpResult(
-    @JsonProperty("sources") val sources: List<MegaUpSource> = emptyList(),
-    @JsonProperty("tracks") val tracks: List<MegaUpTrack> = emptyList()
+    val sources: List<MegaUpSource> = emptyList(),
+    val tracks: List<MegaUpTrack> = emptyList()
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
