@@ -124,7 +124,6 @@ class NetflixProvider : MainAPI() {
         Log.i(TAG, "Starting load for URL: $url")
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val id = parseJson<Id>(url).id
-        Log.i(TAG, "Extracted ID: $id")
 
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -132,84 +131,55 @@ class NetflixProvider : MainAPI() {
             "hd" to "on"
         )
         val postUrl = "$newUrl/post.php?id=$id&t=${APIHolder.unixTime}"
-        Log.i(TAG, "Fetching post data from: $postUrl")
 
-        val data = app.get(
-            postUrl,
-            headers,
-            referer = "https://net51.cc",
-            cookies = cookies
-        ).parsed<PostData>()
+        val res = app.get(postUrl, headers, cookies = cookies)
+        val data = res.parsed<PostData>()
 
         val episodes = arrayListOf<Episode>()
+        val title = data.title ?: ""
 
-        val title = data.title
-        Log.i(TAG, "Title loaded: $title, Type check: ${if (data.episodes.first() == null) "Movie" else "Series"}")
+        val isMovie = data.type == "m" || data.episodes.isNullOrEmpty()
 
-        val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
-        val cast = castList.map {
-            ActorData(
-                Actor(it),
-            )
-        }
-        val genre = data.genre?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-
-        val rating = data.match?.replace("IMDb ", "")
-        val runTime = convertRuntimeToMinutes(data.runtime.toString())
-        val suggest = data.suggest?.map {
-            newAnimeSearchResponse("", Id(it.id).toJson()) {
-                this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            }
-        }
-
-        if (data.episodes.first() == null) {
+        if (isMovie) {
             episodes.add(newEpisode(LoadData(title, id)) {
-                name = data.title
+                this.name = title
             })
-            Log.i(TAG, "Added 1 episode for Movie type.")
         } else {
-            data.episodes.filterNotNull().mapTo(episodes) {
-                newEpisode(LoadData(title, it.id)) {
+            data.episodes?.filterNotNull()?.forEach { it ->
+                episodes.add(newEpisode(LoadData(title, it.id)) {
                     this.name = it.t
-                    this.episode = it.ep.replace("E", "").toIntOrNull()
-                    this.season = it.s.replace("S", "").toIntOrNull()
+                    this.episode = it.ep?.replace("E", "")?.toIntOrNull()
+                    this.season = it.s?.replace("S", "")?.toIntOrNull()
                     this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
-                    this.runTime = it.time.replace("m", "").toIntOrNull()
+                    this.runTime = it.time?.replace("m", "")?.toIntOrNull()
+                })
+            }
+
+            if (data.nextPageShow == 1 && data.nextPageSeason != null) {
+                episodes.addAll(getEpisodes(title, id, data.nextPageSeason, 2))
+            }
+
+            data.season?.forEach { s ->
+                if (s.id != id && s.id != data.nextPageSeason) {
+                    episodes.addAll(getEpisodes(title, id, s.id, 1))
                 }
             }
-            Log.i(TAG, "Added ${data.episodes.filterNotNull().size} episodes from initial post data.")
-
-            if (data.nextPageShow == 1) {
-                Log.i(TAG, "Fetching next page episodes for season: ${data.nextPageSeason}")
-                episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
-            }
-
-            data.season?.dropLast(1)?.amap {
-                Log.i(TAG, "Fetching episodes for subsequent season ID: ${it.id}")
-                episodes.addAll(getEpisodes(title, url, it.id, 1))
-            }
-            Log.i(TAG, "Total episodes collected: ${episodes.size}")
         }
 
-        val type = if (data.episodes.first() == null) TvType.Movie else TvType.TvSeries
+        val tvType = if (isMovie) TvType.Movie else TvType.TvSeries
 
-        Log.i(TAG, "Final Load Response metadata: Year=${data.year}, Rating=${rating}, Tags=${genre?.size}")
-
-        return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
-            backgroundPosterUrl ="https://imgcdn.kim/poster/h/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/tv/home")
-            plot = data.desc
-            year = data.year.toIntOrNull()
-            tags = genre
-            actors = cast
-            //this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
-            this.duration = runTime
+        return newTvSeriesLoadResponse(title, url, tvType, episodes.distinctBy { it.data }) {
+            this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
+            this.backgroundPosterUrl = "https://imgcdn.kim/poster/h/$id.jpg"
+            this.plot = data.desc
+            this.year = data.year?.toIntOrNull()
+            this.tags = data.genre?.split(",")?.map { it.trim() }
             this.contentRating = data.ua
-            this.recommendations = suggest
+            this.recommendations = data.suggest?.map {
+                newAnimeSearchResponse("", Id(it.id).toJson()) {
+                    this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
+                }
+            }
         }
     }
 
@@ -239,11 +209,11 @@ class NetflixProvider : MainAPI() {
 
             data.episodes?.mapTo(episodes) {
                 newEpisode(LoadData(title, it.id)) {
-                    name = it.t
-                    episode = it.ep.replace("E", "").toIntOrNull()
-                    season = it.s.replace("S", "").toIntOrNull()
+                    this.name = it.t
+                    this.episode = it.ep?.replace("E", "")?.toIntOrNull()
+                    this.season = it.s?.replace("S", "")?.toIntOrNull()
                     this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
-                    this.runTime = it.time.replace("m", "").toIntOrNull()
+                    this.runTime = it.time?.replace("m", "")?.toIntOrNull()
                 }
             }
             if (data.nextPageShow == 0) break
