@@ -130,20 +130,14 @@ class PrimeVideoProvider : MainAPI() {
         ).parsed<PostData>()
 
         val episodes = arrayListOf<Episode>()
+        val title = data.title ?: ""
 
-        val title = data.title
-        Log.i(TAG, "Title loaded: $title, Type check: ${if (data.episodes.first() == null) "Movie" else "Series"}")
+        val isMovie = data.episodes.isNullOrEmpty() || data.type == "m"
+        Log.i(TAG, "Title loaded: $title, Type check: ${if (isMovie) "Movie" else "Series"}")
 
         val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
-        val cast = castList.map {
-            ActorData(
-                Actor(it),
-            )
-        }
-        val genre = data.genre?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-
+        val cast = castList.map { ActorData(Actor(it)) }
+        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val rating = data.match?.replace("IMDb ", "")
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
 
@@ -154,49 +148,45 @@ class PrimeVideoProvider : MainAPI() {
             }
         }
 
-        if (data.episodes.first() == null) {
+        if (isMovie) {
             episodes.add(newEpisode(LoadData(title, id)) {
-                name = data.title
+                name = title
             })
             Log.i(TAG, "Added 1 episode for Movie type.")
         } else {
-            data.episodes.filterNotNull().mapTo(episodes) {
-                newEpisode(LoadData(title, it.id)) {
-                    name = it.t
-                    episode = it.ep.replace("E", "").toIntOrNull()
-                    season = it.s.replace("S", "").toIntOrNull()
+            data.episodes?.filterNotNull()?.forEach { it ->
+                episodes.add(newEpisode(LoadData(title, it.id ?: "")) {
+                    this.name = it.t
+                    this.episode = it.ep?.replace("E", "")?.toIntOrNull()
+                    this.season = it.s?.replace("S", "")?.toIntOrNull()
                     this.posterUrl = "https://imgcdn.kim/pvepimg/150/${it.id}.jpg"
-                    this.runTime = it.time.replace("m", "").toIntOrNull()
-                }
+                    this.runTime = it.time?.replace("m", "")?.toIntOrNull()
+                })
             }
-            Log.i(TAG, "Added ${data.episodes.filterNotNull().size} episodes from initial post data.")
 
+            Log.i(TAG, "Added ${episodes.size} episodes from initial post data.")
 
-            if (data.nextPageShow == 1) {
+            if (data.nextPageShow == 1 && data.nextPageSeason != null) {
                 Log.i(TAG, "Fetching next page episodes for season: ${data.nextPageSeason}")
-                episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
+                episodes.addAll(getEpisodes(title, url, data.nextPageSeason, 2))
             }
 
             data.season?.dropLast(1)?.amap {
                 Log.i(TAG, "Fetching episodes for subsequent season ID: ${it.id}")
                 episodes.addAll(getEpisodes(title, url, it.id, 1))
             }
-            Log.i(TAG, "Total episodes collected: ${episodes.size}")
         }
 
-        val type = if (data.episodes.first() == null) TvType.Movie else TvType.TvSeries
-
-        Log.i(TAG, "Final Load Response metadata: Year=${data.year}, Rating=${rating}, Tags=${genre?.size}")
+        val type = if (isMovie) TvType.Movie else TvType.TvSeries
 
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://wsrv.nl/?url=https://imgcdn.kim/pv/v/$id.jpg&w=500"
             backgroundPosterUrl = "https://wsrv.nl/?url=https://imgcdn.kim/pv/h/$id.jpg&w=500"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc
-            year = data.year.toIntOrNull()
+            year = data.year?.toIntOrNull()
             tags = genre
             actors = cast
-            //this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
@@ -217,26 +207,29 @@ class PrimeVideoProvider : MainAPI() {
             val epUrl = "$mainUrl/pv/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg"
             Log.i(TAG, "Fetching episodes page $pg for SID: $sid")
 
-            val data = app.get(
+            val response = app.get(
                 epUrl,
                 headers,
                 referer = "$mainUrl/home",
                 cookies = cookies
-            ).parsed<EpisodesData>()
+            )
+
+            val data = response.parsed<EpisodesData>()
 
             val newEpsCount = data.episodes?.size ?: 0
             Log.i(TAG, "Fetched $newEpsCount episodes from page $pg.")
 
-            data.episodes?.mapTo(episodes) {
-                newEpisode(LoadData(title, it.id)) {
-                    name = it.t
-                    episode = it.ep.replace("E", "").toIntOrNull()
-                    season = it.s.replace("S", "").toIntOrNull()
+            data.episodes?.forEach { it ->
+                episodes.add(newEpisode(LoadData(title, it.id ?: "")) {
+                    this.name = it.t
+                    this.episode = it.ep?.replace("E", "")?.toIntOrNull()
+                    this.season = it.s?.replace("S", "")?.toIntOrNull()
                     this.posterUrl = "https://img.nfmirrorcdn.top/pvepimg/${it.id}.jpg"
-                    this.runTime = it.time.replace("m", "").toIntOrNull()
-                }
+                    this.runTime = it.time?.replace("m", "")?.toIntOrNull()
+                })
             }
-            if (data.nextPageShow == 0) break
+
+            if (data.nextPageShow == 0 || data.nextPageShow == null) break
             pg++
         }
         Log.i(TAG, "Finished fetching episodes for SID: $sid. Total: ${episodes.size}")
