@@ -14,7 +14,6 @@ class AnimeytProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = mutableListOf<HomePageList>()
-
         val sections = listOf(
             Pair("$mainUrl/ultimos-animes?page=$page", "Recién Agregados"),
             Pair("$mainUrl/mas-populares?page=$page", "Más Populares")
@@ -23,14 +22,22 @@ class AnimeytProvider : MainAPI() {
         sections.forEach { (url, title) ->
             try {
                 val doc = app.get(url).document
-                val animeList = doc.select("div.video-block div.row div.col-md-2 div.video-card").map {
-                    it.toSearchResponse()
+                val animeList = doc.select("div.video-block div.row div.col-md-2 div.video-card").amap {
+                    val href = it.select("div.video-card-body div.video-title a").attr("href")
+                    val aTitle = it.select("div.video-card-body div.video-title a").text()
+                    val fullUrl = fixUrl(href)
+
+                    val poster = getPosterFromLoad(fullUrl)
+
+                    newAnimeSearchResponse(aTitle, fullUrl, TvType.Anime) {
+                        this.posterUrl = poster
+                    }
                 }
+
                 if (animeList.isNotEmpty()) {
                     items.add(HomePageList(title, animeList))
                 }
-            } catch (e: Exception) {
-            }
+            } catch (e: Exception) { }
         }
 
         return newHomePageResponse(items, items.isNotEmpty())
@@ -38,8 +45,28 @@ class AnimeytProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val doc = app.get("$mainUrl/search?q=$query").document
-        return doc.select("div.video-block div.row div.col-md-2 div.video-card").map {
-            it.toSearchResponse()
+        val results = doc.select("div.video-block div.row div.col-md-2 div.video-card")
+
+        return results.amap { element ->
+            val title = element.select("div.video-card-body div.video-title a").text()
+            val href = element.select("div.video-card-body div.video-title a").attr("href")
+            val fullUrl = fixUrl(href)
+
+            val poster = getPosterFromLoad(fullUrl)
+
+            newAnimeSearchResponse(title, fullUrl, TvType.Anime) {
+                this.posterUrl = poster
+            }
+        }
+    }
+
+    private suspend fun getPosterFromLoad(url: String): String? {
+        return try {
+            val doc = app.get(url).document
+            doc.selectFirst("figure.sa-poster__fig img")?.attr("src")
+                ?: doc.selectFirst("div.sa-series-dashboard__poster img")?.attr("src")
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -47,15 +74,8 @@ class AnimeytProvider : MainAPI() {
         val title = this.select("div.video-card-body div.video-title a").text()
         val href = this.select("div.video-card-body div.video-title a").attr("href")
 
-        val imgElement = this.select("div.video-card-image a img").first()
-        var posterUrl = imgElement?.attr("src")?.ifEmpty { imgElement.attr("data-src") }
-
-        if (posterUrl != null && posterUrl.startsWith("/")) {
-            posterUrl = mainUrl + posterUrl
-        }
-
         return newAnimeSearchResponse(title, href, TvType.Anime) {
-            this.posterUrl = posterUrl
+            this.posterUrl = this@toSearchResponse.select("img").attr("src")
         }
     }
 
