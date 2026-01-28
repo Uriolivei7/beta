@@ -205,18 +205,21 @@ class SeriesmetroProvider : MainAPI() {
         Log.d(TAG, "Logs: [2026-01-22] Analizando opciones en: $data")
 
         doc.select(".aa-tbs-video li a").forEach { option ->
-            val langText = option.select(".server").text().lowercase()
+            val fullText = option.text().lowercase().replace("-", "").trim()
+
             val qualityName = when {
-                langText.contains("latino") -> "Latino"
-                langText.contains("español") || langText.contains("castellano") -> "Castellano"
-                langText.contains("vose") || langText.contains("sub") -> "Subtitulado"
+                fullText.contains("latino") -> "Latino"
+                fullText.contains("castellano") || fullText.contains("español") -> "Castellano"
+                fullText.contains("vose") || fullText.contains("sub") -> "Subtitulado"
                 else -> "SD"
             }
 
             val targetId = option.attr("href").replace("#", "")
             val container = doc.selectFirst("div#$targetId")
-            val iframeUrl = container?.selectFirst("iframe")?.attr("data-src")
-                ?: container?.selectFirst("iframe")?.attr("src") ?: ""
+
+            val iframeUrl = container?.selectFirst("iframe")?.attr("data-src").takeIf { !it.isNullOrBlank() }
+                ?: container?.selectFirst("iframe")?.attr("src")
+                ?: ""
 
             if (iframeUrl.isNotBlank()) {
                 val fullIframeUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
@@ -224,35 +227,36 @@ class SeriesmetroProvider : MainAPI() {
                 coroutineScope {
                     if (fullIframeUrl.contains("seriesmetro.net") && (fullIframeUrl.contains("trembed") || fullIframeUrl.contains("/ir/"))) {
                         try {
-                            val innerDoc = app.get(fullIframeUrl).document
+                            val innerDoc = app.get(fullIframeUrl, headers = headers.plus("Referer" to data)).document
                             val realPlayerUrl = innerDoc.selectFirst("iframe")?.attr("src")
+                                ?: innerDoc.selectFirst("iframe")?.attr("data-src")
                                 ?: innerDoc.selectFirst("a")?.attr("href")
 
                             if (!realPlayerUrl.isNullOrBlank()) {
-                                loadExtractor(realPlayerUrl, fullIframeUrl, subtitleCallback) { link ->
+                                val finalUrl = if (realPlayerUrl.startsWith("//")) "https:$realPlayerUrl" else realPlayerUrl
+                                loadExtractor(finalUrl, fullIframeUrl, subtitleCallback) { link ->
                                     launch {
-                                        val renamedLink = newExtractorLink(
-                                            source = link.source,
-                                            name = "${link.name} [$qualityName]",
-                                            url = link.url,
-                                            type = link.type
+                                        callback(newExtractorLink(
+                                            link.source,
+                                            "${link.name} [$qualityName]",
+                                            link.url,
+                                            link.type
                                         ) {
                                             this.quality = link.quality
                                             this.referer = link.referer
                                             this.headers = link.headers
                                             this.extractorData = link.extractorData
-                                        }
-                                        callback(renamedLink)
+                                        })
                                     }
                                 }
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Logs: Error en carga: ${e.message}")
+                            Log.e(TAG, "Logs: Error en $qualityName: ${e.message}")
                         }
                     } else {
                         loadExtractor(fullIframeUrl, data, subtitleCallback) { link ->
                             launch {
-                                val renamedLink = newExtractorLink(
+                                callback(newExtractorLink(
                                     link.source,
                                     "${link.name} [$qualityName]",
                                     link.url,
@@ -260,8 +264,7 @@ class SeriesmetroProvider : MainAPI() {
                                 ) {
                                     this.quality = link.quality
                                     this.referer = link.referer
-                                }
-                                callback(renamedLink)
+                                })
                             }
                         }
                     }
@@ -270,4 +273,5 @@ class SeriesmetroProvider : MainAPI() {
         }
         return true
     }
+
 }
