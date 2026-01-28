@@ -59,7 +59,7 @@ class SeriesmetroProvider : MainAPI() {
             else if (finalPoster.startsWith("/")) "https://www3.seriesmetro.net$finalPoster"
             else finalPoster
         }*/
-        
+
         return fixImg(finalPoster)?.replace("/w185/", "/w500/")
     }
 
@@ -133,7 +133,11 @@ class SeriesmetroProvider : MainAPI() {
         val genres = doc.select(".genres a").map { it.text() }
         val year = doc.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        val recommendations = doc.select("section.episodes article.post").mapNotNull { element: Element ->
+        val recommendations = doc.select("section.episodes").filter {
+            it.selectFirst(".section-title")?.text()?.contains("Recomendadas", ignoreCase = true) == true
+        }.flatMap { section ->
+            section.select("article.post")
+        }.mapNotNull { element: Element ->
             val recTitle = element.selectFirst(".entry-title")?.text() ?: return@mapNotNull null
             val recUrl = element.selectFirst("a.lnk-blk")?.attr("abs:href")
                 ?: element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
