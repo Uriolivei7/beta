@@ -376,5 +376,19 @@
     "iconUrl": "https://anikai.to/assets/uploads/37585a3ffa8ec292ee9e2255f3f63b48ceca17e5241280b3dc21.png",
     "language": "en",
     "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SeriesmetroProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "SeriesMetro",
+    "internalName": "SeriesmetroProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para Contenido en Latino y Catellano",
+    "tvTypes": ["Anime","TvSeries","Movie"],
+    "iconUrl": "https://www3.seriesmetro.net/wp-content/uploads/2024/04/cropped-Favicon2-32x32.png",
+    "language": "mx",
+    "fileSize": 20000
   }
 ]
