@@ -390,5 +390,19 @@
     "iconUrl": "https://www3.seriesmetro.net/wp-content/uploads/2024/04/cropped-Favicon2-32x32.png",
     "language": "mx",
     "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeytProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "AnimeYT",
+    "internalName": "AnimeytProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para Anime",
+    "tvTypes": ["Anime"],
+    "iconUrl": "https://ww3.ytanime.tv/favicon.ico",
+    "language": "mx",
+    "fileSize": 20000
   }
 ]
