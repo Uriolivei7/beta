@@ -16,7 +16,7 @@
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/NetflixmirrorProvider.cs3",
     "status": 1,
-    "version": 1,
+    "version": 4,
     "apiVersion": 1,
     "name": "NetMirror",
     "internalName": "NetflixmirrorProvider",
@@ -253,7 +253,7 @@
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/GnulaProvider.cs3",
-    "status": 0,
+    "status": 1,
     "version": 1,
     "apiVersion": 1,
     "name": "GNULA",
