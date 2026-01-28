@@ -23,13 +23,13 @@ class SeriesmetroProvider : MainAPI() {
 
     private val TAG = "MetroSeries"
 
-    // Función auxiliar para arreglar las URLs de imágenes que empiezan con //
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
+        val cleanUrl = url.trim()
         return when {
-            url.startsWith("https:") || url.startsWith("http:") -> url
-            url.startsWith("//") -> "https:$url"
-            else -> url
+            cleanUrl.startsWith("//") -> "https:$cleanUrl"
+            cleanUrl.startsWith("/") -> "$mainUrl$cleanUrl"
+            else -> cleanUrl
         }
     }
 
@@ -43,8 +43,8 @@ class SeriesmetroProvider : MainAPI() {
             )
 
             sections.forEach { (title, url) ->
-                val doc = app.get(url).document
-                val res = doc.select(".post").mapNotNull {
+                val doc = app.get(url, headers = mapOf("Referer" to "$mainUrl/")).document
+                val res = doc.select("article.post, .post").mapNotNull {
                     it.toSearchResult()
                 }
                 if (res.isNotEmpty()) items.add(HomePageList(title, res))
@@ -57,20 +57,28 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst(".entry-header .entry-title")?.text()
-            ?: this.selectFirst(".entry-title")?.text() ?: return null
-        val href = this.selectFirst(".lnk-blk, a")?.attr("abs:href") ?: return null
+        val title = this.selectFirst(".entry-title")?.text() ?: return null
 
-        // Corregido: Selector más flexible y uso de fixImg
-        val img = this.selectFirst(".post-thumbnail img")
-        val posterUrl = fixImg(
-            img?.attr("data-src") ?: img?.attr("src") ?: img?.attr("srcset")?.substringBefore(" ")
-        )
+        var href = this.selectFirst("a")?.attr("href") ?: return null
+        if (href.startsWith("/")) href = "$mainUrl$href"
+
+        val imgElement = this.selectFirst("img")
+        val rawImg = imgElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
+            ?: imgElement?.attr("srcset")?.substringBefore(" ")
+            ?: imgElement?.attr("src")
+
+        val posterUrl = fixImg(rawImg)
+
+        Log.d(TAG, "Logs: [DEBUG] Titulo: $title | Poster: $posterUrl")
 
         return if (href.contains("/pelicula/")) {
-            newMovieSearchResponse(title, href, TvType.Movie) { this.posterUrl = posterUrl }
+            newMovieSearchResponse(title, href, TvType.Movie) {
+                this.posterUrl = posterUrl
+            }
         } else {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) { this.posterUrl = posterUrl }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            }
         }
     }
 
