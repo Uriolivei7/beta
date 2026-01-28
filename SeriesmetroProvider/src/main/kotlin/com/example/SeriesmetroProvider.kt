@@ -7,22 +7,31 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import org.jsoup.nodes.Element
 
 class SeriesmetroProvider : MainAPI() {
     override var mainUrl = "https://www3.seriesmetro.net"
     override var name = "SeriesMetro"
-    override var lang = "mx"
+    override var lang = "es" // Cambiado a es para mejor compatibilidad
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val supportedTypes = setOf(
         TvType.TvSeries,
-        TvType.Movie,
-        TvType.Anime
+        TvType.Movie
     )
 
     private val TAG = "MetroSeries"
+
+    // Función auxiliar para arreglar las URLs de imágenes que empiezan con //
+    private fun fixImg(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        return when {
+            url.startsWith("https:") || url.startsWith("http:") -> url
+            url.startsWith("//") -> "https:$url"
+            else -> url
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "Logs: Cargando página principal: $page")
@@ -36,17 +45,7 @@ class SeriesmetroProvider : MainAPI() {
             sections.forEach { (title, url) ->
                 val doc = app.get(url).document
                 val res = doc.select(".post").mapNotNull {
-                    val sTitle = it.selectFirst(".entry-header .entry-title")?.text() ?: return@mapNotNull null
-                    val sHref = it.selectFirst(".lnk-blk")?.attr("abs:href") ?: return@mapNotNull null
-                    val sPoster = it.selectFirst(".post-thumbnail figure img")?.let { img ->
-                        if (img.hasAttr("data-src")) img.attr("abs:data-src") else img.attr("abs:src")
-                    }
-
-                    if (sHref.contains("pelicula")) {
-                        newMovieSearchResponse(sTitle, sHref, TvType.Movie) { this.posterUrl = sPoster }
-                    } else {
-                        newTvSeriesSearchResponse(sTitle, sHref, TvType.TvSeries) { this.posterUrl = sPoster }
-                    }
+                    it.toSearchResult()
                 }
                 if (res.isNotEmpty()) items.add(HomePageList(title, res))
             }
@@ -58,26 +57,20 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst(".entry-title")?.text() ?: return null
-        val href = this.selectFirst("a.lnk-blk, a")?.attr("abs:href") ?: return null
+        val title = this.selectFirst(".entry-header .entry-title")?.text()
+            ?: this.selectFirst(".entry-title")?.text() ?: return null
+        val href = this.selectFirst(".lnk-blk, a")?.attr("abs:href") ?: return null
 
+        // Corregido: Selector más flexible y uso de fixImg
         val img = this.selectFirst(".post-thumbnail img")
-        var posterUrl = img?.attr("srcset")?.substringBefore(" ")
-            ?: img?.attr("data-src")
-            ?: img?.attr("src")
-
-        if (posterUrl?.startsWith("//") == true) {
-            posterUrl = "https:$posterUrl"
-        }
+        val posterUrl = fixImg(
+            img?.attr("data-src") ?: img?.attr("src") ?: img?.attr("srcset")?.substringBefore(" ")
+        )
 
         return if (href.contains("/pelicula/")) {
-            newMovieSearchResponse(title, href, TvType.Movie) {
-                this.posterUrl = posterUrl
-            }
+            newMovieSearchResponse(title, href, TvType.Movie) { this.posterUrl = posterUrl }
         } else {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-            }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) { this.posterUrl = posterUrl }
         }
     }
 
@@ -91,15 +84,11 @@ class SeriesmetroProvider : MainAPI() {
         Log.d(TAG, "Logs: [2026-01-22] Cargando metadatos de: $url")
         val doc = app.get(url).document
 
-        fun fixUrl(url: String?): String? {
-            if (url == null) return null
-            return if (url.startsWith("//")) "https:$url" else url
-        }
-
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
+        // Arreglo de poster en vista detalle
         val posterElement = doc.selectFirst(".post.single .post-thumbnail img, .post-thumbnail img")
-        val poster = fixUrl(posterElement?.attr("src"))?.replace("/w185/", "/w500/")
+        val poster = fixImg(posterElement?.attr("src"))?.replace("/w185/", "/w500/")
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }
         val genres = doc.select(".genres a").map { it.text() }
@@ -136,7 +125,7 @@ class SeriesmetroProvider : MainAPI() {
                                 val epText = ep.select(".num-epi").text()
                                 val epNumber = epText.substringAfter("x").substringBefore("–").trim().toIntOrNull()
 
-                                val epThumb = fixUrl(ep.selectFirst("img")?.attr("src"))
+                                val epThumb = fixImg(ep.selectFirst("img")?.attr("src"))
 
                                 synchronized(episodes) {
                                     episodes.add(newEpisode(epHref) {
@@ -172,30 +161,66 @@ class SeriesmetroProvider : MainAPI() {
         Log.d(TAG, "Logs: [2026-01-22] Analizando opciones en: $data")
 
         doc.select(".aa-tbs-video li a").forEach { option ->
+            val langText = option.select(".server").text().lowercase()
+            val qualityName = when {
+                langText.contains("latino") -> "Latino"
+                langText.contains("español") || langText.contains("castellano") -> "Castellano"
+                langText.contains("vose") || langText.contains("sub") -> "Subtitulado"
+                else -> "SD"
+            }
+
             val targetId = option.attr("href").replace("#", "")
             val container = doc.selectFirst("div#$targetId")
-
-            var iframeUrl = container?.selectFirst("iframe")?.attr("data-src")
+            val iframeUrl = container?.selectFirst("iframe")?.attr("data-src")
                 ?: container?.selectFirst("iframe")?.attr("src") ?: ""
 
             if (iframeUrl.isNotBlank()) {
-                if (iframeUrl.startsWith("//")) iframeUrl = "https:$iframeUrl"
+                val fullIframeUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
 
-                if (iframeUrl.contains("seriesmetro.net") && (iframeUrl.contains("trembed") || iframeUrl.contains("/ir/"))) {
-                    try {
-                        val innerDoc = app.get(iframeUrl).document
-                        val realPlayerUrl = innerDoc.selectFirst("iframe")?.attr("src")
-                            ?: innerDoc.selectFirst("a")?.attr("href")
+                coroutineScope {
+                    if (fullIframeUrl.contains("seriesmetro.net") && (fullIframeUrl.contains("trembed") || fullIframeUrl.contains("/ir/"))) {
+                        try {
+                            val innerDoc = app.get(fullIframeUrl).document
+                            val realPlayerUrl = innerDoc.selectFirst("iframe")?.attr("src")
+                                ?: innerDoc.selectFirst("a")?.attr("href")
 
-                        if (!realPlayerUrl.isNullOrBlank()) {
-                            Log.d(TAG, "Logs: Redirigiendo a extractor: $realPlayerUrl")
-                            loadExtractor(realPlayerUrl, iframeUrl, subtitleCallback, callback)
+                            if (!realPlayerUrl.isNullOrBlank()) {
+                                loadExtractor(realPlayerUrl, fullIframeUrl, subtitleCallback) { link ->
+                                    launch {
+                                        val renamedLink = newExtractorLink(
+                                            source = link.source,
+                                            name = "${link.name} [$qualityName]",
+                                            url = link.url,
+                                            type = link.type
+                                        ) {
+                                            this.quality = link.quality
+                                            this.referer = link.referer
+                                            this.headers = link.headers
+                                            this.extractorData = link.extractorData
+                                        }
+                                        callback(renamedLink)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Logs: Error en carga: ${e.message}")
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Logs: Error en redirección: ${e.message}")
+                    } else {
+                        loadExtractor(fullIframeUrl, data, subtitleCallback) { link ->
+                            launch {
+                                val renamedLink = newExtractorLink(
+                                    link.source,
+                                    "${link.name} [$qualityName]",
+                                    link.url,
+                                    link.type
+                                ) {
+                                    this.quality = link.quality
+                                    this.referer = link.referer
+                                }
+                                callback(renamedLink)
+                            }
+                        }
                     }
-                } else {
-                    loadExtractor(iframeUrl, data, subtitleCallback, callback)
                 }
             }
         }
