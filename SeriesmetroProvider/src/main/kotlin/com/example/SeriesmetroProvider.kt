@@ -121,8 +121,6 @@ class SeriesmetroProvider : MainAPI() {
 
         val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
 
-        Log.d(TAG, "Logs: [DEBUG LOAD] Titulo: $title | Poster Final: $poster")
-
         val backposter = fixImg(
             doc.selectFirst("div.bghd img.TPostBg")?.attr("src")
                 ?: doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")
@@ -132,18 +130,19 @@ class SeriesmetroProvider : MainAPI() {
         val genres = doc.select(".genres a").map { it.text() }
         val year = doc.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        val recommendations = doc.select(".serie.sm, .movies.sm").mapNotNull { element ->
+        val recommendations = doc.select("section.episodes article.post").mapNotNull { element ->
             val recTitle = element.selectFirst(".entry-title")?.text() ?: return@mapNotNull null
-            val recUrl = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
-            val recPoster = fixImg(element.selectFirst("img")?.attr("data-lazy-src") ?: element.selectFirst("img")?.attr("src"))
+            val recUrl = element.selectFirst("a.lnk-blk")?.attr("abs:href") ?: return@mapNotNull null
+            val img = element.selectFirst("img")
+            val recPoster = fixImg(img?.attr("data-lazy-src") ?: img?.attr("src"))
 
             newTvSeriesSearchResponse(recTitle, recUrl, if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = recPoster
             }
         }
 
-        return if (url.contains("/pelicula/")) {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
+        if (url.contains("/pelicula/")) {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backposter
                 this.plot = description
@@ -156,50 +155,35 @@ class SeriesmetroProvider : MainAPI() {
             val seasonElements = doc.select(".sel-temp a")
             val datapost = doc.selectFirst("li.sel-temp a")?.attr("data-post") ?: ""
 
-            coroutineScope {
-                seasonElements.map { season ->
-                    async(Dispatchers.IO) {
-                        try {
-                            val seasonNum = season.attr("data-season")
-                            val response = app.post(
-                                "$mainUrl/wp-admin/admin-ajax.php",
-                                data = mapOf(
-                                    "action" to "action_select_season",
-                                    "season" to seasonNum,
-                                    "post" to datapost
-                                ),
-                                headers = headers.plus("Referer" to url)
-                            ).document
+            seasonElements.amap { season ->
+                try {
+                    val seasonNum = season.attr("data-season")
+                    val response = app.post(
+                        "$mainUrl/wp-admin/admin-ajax.php",
+                        data = mapOf("action" to "action_select_season", "season" to seasonNum, "post" to datapost),
+                        headers = headers.plus("Referer" to url)
+                    ).document
 
-                            response.select(".post").reversed().forEach { ep ->
-                                val epHref = ep.select("a").attr("abs:href")
-                                val epText = ep.select(".num-epi").text()
-                                val epNumber = epText.substringAfter("x").trim().toIntOrNull()
+                    response.select(".post").reversed().forEach { ep ->
+                        val epHref = ep.select("a").attr("abs:href")
+                        val epText = ep.select(".num-epi").text()
+                        val epNumber = epText.substringAfter("x").trim().toIntOrNull()
+                        val epImg = ep.selectFirst("img")
+                        val epThumb = fixImg(epImg?.attr("data-lazy-src") ?: epImg?.attr("src"))
 
-                                val epImgElement = ep.selectFirst("img")
-                                val epThumb = fixImg(
-                                    epImgElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
-                                        ?: epImgElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
-                                        ?: epImgElement?.attr("src")
-                                )
-
-                                synchronized(episodes) {
-                                    episodes.add(newEpisode(epHref) {
-                                        this.name = "T$seasonNum - E$epNumber"
-                                        this.season = seasonNum.toIntOrNull()
-                                        this.episode = epNumber
-                                        this.posterUrl = epThumb
-                                    })
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Logs: Error en temp $season: ${e.message}")
+                        synchronized(episodes) {
+                            episodes.add(newEpisode(epHref) {
+                                this.name = "T$seasonNum - E$epNumber"
+                                this.season = seasonNum.toIntOrNull()
+                                this.episode = epNumber
+                                this.posterUrl = epThumb
+                            })
                         }
                     }
-                }.awaitAll()
+                } catch (e: Exception) { Log.e(TAG, "Logs: Error en episodios: ${e.message}") }
             }
 
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.sortedWith(compareBy({ it.season }, { it.episode }))) {
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.sortedWith(compareBy({ it.season }, { it.episode }))) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backposter
                 this.plot = description
