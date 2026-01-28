@@ -110,16 +110,28 @@ class SeriesmetroProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "Logs: [2026-01-22] Cargando metadatos de: $url")
+        // Es vital usar headers para que el servidor no bloquee las imágenes
         val doc = app.get(url, headers = headers).document
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
-        val posterElement = doc.selectFirst(".post.single .post-thumbnail figure img, .post-thumbnail img")
+        // --- MEJORA: Búsqueda de Poster de Alta Calidad ---
+        val posterElement = doc.selectFirst("article.post .post-thumbnail figure img, .post.single .post-thumbnail img, .post-thumbnail img")
+
+        // Probamos todos los escondites posibles de la imagen
         var rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
+            ?: posterElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
             ?: posterElement?.attr("src")
 
+        // Si sigue siendo un placeholder (cuadro gris), lo rescatamos del Meta Tag OG:Image
+        if (rawPoster.isNullOrBlank() || rawPoster.contains("data:image")) {
+            rawPoster = doc.selectFirst("meta[property=og:image]")?.attr("content")
+        }
+
+        // Convertimos a calidad W500 (TMDB) y arreglamos la URL
         val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
 
+        // Backdrop (Fondo)
         val backposter = doc.selectFirst("div.bghd img.TPostBg")?.attr("abs:src") ?: poster
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }
@@ -158,12 +170,13 @@ class SeriesmetroProvider : MainAPI() {
                             response.select(".post").reversed().forEach { ep ->
                                 val epHref = ep.select("a").attr("abs:href")
                                 val epText = ep.select(".num-epi").text()
-
                                 val epNumber = epText.substringAfter("x").trim().toIntOrNull()
 
+                                // Miniatura del episodio con la misma lógica de calidad
                                 val epImgElement = ep.selectFirst("img")
                                 val epThumb = fixImg(
                                     epImgElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
+                                        ?: epImgElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
                                         ?: epImgElement?.attr("src")
                                 )
 
