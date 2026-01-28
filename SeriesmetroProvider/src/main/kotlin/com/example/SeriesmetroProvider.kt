@@ -114,30 +114,28 @@ class SeriesmetroProvider : MainAPI() {
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
-        // --- EXTRACCIÓN BASADA EN TU HTML ---
         val posterElement = doc.selectFirst(".post-thumbnail figure img")
+        val rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
+            ?: posterElement?.attr("src").takeIf { !it.isNullOrBlank() && !it.contains("data:image") }
+            ?: doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")
 
-        val rawPoster = posterElement?.attr("src").takeIf { !it.isNullOrBlank() }
-            ?: posterElement?.attr("data-lazy-src")
-            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
-
-        // Aplicamos fixImg para poner el https: y luego subimos calidad a w500
         val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
 
         Log.d(TAG, "Logs: [DEBUG LOAD] Titulo: $title | Poster Final: $poster")
 
-        val backposter = doc.selectFirst("div.bghd img.TPostBg")?.attr("abs:src") ?: poster
+        val backposter = fixImg(
+            doc.selectFirst("div.bghd img.TPostBg")?.attr("src")
+                ?: doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")
+        ) ?: poster
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }.trim()
         val genres = doc.select(".genres a").map { it.text() }
         val year = doc.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        // --- RECOMENDACIONES ---
-        // Esto añade ese toque extra de calidad para navegar entre series similares
         val recommendations = doc.select(".serie.sm, .movies.sm").mapNotNull { element ->
             val recTitle = element.selectFirst(".entry-title")?.text() ?: return@mapNotNull null
             val recUrl = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
-            val recPoster = element.getMetroPoster()
+            val recPoster = fixImg(element.selectFirst("img")?.attr("data-lazy-src") ?: element.selectFirst("img")?.attr("src"))
 
             newTvSeriesSearchResponse(recTitle, recUrl, if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = recPoster
@@ -156,7 +154,7 @@ class SeriesmetroProvider : MainAPI() {
         } else {
             val episodes = ArrayList<Episode>()
             val seasonElements = doc.select(".sel-temp a")
-            val datapost = doc.select("li.sel-temp a").attr("data-post") // Sacamos el ID del post una sola vez
+            val datapost = doc.selectFirst("li.sel-temp a")?.attr("data-post") ?: ""
 
             coroutineScope {
                 seasonElements.map { season ->
