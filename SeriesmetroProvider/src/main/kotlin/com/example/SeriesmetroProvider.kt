@@ -110,33 +110,38 @@ class SeriesmetroProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "Logs: [2026-01-22] Cargando metadatos de: $url")
-        // Es vital usar headers para que el servidor no bloquee las imágenes
         val doc = app.get(url, headers = headers).document
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
-        // --- MEJORA: Búsqueda de Poster de Alta Calidad ---
+        // Lógica de posters que ya validamos en los logs
         val posterElement = doc.selectFirst("article.post .post-thumbnail figure img, .post.single .post-thumbnail img, .post-thumbnail img")
-
-        // Probamos todos los escondites posibles de la imagen
         var rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
             ?: posterElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
             ?: posterElement?.attr("src")
 
-        // Si sigue siendo un placeholder (cuadro gris), lo rescatamos del Meta Tag OG:Image
         if (rawPoster.isNullOrBlank() || rawPoster.contains("data:image")) {
             rawPoster = doc.selectFirst("meta[property=og:image]")?.attr("content")
         }
 
-        // Convertimos a calidad W500 (TMDB) y arreglamos la URL
         val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
-
-        // Backdrop (Fondo)
         val backposter = doc.selectFirst("div.bghd img.TPostBg")?.attr("abs:src") ?: poster
 
-        val description = doc.select(".description p, .entry-content p").joinToString { it.text() }
+        val description = doc.select(".description p, .entry-content p").joinToString { it.text() }.trim()
         val genres = doc.select(".genres a").map { it.text() }
         val year = doc.selectFirst("span.year")?.text()?.toIntOrNull()
+
+        // --- RECOMENDACIONES ---
+        // Esto añade ese toque extra de calidad para navegar entre series similares
+        val recommendations = doc.select(".serie.sm, .movies.sm").mapNotNull { element ->
+            val recTitle = element.selectFirst(".entry-title")?.text() ?: return@mapNotNull null
+            val recUrl = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
+            val recPoster = element.getMetroPoster()
+
+            newTvSeriesSearchResponse(recTitle, recUrl, if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = recPoster
+            }
+        }
 
         return if (url.contains("/pelicula/")) {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -145,26 +150,26 @@ class SeriesmetroProvider : MainAPI() {
                 this.plot = description
                 this.tags = genres
                 this.year = year
+                this.recommendations = recommendations
             }
         } else {
             val episodes = ArrayList<Episode>()
             val seasonElements = doc.select(".sel-temp a")
+            val datapost = doc.select("li.sel-temp a").attr("data-post") // Sacamos el ID del post una sola vez
 
             coroutineScope {
                 seasonElements.map { season ->
                     async(Dispatchers.IO) {
                         try {
                             val seasonNum = season.attr("data-season")
-                            val post = season.attr("data-post")
-
                             val response = app.post(
                                 "$mainUrl/wp-admin/admin-ajax.php",
                                 data = mapOf(
                                     "action" to "action_select_season",
                                     "season" to seasonNum,
-                                    "post" to post
+                                    "post" to datapost
                                 ),
-                                referer = url
+                                headers = headers.plus("Referer" to url)
                             ).document
 
                             response.select(".post").reversed().forEach { ep ->
@@ -172,7 +177,6 @@ class SeriesmetroProvider : MainAPI() {
                                 val epText = ep.select(".num-epi").text()
                                 val epNumber = epText.substringAfter("x").trim().toIntOrNull()
 
-                                // Miniatura del episodio con la misma lógica de calidad
                                 val epImgElement = ep.selectFirst("img")
                                 val epThumb = fixImg(
                                     epImgElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
@@ -190,7 +194,7 @@ class SeriesmetroProvider : MainAPI() {
                                 }
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Logs: Error cargando temporada: ${e.message}")
+                            Log.e(TAG, "Logs: Error en temp $season: ${e.message}")
                         }
                     }
                 }.awaitAll()
@@ -202,6 +206,7 @@ class SeriesmetroProvider : MainAPI() {
                 this.plot = description
                 this.tags = genres
                 this.year = year
+                this.recommendations = recommendations
             }
         }
     }
