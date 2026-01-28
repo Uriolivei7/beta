@@ -7,9 +7,6 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import org.jsoup.nodes.Element
 
 class CinehdplusProvider : MainAPI() {
@@ -74,10 +71,9 @@ class CinehdplusProvider : MainAPI() {
         val trailer = doc.selectFirst("#OptYt iframe")?.attr("data-src")?.replaceFirst("https://www.youtube.com/embed/","https://www.youtube.com/watch?v=")
         val recommendations = doc.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
 
-        // CORRECCIÓN: Se especifica el tipo Element para evitar ambigüedad en flatMap
         val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonElement: Element ->
             val seasonNum = seasonElement.attr("id").replaceFirst("season-", "").toIntOrNull()
-            seasonElement.select(".episodios_list li").mapIndexed { idx, epi: Element ->
+            seasonElement.select(".episodios_list li").asIterable().mapIndexed { idx, epi ->
                 val epUrl = epi.selectFirst("a")?.attr("href") ?: ""
                 val epImgElement = epi.selectFirst("figure img")
                 val epTitle = epImgElement?.attr("alt")
@@ -124,8 +120,6 @@ class CinehdplusProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data).document
-
-        // Obtenemos la lista de opciones (li.clili)
         val options = doc.select("li.clili")
 
         options.forEach { element ->
@@ -137,7 +131,6 @@ class CinehdplusProvider : MainAPI() {
             if (frame != null) {
                 val apiBase = mainUrl.replaceFirst("https://", "https://api.")
                 try {
-                    // EJECUCIÓN SECUENCIAL (Suspendida): Eliminamos el CoroutineScope.launch
                     val gotoDoc = app.get("$apiBase/ir/goto.php?h=$frame").document
                     val form1 = gotoDoc.selectFirst("form")
                     val url1 = form1?.selectFirst("input#url")?.attr("value")
@@ -161,7 +154,6 @@ class CinehdplusProvider : MainAPI() {
 
                                 if (encoded != null) {
                                     val link = base64Decode(encoded)
-                                    // Llamamos directamente a la función suspendida
                                     loadSourceNameExtractor(
                                         lang,
                                         fixHostsLinks(link),
@@ -189,8 +181,6 @@ suspend fun loadSourceNameExtractor(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit,
 ) {
-    Log.d("CineHD", "Logs: Iniciando extracción para fuente: $source")
-
     loadExtractor(url, referer, subtitleCallback) { link ->
         val idiomaLabel = when {
             source.lowercase().contains("lat") -> "Latino"
@@ -202,31 +192,22 @@ suspend fun loadSourceNameExtractor(
         val nombreFinal = "CineHD+ $idiomaLabel [${link.source}] $calidadLabel".trim()
 
         kotlinx.coroutines.runBlocking {
-            val extractorLink = newExtractorLink(
-                source = nombreFinal,
-                name = nombreFinal,
-                url = link.url,
-                type = link.type
-            ) {
-                this.quality = link.quality
-                this.referer = link.referer
-                this.headers = link.headers
-                this.extractorData = link.extractorData
-            }
-            callback.invoke(extractorLink)
+            callback.invoke(
+                newExtractorLink(
+                    source = nombreFinal,
+                    name = nombreFinal,
+                    url = link.url,
+                    type = link.type
+                ) {
+                    this.quality = link.quality
+                    this.referer = link.referer ?: referer ?: ""
+                    this.headers = link.headers
+                    this.extractorData = link.extractorData
+                }
+            )
         }
-
-        Log.d("CineHD", "Logs: Link enviado: $nombreFinal")
     }
 }
-
-data class LinkData(
-    @JsonProperty("movieName") val title: String? = null,
-    @JsonProperty("imdbID") val imdbId: String? = null,
-    @JsonProperty("tmdbID") val tmdbId: Int? = null,
-    @JsonProperty("season") val season: Int? = null,
-    @JsonProperty("episode") val episode: Int? = null,
-)
 
 fun fixHostsLinks(url: String): String {
     return url
