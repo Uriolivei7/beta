@@ -13,11 +13,12 @@ import org.jsoup.nodes.Element
 class SeriesmetroProvider : MainAPI() {
     override var mainUrl = "https://www3.seriesmetro.net"
     override var name = "SeriesMetro"
-    override var lang = "es" // Cambiado a es para mejor compatibilidad
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val supportedTypes = setOf(
         TvType.TvSeries,
+        TvType.Anime,
         TvType.Movie
     )
 
@@ -25,16 +26,20 @@ class SeriesmetroProvider : MainAPI() {
 
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        val cleanUrl = url.trim()
-        return when {
-            cleanUrl.startsWith("//") -> "https:$cleanUrl"
-            cleanUrl.startsWith("/") -> "$mainUrl$cleanUrl"
-            else -> cleanUrl
+        var cleanUrl = url.trim()
+
+        if (cleanUrl.startsWith("//")) {
+            cleanUrl = "https:$cleanUrl"
         }
+        else if (cleanUrl.startsWith("/")) {
+            cleanUrl = "$mainUrl$cleanUrl"
+        }
+
+        return cleanUrl
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: Cargando página principal: $page")
+        Log.d(TAG, "Logs: [2026-01-22] Cargando página principal: $page")
         return try {
             val items = ArrayList<HomePageList>()
             val sections = listOf(
@@ -43,7 +48,11 @@ class SeriesmetroProvider : MainAPI() {
             )
 
             sections.forEach { (title, url) ->
-                val doc = app.get(url, headers = mapOf("Referer" to "$mainUrl/")).document
+                val doc = app.get(url, headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                    "Referer" to "$mainUrl/"
+                )).document
+
                 val res = doc.select("article.post, .post").mapNotNull {
                     it.toSearchResult()
                 }
@@ -57,19 +66,20 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst(".entry-title")?.text() ?: return null
-
+        val title = this.selectFirst(".entry-title, .entry-header h2")?.text() ?: return null
         var href = this.selectFirst("a")?.attr("href") ?: return null
         if (href.startsWith("/")) href = "$mainUrl$href"
 
         val imgElement = this.selectFirst("img")
-        val rawImg = imgElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
-            ?: imgElement?.attr("srcset")?.substringBefore(" ")
+
+        val rawImg = imgElement?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: imgElement?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
+            ?: imgElement?.attr("srcset")?.split(",")?.firstOrNull()?.trim()?.split(" ")?.firstOrNull()
             ?: imgElement?.attr("src")
 
         val posterUrl = fixImg(rawImg)
 
-        Log.d(TAG, "Logs: [DEBUG] Titulo: $title | Poster: $posterUrl")
+        Log.d(TAG, "Logs: [DEBUG] Titulo: $title | Poster Detectado: $posterUrl")
 
         return if (href.contains("/pelicula/")) {
             newMovieSearchResponse(title, href, TvType.Movie) {
@@ -84,8 +94,10 @@ class SeriesmetroProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: Buscando: $query")
-        val document = app.get("$mainUrl/?s=$query").document
-        return document.select(".post").mapNotNull { it.toSearchResult() }
+        val document = app.get("$mainUrl/?s=$query", headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )).document
+        return document.select("article.post, .post").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -94,7 +106,6 @@ class SeriesmetroProvider : MainAPI() {
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
-        // Arreglo de poster en vista detalle
         val posterElement = doc.selectFirst(".post.single .post-thumbnail img, .post-thumbnail img")
         val poster = fixImg(posterElement?.attr("src"))?.replace("/w185/", "/w500/")
 
