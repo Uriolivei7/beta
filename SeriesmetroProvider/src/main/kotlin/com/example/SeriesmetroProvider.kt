@@ -38,66 +38,67 @@ class SeriesmetroProvider : MainAPI() {
         return cleanUrl
     }
 
+    val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Referer" to "$mainUrl/"
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: [2026-01-22] Cargando página principal: $page")
-        return try {
-            val items = ArrayList<HomePageList>()
-            val sections = listOf(
-                Pair("Series", "$mainUrl/cartelera-series/page/$page"),
-                Pair("Películas", "$mainUrl/cartelera-peliculas/page/$page")
-            )
+        val items = ArrayList<HomePageList>()
+        val sections = listOf(
+            Pair("Series", "$mainUrl/cartelera-series/page/$page"),
+            Pair("Películas", "$mainUrl/cartelera-peliculas/page/$page")
+        )
 
-            sections.forEach { (title, url) ->
-                val doc = app.get(url, headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                    "Referer" to "$mainUrl/"
-                )).document
+        sections.forEach { (title, url) ->
+            val doc = app.get(url, headers = headers).document
 
-                val res = doc.select("article.post, .post").mapNotNull {
-                    it.toSearchResult()
+            val res = doc.select(".post").mapNotNull { element ->
+                val sTitle = element.selectFirst(".entry-header .entry-title")?.text() ?: return@mapNotNull null
+                val sHref = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
+
+                val imgElement = element.selectFirst(".post-thumbnail img, img")
+                val sPoster = imgElement?.let {
+                    if (it.hasAttr("data-src")) it.attr("abs:data-src") else it.attr("abs:src")
                 }
-                if (res.isNotEmpty()) items.add(HomePageList(title, res))
+
+                Log.d(TAG, "Logs: [DEBUG] $sTitle -> $sPoster")
+
+                if (sHref.contains("/pelicula/")) {
+                    newMovieSearchResponse(sTitle, sHref, TvType.Movie) { this.posterUrl = sPoster }
+                } else {
+                    newTvSeriesSearchResponse(sTitle, sHref, TvType.TvSeries) { this.posterUrl = sPoster }
+                }
             }
-            newHomePageResponse(items)
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
-            null
+            if (res.isNotEmpty()) items.add(HomePageList(title, res))
         }
-    }
-
-    private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst(".entry-title, .entry-header h2")?.text() ?: return null
-        var href = this.selectFirst("a")?.attr("href") ?: return null
-        if (href.startsWith("/")) href = "$mainUrl$href"
-
-        val imgElement = this.selectFirst("img")
-
-        val rawImg = imgElement?.attr("data-src")?.takeIf { it.isNotBlank() }
-            ?: imgElement?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-            ?: imgElement?.attr("srcset")?.split(",")?.firstOrNull()?.trim()?.split(" ")?.firstOrNull()
-            ?: imgElement?.attr("src")
-
-        val posterUrl = fixImg(rawImg)
-
-        Log.d(TAG, "Logs: [DEBUG] Titulo: $title | Poster Detectado: $posterUrl")
-
-        return if (href.contains("/pelicula/")) {
-            newMovieSearchResponse(title, href, TvType.Movie) {
-                this.posterUrl = posterUrl
-            }
-        } else {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-            }
-        }
+        return newHomePageResponse(items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: Buscando: $query")
-        val document = app.get("$mainUrl/?s=$query", headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-        )).document
-        return document.select("article.post, .post").mapNotNull { it.toSearchResult() }
+
+        val document = app.get("$mainUrl/?s=$query", headers = headers).document
+
+        return document.select(".post").mapNotNull { element ->
+            val sTitle = element.selectFirst(".entry-header .entry-title, .entry-title")?.text() ?: return@mapNotNull null
+            val sHref = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
+
+            val imgElement = element.selectFirst(".post-thumbnail img, img")
+            val sPoster = imgElement?.let {
+                if (it.hasAttr("data-src")) it.attr("abs:data-src")
+                else if (it.hasAttr("data-lazy-src")) it.attr("abs:data-lazy-src")
+                else it.attr("abs:src")
+            }
+
+            Log.d(TAG, "Logs: [DEBUG SEARCH] $sTitle -> $sPoster")
+
+            if (sHref.contains("/pelicula/")) {
+                newMovieSearchResponse(sTitle, sHref, TvType.Movie) { this.posterUrl = sPoster }
+            } else {
+                newTvSeriesSearchResponse(sTitle, sHref, TvType.TvSeries) { this.posterUrl = sPoster }
+            }
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
