@@ -46,18 +46,21 @@ class SeriesmetroProvider : MainAPI() {
     )
 
     private fun Element.getMetroPoster(): String? {
-        val img = this.selectFirst(".post-thumbnail figure img, .post-thumbnail img") ?: return null
+        val img = this.selectFirst(".post-thumbnail img, img") ?: return null
 
         val lazyPoster = img.attr("data-lazy-src").takeIf { it.isNotBlank() }
-        val normalPoster = img.attr("src").takeIf { it.isNotBlank() }
+        val dataPoster = img.attr("data-src").takeIf { it.isNotBlank() }
+        val normalPoster = img.attr("src").takeIf { it.isNotBlank() && !it.contains("data:image") }
 
-        val finalPoster = if (lazyPoster != null && !lazyPoster.contains("data:image")) {
-            lazyPoster
-        } else {
-            normalPoster
-        }
+        val finalPoster = lazyPoster ?: dataPoster ?: normalPoster
 
-        return fixUrlNull(finalPoster)
+        /*return if (finalPoster.isNullOrBlank()) null else {
+            if (finalPoster.startsWith("//")) "https:$finalPoster"
+            else if (finalPoster.startsWith("/")) "https://www3.seriesmetro.net$finalPoster"
+            else finalPoster
+        }*/
+        
+        return fixImg(finalPoster)?.replace("/w185/", "/w500/")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -130,11 +133,12 @@ class SeriesmetroProvider : MainAPI() {
         val genres = doc.select(".genres a").map { it.text() }
         val year = doc.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        val recommendations = doc.select("section.episodes article.post").mapNotNull { element ->
+        val recommendations = doc.select("section.episodes article.post").mapNotNull { element: Element ->
             val recTitle = element.selectFirst(".entry-title")?.text() ?: return@mapNotNull null
-            val recUrl = element.selectFirst("a.lnk-blk")?.attr("abs:href") ?: return@mapNotNull null
-            val img = element.selectFirst("img")
-            val recPoster = fixImg(img?.attr("data-lazy-src") ?: img?.attr("src"))
+            val recUrl = element.selectFirst("a.lnk-blk")?.attr("abs:href")
+                ?: element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
+
+            val recPoster = element.getMetroPoster()
 
             newTvSeriesSearchResponse(recTitle, recUrl, if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = recPoster
