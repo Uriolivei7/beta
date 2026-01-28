@@ -43,6 +43,14 @@ class SeriesmetroProvider : MainAPI() {
         "Referer" to "$mainUrl/"
     )
 
+    private fun Element.getImage(): String? {
+        val img = this.selectFirst(".post-thumbnail img, img") ?: return null
+        return img.attr("abs:data-src").takeIf { it.isNotBlank() }
+            ?: img.attr("abs:data-lazy-src").takeIf { it.isNotBlank() }
+            ?: img.attr("abs:srcset").split(" ").firstOrNull { it.startsWith("http") }
+            ?: img.attr("abs:src").takeIf { it.isNotBlank() && !it.contains("data:image") }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
         val sections = listOf(
@@ -57,12 +65,9 @@ class SeriesmetroProvider : MainAPI() {
                 val sTitle = element.selectFirst(".entry-header .entry-title")?.text() ?: return@mapNotNull null
                 val sHref = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
 
-                val imgElement = element.selectFirst(".post-thumbnail img, img")
-                val sPoster = imgElement?.let {
-                    if (it.hasAttr("data-src")) it.attr("abs:data-src") else it.attr("abs:src")
-                }
+                val sPoster = element.getImage()
 
-                Log.d(TAG, "Logs: [DEBUG] $sTitle -> $sPoster")
+                Log.d(TAG, "Logs: [DEBUG MAIN] $sTitle -> $sPoster")
 
                 if (sHref.contains("/pelicula/")) {
                     newMovieSearchResponse(sTitle, sHref, TvType.Movie) { this.posterUrl = sPoster }
@@ -77,19 +82,13 @@ class SeriesmetroProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: Buscando: $query")
-
         val document = app.get("$mainUrl/?s=$query", headers = headers).document
 
         return document.select(".post").mapNotNull { element ->
             val sTitle = element.selectFirst(".entry-header .entry-title, .entry-title")?.text() ?: return@mapNotNull null
             val sHref = element.selectFirst("a")?.attr("abs:href") ?: return@mapNotNull null
 
-            val imgElement = element.selectFirst(".post-thumbnail img, img")
-            val sPoster = imgElement?.let {
-                if (it.hasAttr("data-src")) it.attr("abs:data-src")
-                else if (it.hasAttr("data-lazy-src")) it.attr("abs:data-lazy-src")
-                else it.attr("abs:src")
-            }
+            val sPoster = element.getImage()
 
             Log.d(TAG, "Logs: [DEBUG SEARCH] $sTitle -> $sPoster")
 
@@ -108,7 +107,10 @@ class SeriesmetroProvider : MainAPI() {
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
         val posterElement = doc.selectFirst(".post.single .post-thumbnail img, .post-thumbnail img")
-        val poster = fixImg(posterElement?.attr("src"))?.replace("/w185/", "/w500/")
+        val rawPoster = posterElement?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
+            ?: posterElement?.attr("abs:src")
+
+        val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }
         val genres = doc.select(".genres a").map { it.text() }
