@@ -1,5 +1,6 @@
 package com.horis.example
 
+import android.util.Log
 import com.horis.example.entities.EpisodesData
 import com.horis.example.entities.PlayList
 import com.horis.example.entities.PostData
@@ -33,6 +34,8 @@ class NetflixProvider : MainAPI() {
 
     override val hasMainPage = true
     private var cookie_value = ""
+
+    private val TAG = "NetflixProvider"
     private val headers = mapOf(
         "X-Requested-With" to "XMLHttpRequest"
     )
@@ -214,48 +217,53 @@ class NetflixProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val (title, id) = parseJson<LoadData>(data)
+        Log.i(TAG, "loadLinks: Buscando enlaces para $title (ID: $id)")
+
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "nf",
             "hd" to "on"
         )
-        val playlist = app.get(
+
+        val res = app.get(
             "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
-            headers,
-            referer = "$mainUrl/home",
+            headers = headers,
+            referer = "$newUrl/home",
             cookies = cookies
-        ).parsed<PlayList>()
+        )
+
+        val playlist = res.parsed<PlayList>()
 
         playlist.forEach { item ->
             item.sources.forEach {
+                val qualityLabel = it.label ?: "HLS"
+                val linkName = "${this.name} $qualityLabel"
+
                 callback.invoke(
                     newExtractorLink(
-                        name,
-                        name,
-                        """$newUrl${it.file.replace("/tv/", "/")}""",
+                        this.name,
+                        linkName,
+                        """$newUrl${it.file?.replace("/tv/", "/") ?: ""}""",
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$newUrl/"
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Android) ExoPlayer",
-                            "Accept" to "*/*",
-                            "Accept-Encoding" to "identity",
-                            "Connection" to "keep-alive",
                             "Cookie" to "hd=on"
                         )
+                        this.quality = getQualityFromName(it.file?.substringAfter("q=", "")?.substringBefore("&") ?: "")
                     }
                 )
+                Log.d(TAG, "Link añadido: $linkName")
             }
 
-            item.tracks?.filter { it.kind == "captions" }?.map { track ->
+            item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 subtitleCallback.invoke(
                     newSubtitleFile(
                         track.label.toString(),
                         httpsify(track.file.toString()),
                     ) {
-                        this.headers = mapOf(
-                            "Referer" to "$newUrl/"
-                        )
+                        this.headers = mapOf("Referer" to "$newUrl/")
                     }
                 )
             }
