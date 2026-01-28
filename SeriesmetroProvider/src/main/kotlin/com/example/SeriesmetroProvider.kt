@@ -114,17 +114,18 @@ class SeriesmetroProvider : MainAPI() {
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
-        // Lógica de posters que ya validamos en los logs
-        val posterElement = doc.selectFirst("article.post .post-thumbnail figure img, .post.single .post-thumbnail img, .post-thumbnail img")
-        var rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
-            ?: posterElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
-            ?: posterElement?.attr("src")
+        // --- EXTRACCIÓN BASADA EN TU HTML ---
+        val posterElement = doc.selectFirst(".post-thumbnail figure img")
 
-        if (rawPoster.isNullOrBlank() || rawPoster.contains("data:image")) {
-            rawPoster = doc.selectFirst("meta[property=og:image]")?.attr("content")
-        }
+        val rawPoster = posterElement?.attr("src").takeIf { !it.isNullOrBlank() }
+            ?: posterElement?.attr("data-lazy-src")
+            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
 
+        // Aplicamos fixImg para poner el https: y luego subimos calidad a w500
         val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
+
+        Log.d(TAG, "Logs: [DEBUG LOAD] Titulo: $title | Poster Final: $poster")
+
         val backposter = doc.selectFirst("div.bghd img.TPostBg")?.attr("abs:src") ?: poster
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }.trim()
