@@ -46,7 +46,13 @@ class AnimeytProvider : MainAPI() {
     private fun Element.toSearchResponse(): SearchResponse {
         val title = this.select("div.video-card-body div.video-title a").text()
         val href = this.select("div.video-card-body div.video-title a").attr("href")
-        val posterUrl = this.select("div.video-card-image a:nth-child(2) img").attr("src")
+
+        val imgElement = this.select("div.video-card-image a img").first()
+        var posterUrl = imgElement?.attr("src")?.ifEmpty { imgElement.attr("data-src") }
+
+        if (posterUrl != null && posterUrl.startsWith("/")) {
+            posterUrl = mainUrl + posterUrl
+        }
 
         return newAnimeSearchResponse(title, href, TvType.Anime) {
             this.posterUrl = posterUrl
