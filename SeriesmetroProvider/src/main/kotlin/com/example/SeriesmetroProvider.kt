@@ -47,18 +47,11 @@ class SeriesmetroProvider : MainAPI() {
 
     private fun Element.getMetroPoster(): String? {
         val img = this.selectFirst(".post-thumbnail img, img") ?: return null
-
         val lazyPoster = img.attr("data-lazy-src").takeIf { it.isNotBlank() }
         val dataPoster = img.attr("data-src").takeIf { it.isNotBlank() }
         val normalPoster = img.attr("src").takeIf { it.isNotBlank() && !it.contains("data:image") }
 
         val finalPoster = lazyPoster ?: dataPoster ?: normalPoster
-
-        /*return if (finalPoster.isNullOrBlank()) null else {
-            if (finalPoster.startsWith("//")) "https:$finalPoster"
-            else if (finalPoster.startsWith("/")) "https://www3.seriesmetro.net$finalPoster"
-            else finalPoster
-        }*/
 
         return fixImg(finalPoster)?.replace("/w185/", "/w500/")
     }
@@ -112,7 +105,7 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Logs: [2026-01-22] Cargando metadatos de: $url")
+        Log.d(TAG, "Cargando metadatos de: $url")
         val doc = app.get(url, headers = headers).document
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
