@@ -197,7 +197,7 @@
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeioProvider.cs3",
-    "status": 0,
+    "status": 1,
     "version": 5,
     "apiVersion": 1,
     "name": "AnimeIO",
@@ -281,7 +281,7 @@
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelisplusProvider.cs3",
-    "status": 0,
+    "status": 1,
     "version": 1,
     "apiVersion": 1,
     "name": "PelisPlus",
