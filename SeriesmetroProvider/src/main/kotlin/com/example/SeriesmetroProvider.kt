@@ -110,22 +110,29 @@ class SeriesmetroProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "Logs: [2026-01-22] Cargando metadatos de: $url")
-        val doc = app.get(url).document
+        val doc = app.get(url, headers = headers).document
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
-        val posterElement = doc.selectFirst(".post.single .post-thumbnail img, .post-thumbnail img")
+        val posterElement = doc.selectFirst(".post.single .post-thumbnail figure img, .post-thumbnail img")
+        var rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
+            ?: posterElement?.attr("src")
 
-        val poster = fixImg(posterElement?.attr("src"))?.replace("/w185/", "/w500/")
+        val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
+
+        val backposter = doc.selectFirst("div.bghd img.TPostBg")?.attr("abs:src") ?: poster
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }
         val genres = doc.select(".genres a").map { it.text() }
+        val year = doc.selectFirst("span.year")?.text()?.toIntOrNull()
 
         return if (url.contains("/pelicula/")) {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = backposter
                 this.plot = description
                 this.tags = genres
+                this.year = year
             }
         } else {
             val episodes = ArrayList<Episode>()
@@ -151,9 +158,14 @@ class SeriesmetroProvider : MainAPI() {
                             response.select(".post").reversed().forEach { ep ->
                                 val epHref = ep.select("a").attr("abs:href")
                                 val epText = ep.select(".num-epi").text()
-                                val epNumber = epText.substringAfter("x").substringBefore("–").trim().toIntOrNull()
 
-                                val epThumb = fixImg(ep.selectFirst("img")?.attr("src"))
+                                val epNumber = epText.substringAfter("x").trim().toIntOrNull()
+
+                                val epImgElement = ep.selectFirst("img")
+                                val epThumb = fixImg(
+                                    epImgElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
+                                        ?: epImgElement?.attr("src")
+                                )
 
                                 synchronized(episodes) {
                                     episodes.add(newEpisode(epHref) {
@@ -173,8 +185,10 @@ class SeriesmetroProvider : MainAPI() {
 
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.sortedWith(compareBy({ it.season }, { it.episode }))) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = backposter
                 this.plot = description
                 this.tags = genres
+                this.year = year
             }
         }
     }
