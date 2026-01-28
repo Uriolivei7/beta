@@ -166,7 +166,7 @@ class PrimeVideoProvider : MainAPI() {
                     this.name = it.t
                     this.episode = it.ep?.replace("E", "")?.toIntOrNull()
                     this.season = it.s?.replace("S", "")?.toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/pvepimg/150/${it.id}.jpg"
                     this.runTime = it.time?.replace("m", "")?.toIntOrNull()
                 })
             }
@@ -234,7 +234,7 @@ class PrimeVideoProvider : MainAPI() {
                         this.name = it.t
                         this.episode = it.ep?.replace("E", "")?.toIntOrNull()
                         this.season = it.s?.replace("S", "")?.toIntOrNull()
-                        this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
+                        this.posterUrl = "https://imgcdn.kim/pvepimg/150/${it.id}.jpg"
                         this.runTime = it.time?.replace("m", "")?.toIntOrNull()
                     })
                 }
