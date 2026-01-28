@@ -252,10 +252,9 @@ class PrimeVideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        cookie_value = bypass(mainUrl)
+        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
-        Log.i(TAG, "Loading links for Episode/Movie ID: $id, Title: $title")
 
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -263,50 +262,43 @@ class PrimeVideoProvider : MainAPI() {
             "hd" to "on"
         )
         val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.i(TAG, "Fetching playlist from: $playlistUrl")
 
-        val playlist = app.get(
+        val res = app.get(
             playlistUrl,
             headers,
             referer = "$newUrl/home",
             cookies = cookies
-        ).parsed<PlayList>()
+        )
+
+        val playlist = res.parsed<PlayList>()
 
         var linkCount = 0
         var subtitleCount = 0
 
-        val fullCookie = "t_hash_t=$cookie_value; ott=pv; hd=on"
-        val refererUrl = "$newUrl/home"
-
-        val encodedReferer = java.net.URLEncoder.encode(refererUrl, "UTF-8")
-        val encodedCookie = java.net.URLEncoder.encode(fullCookie, "UTF-8")
-
-        val headersString = "Referer=$encodedReferer&Cookie=$encodedCookie"
-
         playlist.forEach { item ->
             item.sources.forEach {
+                val qualityLabel = it.label ?: "HLS"
+                val linkName = "${this.name} $qualityLabel"
+
                 callback.invoke(
                     newExtractorLink(
-                        name,
-                        name,
-                        """$newUrl${it.file.replace("/tv/", "/")}""",
+                        this.name,
+                        linkName,
+                        """$newUrl${it.file?.replace("/tv/", "/") ?: ""}""",
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$newUrl/"
-                        this.quality = getQualityFromName(it.file.substringAfter("q=", ""))
+                        this.quality = getQualityFromName(it.file?.substringAfter("q=", "")?.substringBefore("&") ?: "")
                     }
                 )
                 linkCount++
-                Log.i(TAG, "Found Link: ${it.label} (${it.file})")
+                Log.i(TAG, "Link Generado: $linkName")
             }
 
-            item.tracks?.filter { it.kind == "captions" }?.map { track ->
+            item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 val trackLabel = track.label.toString()
-
                 val filename = trackLabel.replace(" ", "") + ".srt"
-
                 val manualSubtitleUrl = "https://pv.subscdn.top/subs/$id/$filename"
-
 
                 subtitleCallback.invoke(
                     newSubtitleFile(
@@ -315,12 +307,11 @@ class PrimeVideoProvider : MainAPI() {
                     )
                 )
                 subtitleCount++
-                Log.i(TAG, "Found Subtitle: $trackLabel (Manual URL: $manualSubtitleUrl)")
+                Log.i(TAG, "Sub Encontrado: $trackLabel")
             }
         }
 
-        Log.i(TAG, "Finished loadLinks. Total links: $linkCount, Total subtitles: $subtitleCount")
-
+        Log.i(TAG, "Finished loadLinks. Total links: $linkCount")
         return true
     }
 
