@@ -29,8 +29,8 @@ class SeriesmetroProvider : MainAPI() {
         return try {
             val items = ArrayList<HomePageList>()
             val sections = listOf(
-                Pair("Series Recientes", "$mainUrl/cartelera-series/page/$page"),
-                Pair("Películas", "$mainUrl/genero/pelicula/page/$page")
+                Pair("Series", "$mainUrl/cartelera-series/page/$page"),
+                Pair("Películas", "$mainUrl/cartelera-peliculas/page/$page")
             )
 
             sections.forEach { (title, url) ->
@@ -58,20 +58,14 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // Selector más flexible para el título
         val title = this.selectFirst(".entry-title")?.text() ?: return null
         val href = this.selectFirst("a.lnk-blk, a")?.attr("abs:href") ?: return null
 
-        // CORRECCIÓN CRÍTICA DE POSTER:
-        // 1. Buscamos el tag img
         val img = this.selectFirst(".post-thumbnail img")
+        var posterUrl = img?.attr("srcset")?.substringBefore(" ")
+            ?: img?.attr("data-src")
+            ?: img?.attr("src")
 
-        // 2. Intentamos sacar la URL de varios atributos posibles
-        var posterUrl = img?.attr("abs:data-src").takeIf { !it.isNullOrBlank() }
-            ?: img?.attr("abs:src")
-            ?: img?.attr("abs:srcset")?.substringBefore(" ") // Para casos como American Carnage
-
-        // 3. Si la URL empieza con //, le agregamos https:
         if (posterUrl?.startsWith("//") == true) {
             posterUrl = "https:$posterUrl"
         }
@@ -175,23 +169,34 @@ class SeriesmetroProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data).document
+        Log.d(TAG, "Logs: [2026-01-22] Analizando opciones en: $data")
 
-        doc.select(".aa-tbs-video a").forEach { option ->
-            val serverName = option.text()
+        doc.select(".aa-tbs-video li a").forEach { option ->
             val targetId = option.attr("href").replace("#", "")
-
             val container = doc.selectFirst("div#$targetId")
-            val iframe = container?.selectFirst("iframe")
 
-            var iframeUrl = iframe?.attr("abs:data-src").takeIf { !it.isNullOrBlank() }
-                ?: iframe?.attr("abs:src") ?: ""
+            var iframeUrl = container?.selectFirst("iframe")?.attr("data-src")
+                ?: container?.selectFirst("iframe")?.attr("src") ?: ""
 
             if (iframeUrl.isNotBlank()) {
-                if (iframeUrl.contains("seriesmetro.net/ir/")) {
-                    iframeUrl = app.get(iframeUrl).document.selectFirst("iframe")?.attr("abs:src") ?: ""
-                }
+                if (iframeUrl.startsWith("//")) iframeUrl = "https:$iframeUrl"
 
-                loadExtractor(iframeUrl, data, subtitleCallback, callback)
+                if (iframeUrl.contains("seriesmetro.net") && (iframeUrl.contains("trembed") || iframeUrl.contains("/ir/"))) {
+                    try {
+                        val innerDoc = app.get(iframeUrl).document
+                        val realPlayerUrl = innerDoc.selectFirst("iframe")?.attr("src")
+                            ?: innerDoc.selectFirst("a")?.attr("href")
+
+                        if (!realPlayerUrl.isNullOrBlank()) {
+                            Log.d(TAG, "Logs: Redirigiendo a extractor: $realPlayerUrl")
+                            loadExtractor(realPlayerUrl, iframeUrl, subtitleCallback, callback)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Logs: Error en redirección: ${e.message}")
+                    }
+                } else {
+                    loadExtractor(iframeUrl, data, subtitleCallback, callback)
+                }
             }
         }
         return true
