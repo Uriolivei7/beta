@@ -39,16 +39,22 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Referer" to "$mainUrl/"
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Referer" to "$mainUrl/",
+        "Connection" to "keep-alive"
     )
 
     private fun Element.getImage(): String? {
         val img = this.selectFirst(".post-thumbnail img, img") ?: return null
-        return img.attr("abs:data-src").takeIf { it.isNotBlank() }
+
+        val url = img.attr("abs:data-src").takeIf { it.isNotBlank() }
             ?: img.attr("abs:data-lazy-src").takeIf { it.isNotBlank() }
+            ?: img.attr("abs:data-srcset").split(" ").firstOrNull { it.startsWith("http") }
             ?: img.attr("abs:srcset").split(" ").firstOrNull { it.startsWith("http") }
             ?: img.attr("abs:src").takeIf { it.isNotBlank() && !it.contains("data:image") }
+
+        return url?.replace("/w185/", "/w500/")?.replace("-200x300", "")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -107,10 +113,8 @@ class SeriesmetroProvider : MainAPI() {
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
         val posterElement = doc.selectFirst(".post.single .post-thumbnail img, .post-thumbnail img")
-        val rawPoster = posterElement?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
-            ?: posterElement?.attr("abs:src")
 
-        val poster = fixImg(rawPoster)?.replace("/w185/", "/w500/")
+        val poster = fixImg(posterElement?.attr("src"))?.replace("/w185/", "/w500/")
 
         val description = doc.select(".description p, .entry-content p").joinToString { it.text() }
         val genres = doc.select(".genres a").map { it.text() }
