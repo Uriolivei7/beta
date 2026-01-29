@@ -122,7 +122,6 @@ class LamovieProvider : MainAPI() {
             null
         }
 
-        // 1. PROCESAR EMBEDS (Vimeos, Goodstream, etc. usando tus extractores)
         val embeds = response?.data?.embeds
         Log.i(TAG, "LOG: Se encontraron ${embeds?.size ?: 0} reproductores de streaming")
 
@@ -130,11 +129,9 @@ class LamovieProvider : MainAPI() {
             val embedUrl = embed.url ?: return@forEach
             Log.i(TAG, "LOG: Delegando carga al extractor: $embedUrl")
 
-            // Aquí Cloudstream buscará automáticamente tus clases Vimeos() y GoodstreamExtractor()
             loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
         }
 
-        // 2. LOG DE DESCARGAS (Omitimos Torrents para evitar cortes en la reproducción)
         val downloadCount = response?.data?.downloads?.size ?: 0
         if (downloadCount > 0) {
             Log.i(TAG, "LOG: Se detectaron $downloadCount enlaces en la sección descargas, pero se omitieron para priorizar streaming directo.")
@@ -144,7 +141,6 @@ class LamovieProvider : MainAPI() {
         return true
     }
 
-    // --- MODELOS ---
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)

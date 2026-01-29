@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
@@ -27,7 +28,6 @@ class Vimeos : ExtractorApi() {
         val res = app.get(embedUrl, referer = referer)
         val doc = res.document
 
-        // Intentamos desempaquetar el JS (p,a,c,k,e,d)
         val unpackedJs = unpackJs(doc)
 
         if (unpackedJs.isNullOrBlank()) {
@@ -35,15 +35,21 @@ class Vimeos : ExtractorApi() {
             return
         }
 
-        // 1. Extraer Video M3U8
-        val videoUrl = Regex("""file\s*:\s*"([^"]+\.m3u8[^"]*)"""").find(unpackedJs)?.groupValues?.get(1)
-
-        // 2. Extraer Subtítulos (Vimeos suele ponerlos como .vtt)
-        val subUrl = Regex("""file\s*:\s*"([^"]+\.vtt[^"]*)"""").find(unpackedJs)?.groupValues?.get(1)
+        val videoUrl = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
+        val subUrl = Regex("""file\s*:\s*["']([^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
         if (!subUrl.isNullOrBlank()) {
-            Log.i("LaMovie", "LOG: Subtítulo encontrado en Vimeos -> $subUrl")
-            subtitleCallback.invoke(SubtitleFile("Español", subUrl))
+            val finalSub = fixUrl(subUrl)
+            Log.i("LaMovie", "LOG: ¡Subtítulo detectado! -> $finalSub")
+
+            subtitleCallback.invoke(
+                newSubtitleFile(
+                    lang = "Español",
+                    url = finalSub
+                )
+            )
+        } else {
+            Log.w("LaMovie", "LOG WARNING: No se encontró la ruta del subtítulo .vtt en el JS")
         }
 
         if (videoUrl != null) {
@@ -54,18 +60,16 @@ class Vimeos : ExtractorApi() {
                 "$mainUrl/",
             ).forEach(callback)
         } else {
-            Log.e("LaMovie", "LOG ERROR: No se encontró enlace de video en el JS desempaquetado")
+            Log.e("LaMovie", "LOG ERROR: No se encontró enlace de video (.m3u8)")
         }
     }
 
     private fun unpackJs(doc: org.jsoup.nodes.Document): String? {
-        // Buscamos el script que contiene el eval
         val script = doc.select("script").find { it.data().contains("eval(function(p,a,c,k,e,d)") }
         return if (script != null) {
             Log.i("LaMovie", "LOG: Script empaquetado detectado, procediendo a Unpack")
             getAndUnpack(script.data())
         } else {
-            // Si no hay eval, devolvemos el contenido de los scripts normales por si acaso
             doc.select("script").joinToString("\n") { it.data() }
         }
     }
