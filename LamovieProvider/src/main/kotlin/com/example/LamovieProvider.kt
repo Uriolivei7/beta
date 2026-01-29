@@ -71,14 +71,14 @@ class LamovieProvider : MainAPI() {
         val postData = parseJson<SinglePostResponse>(res).data ?: return null
         val id = postData.id ?: return null
 
-        if (type == "movies") {
-            return newMovieLoadResponse(postData.title ?: "", url, TvType.Movie, id.toString()) {
+        return if (type == "movies") {
+            newMovieLoadResponse(postData.title ?: "", url, TvType.Movie, id.toString()) {
                 this.posterUrl = fixImg(postData.images?.poster ?: postData.poster)
                 this.plot = postData.overview
             }
         } else {
             val episodesList = mutableListOf<Episode>()
-            val seasons = if (postData.seasons_list.isNullOrEmpty()) listOf("1", "2", "3") else postData.seasons_list
+            val seasons = if (postData.seasons_list.isNullOrEmpty()) listOf("1") else postData.seasons_list
 
             seasons.forEach { sNumStr ->
                 val sNum = sNumStr.toIntOrNull() ?: return@forEach
@@ -94,7 +94,7 @@ class LamovieProvider : MainAPI() {
                     }
                 } catch (e: Exception) { }
             }
-            return newTvSeriesLoadResponse(postData.title ?: "", url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
+            newTvSeriesLoadResponse(postData.title ?: "", url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
                 this.posterUrl = fixImg(postData.images?.poster ?: postData.poster)
                 this.plot = postData.overview
             }
@@ -110,81 +110,41 @@ class LamovieProvider : MainAPI() {
         val cleanId = data.substringAfterLast("/")
         val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
 
-        Log.i(TAG, "LOG: Iniciando carga de enlaces para ID: $cleanId")
+        Log.i(TAG, "LOG: --- INICIANDO CARGA DE ENLACES PARA ID $cleanId ---")
 
         val res = try { app.get(playerUrl).text } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Falló la petición API: ${e.message}")
+            Log.e(TAG, "LOG ERROR: No se pudo obtener respuesta de la API de reproductores: ${e.message}")
             return false
         }
 
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Error parseando JSON")
+            Log.e(TAG, "LOG ERROR: Falló el parseo del JSON del reproductor")
             null
         }
 
-        // 1. EMBEDS (Online)
-        response?.data?.embeds?.forEach { embed ->
+        // 1. PROCESAR EMBEDS (Vimeos, Goodstream, etc. usando tus extractores)
+        val embeds = response?.data?.embeds
+        Log.i(TAG, "LOG: Se encontraron ${embeds?.size ?: 0} reproductores de streaming")
+
+        embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
-            Log.i(TAG, "LOG: Procesando embed: $embedUrl")
+            Log.i(TAG, "LOG: Delegando carga al extractor: $embedUrl")
 
-            if (embedUrl.contains("vimeos.net")) {
-                try {
-                    val embedHtml = app.get(embedUrl, referer = "https://la.movie/").text
-                    val masterUrl = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
-                    val subUrl = Regex("""file\s*:\s*["']([^"']+\.vtt[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
-
-                    if (!subUrl.isNullOrBlank()) {
-                        Log.i(TAG, "LOG: Subtítulo detectado: $subUrl")
-                        subtitleCallback.invoke(SubtitleFile("Español", subUrl))
-                    }
-
-                    if (masterUrl != null) {
-                        Log.i(TAG, "LOG: Video M3U8 detectado: $masterUrl")
-                        // CORRECCIÓN AQUÍ: Usando el bloque {} para evitar el error de argumentos
-                        callback.invoke(
-                            newExtractorLink(
-                                source = "Vimeos",
-                                name = "Vimeos ${embed.lang ?: ""}",
-                                url = masterUrl,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.quality = Qualities.P1080.value
-                                this.referer = "https://vimeos.net/"
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "LOG ERROR: Vimeos falló: ${e.message}")
-                }
-            } else {
-                loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
-            }
+            // Aquí Cloudstream buscará automáticamente tus clases Vimeos() y GoodstreamExtractor()
+            loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
         }
 
-        // 2. DOWNLOADS (Magnets)
-        response?.data?.downloads?.forEach { dl ->
-            val url = dl.url ?: return@forEach
-            if (url.startsWith("magnet:")) {
-                Log.i(TAG, "LOG: Magnet detectado: ${dl.quality}")
-                callback.invoke(
-                    newExtractorLink(
-                        source = dl.server ?: "Torrent",
-                        name = "Torrent ${dl.quality ?: ""} (${dl.lang ?: ""})",
-                        url = url,
-                        type = ExtractorLinkType.TORRENT
-                    ) {
-                        // En la nueva versión, la calidad se asigna aquí dentro
-                        this.quality = Qualities.P1080.value
-                    }
-                )
-            } else {
-                loadExtractor(url, "https://la.movie/", subtitleCallback, callback)
-            }
+        // 2. LOG DE DESCARGAS (Omitimos Torrents para evitar cortes en la reproducción)
+        val downloadCount = response?.data?.downloads?.size ?: 0
+        if (downloadCount > 0) {
+            Log.i(TAG, "LOG: Se detectaron $downloadCount enlaces en la sección descargas, pero se omitieron para priorizar streaming directo.")
         }
+
+        Log.i(TAG, "LOG: --- FINALIZADA CARGA DE ENLACES ---")
         return true
     }
 
-    // --- MODELOS ACTUALIZADOS ---
+    // --- MODELOS ---
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
