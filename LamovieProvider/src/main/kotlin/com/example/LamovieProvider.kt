@@ -1,9 +1,9 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 
 class LamovieProvider : MainAPI() {
@@ -36,9 +36,9 @@ class LamovieProvider : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, home), home.isNotEmpty())
     }
 
-    // --- FUNCIÓN DE BÚSQUEDA AÑADIDA ---
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$apiBase/search?postType=any&q=${query.replace(" ", "+")}&postsPerPage=26"
+        Log.i(TAG, "Buscando: $url")
         val res = app.get(url).text
         val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) { null }
         return json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
@@ -53,7 +53,6 @@ class LamovieProvider : MainAPI() {
             else -> TvType.TvSeries
         }
         val path = if (tvType == TvType.Movie) "movies" else if (tvType == TvType.Anime) "animes" else "series"
-
         return if (tvType == TvType.Movie) {
             newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
@@ -62,6 +61,7 @@ class LamovieProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.i(TAG, "Cargando metadatos de: $url")
         val slug = url.trimEnd('/').split("/").last()
         val type = when {
             url.contains("/series/") -> "tvshows"
@@ -75,14 +75,13 @@ class LamovieProvider : MainAPI() {
 
         val title = postData.title ?: ""
         val poster = fixImg(postData.images?.poster ?: postData.poster)
-        val backdrop = fixImg(postData.images?.backdrop ?: postData.backdrop)
+
+        Log.i(TAG, "ID encontrado: $id para $title")
 
         if (type == "movies") {
             return newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
                 this.plot = postData.overview
-                this.year = postData.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
             }
         } else {
             val episodesList = mutableListOf<Episode>()
@@ -98,17 +97,15 @@ class LamovieProvider : MainAPI() {
                             this.name = epItem.title
                             this.season = sNum
                             this.episode = epItem.episode_number
-                            this.posterUrl = fixImg(epItem.still_path)
                         })
                     }
-                } catch (e: Exception) { }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error en temporada $sNumStr: ${e.message}")
+                }
             }
-
             return newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
                 this.plot = postData.overview
-                this.year = postData.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
             }
         }
     }
@@ -119,25 +116,58 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Limpiamos el ID por si viene una URL completa del episodio
+        Log.i(TAG, "Solicitando links para ID -> $data")
+
         val cleanId = data.substringAfterLast("/")
         val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
 
         val res = app.get(playerUrl).text
+        Log.i(TAG, "Respuesta API Player -> $res")
+
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
 
         response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
-            loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
+            Log.i(TAG, "Procesando embed -> $embedUrl")
+
+            if (embedUrl.contains("vimeos.net")) {
+                try {
+                    val embedHtml = app.get(embedUrl, referer = "https://vimeos.net/").text
+                    val masterUrl = Regex("""file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
+                    val subUrl = Regex("""file\s*:\s*["'](https?://[^"']+\.vtt[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
+
+                    if (subUrl != null) {
+                        Log.i(TAG, "Subtítulo encontrado: $subUrl")
+                        subtitleCallback.invoke(SubtitleFile("Español", subUrl))
+                    }
+
+                    if (masterUrl != null) {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "Vimeos",
+                                name = "Vimeos ${embed.lang ?: ""}",
+                                url = masterUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.quality = Qualities.P1080.value
+                                this.referer = "https://vimeos.net/"
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error en Vimeos: ${e.message}")
+                }
+            } else {
+                loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
+            }
         }
         return true
     }
 
-    // --- MODELOS DE DATOS ---
+    // --- MODELOS ---
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
-
     data class Post(
         @JsonProperty("_id") val id: Int?,
         val title: String?,
@@ -146,22 +176,13 @@ class LamovieProvider : MainAPI() {
         val overview: String?,
         val images: Images?,
         val poster: String?,
-        val backdrop: String?,
-        @JsonProperty("release_date") val releaseDate: String?,
         @JsonProperty("seasons") val seasons_list: List<String>?
     )
-
-    data class Images(val poster: String?, val backdrop: String?)
+    data class Images(val poster: String?)
     data class EpisodeListResponse(val data: EpisodeListData?)
     data class EpisodeListData(val posts: List<EpisodePostItem>?)
-    data class EpisodePostItem(
-        @JsonProperty("_id") val id: Int?,
-        val title: String?,
-        val still_path: String?,
-        val episode_number: Int?
-    )
-
+    data class EpisodePostItem(@JsonProperty("_id") val id: Int?, val title: String?, val episode_number: Int?)
     data class PlayerResponse(val data: PlayerData?)
     data class PlayerData(val embeds: List<EmbedItem>?)
-    data class EmbedItem(val url: String?)
+    data class EmbedItem(val url: String?, val lang: String?)
 }
