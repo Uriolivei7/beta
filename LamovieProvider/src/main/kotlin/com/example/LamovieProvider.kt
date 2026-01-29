@@ -8,23 +8,35 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 
 class LamovieProvider : MainAPI() {
     override var mainUrl = "https://la.movie"
-    override var name = "LaMovie"
+    override var name = "La.Movie"
     override var lang = "mx"
     override val hasMainPage = true
     override val hasQuickSearch = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
 
     private val apiBase = "$mainUrl/wp-api/v1"
     private val TAG = "LaMovie"
 
+    private fun fixImg(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        return when {
+            url.startsWith("http") -> url
+            url.startsWith("/") -> "$mainUrl$url"
+            else -> "$mainUrl/$url"
+        }
+    }
+
     override val mainPage = mainPageOf(
-        "$apiBase/posts?postType=tvshows" to "Series",
-        "$apiBase/posts?postType=movies" to "Películas",
-        "$apiBase/posts?postType=any" to "Agregados Recientemente"
+        "$apiBase/listing/movies?postType=movies" to "Películas",
+        "$apiBase/listing/tvshows?postType=tvshows" to "Series",
+        "$apiBase/listing/animes?postType=animes" to "Animes",
+        "$apiBase/posts?postType=any" to "Recientes"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = "${request.data}&postsPerPage=20&page=$page"
+        val url = "${request.data}&page=$page&postsPerPage=12&orderBy=latest&order=DESC"
+        println("$TAG: Cargando MainPage -> $url")
+
         val res = app.get(url).text
         if (!res.trim().startsWith("{")) return newHomePageResponse(request.name, emptyList(), false)
 
@@ -33,7 +45,7 @@ class LamovieProvider : MainAPI() {
 
         return newHomePageResponse(
             list = HomePageList(request.name, home, isHorizontalImages = false),
-            hasNext = json.data?.pagination?.nextPageUrl != null
+            hasNext = home.isNotEmpty()
         )
     }
 
@@ -47,24 +59,42 @@ class LamovieProvider : MainAPI() {
     }
 
     private fun Post.toSearchResult(): SearchResponse {
-        val poster = if (images?.poster?.startsWith("/") == true) "$mainUrl${images.poster}" else images?.poster
-        return if (type == "movies") {
-            newMovieSearchResponse(title ?: "", "$mainUrl/movies/$slug", TvType.Movie) {
+        val poster = fixImg(images?.poster)
+        val typeStr = type ?: "movies"
+
+        val tvType = when (typeStr) {
+            "movies" -> TvType.Movie
+            "animes" -> TvType.Anime
+            else -> TvType.TvSeries
+        }
+
+        val path = when (typeStr) {
+            "movies" -> "movies"
+            "animes" -> "animes"
+            else -> "series"
+        }
+
+        return if (tvType == TvType.Movie) {
+            newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) {
                 this.posterUrl = poster
             }
         } else {
-            newTvSeriesSearchResponse(title ?: "", "$mainUrl/series/$slug", TvType.TvSeries) {
+            newTvSeriesSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) {
                 this.posterUrl = poster
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val slug = url.split("/").last()
-        val type = if (url.contains("/series/")) "tvshows" else "movies"
+        val slug = url.split("/").filter { it.isNotEmpty() }.last()
+        val type = when {
+            url.contains("/series/") -> "tvshows"
+            url.contains("/animes/") -> "animes"
+            else -> "movies"
+        }
 
         val apiUrl = "$apiBase/single/$type?slug=$slug&postType=$type"
-        println("$TAG: Cargando detalles desde -> $apiUrl")
+        println("$TAG: Cargando info detallada -> $apiUrl")
 
         val res = app.get(apiUrl).text
         if (!res.trim().startsWith("{")) return null
@@ -72,8 +102,8 @@ class LamovieProvider : MainAPI() {
         val postData = parseJson<SinglePostResponse>(res).data ?: return null
 
         val title = postData.title ?: ""
-        val poster = if (postData.images?.poster?.startsWith("/") == true) "$mainUrl${postData.images.poster}" else postData.images?.poster
-        val backdrop = if (postData.images?.backdrop?.startsWith("/") == true) "$mainUrl${postData.images.backdrop}" else postData.images?.backdrop
+        val poster = fixImg(postData.images?.poster)
+        val backdrop = fixImg(postData.images?.backdrop)
 
         return if (type == "movies") {
             newMovieLoadResponse(title, url, TvType.Movie, postData.id.toString()) {
@@ -84,7 +114,8 @@ class LamovieProvider : MainAPI() {
                 addTrailer(postData.trailer)
             }
         } else {
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, emptyList()) {
+            val tvType = if (type == "animes") TvType.Anime else TvType.TvSeries
+            newTvSeriesLoadResponse(title, url, tvType, emptyList()) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.plot = postData.overview
@@ -99,36 +130,62 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val masterUrl = "https://p3.vimeos.zip/hls2/03/00007/p8h98thufoby_h/master.m3u8?t=C2JCqeI0GLk1xuUOJc6zqlsldcPOPv07l5LriqYZNro&s=1769651287&e=43200"
+        val playerUrl = "$apiBase/player?postId=$data&demo=0"
 
-        callback.invoke(
-            newExtractorLink(
-                source = this.name,
-                name = "$name Server",
-                url = masterUrl,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.quality = Qualities.Unknown.value
-                this.referer = "https://vimeos.net/"
+        val res = app.get(playerUrl).text
+        if (!res.trim().startsWith("{")) return false
+
+        val response = parseJson<PlayerResponse>(res)
+
+        response.data?.embeds?.forEach { embed ->
+            val url = embed.url ?: return@forEach
+
+            if (url.contains("vimeos.net")) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = "Vimeos",
+                        name = "Vimeos (${embed.lang ?: "Latino"})",
+                        url = url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "https://vimeos.net/"
+                        this.quality = when(embed.quality) {
+                            "Full HD" -> Qualities.P1080.value
+                            else -> Qualities.Unknown.value
+                        }
+                        this.headers = mapOf(
+                            "Origin" to "https://vimeos.net",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                        )
+                    }
+                )
+            } else {
+                loadExtractor(url, "https://la.movie/", subtitleCallback, callback)
             }
-        )
-
-        val subList = listOf(
-            "Español" to "spa",
-            "English" to "eng",
-            "Português" to "por"
-        )
-
-        subList.forEach { (name, langCode) ->
-            val subUrl = "https://s1.vimeos.net/vtt/03/00007/p8h98thufoby_$langCode.vtt"
-            subtitleCallback.invoke(newSubtitleFile(name, subUrl))
         }
 
         return true
     }
 
+    data class PlayerResponse(
+        val error: Boolean,
+        val data: PlayerData?
+    )
+
+    data class PlayerData(
+        val embeds: List<EmbedItem>?
+    )
+
+    data class EmbedItem(
+        val url: String?,
+        val server: String?,
+        val lang: String?,
+        val quality: String?
+    )
+
+    // --- Modelos ---
     data class ApiResponse(val data: DataContainer?)
-    data class SinglePostResponse(val data: Post?) 
+    data class SinglePostResponse(val data: Post?)
     data class DataContainer(val posts: List<Post>?, val pagination: Pagination?)
     data class Pagination(@JsonProperty("next_page_url") val nextPageUrl: String?)
     data class Post(
@@ -139,9 +196,7 @@ class LamovieProvider : MainAPI() {
         val overview: String?,
         val images: Images?,
         val trailer: String?,
-        @JsonProperty("release_date") val releaseDate: String?,
-        @JsonProperty("latest_episode") val latestEpisode: LatestEpisode?
+        @JsonProperty("release_date") val releaseDate: String?
     )
     data class Images(val poster: String?, val backdrop: String?)
-    data class LatestEpisode(val season: Int?, val episode: Int?)
 }
