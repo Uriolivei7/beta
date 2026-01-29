@@ -21,14 +21,12 @@ class LamovieProvider : MainAPI() {
 
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        // Limpiamos entidades HTML como &quot; y comillas
         var cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
 
         if (cleanUrl.contains("url(")) {
             cleanUrl = cleanUrl.substringAfter("url(").substringBefore(")").trim()
         }
 
-        // Forzamos calidad original en TMDB
         if (cleanUrl.contains("tmdb.org")) {
             cleanUrl = cleanUrl.replace(Regex("/t/p/w\\d+/"), "/t/p/original/")
         }
@@ -37,12 +35,7 @@ class LamovieProvider : MainAPI() {
             cleanUrl = "/wp-content/uploads/${cleanUrl.removePrefix("/")}"
         }
 
-        return when {
-            cleanUrl.startsWith("http") -> cleanUrl
-            cleanUrl.startsWith("//") -> "https:$cleanUrl"
-            cleanUrl.startsWith("/") -> "$mainUrl$cleanUrl"
-            else -> "$mainUrl/$cleanUrl"
-        }
+        return if (cleanUrl.startsWith("http")) cleanUrl else if (cleanUrl.startsWith("//")) "https:$cleanUrl" else if (cleanUrl.startsWith("/")) "$mainUrl$cleanUrl" else "$mainUrl/$cleanUrl"
     }
 
     override val mainPage = mainPageOf(
@@ -54,10 +47,7 @@ class LamovieProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}&page=$page&postsPerPage=12&orderBy=latest&order=DESC"
         val res = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
-        val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "FALLO LOG: Error en MainPage JSON -> ${e.message}")
-            null
-        }
+        val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) { null }
         val home = json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
         return newHomePageResponse(HomePageList(request.name, home), home.isNotEmpty())
     }
@@ -72,13 +62,8 @@ class LamovieProvider : MainAPI() {
     private fun Post.toSearchResult(): SearchResponse {
         val poster = fixImg(images?.poster ?: this.poster)
         val typeStr = type ?: "movies"
-        val tvType = when (typeStr) {
-            "movies" -> TvType.Movie
-            "animes" -> TvType.Anime
-            else -> TvType.TvSeries
-        }
+        val tvType = if (typeStr == "movies") TvType.Movie else if (typeStr == "animes") TvType.Anime else TvType.TvSeries
         val path = if (tvType == TvType.Movie) "peliculas" else if (tvType == TvType.Anime) "animes" else "series"
-
         return if (tvType == TvType.Movie) {
             newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
@@ -94,23 +79,23 @@ class LamovieProvider : MainAPI() {
             else -> "movies"
         }
 
-        val htmlResponse = app.get(url, headers = mapOf("User-Agent" to USER_AGENT))
-        val htmlText = htmlResponse.text
-        val doc = Jsoup.parse(htmlText)
-
         val apiRes = app.get("$apiBase/single/$type?slug=$slug&postType=$type", headers = mapOf("User-Agent" to USER_AGENT)).text
         val responseObj = try { parseJson<SinglePostResponse>(apiRes) } catch (e: Exception) { null }
         val postData = responseObj?.data ?: return null
         val id = postData.id ?: return null
         val title = postData.title ?: ""
 
-        // LOG DE PÓSTER: Buscamos el fondo grande (bg-image)
+        // LOG PÓSTER: Buscamos el fondo grande en el HTML
         var finalPoster = fixImg(postData.images?.poster ?: postData.poster)
-        val bgStyle = doc.selectFirst("div.bg-image")?.attr("style")
-        if (!bgStyle.isNullOrBlank()) {
-            finalPoster = fixImg(bgStyle)
-        }
-        Log.d(TAG, "LOG LOAD: URL del póster final utilizado -> $finalPoster")
+        try {
+            val html = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
+            val doc = Jsoup.parse(html)
+            val bgStyle = doc.selectFirst("div.bg-image")?.attr("style")
+            if (!bgStyle.isNullOrBlank()) {
+                finalPoster = fixImg(bgStyle)
+            }
+        } catch (e: Exception) { Log.e(TAG, "FALLO LOG: No se pudo obtener bg-image") }
+        Log.d(TAG, "LOG LOAD: URL del póster final -> $finalPoster")
 
         if (type == "movies") {
             return newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
@@ -120,17 +105,23 @@ class LamovieProvider : MainAPI() {
         } else {
             val episodesList = mutableListOf<Episode>()
 
-            val seasonsFromApi = postData.seasons ?: postData.seasons_list ?: emptyList()
-            val seasonsFromHtml = doc.select("div.seasons-list button[data-season]").mapNotNull { it.attr("data-season") }
+            // 1. Llamada inicial a la T1 para detectar el resto de temporadas
+            val firstSeasonUrl = "$apiBase/single/episodes/list?_id=$id&season=1&page=1&postsPerPage=50"
+            val firstSeasonRes = app.get(firstSeasonUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
+            val firstSeasonData = try { parseJson<EpisodeListResponse>(firstSeasonRes) } catch (e: Exception) { null }
 
-            val finalSeasons = (seasonsFromApi + seasonsFromHtml).distinct().filter { it.isNotBlank() }
-            Log.d(TAG, "LOG LOAD: Temporadas combinadas (API + HTML) -> $finalSeasons")
+            // Obtenemos temporadas de la API, si viene vacío probamos con [1, 2] como fallback
+            val apiSeasons = firstSeasonData?.data?.seasons ?: emptyList()
+            val finalSeasons = if (apiSeasons.isEmpty()) listOf("1", "2") else apiSeasons
+
+            Log.d(TAG, "LOG LOAD: Temporadas a procesar -> $finalSeasons")
 
             finalSeasons.forEach { sNumStr ->
                 try {
                     val sNum = sNumStr.toIntOrNull() ?: return@forEach
-                    val epUrl = "$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50"
-                    val epRes = app.get(epUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
+                    val epRes = if (sNum == 1) firstSeasonRes else {
+                        app.get("$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50", headers = mapOf("User-Agent" to USER_AGENT)).text
+                    }
                     val epData = parseJson<EpisodeListResponse>(epRes)
 
                     epData.data?.posts?.forEach { epItem ->
@@ -143,9 +134,9 @@ class LamovieProvider : MainAPI() {
                             this.episode = epItem.episode_number
                         })
                     }
-                    Log.d(TAG, "LOG LOAD: Temporada $sNum OK -> ${epData.data?.posts?.size ?: 0} eps")
+                    Log.d(TAG, "LOG LOAD: Temporada $sNum cargada OK")
                 } catch (e: Exception) {
-                    Log.e(TAG, "FALLO LOG: Error cargando temporada $sNumStr -> ${e.message}")
+                    Log.e(TAG, "FALLO LOG: Error en temporada $sNumStr")
                 }
             }
 
@@ -156,12 +147,7 @@ class LamovieProvider : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
         val res = app.get(playerUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
@@ -187,7 +173,10 @@ class LamovieProvider : MainAPI() {
     )
     data class Images(val poster: String?)
     data class EpisodeListResponse(val data: EpisodeListData?)
-    data class EpisodeListData(val posts: List<EpisodePostItem>?)
+    data class EpisodeListData(
+        val posts: List<EpisodePostItem>?,
+        val seasons: List<String>? // ¡IMPORTANTE! Esto faltaba para detectar temporadas
+    )
     data class EpisodePostItem(@JsonProperty("_id") val id: Int?, val title: String?, val episode_number: Int?)
     data class PlayerResponse(val data: PlayerData?)
     data class PlayerData(val embeds: List<EmbedItem>?)
