@@ -6,9 +6,11 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.fixUrl
 import com.lagradost.cloudstream3.utils.getAndUnpack
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 class Vimeos : ExtractorApi() {
@@ -23,20 +25,16 @@ class Vimeos : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val embedUrl = getEmbedUrl(url)
-        Log.i("LaMovie", "LOG: Cargando Embed de Vimeos -> $embedUrl")
+        Log.i("LaMovie", "LOG: Cargando Vimeos -> $embedUrl")
 
-        val res = app.get(embedUrl, referer = referer)
+        val res = app.get(embedUrl, referer = "https://la.movie/")
         val doc = res.document
+        val unpackedJs = unpackJs(doc) ?: ""
 
-        val unpackedJs = unpackJs(doc)
+        val videoUrl = Regex("""["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
-        if (unpackedJs.isNullOrBlank()) {
-            Log.e("LaMovie", "LOG ERROR: No se pudo desempaquetar el JS de Vimeos")
-            return
-        }
-
-        val videoUrl = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
-        val subUrl = Regex("""file\s*:\s*["']([^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
+        val subUrl = Regex("""["'](https?://[^"']+/vtt/[^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
+            ?: Regex("""["']([^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
         if (!subUrl.isNullOrBlank()) {
             val finalSub = fixUrl(subUrl)
@@ -48,19 +46,34 @@ class Vimeos : ExtractorApi() {
                     url = finalSub
                 )
             )
-        } else {
-            Log.w("LaMovie", "LOG WARNING: No se encontró la ruta del subtítulo .vtt en el JS")
         }
 
         if (videoUrl != null) {
-            Log.i("LaMovie", "LOG: Generando enlaces M3U8 para Vimeos")
+            Log.i("LaMovie", "LOG: Generando enlaces con newExtractorLink...")
+
             M3u8Helper.generateM3u8(
                 this.name,
                 fixUrl(videoUrl),
-                "$mainUrl/",
-            ).forEach(callback)
+                "https://vimeos.net/",
+            ).forEach { link ->
+                callback.invoke(
+                    newExtractorLink(
+                        source = link.source,
+                        name = link.name,
+                        url = link.url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.quality = link.quality
+                        this.referer = "https://vimeos.net/"
+                        this.headers = mapOf(
+                            "Origin" to "https://vimeos.net",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        )
+                    }
+                )
+            }
         } else {
-            Log.e("LaMovie", "LOG ERROR: No se encontró enlace de video (.m3u8)")
+            Log.e("LaMovie", "LOG ERROR: No se encontró video M3U8 en el JS")
         }
     }
 
