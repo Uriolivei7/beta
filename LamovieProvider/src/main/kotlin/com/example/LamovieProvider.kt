@@ -36,14 +36,24 @@ class LamovieProvider : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, home), home.isNotEmpty())
     }
 
+    // --- FUNCIÓN DE BÚSQUEDA AÑADIDA ---
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = "$apiBase/search?postType=any&q=${query.replace(" ", "+")}&postsPerPage=26"
+        val res = app.get(url).text
+        val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) { null }
+        return json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
+    }
+
     private fun Post.toSearchResult(): SearchResponse {
         val poster = fixImg(images?.poster ?: this.poster)
-        val tvType = when (type) {
+        val typeStr = type ?: "movies"
+        val tvType = when (typeStr) {
             "movies" -> TvType.Movie
             "animes" -> TvType.Anime
             else -> TvType.TvSeries
         }
         val path = if (tvType == TvType.Movie) "movies" else if (tvType == TvType.Anime) "animes" else "series"
+
         return if (tvType == TvType.Movie) {
             newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
@@ -76,7 +86,6 @@ class LamovieProvider : MainAPI() {
             }
         } else {
             val episodesList = mutableListOf<Episode>()
-            // Obtenemos la lista de temporadas (ej: ["1", "2"])
             val seasonNumbers = postData.seasons_list ?: listOf("1")
 
             seasonNumbers.forEach { sNumStr ->
@@ -110,7 +119,7 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Limpiamos el ID por si viene una URL
+        // Limpiamos el ID por si viene una URL completa del episodio
         val cleanId = data.substringAfterLast("/")
         val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
 
@@ -119,16 +128,16 @@ class LamovieProvider : MainAPI() {
 
         response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
-            // Forzamos el referer correcto
             loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
         }
         return true
     }
 
-    // --- MODELOS ---
+    // --- MODELOS DE DATOS ---
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
+
     data class Post(
         @JsonProperty("_id") val id: Int?,
         val title: String?,
@@ -141,6 +150,7 @@ class LamovieProvider : MainAPI() {
         @JsonProperty("release_date") val releaseDate: String?,
         @JsonProperty("seasons") val seasons_list: List<String>?
     )
+
     data class Images(val poster: String?, val backdrop: String?)
     data class EpisodeListResponse(val data: EpisodeListData?)
     data class EpisodeListData(val posts: List<EpisodePostItem>?)
@@ -150,6 +160,7 @@ class LamovieProvider : MainAPI() {
         val still_path: String?,
         val episode_number: Int?
     )
+
     data class PlayerResponse(val data: PlayerData?)
     data class PlayerData(val embeds: List<EmbedItem>?)
     data class EmbedItem(val url: String?)
