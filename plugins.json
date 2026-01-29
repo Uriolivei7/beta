@@ -410,7 +410,7 @@
     "status": 1,
     "version": 1,
     "apiVersion": 1,
-    "name": "LaMovie",
+    "name": "La.Movie",
     "internalName": "LamovieProvider",
     "authors": ["Ranita"],
     "description": "Plugin para Series, Peliculas y Animes",
