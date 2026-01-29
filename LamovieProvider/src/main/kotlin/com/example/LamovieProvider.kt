@@ -116,14 +116,13 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i(TAG, "Solicitando links para ID -> $data")
-
-        val cleanId = data.substringAfterLast("/")
+        // CORRECCIÓN 1: Limpieza agresiva del ID para que sea solo el número
+        val cleanId = if (data.contains("/")) data.substringAfterLast("/") else data
         val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
 
-        val res = app.get(playerUrl).text
-        Log.i(TAG, "Respuesta API Player -> $res")
+        Log.i(TAG, "URL Player Final -> $playerUrl")
 
+        val res = app.get(playerUrl).text
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
 
         response?.data?.embeds?.forEach { embed ->
@@ -133,12 +132,20 @@ class LamovieProvider : MainAPI() {
             if (embedUrl.contains("vimeos.net")) {
                 try {
                     val embedHtml = app.get(embedUrl, referer = "https://vimeos.net/").text
+
+                    // CORRECCIÓN 2: Regex mejorado para capturar video y subs
                     val masterUrl = Regex("""file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
-                    val subUrl = Regex("""file\s*:\s*["'](https?://[^"']+\.vtt[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
+                    // Buscamos el .vtt (algunas veces el campo se llama 'file' dentro de 'tracks')
+                    val subUrl = Regex("""["']?file["']?\s*:\s*["'](https?://[^"']+\.vtt[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
 
                     if (subUrl != null) {
-                        Log.i(TAG, "Subtítulo encontrado: $subUrl")
-                        subtitleCallback.invoke(SubtitleFile("Español", subUrl))
+                        Log.i(TAG, "Subtítulo capturado con éxito: $subUrl")
+                        subtitleCallback.invoke(
+                            newSubtitleFile(
+                                lang = "Español",
+                                url = subUrl
+                            )
+                        )
                     }
 
                     if (masterUrl != null) {
@@ -155,9 +162,10 @@ class LamovieProvider : MainAPI() {
                         )
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error en Vimeos: ${e.message}")
+                    Log.e(TAG, "Error extrayendo de Vimeos: ${e.message}")
                 }
             } else {
+                // Servidores estándar (Voe, Filemoon, etc.)
                 loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
             }
         }
