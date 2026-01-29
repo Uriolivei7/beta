@@ -83,10 +83,17 @@ class LamovieProvider : MainAPI() {
         }
 
         val apiUrl = "$apiBase/single/$type?slug=$slug&postType=$type"
+        println("$TAG: Cargando detalle desde -> $apiUrl")
+
         val res = app.get(apiUrl).text
         if (!res.trim().startsWith("{")) return null
 
         val postData = parseJson<SinglePostResponse>(res).data ?: return null
+
+        // LOGS DE DEPURACIÓN
+        println("$TAG: Post ID -> ${postData.id}")
+        println("$TAG: Temporadas en JSON -> ${postData.seasons?.size ?: "NULAS"}")
+
         val title = postData.title ?: ""
         val poster = fixImg(postData.images?.poster ?: postData.poster)
         val backdrop = fixImg(postData.images?.backdrop ?: postData.backdrop)
@@ -105,6 +112,8 @@ class LamovieProvider : MainAPI() {
 
             postData.seasons?.forEach { season ->
                 val sNum = season.number ?: 1
+                println("$TAG: Procesando temporada $sNum con ${season.episodes?.size ?: 0} episodios")
+
                 season.episodes?.forEach { ep ->
                     episodesList.add(newEpisode(ep.id.toString()) {
                         this.name = ep.title
@@ -131,14 +140,18 @@ class LamovieProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
+        println("$TAG: Solicitando links (loadLinks) para ID -> $data")
+        println("$TAG: URL Player -> $playerUrl")
+
         val res = app.get(playerUrl).text
-        println("$TAG: Cargando links para ID -> $data")
+        println("$TAG: Respuesta API Player -> $res")
 
         if (!res.trim().startsWith("{")) return false
-        val response = parseJson<PlayerResponse>(res)
+        val response = try { parseJson<PlayerResponse>(res) } catch(e: Exception) { null }
 
-        response.data?.embeds?.forEach { embed ->
+        response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
+            println("$TAG: Procesando embed -> $embedUrl")
 
             if (embedUrl.contains("vimeos.net")) {
                 val embedHtml = app.get(embedUrl, referer = "https://vimeos.net/").text
@@ -168,6 +181,7 @@ class LamovieProvider : MainAPI() {
         return true
     }
 
+    // --- MODELOS DE DATOS MEJORADOS ---
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
 
@@ -190,7 +204,7 @@ class LamovieProvider : MainAPI() {
 
     data class Season(
         val number: Int?,
-        @JsonProperty("episodes") val episodes: List<EpisodeItem>?
+        val episodes: List<EpisodeItem>? // Quitamos la anotación para probar mapeo automático
     )
 
     data class EpisodeItem(
@@ -202,5 +216,9 @@ class LamovieProvider : MainAPI() {
 
     data class PlayerResponse(val data: PlayerData?)
     data class PlayerData(val embeds: List<EmbedItem>?)
-    data class EmbedItem(val url: String?, val lang: String?)
+    data class EmbedItem(
+        val url: String?,
+        val lang: String?,
+        val quality: String? // Añadido quality por si acaso
+    )
 }
