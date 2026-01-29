@@ -71,20 +71,21 @@ class CinehdplusProvider : MainAPI() {
         val trailer = doc.selectFirst("#OptYt iframe")?.attr("data-src")?.replaceFirst("https://www.youtube.com/embed/","https://www.youtube.com/watch?v=")
         val recommendations = doc.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
 
-        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonElement: Element ->
+        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonElement ->
             val seasonNum = seasonElement.attr("id").replaceFirst("season-", "").toIntOrNull()
-            seasonElement.select(".episodios_list li").asIterable().mapIndexed { idx, epi ->
+            seasonElement.select(".episodios_list li").mapIndexed { idx, epi ->
                 val epUrl = epi.selectFirst("a")?.attr("href") ?: ""
                 val epImgElement = epi.selectFirst("figure img")
                 val epTitle = epImgElement?.attr("alt")
                 val epImg = epImgElement?.attr("src")
+
                 newEpisode(epUrl) {
                     this.name = epTitle
                     this.season = seasonNum
                     this.episode = idx + 1
                     this.posterUrl = epImg
                 }
-            }
+            }.toList()
         }
 
         return when (tvType) {
@@ -192,19 +193,18 @@ suspend fun loadSourceNameExtractor(
         val nombreFinal = "CineHD+ $idiomaLabel [${link.source}] $calidadLabel".trim()
 
         kotlinx.coroutines.runBlocking {
-            callback.invoke(
-                newExtractorLink(
-                    source = nombreFinal,
-                    name = nombreFinal,
-                    url = link.url,
-                    type = link.type
-                ) {
-                    this.quality = link.quality
-                    this.referer = link.referer ?: referer ?: ""
-                    this.headers = link.headers
-                    this.extractorData = link.extractorData
-                }
-            )
+            val extractorLink = newExtractorLink(
+                source = nombreFinal,
+                name = nombreFinal,
+                url = link.url,
+                type = link.type
+            ) {
+                this.quality = link.quality
+                this.referer = link.referer ?: referer ?: ""
+                this.headers = link.headers
+                this.extractorData = link.extractorData
+            }
+            callback.invoke(extractorLink)
         }
     }
 }
