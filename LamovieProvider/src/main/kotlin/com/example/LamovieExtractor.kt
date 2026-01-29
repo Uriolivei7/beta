@@ -4,14 +4,8 @@ import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
-import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.fixUrl
-import com.lagradost.cloudstream3.utils.getAndUnpack
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import org.jsoup.nodes.Element
+import com.lagradost.cloudstream3.utils.*
+import org.jsoup.nodes.Document
 
 class Vimeos : ExtractorApi() {
     override val name = "Vimeos"
@@ -33,24 +27,40 @@ class Vimeos : ExtractorApi() {
 
         val videoUrl = Regex("""["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
-        val subUrl = Regex("""["'](https?://[^"']+/vtt/[^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
-            ?: Regex("""["']([^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
+        val subData = Regex("""["']([^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
-        if (!subUrl.isNullOrBlank()) {
-            val finalSub = fixUrl(subUrl)
-            Log.i("LaMovie", "LOG: ¡Subtítulo detectado! -> $finalSub")
+        if (!subData.isNullOrBlank()) {
+            Log.i("LaMovie", "LOG: Procesando cadena de subs: $subData")
 
-            subtitleCallback.invoke(
-                newSubtitleFile(
-                    lang = "Español",
-                    url = finalSub
-                )
-            )
+            subData.split(",").forEach { rawSub ->
+                try {
+                    val langLabel = Regex("""\[([^\]]+)\]""").find(rawSub)?.groupValues?.get(1) ?: "Español"
+
+                    val cleanSubUrl = if (rawSub.contains("]")) {
+                        rawSub.substringAfter("]").trim()
+                    } else {
+                        rawSub.trim()
+                    }
+
+                    if (cleanSubUrl.startsWith("http")) {
+                        Log.i("LaMovie", "LOG: Subtítulo limpio detectado ($langLabel) -> $cleanSubUrl")
+                        subtitleCallback.invoke(
+                            newSubtitleFile(
+                                lang = langLabel,
+                                url = cleanSubUrl
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("LaMovie", "LOG ERROR: Error procesando subtítulo individual: ${e.message}")
+                }
+            }
+        } else {
+            Log.w("LaMovie", "LOG WARNING: No se encontraron subtítulos en el JS")
         }
 
         if (videoUrl != null) {
             Log.i("LaMovie", "LOG: Generando enlaces con newExtractorLink...")
-
             M3u8Helper.generateM3u8(
                 this.name,
                 fixUrl(videoUrl),
@@ -77,7 +87,7 @@ class Vimeos : ExtractorApi() {
         }
     }
 
-    private fun unpackJs(doc: org.jsoup.nodes.Document): String? {
+    private fun unpackJs(doc: Document): String? {
         val script = doc.select("script").find { it.data().contains("eval(function(p,a,c,k,e,d)") }
         return if (script != null) {
             Log.i("LaMovie", "LOG: Script empaquetado detectado, procediendo a Unpack")
@@ -114,7 +124,7 @@ class GoodstreamExtractor : ExtractorApi() {
         doc.select("script").forEach { script ->
             val data = script.data()
             if (data.contains("file:")) {
-                val urlRegex = Regex("""file\s*:\s*"([^"]+\.m3u8[^"]*)"""")
+                val urlRegex = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""")
                 urlRegex.find(data)?.groupValues?.get(1)?.let { link ->
                     Log.i("LaMovie", "LOG: Enlace M3U8 encontrado en Goodstream")
                     M3u8Helper.generateM3u8(
