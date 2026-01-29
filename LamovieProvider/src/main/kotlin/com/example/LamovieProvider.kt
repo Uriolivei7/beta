@@ -61,7 +61,7 @@ class LamovieProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.i(TAG, "Cargando metadatos de: $url")
+        Log.i(TAG, "Iniciando carga de URL: $url")
         val slug = url.trimEnd('/').split("/").last()
         val type = when {
             url.contains("/series/") -> "tvshows"
@@ -73,38 +73,56 @@ class LamovieProvider : MainAPI() {
         val postData = parseJson<SinglePostResponse>(res).data ?: return null
         val id = postData.id ?: return null
 
-        val title = postData.title ?: ""
-        val poster = fixImg(postData.images?.poster ?: postData.poster)
-
-        Log.i(TAG, "ID encontrado: $id para $title")
+        Log.i(TAG, "ID Principal detectado: $id")
 
         if (type == "movies") {
-            return newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
-                this.posterUrl = poster
+            return newMovieLoadResponse(postData.title ?: "", url, TvType.Movie, id.toString()) {
+                this.posterUrl = fixImg(postData.images?.poster ?: postData.poster)
                 this.plot = postData.overview
             }
         } else {
             val episodesList = mutableListOf<Episode>()
-            val seasonNumbers = postData.seasons_list ?: listOf("1")
 
-            seasonNumbers.forEach { sNumStr ->
+            // Log para ver qué temporadas reporta el sitio
+            Log.i(TAG, "Temporadas reportadas en JSON: ${postData.seasons_list}")
+
+            // Si seasons_list es nulo o vacío, intentamos forzar la búsqueda de la T1 a la T10
+            val seasons = if (postData.seasons_list.isNullOrEmpty()) listOf("1", "2", "3") else postData.seasons_list
+
+            seasons.forEach { sNumStr ->
+                val sNum = sNumStr.toIntOrNull() ?: return@forEach
+                val epUrl = "$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50"
+
+                Log.i(TAG, "Consultando API Temporada $sNum: $epUrl")
+
                 try {
-                    val sNum = sNumStr.toIntOrNull() ?: 1
-                    val epRes = app.get("$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50").text
+                    val epRes = app.get(epUrl).text
+                    // Log de la respuesta cruda para ver si hay episodios realmente
+                    Log.i(TAG, "Respuesta Temporada $sNum: ${epRes.take(100)}...")
+
                     val epData = parseJson<EpisodeListResponse>(epRes)
-                    epData.data?.posts?.forEach { epItem ->
-                        episodesList.add(newEpisode(epItem.id.toString()) {
-                            this.name = epItem.title
-                            this.season = sNum
-                            this.episode = epItem.episode_number
-                        })
+                    val posts = epData.data?.posts
+
+                    if (posts.isNullOrEmpty()) {
+                        Log.w(TAG, "No se encontraron episodios para la Temporada $sNum")
+                    } else {
+                        posts.forEach { epItem ->
+                            episodesList.add(newEpisode(epItem.id.toString()) {
+                                this.name = epItem.title
+                                this.season = sNum
+                                this.episode = epItem.episode_number
+                            })
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error en temporada $sNumStr: ${e.message}")
+                    Log.e(TAG, "Error en Temporada $sNum: ${e.message}")
                 }
             }
-            return newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
-                this.posterUrl = poster
+
+            Log.i(TAG, "Total episodios cargados: ${episodesList.size}")
+
+            return newTvSeriesLoadResponse(postData.title ?: "", url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
+                this.posterUrl = fixImg(postData.images?.poster ?: postData.poster)
                 this.plot = postData.overview
             }
         }
@@ -116,39 +134,33 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // CORRECCIÓN 1: Limpieza agresiva del ID para que sea solo el número
-        val cleanId = if (data.contains("/")) data.substringAfterLast("/") else data
+        val cleanId = data.substringAfterLast("/")
         val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
 
-        Log.i(TAG, "URL Player Final -> $playerUrl")
+        Log.i(TAG, "Cargando links desde: $playerUrl")
 
         val res = app.get(playerUrl).text
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
 
         response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
-            Log.i(TAG, "Procesando embed -> $embedUrl")
 
             if (embedUrl.contains("vimeos.net")) {
                 try {
+                    // Agregamos User-Agent para evitar bloqueos en el fetch del HTML
                     val embedHtml = app.get(embedUrl, referer = "https://vimeos.net/").text
 
-                    // CORRECCIÓN 2: Regex mejorado para capturar video y subs
-                    val masterUrl = Regex("""file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
-                    // Buscamos el .vtt (algunas veces el campo se llama 'file' dentro de 'tracks')
-                    val subUrl = Regex("""["']?file["']?\s*:\s*["'](https?://[^"']+\.vtt[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
+                    // Regex ultra-flexible para HLS y VTT
+                    val masterUrl = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
+                    val subUrl = Regex("""file\s*:\s*["']([^"']+\.vtt[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
 
-                    if (subUrl != null) {
-                        Log.i(TAG, "Subtítulo capturado con éxito: $subUrl")
-                        subtitleCallback.invoke(
-                            newSubtitleFile(
-                                lang = "Español",
-                                url = subUrl
-                            )
-                        )
+                    if (!subUrl.isNullOrBlank()) {
+                        Log.i(TAG, "Subtítulo encontrado: $subUrl")
+                        subtitleCallback.invoke(newSubtitleFile("Español", subUrl))
                     }
 
                     if (masterUrl != null) {
+                        Log.i(TAG, "Link Maestro Vimeos: $masterUrl")
                         callback.invoke(
                             newExtractorLink(
                                 source = "Vimeos",
@@ -156,16 +168,16 @@ class LamovieProvider : MainAPI() {
                                 url = masterUrl,
                                 type = ExtractorLinkType.M3U8
                             ) {
+                                // Bloque de configuración (initializer)
                                 this.quality = Qualities.P1080.value
                                 this.referer = "https://vimeos.net/"
                             }
                         )
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error extrayendo de Vimeos: ${e.message}")
+                    Log.e(TAG, "Error en Vimeos ID $cleanId: ${e.message}")
                 }
             } else {
-                // Servidores estándar (Voe, Filemoon, etc.)
                 loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
             }
         }
