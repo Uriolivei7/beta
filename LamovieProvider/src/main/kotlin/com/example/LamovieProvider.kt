@@ -83,23 +83,16 @@ class LamovieProvider : MainAPI() {
         }
 
         val apiUrl = "$apiBase/single/$type?slug=$slug&postType=$type"
-        println("$TAG: Cargando detalle desde -> $apiUrl")
-
         val res = app.get(apiUrl).text
-        if (!res.trim().startsWith("{")) return null
-
         val postData = parseJson<SinglePostResponse>(res).data ?: return null
-
-        // LOGS DE DEPURACIÓN
-        println("$TAG: Post ID -> ${postData.id}")
-        println("$TAG: Temporadas en JSON -> ${postData.seasons?.size ?: "NULAS"}")
 
         val title = postData.title ?: ""
         val poster = fixImg(postData.images?.poster ?: postData.poster)
         val backdrop = fixImg(postData.images?.backdrop ?: postData.backdrop)
+        val id = postData.id ?: return null
 
-        return if (type == "movies") {
-            newMovieLoadResponse(title, url, TvType.Movie, postData.id.toString()) {
+        if (type == "movies") {
+            return newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.plot = postData.overview
@@ -107,24 +100,33 @@ class LamovieProvider : MainAPI() {
                 addTrailer(postData.trailer)
             }
         } else {
-            val tvType = if (type == "animes") TvType.Anime else TvType.TvSeries
             val episodesList = mutableListOf<Episode>()
 
-            postData.seasons?.forEach { season ->
-                val sNum = season.number ?: 1
-                println("$TAG: Procesando temporada $sNum con ${season.episodes?.size ?: 0} episodios")
+            // 1. Obtenemos las temporadas disponibles (la API devuelve ["2", "1"] según tu curl)
+            // Usamos un fallback por si el campo se llama distinto
+            val seasonNumbers = postData.seasons_list ?: listOf("1")
 
-                season.episodes?.forEach { ep ->
-                    episodesList.add(newEpisode(ep.id.toString()) {
-                        this.name = ep.title
-                        this.episode = ep.number
-                        this.season = sNum
-                        this.posterUrl = fixImg(ep.image)
-                    })
+            // 2. Por cada temporada, hacemos la petición a la sub-API de episodios
+            seasonNumbers.forEach { sNumStr ->
+                try {
+                    val sNum = sNumStr.toIntOrNull() ?: 1
+                    val epRes = app.get("$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=100").text
+                    val epData = parseJson<EpisodeListResponse>(epRes)
+
+                    epData.data?.posts?.forEach { epItem ->
+                        episodesList.add(newEpisode(epItem.id.toString()) {
+                            this.name = epItem.title
+                            this.season = epItem.season_number ?: sNum
+                            this.episode = epItem.episode_number
+                            this.posterUrl = fixImg(epItem.still_path)
+                        })
+                    }
+                } catch (e: Exception) {
+                    println("$TAG: Error cargando temporada $sNumStr -> ${e.message}")
                 }
             }
 
-            newTvSeriesLoadResponse(title, url, tvType, episodesList) {
+            return newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.plot = postData.overview
@@ -186,6 +188,18 @@ class LamovieProvider : MainAPI() {
     data class DataContainer(val posts: List<Post>?)
 
     data class SinglePostResponse(val data: Post?)
+
+    data class EpisodeListResponse(val data: EpisodeListData?)
+    data class EpisodeListData(val posts: List<EpisodePostItem>?, val seasons: List<String>?)
+
+    data class EpisodePostItem(
+        @JsonProperty("_id") val id: Int?,
+        val title: String?,
+        val still_path: String?,
+        val season_number: Int?,
+        val episode_number: Int?
+    )
+
     data class Post(
         @JsonProperty("_id") val id: Int?,
         val title: String?,
@@ -197,7 +211,7 @@ class LamovieProvider : MainAPI() {
         val backdrop: String?,
         val trailer: String?,
         @JsonProperty("release_date") val releaseDate: String?,
-        val seasons: List<Season>?
+        @JsonProperty("seasons") val seasons_list: List<String>?
     )
 
     data class Images(val poster: String?, val backdrop: String?)
