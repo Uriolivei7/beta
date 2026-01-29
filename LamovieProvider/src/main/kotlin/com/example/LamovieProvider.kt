@@ -127,43 +127,71 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Usamos postId=$data y demo=0 tal como en tu curl exitoso
-        val playerUrl = "$apiBase/player?postId=$data&demo=0"
-        Log.d(TAG, "LOG LINKS: Solicitando reproductores para ID $data")
+        // 1. Limpiamos el ID: Si nos llega una URL (ej: https://la.movie/5912), extraemos solo el 5912
+        val cleanId = data.trimEnd('/').split("/").last()
+        val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
+
+        Log.d(TAG, "LOG LINKS: Solicitando reproductores para ID limpio: $cleanId")
 
         val res = app.get(playerUrl, headers = mapOf(
             "accept" to "application/json",
-            "accept-language" to "es-ES,es;q=0.6",
-            "cache-control" to "no-cache",
-            "pragma" to "no-cache",
-            "referer" to "$mainUrl/", // Referer base
-            "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Brave\";v=\"144\"",
-            "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
-            "sec-fetch-dest" to "empty",
-            "sec-fetch-mode" to "cors",
-            "sec-fetch-site" to "same-origin",
+            "referer" to "$mainUrl/",
             "user-agent" to USER_AGENT
         )).text
 
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "FALLO LOG: Error parseando JSON de links -> ${e.message}")
+            Log.e(TAG, "FALLO LOG: Error parseando JSON -> ${e.message}")
             null
         }
 
-        // Procesamos tanto embeds como downloads (por si acaso)
+        // Procesamos Embeds
         response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
-            Log.d(TAG, "LOG LINKS: Pasando al extractor -> $embedUrl")
 
-            // Al estar registrados en el Plugin, loadExtractor los encontrará por dominio
+            // 2. Manejo especial para el reproductor interno de la.movie/embed.html
+            if (embedUrl.contains("la.movie/embed.html")) {
+                Log.d(TAG, "LOG LINKS: Detectado reproductor interno -> $embedUrl")
+                try {
+                    val embedHtml = app.get(embedUrl, referer = "$mainUrl/").text
+                    val doc = Jsoup.parse(embedHtml)
+
+                    // Opción A: Buscar un iframe interno
+                    val internalIframe = doc.select("iframe").attr("src")
+                    if (internalIframe.isNotBlank()) {
+                        loadExtractor(internalIframe, embedUrl, subtitleCallback, callback)
+                    }
+                    // Opción B: Buscar un enlace de video directo en scripts
+                    else if (embedHtml.contains(".m3u8")) {
+                        val m3u8 = Regex("""["'](http[^"']+\.m3u8[^"']*)["']""").find(embedHtml)?.groupValues?.get(1)
+                        if (m3u8 != null) {
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = "LaMovie Internal",
+                                    name = "Directo",
+                                    url = m3u8,
+                                    type = ExtractorLinkType.M3U8 // Aquí definimos que es un stream
+                                ) {
+                                    this.quality = Qualities.Unknown.value
+                                    this.referer = embedUrl
+                                }
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "FALLO LOG: Error en embed interno -> ${e.message}")
+                }
+                return@forEach
+            }
+
+            // 3. Extractores normales (Vimeos, Goodstream, etc.)
+            Log.d(TAG, "LOG LINKS: Pasando al extractor -> $embedUrl")
             loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
         }
 
-        // Opcional: Si quieres que también salgan los links de descarga (Mega, etc)
+        // 4. También procesamos Downloads por si hay enlaces de Mega/Mediafire
         response?.data?.downloads?.forEach { download ->
             val downloadUrl = download.url ?: return@forEach
-            Log.d(TAG, "LOG LINKS: Link de descarga detectado -> $downloadUrl")
+            Log.d(TAG, "LOG LINKS: Probando descarga -> $downloadUrl")
             loadExtractor(downloadUrl, "$mainUrl/", subtitleCallback, callback)
         }
 
