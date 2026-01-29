@@ -10,10 +10,10 @@ import org.jsoup.Jsoup
 class LamovieProvider : MainAPI() {
     override var mainUrl = "https://la.movie"
     override var name = "La.Movie"
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasQuickSearch = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama, TvType.Cartoon)
 
     private val apiBase = "$mainUrl/wp-api/v1"
     private val TAG = "LaMovie"
@@ -132,7 +132,6 @@ class LamovieProvider : MainAPI() {
 
         Log.i(TAG, "LOG: --- INICIANDO CARGA DE ENLACES PARA ID $cleanId ---")
 
-        // Agregamos Referer para evitar bloqueos 403
         val res = try {
             app.get(playerUrl, headers = mapOf("Referer" to "$mainUrl/")).text
         } catch (e: Exception) {
@@ -148,7 +147,6 @@ class LamovieProvider : MainAPI() {
         response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
 
-            // PARCHE: Si el enlace es interno de la.movie, extraemos el video real
             if (embedUrl.contains("la.movie/embed.html")) {
                 Log.i(TAG, "LOG: Procesando reproductor interno: $embedUrl")
                 try {
@@ -165,7 +163,6 @@ class LamovieProvider : MainAPI() {
             loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
         }
 
-        // Opcional: Procesar descargas como respaldo
         response?.data?.downloads?.forEach { download ->
             download.url?.let { loadExtractor(it, "$mainUrl/", subtitleCallback, callback) }
         }
@@ -177,7 +174,7 @@ class LamovieProvider : MainAPI() {
     data class PlayerResponse(val data: PlayerData?)
     data class PlayerData(
         val embeds: List<EmbedItem>?,
-        val downloads: List<EmbedItem>? // Reutilizamos EmbedItem si tienen la misma estructura
+        val downloads: List<EmbedItem>?
     )
     data class EmbedItem(
         val url: String?,
@@ -188,7 +185,16 @@ class LamovieProvider : MainAPI() {
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
-    data class Post(@JsonProperty("_id") val id: Int?, val title: String?, val slug: String?, val type: String?, val overview: String?, val images: Images?, val poster: String?)
+
+    data class Post(
+        @JsonProperty("_id")
+        val id: Int?, val title: String?,
+        val slug: String?,
+        val type: String?,
+        val overview: String?,
+        val images: Images?,
+        val poster: String?)
+
     data class Images(val poster: String?)
     data class EpisodeListResponse(val data: EpisodeListData?)
     data class EpisodeListData(val posts: List<EpisodePostItem>?, val seasons: List<String>?)
