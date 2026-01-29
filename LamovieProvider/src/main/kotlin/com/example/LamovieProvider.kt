@@ -130,8 +130,12 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // 1. Obtenemos los embeds de la API usando el ID del post
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
         val res = app.get(playerUrl).text
+
+        // Log para verificar qué responde la API
+        println("$TAG: Respuesta Player API -> $res")
 
         if (!res.trim().startsWith("{")) return false
 
@@ -141,27 +145,45 @@ class LamovieProvider : MainAPI() {
             val embedUrl = embed.url ?: return@forEach
 
             if (embedUrl.contains("vimeos.net")) {
-                val videoId = embedUrl.substringAfter("embed-").substringBefore(".html")
+                // 2. Cargamos el HTML del embed. Usamos los headers que vimos en tu CURL
+                val embedHtml = app.get(
+                    embedUrl,
+                    referer = "$mainUrl/",
+                    headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36")
+                ).text
 
-                val masterUrl = "https://p2.vimeos.zip/hls2/03/00008/${videoId}_h/master.m3u8"
+                // 3. Buscamos el link del MASTER M3U8 dentro del HTML
+                // Intentamos con tres patrones diferentes por si cambia el nombre de la variable
+                val masterUrl = Regex("""file\s*:\s*["'](https?://[^"']+.m3u8[^"']*)["']""")
+                    .find(embedHtml)?.groupValues?.get(1)
+                    ?: Regex("""source\s*:\s*["'](https?://[^"']+.m3u8[^"']*)["']""")
+                        .find(embedHtml)?.groupValues?.get(1)
+                    ?: Regex("""["'](https?://[^"']+.m3u8[^"']*)["']""")
+                        .find(embedHtml)?.groupValues?.get(1)
 
-                callback.invoke(
-                    newExtractorLink(
-                        source = "Vimeos",
-                        name = "Vimeos (${embed.lang ?: "Latino"})",
-                        url = masterUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "https://vimeos.net/"
-                        this.quality = Qualities.P1080.value
-                        this.headers = mapOf(
-                            "Origin" to "https://vimeos.net",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
-                        )
-                    }
-                )
+                if (masterUrl != null) {
+                    println("$TAG: Master M3U8 Encontrado -> $masterUrl")
+                    callback.invoke(
+                        newExtractorLink(
+                            source = "Vimeos",
+                            name = "Vimeos (${embed.lang ?: "Latino"})",
+                            url = masterUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "https://vimeos.net/"
+                            this.quality = Qualities.P1080.value
+                            this.headers = mapOf(
+                                "Origin" to "https://vimeos.net",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                            )
+                        }
+                    )
+                } else {
+                    println("$TAG: No se encontró el .m3u8 en el HTML de Vimeos")
+                }
             } else {
-                loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
+                // Para VOE, StreamWish, etc., usamos los extractores nativos
+                loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
             }
         }
         return true
