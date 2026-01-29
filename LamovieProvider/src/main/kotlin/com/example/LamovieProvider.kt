@@ -5,40 +5,35 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import org.jsoup.Jsoup
 
 class LamovieProvider : MainAPI() {
     override var mainUrl = "https://la.movie"
     override var name = "La.Movie"
-    override var lang = "es" // Cambiado a es (estándar)
+    override var lang = "es"
     override val hasMainPage = true
     override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
 
     private val apiBase = "$mainUrl/wp-api/v1"
     private val TAG = "LaMovie"
+    private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     private fun fixImg(url: String?): String? {
-        if (url.isNullOrBlank()) {
-            Log.w(TAG, "LOG POSTER: Se recibió una URL nula o vacía")
-            return null
-        }
+        if (url.isNullOrBlank()) return null
 
-        Log.d(TAG, "LOG POSTER: Procesando entrada -> $url")
+        var cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
 
-        // 1. Limpiar escapes de HTML como &quot; y comillas
-        var cleanUrl = url.replace("&quot;", "")
-            .replace("\"", "")
-            .replace("'", "")
-            .replace("&amp;", "&")
-            .trim()
-
-        // 2. Extraer si viene dentro de url(...) de CSS
         if (cleanUrl.contains("url(")) {
             cleanUrl = cleanUrl.substringAfter("url(").substringBefore(")").trim()
-            Log.d(TAG, "LOG POSTER: Extraído de CSS -> $cleanUrl")
         }
 
-        // 3. Corregir dominio y protocolos
+        if (cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("thumbs/")) {
+            val path = if (cleanUrl.startsWith("/")) cleanUrl else "/$cleanUrl"
+            cleanUrl = "/wp-content/uploads$path"
+            Log.d(TAG, "LOG POSTER: Corrigiendo ruta a WordPress -> $cleanUrl")
+        }
+
         val finalUrl = when {
             cleanUrl.startsWith("http") -> cleanUrl
             cleanUrl.startsWith("//") -> "https:$cleanUrl"
@@ -46,7 +41,7 @@ class LamovieProvider : MainAPI() {
             else -> "$mainUrl/$cleanUrl"
         }
 
-        Log.i(TAG, "LOG POSTER: Resultado Final -> $finalUrl")
+        Log.i(TAG, "LOG POSTER: URL Final Generada -> $finalUrl")
         return finalUrl
     }
 
@@ -58,58 +53,41 @@ class LamovieProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}&page=$page&postsPerPage=12&orderBy=latest&order=DESC"
-        Log.d(TAG, "LOG MAIN: Solicitando $url")
-
-        val res = app.get(url).text
+        val res = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
         val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Error parseando MainPage JSON: ${e.message}")
+            Log.e(TAG, "FALLO LOG: Error en MainPage JSON")
             null
         }
-
         val home = json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
-        Log.d(TAG, "LOG MAIN: Se encontraron ${home.size} items")
         return newHomePageResponse(HomePageList(request.name, home), home.isNotEmpty())
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$apiBase/search?postType=any&q=${query.replace(" ", "+")}&postsPerPage=26"
-        Log.d(TAG, "LOG SEARCH: Buscando $query")
-
-        val res = app.get(url).text
-        val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Error en búsqueda: ${e.message}")
-            null
-        }
+        val res = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
+        val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) { null }
         return json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
     }
 
     private fun Post.toSearchResult(): SearchResponse {
-        // Log para ver qué campos trae el objeto Post originalmente
-        Log.v(TAG, "LOG POST: Procesando item [${this.title}] - PosterField: ${this.poster} - ImagesObj: ${this.images?.poster}")
-
-        val posterUrl = fixImg(images?.poster ?: this.poster)
+        val poster = fixImg(images?.poster ?: this.poster)
         val typeStr = type ?: "movies"
         val tvType = when (typeStr) {
             "movies" -> TvType.Movie
             "animes" -> TvType.Anime
             else -> TvType.TvSeries
         }
-
-        val path = when (tvType) {
-            TvType.Movie -> "peliculas"
-            TvType.Anime -> "animes"
-            else -> "series"
-        }
+        val path = if (tvType == TvType.Movie) "peliculas" else if (tvType == TvType.Anime) "animes" else "series"
 
         return if (tvType == TvType.Movie) {
-            newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = posterUrl }
+            newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
-            newTvSeriesSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = posterUrl }
+            newTvSeriesSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "LOG LOAD: Cargando detalles de $url")
+        Log.d(TAG, "LOG LOAD: Iniciando carga de $url")
         val slug = url.trimEnd('/').split("/").last()
         val type = when {
             url.contains("/series/") -> "tvshows"
@@ -117,30 +95,42 @@ class LamovieProvider : MainAPI() {
             else -> "movies"
         }
 
-        val apiUrl = "$apiBase/single/$type?slug=$slug&postType=$type"
-        val res = app.get(apiUrl).text
-        val postData = try { parseJson<SinglePostResponse>(res).data } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Error parseando SinglePost ($slug): ${e.message}")
-            null
-        } ?: return null
+        val apiRes = app.get("$apiBase/single/$type?slug=$slug&postType=$type", headers = mapOf("User-Agent" to USER_AGENT)).text
+        val postData = try { parseJson<SinglePostResponse>(apiRes).data } catch (e: Exception) { null }
 
-        val id = postData.id ?: return null
-        val poster = fixImg(postData.images?.poster ?: postData.poster)
+        var poster = fixImg(postData?.images?.poster ?: postData?.poster)
+
+        try {
+            val html = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
+            val doc = Jsoup.parse(html)
+            val bgDiv = doc.selectFirst("div.bg-image")
+            val style = bgDiv?.attr("style")
+            if (!style.isNullOrBlank()) {
+                val extracted = fixImg(style)
+                if (extracted?.contains("tmdb.org") == true) {
+                    poster = extracted
+                    Log.d(TAG, "LOG LOAD: Usando póster de TMDB del HTML -> $poster")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "FALLO LOG: Error extrayendo del HTML")
+        }
+
+        val id = postData?.id ?: return null
+        val title = postData.title ?: ""
 
         return if (type == "movies") {
-            newMovieLoadResponse(postData.title ?: "", url, TvType.Movie, id.toString()) {
+            newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
                 this.posterUrl = poster
                 this.plot = postData.overview
             }
         } else {
             val episodesList = mutableListOf<Episode>()
             val seasons = if (postData.seasons_list.isNullOrEmpty()) listOf("1") else postData.seasons_list
-
             seasons.forEach { sNumStr ->
                 val sNum = sNumStr.toIntOrNull() ?: return@forEach
                 try {
-                    val epUrl = "$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50"
-                    val epRes = app.get(epUrl).text
+                    val epRes = app.get("$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50", headers = mapOf("User-Agent" to USER_AGENT)).text
                     val epData = parseJson<EpisodeListResponse>(epRes)
                     epData.data?.posts?.forEach { epItem ->
                         episodesList.add(newEpisode(epItem.id.toString()) {
@@ -149,11 +139,9 @@ class LamovieProvider : MainAPI() {
                             this.episode = epItem.episode_number
                         })
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "LOG ERROR: Error en episodios S$sNum: ${e.message}")
-                }
+                } catch (e: Exception) { }
             }
-            newTvSeriesLoadResponse(postData.title ?: "", url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
+            newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
                 this.posterUrl = poster
                 this.plot = postData.overview
             }
@@ -167,28 +155,14 @@ class LamovieProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
-        Log.i(TAG, "LOG LINKS: Solicitando ID $data")
-
-        val res = try { app.get(playerUrl).text } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Error de red en Player API")
-            return false
-        }
-
-        val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Error parseando Player JSON")
-            null
-        }
-
+        val res = app.get(playerUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
+        val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
         response?.data?.embeds?.forEach { embed ->
-            val embedUrl = embed.url ?: return@forEach
-            Log.i(TAG, "LOG LINKS: Enviando a extractor -> $embedUrl")
-            loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
+            loadExtractor(embed.url ?: return@forEach, "$mainUrl/", subtitleCallback, callback)
         }
-
         return true
     }
 
-    // --- Modelos ---
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
