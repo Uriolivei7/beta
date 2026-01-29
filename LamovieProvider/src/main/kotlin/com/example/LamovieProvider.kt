@@ -19,11 +19,9 @@ class LamovieProvider : MainAPI() {
 
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        return when {
-            url.startsWith("http") -> url
-            url.startsWith("/") -> "$mainUrl$url"
-            else -> "$mainUrl/$url"
-        }
+        if (url.startsWith("//")) return "https:$url"
+        if (!url.startsWith("http")) return "$mainUrl$url"
+        return url
     }
 
     override val mainPage = mainPageOf(
@@ -86,7 +84,7 @@ class LamovieProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val slug = url.split("/").filter { it.isNotEmpty() }.last()
+        val slug = url.trimEnd('/').split("/").last()
         val type = when {
             url.contains("/series/") -> "tvshows"
             url.contains("/animes/") -> "animes"
@@ -94,18 +92,17 @@ class LamovieProvider : MainAPI() {
         }
 
         val apiUrl = "$apiBase/single/$type?slug=$slug&postType=$type"
-        println("$TAG: Cargando info detallada -> $apiUrl")
-
         val res = app.get(apiUrl).text
         if (!res.trim().startsWith("{")) return null
 
         val postData = parseJson<SinglePostResponse>(res).data ?: return null
 
         val title = postData.title ?: ""
-        val poster = fixImg(postData.images?.poster)
-        val backdrop = fixImg(postData.images?.backdrop)
+        val poster = fixImg(postData.images?.poster ?: postData.poster)
+        val backdrop = fixImg(postData.images?.backdrop ?: postData.backdrop)
 
         return if (type == "movies") {
+            // El ID va como cuarto parámetro aquí
             newMovieLoadResponse(title, url, TvType.Movie, postData.id.toString()) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
@@ -115,11 +112,28 @@ class LamovieProvider : MainAPI() {
             }
         } else {
             val tvType = if (type == "animes") TvType.Anime else TvType.TvSeries
-            newTvSeriesLoadResponse(title, url, tvType, emptyList()) {
+
+            val episodes = mutableListOf<Episode>()
+            postData.seasons?.forEach { season ->
+                val sNum = season.number ?: 1
+                season.episodes?.forEach { ep ->
+                    episodes.add(newEpisode(ep.id.toString()) {
+                        this.name = ep.title
+                        this.episode = ep.number
+                        this.season = sNum
+                        this.posterUrl = fixImg(ep.image)
+                    })
+                }
+            }
+
+            // CORRECCIÓN: El ID (postData.id.toString()) se pasa como último parámetro
+            // de la función, antes de las llaves { }
+            newTvSeriesLoadResponse(title, url, tvType, episodes) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.plot = postData.overview
                 this.year = postData.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
+                // Borramos "this.data =" de aquí adentro para evitar el error
             }
         }
     }
@@ -130,13 +144,10 @@ class LamovieProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. Obtenemos los embeds de la API usando el ID del post
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
         val res = app.get(playerUrl).text
 
-        // Log para verificar qué responde la API
         println("$TAG: Respuesta Player API -> $res")
-
         if (!res.trim().startsWith("{")) return false
 
         val response = parseJson<PlayerResponse>(res)
@@ -145,24 +156,17 @@ class LamovieProvider : MainAPI() {
             val embedUrl = embed.url ?: return@forEach
 
             if (embedUrl.contains("vimeos.net")) {
-                // 2. Cargamos el HTML del embed. Usamos los headers que vimos en tu CURL
                 val embedHtml = app.get(
                     embedUrl,
                     referer = "$mainUrl/",
                     headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36")
                 ).text
 
-                // 3. Buscamos el link del MASTER M3U8 dentro del HTML
-                // Intentamos con tres patrones diferentes por si cambia el nombre de la variable
-                val masterUrl = Regex("""file\s*:\s*["'](https?://[^"']+.m3u8[^"']*)["']""")
+                // Regex mejorado para capturar el m3u8
+                val masterUrl = Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""")
                     .find(embedHtml)?.groupValues?.get(1)
-                    ?: Regex("""source\s*:\s*["'](https?://[^"']+.m3u8[^"']*)["']""")
-                        .find(embedHtml)?.groupValues?.get(1)
-                    ?: Regex("""["'](https?://[^"']+.m3u8[^"']*)["']""")
-                        .find(embedHtml)?.groupValues?.get(1)
 
                 if (masterUrl != null) {
-                    println("$TAG: Master M3U8 Encontrado -> $masterUrl")
                     callback.invoke(
                         newExtractorLink(
                             source = "Vimeos",
@@ -178,11 +182,8 @@ class LamovieProvider : MainAPI() {
                             )
                         }
                     )
-                } else {
-                    println("$TAG: No se encontró el .m3u8 en el HTML de Vimeos")
                 }
             } else {
-                // Para VOE, StreamWish, etc., usamos los extractores nativos
                 loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
             }
         }
@@ -197,11 +198,8 @@ class LamovieProvider : MainAPI() {
         val quality: String?
     )
 
-    // --- Modelos ---
-    data class ApiResponse(val data: DataContainer?)
     data class SinglePostResponse(val data: Post?)
-    data class DataContainer(val posts: List<Post>?, val pagination: Pagination?)
-    data class Pagination(@JsonProperty("next_page_url") val nextPageUrl: String?)
+
     data class Post(
         @JsonProperty("_id") val id: Int?,
         val title: String?,
@@ -209,8 +207,31 @@ class LamovieProvider : MainAPI() {
         val type: String?,
         val overview: String?,
         val images: Images?,
+        val poster: String?, // Backup por si images viene vacío
+        val backdrop: String?, // Backup
         val trailer: String?,
-        @JsonProperty("release_date") val releaseDate: String?
+        @JsonProperty("release_date") val releaseDate: String?,
+        val seasons: List<Season>? // NECESARIO PARA SERIES
     )
-    data class Images(val poster: String?, val backdrop: String?)
+
+    data class Images(
+        val poster: String?,
+        val backdrop: String?
+    )
+
+    data class Season(
+        val number: Int?,
+        val episodes: List<EpItem>?
+    )
+
+    data class EpItem(
+        @JsonProperty("_id") val id: Int?,
+        val title: String?,
+        val number: Int?,
+        val image: String?
+    )
+
+    data class ApiResponse(val data: DataContainer?)
+    data class DataContainer(val posts: List<Post>?, val pagination: Pagination?)
+    data class Pagination(@JsonProperty("next_page_url") val nextPageUrl: String?)
 }
