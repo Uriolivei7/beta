@@ -131,28 +131,29 @@ class LamovieProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
-
         val res = app.get(playerUrl).text
+
         if (!res.trim().startsWith("{")) return false
 
         val response = parseJson<PlayerResponse>(res)
 
         response.data?.embeds?.forEach { embed ->
-            val url = embed.url ?: return@forEach
+            val embedUrl = embed.url ?: return@forEach
 
-            if (url.contains("vimeos.net")) {
+            if (embedUrl.contains("vimeos.net")) {
+                val videoId = embedUrl.substringAfter("embed-").substringBefore(".html")
+
+                val masterUrl = "https://p2.vimeos.zip/hls2/03/00008/${videoId}_h/master.m3u8"
+
                 callback.invoke(
                     newExtractorLink(
                         source = "Vimeos",
                         name = "Vimeos (${embed.lang ?: "Latino"})",
-                        url = url,
+                        url = masterUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "https://vimeos.net/"
-                        this.quality = when(embed.quality) {
-                            "Full HD" -> Qualities.P1080.value
-                            else -> Qualities.Unknown.value
-                        }
+                        this.quality = Qualities.P1080.value
                         this.headers = mapOf(
                             "Origin" to "https://vimeos.net",
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
@@ -160,25 +161,16 @@ class LamovieProvider : MainAPI() {
                     }
                 )
             } else {
-                loadExtractor(url, "https://la.movie/", subtitleCallback, callback)
+                loadExtractor(embedUrl, "https://la.movie/", subtitleCallback, callback)
             }
         }
-
         return true
     }
 
-    data class PlayerResponse(
-        val error: Boolean,
-        val data: PlayerData?
-    )
-
-    data class PlayerData(
-        val embeds: List<EmbedItem>?
-    )
-
+    data class PlayerResponse(val data: PlayerData?)
+    data class PlayerData(val embeds: List<EmbedItem>?)
     data class EmbedItem(
         val url: String?,
-        val server: String?,
         val lang: String?,
         val quality: String?
     )
