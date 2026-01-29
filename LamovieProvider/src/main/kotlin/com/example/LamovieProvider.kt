@@ -22,19 +22,9 @@ class LamovieProvider : MainAPI() {
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
         var cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
-
-        if (cleanUrl.contains("url(")) {
-            cleanUrl = cleanUrl.substringAfter("url(").substringBefore(")").trim()
-        }
-
-        if (cleanUrl.contains("tmdb.org")) {
-            cleanUrl = cleanUrl.replace(Regex("/t/p/w\\d+/"), "/t/p/original/")
-        }
-
-        if (cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("thumbs/")) {
-            cleanUrl = "/wp-content/uploads/${cleanUrl.removePrefix("/")}"
-        }
-
+        if (cleanUrl.contains("url(")) cleanUrl = cleanUrl.substringAfter("url(").substringBefore(")").trim()
+        if (cleanUrl.contains("tmdb.org")) cleanUrl = cleanUrl.replace(Regex("/t/p/w\\d+/"), "/t/p/original/")
+        if (cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("thumbs/")) cleanUrl = "/wp-content/uploads/${cleanUrl.removePrefix("/")}"
         return if (cleanUrl.startsWith("http")) cleanUrl else if (cleanUrl.startsWith("//")) "https:$cleanUrl" else if (cleanUrl.startsWith("/")) "$mainUrl$cleanUrl" else "$mainUrl/$cleanUrl"
     }
 
@@ -85,17 +75,13 @@ class LamovieProvider : MainAPI() {
         val id = postData.id ?: return null
         val title = postData.title ?: ""
 
-        // LOG PÓSTER: Buscamos el fondo grande en el HTML
         var finalPoster = fixImg(postData.images?.poster ?: postData.poster)
         try {
             val html = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
             val doc = Jsoup.parse(html)
             val bgStyle = doc.selectFirst("div.bg-image")?.attr("style")
-            if (!bgStyle.isNullOrBlank()) {
-                finalPoster = fixImg(bgStyle)
-            }
-        } catch (e: Exception) { Log.e(TAG, "FALLO LOG: No se pudo obtener bg-image") }
-        Log.d(TAG, "LOG LOAD: URL del póster final -> $finalPoster")
+            if (!bgStyle.isNullOrBlank()) finalPoster = fixImg(bgStyle)
+        } catch (e: Exception) { }
 
         if (type == "movies") {
             return newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
@@ -104,17 +90,11 @@ class LamovieProvider : MainAPI() {
             }
         } else {
             val episodesList = mutableListOf<Episode>()
-
-            // 1. Llamada inicial a la T1 para detectar el resto de temporadas
             val firstSeasonUrl = "$apiBase/single/episodes/list?_id=$id&season=1&page=1&postsPerPage=50"
             val firstSeasonRes = app.get(firstSeasonUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
             val firstSeasonData = try { parseJson<EpisodeListResponse>(firstSeasonRes) } catch (e: Exception) { null }
 
-            // Obtenemos temporadas de la API, si viene vacío probamos con [1, 2] como fallback
-            val apiSeasons = firstSeasonData?.data?.seasons ?: emptyList()
-            val finalSeasons = if (apiSeasons.isEmpty()) listOf("1", "2") else apiSeasons
-
-            Log.d(TAG, "LOG LOAD: Temporadas a procesar -> $finalSeasons")
+            val finalSeasons = firstSeasonData?.data?.seasons ?: listOf("1")
 
             finalSeasons.forEach { sNumStr ->
                 try {
@@ -123,21 +103,15 @@ class LamovieProvider : MainAPI() {
                         app.get("$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50", headers = mapOf("User-Agent" to USER_AGENT)).text
                     }
                     val epData = parseJson<EpisodeListResponse>(epRes)
-
                     epData.data?.posts?.forEach { epItem ->
-                        val cleanEpTitle = epItem.title?.replace(Regex("^.*?Temporada"), "Temporada")?.trim()
-                            ?: "Temporada $sNum Episodio ${epItem.episode_number}"
-
+                        val cleanEpTitle = epItem.title?.replace(Regex("^.*?Temporada"), "Temporada")?.trim() ?: "T$sNum E${epItem.episode_number}"
                         episodesList.add(newEpisode(epItem.id.toString()) {
                             this.name = cleanEpTitle
                             this.season = sNum
                             this.episode = epItem.episode_number
                         })
                     }
-                    Log.d(TAG, "LOG LOAD: Temporada $sNum cargada OK")
-                } catch (e: Exception) {
-                    Log.e(TAG, "FALLO LOG: Error en temporada $sNumStr")
-                }
+                } catch (e: Exception) { }
             }
 
             return newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
@@ -147,38 +121,72 @@ class LamovieProvider : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // Usamos postId=$data y demo=0 tal como en tu curl exitoso
         val playerUrl = "$apiBase/player?postId=$data&demo=0"
-        val res = app.get(playerUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
-        val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
-        response?.data?.embeds?.forEach { embed ->
-            loadExtractor(embed.url ?: return@forEach, "$mainUrl/", subtitleCallback, callback)
+        Log.d(TAG, "LOG LINKS: Solicitando reproductores para ID $data")
+
+        val res = app.get(playerUrl, headers = mapOf(
+            "accept" to "application/json",
+            "accept-language" to "es-ES,es;q=0.6",
+            "cache-control" to "no-cache",
+            "pragma" to "no-cache",
+            "referer" to "$mainUrl/", // Referer base
+            "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Brave\";v=\"144\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Windows\"",
+            "sec-fetch-dest" to "empty",
+            "sec-fetch-mode" to "cors",
+            "sec-fetch-site" to "same-origin",
+            "user-agent" to USER_AGENT
+        )).text
+
+        val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) {
+            Log.e(TAG, "FALLO LOG: Error parseando JSON de links -> ${e.message}")
+            null
         }
+
+        // Procesamos tanto embeds como downloads (por si acaso)
+        response?.data?.embeds?.forEach { embed ->
+            val embedUrl = embed.url ?: return@forEach
+            Log.d(TAG, "LOG LINKS: Pasando al extractor -> $embedUrl")
+
+            // Al estar registrados en el Plugin, loadExtractor los encontrará por dominio
+            loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
+        }
+
+        // Opcional: Si quieres que también salgan los links de descarga (Mega, etc)
+        response?.data?.downloads?.forEach { download ->
+            val downloadUrl = download.url ?: return@forEach
+            Log.d(TAG, "LOG LINKS: Link de descarga detectado -> $downloadUrl")
+            loadExtractor(downloadUrl, "$mainUrl/", subtitleCallback, callback)
+        }
+
         return true
     }
+
+    data class PlayerResponse(val data: PlayerData?)
+    data class PlayerData(
+        val embeds: List<EmbedItem>?,
+        val downloads: List<EmbedItem>? // Reutilizamos EmbedItem si tienen la misma estructura
+    )
+    data class EmbedItem(
+        val url: String?,
+        val server: String? = null,
+        val lang: String? = null
+    )
 
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
-    data class Post(
-        @JsonProperty("_id") val id: Int?,
-        val title: String?,
-        val slug: String?,
-        val type: String?,
-        val overview: String?,
-        val images: Images?,
-        val poster: String?,
-        val seasons: List<String>?,
-        val seasons_list: List<String>?
-    )
+    data class Post(@JsonProperty("_id") val id: Int?, val title: String?, val slug: String?, val type: String?, val overview: String?, val images: Images?, val poster: String?)
     data class Images(val poster: String?)
     data class EpisodeListResponse(val data: EpisodeListData?)
-    data class EpisodeListData(
-        val posts: List<EpisodePostItem>?,
-        val seasons: List<String>? // ¡IMPORTANTE! Esto faltaba para detectar temporadas
-    )
+    data class EpisodeListData(val posts: List<EpisodePostItem>?, val seasons: List<String>?)
     data class EpisodePostItem(@JsonProperty("_id") val id: Int?, val title: String?, val episode_number: Int?)
-    data class PlayerResponse(val data: PlayerData?)
-    data class PlayerData(val embeds: List<EmbedItem>?)
-    data class EmbedItem(val url: String?)
 }
