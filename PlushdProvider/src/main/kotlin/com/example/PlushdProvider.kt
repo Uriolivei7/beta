@@ -39,25 +39,25 @@ class PlushdProvider : MainAPI() {
     private fun fixPelisplusHostsLinks(url: String): String {
         if (url.isBlank()) return url
 
-        // Si ya es un link de Pelisplus/Upstream, solo nos aseguramos de que no tenga el '#'
-        // pero NO cambiamos el dominio todavía para no romper los subtítulos
-        if (url.contains("upns.pro") || url.contains("rpmstream") || url.contains("strp2p")) {
-            return url.replace("/#", "/")
+        return when {
+            // Vidhide / Earnvids: El extractor prefiere /e/ para saltar anuncios
+            url.contains("vidhide") || url.contains("mivalyo") || url.contains("dinisglows") || url.contains("dhtpre") -> {
+                url.replace(Regex("vidhideplus\\.com|vidhidepre\\.com|mivalyo\\.com|dinisglows\\.com|dhtpre\\.com"), "vidhidepro.com")
+                    .replace("/v/", "/e/")
+            }
+
+            // Netu/Waaw: Forzamos hqq.tv que es el extractor que sí tiene los subs
+            url.contains("waaw.to") || url.contains("netu.to") -> {
+                url.replace(Regex("/[fv]/"), "/e/").replace("waaw.to", "hqq.tv").replace("netu.to", "hqq.tv")
+            }
+
+            // Pelisplus / Upstream / Plus: Limpieza de Hash y normalización
+            url.contains("upns.pro") || url.contains("rpmstream") || url.contains("strp2p") || url.contains("emturbovid") -> {
+                url.replace("/#", "/").replace("emturbovid.com", "turbovid.eu")
+            }
+
+            else -> url.replace("/#", "/")
         }
-
-        return url
-            // Forzamos a Netu/Waaw a usar el extractor HQQ que es el más estable
-            .replaceFirst(Regex("https://waaw\\.to/[fv]/"), "https://hqq.tv/e/")
-            .replaceFirst("https://waaw.to", "https://hqq.tv")
-
-            // Vidhide
-            .replaceFirst("vidhideplus.com", "vidhidepro.com")
-            .replaceFirst("vidhidepre.com", "vidhidepro.com")
-            .replaceFirst("mivalyo.com", "vidhidepro.com")
-
-            // Otros
-            .replaceFirst("filemoon.link", "filemoon.sx")
-            .replaceFirst("https://do7go.com", "https://dood.la")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -271,16 +271,18 @@ class PlushdProvider : MainAPI() {
                         url = fixedLink,
                         referer = extractorReferer,
                         subtitleCallback = { sub ->
-                            Log.i("PlushdProvider", "Subtítulo capturado para $serverName: ${sub.url}")
+                            Log.i("PlushdProvider", "Subtítulo detectado: ${sub.url}")
                             subtitleCallback.invoke(sub)
                         },
-                        callback = callback
+                        callback = { link ->
+                            // Si entra aquí, es porque REALMENTE hay un video
+                            linksFound = true
+                            callback.invoke(link)
+                        }
                     )
 
-                    if (loaded) {
-                        Log.i("PlushdProvider", "ÉXITO: $serverName cargado correctamente")
-                        linksFound = true
-                    }
+// También marcamos true si el extractor dice que tuvo éxito
+                    if (loaded) linksFound = true
                 }
             } catch (e: Exception) {
                 // Ahora $serverName ya es accesible aquí
@@ -290,5 +292,5 @@ class PlushdProvider : MainAPI() {
         }
         return linksFound
     }
-    
+
 }
