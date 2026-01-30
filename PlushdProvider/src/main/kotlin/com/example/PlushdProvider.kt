@@ -38,20 +38,30 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         if (url.isBlank()) return url
-        val cleanUrl = url.replace("/#", "/").replace("#", "")
+        // Quitamos el # y cualquier espacio
+        val cleanUrl = url.replace("/#", "/").replace("#", "").trim()
 
         return when {
             cleanUrl.contains("vidhide") || cleanUrl.contains("mivalyo") -> {
                 val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://vidhidepro.com/e/$id"
+                "https://vidhidepro.com/e/$id" // Vidhide SÍ usa /e/
             }
             cleanUrl.contains("upns.pro") -> {
                 val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://pelisplus.upns.pro/$id"
+                "https://pelisplus.upns.pro/$id" // Upstream NO usa /e/ habitualmente aquí
+            }
+            cleanUrl.contains("strp2p.com") -> {
+                val id = cleanUrl.split("/").last { it.isNotBlank() }
+                "https://pelisplus.strp2p.com/$id"
             }
             cleanUrl.contains("emturbovid") -> {
                 val id = cleanUrl.split("/").last { it.isNotBlank() }
                 "https://emturbovid.com/e/$id"
+            }
+            // Para Netu/HQQ que vimos en tu log (waaw.to)
+            cleanUrl.contains("waaw.to") || cleanUrl.contains("hqq.tv") -> {
+                val id = cleanUrl.split("/").last { it.isNotBlank() }
+                "https://hqq.tv/e/$id"
             }
             else -> cleanUrl
         }

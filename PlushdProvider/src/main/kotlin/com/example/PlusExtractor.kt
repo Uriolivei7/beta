@@ -52,16 +52,12 @@ class EmturbovidCom : Filesim() {
     }
 }
 
+// Cambia el nombre de la clase si da error de duplicado
 class Vidhide : VidHidePro() {
     override var mainUrl = "https://vidhidepro.com"
     override var name = "Vidhide Pro"
 
-    override suspend fun getUrl(
-        url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         super.getUrl(url, "https://vidhidepro.com/", subtitleCallback, callback)
     }
 }
