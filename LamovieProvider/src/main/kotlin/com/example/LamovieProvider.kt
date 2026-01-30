@@ -61,6 +61,8 @@ class LamovieProvider : MainAPI() {
 
     private fun Post.toSearchResult(): SearchResponse {
         val poster = fixImg(images?.poster ?: this.poster)
+        val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
+
         val typeStr = type ?: "movies"
         val tvType = if (typeStr == "movies") TvType.Movie else if (typeStr == "animes") TvType.Anime else TvType.TvSeries
         val path = when (tvType) {
@@ -69,9 +71,9 @@ class LamovieProvider : MainAPI() {
             else -> "series"
         }
         return if (tvType == TvType.Movie) {
-            newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
+            newMovieSearchResponse(cleanTitle, "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
-            newTvSeriesSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
+            newTvSeriesSearchResponse(cleanTitle, "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         }
     }
 
@@ -142,9 +144,20 @@ class LamovieProvider : MainAPI() {
         }
 
         return response.apply {
-            // En el JSON de Zootopia 2 no vienen recomendaciones, por eso sale Recs: 0
-            this.recommendations = postData.recommendations?.map { it.toSearchResult() } ?: emptyList()
-            Log.d(TAG, "Logs: Load Finalizado: $cleanTitle | Año: $realYear | Imagen: $bigImg")
+            try {
+                val searchQuery = cleanTitle.take(15) 
+                val searchUrl = "$apiBase/search?postType=any&q=${searchQuery.replace(" ", "+")}&postsPerPage=6"
+                val searchRes = app.get(searchUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
+                val searchJson = parseJson<ApiResponse>(searchRes)
+                this.recommendations = searchJson.data?.posts
+                    ?.filter { it.slug != slug }
+                    ?.map { it.toSearchResult() } ?: emptyList()
+            } catch (e: Exception) {
+                Log.e(TAG, "Logs: Falló carga de recomendaciones automáticas")
+                this.recommendations = emptyList()
+            }
+
+            Log.d(TAG, "Logs: Load Finalizado: $cleanTitle | Recs: ${this.recommendations?.size}")
         }
     }
 
