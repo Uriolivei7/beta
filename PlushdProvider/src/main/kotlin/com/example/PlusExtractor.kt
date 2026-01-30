@@ -12,7 +12,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
-// ============ PELISPLUS BASE ============
 open class PelisPlusBase : VidStack() {
     override val requiresReferer = true
 
@@ -22,8 +21,16 @@ open class PelisPlusBase : VidStack() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        Log.d("PelisPlusBase", "🔍 Intentando extraer: $url")
         val fixedReferer = "https://pelisplus.upns.pro/"
-        super.getUrl(url, fixedReferer, subtitleCallback, callback)
+        try {
+            super.getUrl(url, fixedReferer, subtitleCallback) { link ->
+                Log.d("PelisPlusBase", "✅ Enlace encontrado: ${link.url}")
+                callback(link)
+            }
+        } catch (e: Exception) {
+            Log.e("PelisPlusBase", "❌ Error: ${e.message}")
+        }
     }
 }
 
@@ -70,7 +77,6 @@ class EmturbovidCom : Filesim() {
     }
 }
 
-// ============ VIDHIDE ============
 class Vidhide : VidHidePro() {
     override var mainUrl = "https://vidhidepro.com"
     override var name = "Vidhide Pro"
@@ -81,12 +87,18 @@ class Vidhide : VidHidePro() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Vidhide", "Extrayendo: $url")
-        super.getUrl(url, "https://vidhidepro.com/", subtitleCallback, callback)
+        Log.d("Vidhide", "🔍 Intentando extraer: $url")
+        try {
+            super.getUrl(url, "https://vidhidepro.com/", subtitleCallback) { link ->
+                Log.d("Vidhide", "✅ Enlace encontrado: ${link.url}")
+                callback(link)
+            }
+        } catch (e: Exception) {
+            Log.e("Vidhide", "❌ Error: ${e.message}")
+        }
     }
 }
 
-// ============ LISTEAMED ============
 class Listeamed : ExtractorApi() {
     override var mainUrl = "https://listeamed.net"
     override var name = "VidG"
@@ -98,42 +110,57 @@ class Listeamed : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Listeamed", "Extrayendo: $url")
+        Log.d("Listeamed", "🔍 Extrayendo: $url")
 
         try {
             val response = app.get(url, referer = referer)
             val html: String = response.text
 
-            // Buscar file:"..." o file:'...' en el HTML
-            val sourceRegex = Regex("""file:\s*["']([^"']+)["']""")
-            val match = sourceRegex.find(html)
-            val videoUrl: String? = match?.groupValues?.get(1)
+            Log.d("Listeamed", "📄 HTML length: ${html.length}")
 
-            if (!videoUrl.isNullOrBlank()) {
-                Log.d("Listeamed", "✅ Video encontrado: $videoUrl")
+            // Buscar diferentes patrones
+            val patterns = listOf(
+                Regex("""file:\s*["']([^"']+)["']"""),
+                Regex("""source:\s*["']([^"']+)["']"""),
+                Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']"""),
+                Regex(""""file":\s*"([^"]+)"""")
+            )
 
-                val linkType = if (videoUrl.contains(".m3u8")) {
-                    ExtractorLinkType.M3U8
-                } else {
-                    ExtractorLinkType.VIDEO
-                }
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                val videoUrl: String? = match?.groupValues?.get(1)
 
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = videoUrl,
-                        type = linkType
-                    ) {
-                        this.referer = url
-                        this.quality = Qualities.Unknown.value
+                if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                    Log.d("Listeamed", "✅ Video encontrado: $videoUrl")
+
+                    val linkType = if (videoUrl.contains(".m3u8")) {
+                        ExtractorLinkType.M3U8
+                    } else {
+                        ExtractorLinkType.VIDEO
                     }
-                )
-            } else {
-                Log.w("Listeamed", "⚠️ No se encontró URL de video")
+
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = videoUrl,
+                            type = linkType
+                        ) {
+                            this.referer = url
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    return  // Salir después de encontrar uno
+                }
             }
+
+            Log.w("Listeamed", "⚠️ No se encontró URL de video en el HTML")
+            // Log primeros 500 caracteres para debug
+            Log.d("Listeamed", "HTML preview: ${html.take(500)}")
+
         } catch (e: Exception) {
             Log.e("Listeamed", "❌ Error: ${e.message}")
+            e.printStackTrace()
         }
     }
 }

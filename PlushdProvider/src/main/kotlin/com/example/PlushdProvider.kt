@@ -264,24 +264,27 @@ class PlushdProvider : MainAPI() {
                         fixedLink.contains("upns.pro") -> "https://pelisplus.upns.pro/"
                         fixedLink.contains("strp2p.com") -> "https://pelisplus.strp2p.com/"
                         fixedLink.contains("emturbovid.com") -> "https://emturbovid.com/"
+                        fixedLink.contains("listeamed.net") -> "https://listeamed.net/"
                         else -> fixedLink
                     }
 
                     try {
+                        // Usamos el callback directo, no uno envuelto
                         val loaded = loadExtractor(
                             url = fixedLink,
                             referer = extractorReferer,
                             subtitleCallback = subtitleCallback,
-                            callback = { videoLink ->
-                                Log.i("PlushdProvider", "✅ ENLACE ENCONTRADO: ${videoLink.name} - ${videoLink.url}")
-                                linksFound = true
-                                callback.invoke(videoLink)
-                            }
+                            callback = callback  // ← Cambio importante: usar callback directamente
                         )
-                        Log.d("PlushdProvider", "loadExtractor para $serverName retornó: $loaded")
+
+                        if (loaded) {
+                            linksFound = true
+                            Log.d("PlushdProvider", "✅ Extractor $serverName procesado correctamente")
+                        } else {
+                            Log.w("PlushdProvider", "⚠️ Extractor $serverName no encontró enlaces")
+                        }
                     } catch (e: Exception) {
                         Log.e("PlushdProvider", "❌ Error en extractor $serverName: ${e.message}")
-                        e.printStackTrace()
                     }
                 } else {
                     Log.w("PlushdProvider", "⚠️ No se encontró link en $serverName")
