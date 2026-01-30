@@ -4,6 +4,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.Jsoup
 
@@ -21,11 +22,27 @@ class LamovieProvider : MainAPI() {
 
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
+        // Limpiamos basura de estilos CSS o comillas del HTML
         var cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
-        if (cleanUrl.contains("url(")) cleanUrl = cleanUrl.substringAfter("url(").substringBefore(")").trim()
-        if (cleanUrl.contains("tmdb.org")) cleanUrl = cleanUrl.replace(Regex("/t/p/w\\d+/"), "/t/p/original/")
-        if (cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("thumbs/")) cleanUrl = "/wp-content/uploads/${cleanUrl.removePrefix("/")}"
-        return if (cleanUrl.startsWith("http")) cleanUrl else if (cleanUrl.startsWith("//")) "https:$cleanUrl" else if (cleanUrl.startsWith("/")) "$mainUrl$cleanUrl" else "$mainUrl/$cleanUrl"
+        if (cleanUrl.contains("url(")) {
+            cleanUrl = cleanUrl.substringAfter("url(").substringBefore(")").trim()
+        }
+
+        // MEJORA DE NITIDEZ: Forzamos 'original' en lugar de 'w500' o 'w300'
+        if (cleanUrl.contains("tmdb.org")) {
+            cleanUrl = cleanUrl.replace(Regex("/t/p/w\\d+/"), "/t/p/original/")
+        }
+
+        if (cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("thumbs/")) {
+            cleanUrl = "/wp-content/uploads/${cleanUrl.removePrefix("/")}"
+        }
+
+        return when {
+            cleanUrl.startsWith("http") -> cleanUrl
+            cleanUrl.startsWith("//") -> "https:$cleanUrl"
+            cleanUrl.startsWith("/") -> "$mainUrl$cleanUrl"
+            else -> "$mainUrl/$cleanUrl"
+        }
     }
 
     override val mainPage = mainPageOf(
@@ -53,7 +70,11 @@ class LamovieProvider : MainAPI() {
         val poster = fixImg(images?.poster ?: this.poster)
         val typeStr = type ?: "movies"
         val tvType = if (typeStr == "movies") TvType.Movie else if (typeStr == "animes") TvType.Anime else TvType.TvSeries
-        val path = if (tvType == TvType.Movie) "peliculas" else if (tvType == TvType.Anime) "animes" else "series"
+        val path = when (tvType) {
+            TvType.Movie -> "peliculas"
+            TvType.Anime -> "animes"
+            else -> "series"
+        }
         return if (tvType == TvType.Movie) {
             newMovieSearchResponse(title ?: "", "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
@@ -70,22 +91,26 @@ class LamovieProvider : MainAPI() {
         }
 
         val apiRes = app.get("$apiBase/single/$type?slug=$slug&postType=$type", headers = mapOf("User-Agent" to USER_AGENT)).text
-        val responseObj = try { parseJson<SinglePostResponse>(apiRes) } catch (e: Exception) { null }
+        val responseObj = try { parseJson<SinglePostResponse>(apiRes) } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error en parseo de load: ${e.message}")
+            null
+        }
         val postData = responseObj?.data ?: return null
         val id = postData.id ?: return null
         val title = postData.title ?: ""
 
-        var finalPoster = fixImg(postData.images?.poster ?: postData.poster)
-        try {
-            val html = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
-            val doc = Jsoup.parse(html)
-            val bgStyle = doc.selectFirst("div.bg-image")?.attr("style")
-            if (!bgStyle.isNullOrBlank()) finalPoster = fixImg(bgStyle)
-        } catch (e: Exception) { }
+        // CONFIGURACIÓN DE IMÁGENES
+        // Usamos el 'backdrop' (imagen grande) como poster principal del LOAD
+        val bigPoster = fixImg(postData.images?.backdrop ?: postData.backdrop)
+        // Si por alguna razón no hay backdrop, usamos el poster normal como respaldo
+        val fallbackPoster = fixImg(postData.images?.poster ?: postData.poster)
 
-        if (type == "movies") {
-            return newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
-                this.posterUrl = finalPoster
+        val finalMainImg = bigPoster ?: fallbackPoster
+
+        val response = if (type == "movies") {
+            newMovieLoadResponse(title, url, TvType.Movie, id.toString()) {
+                this.posterUrl = finalMainImg // <--- Aquí va la imagen grande
+                this.backgroundPosterUrl = finalMainImg
                 this.plot = postData.overview
             }
         } else {
@@ -114,10 +139,20 @@ class LamovieProvider : MainAPI() {
                 } catch (e: Exception) { }
             }
 
-            return newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
-                this.posterUrl = finalPoster
+            newTvSeriesLoadResponse(title, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
+                this.posterUrl = finalMainImg // <--- Aquí también la imagen grande
+                this.backgroundPosterUrl = finalMainImg
                 this.plot = postData.overview
             }
+        }
+
+        // Cambia esto al final de tu función load:
+        return response.apply {
+            this.recommendations = postData.recommendations
+                ?.filter { it.id != postData.id } // Evita que se recomiende a sí mismo
+                ?.map { it.toSearchResult() }
+
+            Log.d(TAG, "Logs: Load finalizado para $title. Imagen principal: $finalMainImg")
         }
     }
 
@@ -130,25 +165,21 @@ class LamovieProvider : MainAPI() {
         val cleanId = data.substringAfterLast("/").trim()
         val playerUrl = "$apiBase/player?postId=$cleanId&demo=0"
 
-        Log.i(TAG, "LOG: --- INICIANDO CARGA DE ENLACES PARA ID $cleanId ---")
+        Log.d(TAG, "Logs: Cargando enlaces para ID $cleanId")
 
         val res = try {
             app.get(playerUrl, headers = mapOf("Referer" to "$mainUrl/")).text
         } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: No se pudo obtener respuesta de la API: ${e.message}")
+            Log.e(TAG, "Logs: Error en API de player: ${e.message}")
             return false
         }
 
-        val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) {
-            Log.e(TAG, "LOG ERROR: Falló el parseo del JSON del reproductor")
-            null
-        }
+        val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
 
         response?.data?.embeds?.forEach { embed ->
             val embedUrl = embed.url ?: return@forEach
 
             if (embedUrl.contains("la.movie/embed.html")) {
-                Log.i(TAG, "LOG: Procesando reproductor interno: $embedUrl")
                 try {
                     val internalHtml = app.get(embedUrl, referer = "$mainUrl/").document
                     val realUrl = internalHtml.select("iframe").attr("src")
@@ -156,10 +187,8 @@ class LamovieProvider : MainAPI() {
                         loadExtractor(realUrl, embedUrl, subtitleCallback, callback)
                         return@forEach
                     }
-                } catch (e: Exception) { Log.e(TAG, "LOG ERROR: Falló internal player") }
+                } catch (e: Exception) { }
             }
-
-            Log.i(TAG, "LOG: Delegando carga al extractor: $embedUrl")
             loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
         }
 
@@ -167,35 +196,38 @@ class LamovieProvider : MainAPI() {
             download.url?.let { loadExtractor(it, "$mainUrl/", subtitleCallback, callback) }
         }
 
-        Log.i(TAG, "LOG: --- FINALIZADA CARGA DE ENLACES ---")
         return true
     }
 
+    // --- DATA CLASSES ---
+
     data class PlayerResponse(val data: PlayerData?)
-    data class PlayerData(
-        val embeds: List<EmbedItem>?,
-        val downloads: List<EmbedItem>?
-    )
-    data class EmbedItem(
-        val url: String?,
-        val server: String? = null,
-        val lang: String? = null
-    )
+    data class PlayerData(val embeds: List<EmbedItem>?, val downloads: List<EmbedItem>?)
+    data class EmbedItem(val url: String?, val server: String? = null, val lang: String? = null)
 
     data class ApiResponse(val data: DataContainer?)
     data class DataContainer(val posts: List<Post>?)
     data class SinglePostResponse(val data: Post?)
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class Post(
-        @JsonProperty("_id")
-        val id: Int?, val title: String?,
+        @JsonProperty("_id") val id: Int?,
+        val title: String?,
         val slug: String?,
         val type: String?,
         val overview: String?,
         val images: Images?,
-        val poster: String?)
+        val poster: String?,
+        val backdrop: String? = null,
+        val recommendations: List<Post>? = null
+    )
 
-    data class Images(val poster: String?)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class Images(
+        val poster: String?,
+        val backdrop: String? = null
+    )
+
     data class EpisodeListResponse(val data: EpisodeListData?)
     data class EpisodeListData(val posts: List<EpisodePostItem>?, val seasons: List<String>?)
     data class EpisodePostItem(@JsonProperty("_id") val id: Int?, val title: String?, val episode_number: Int?)

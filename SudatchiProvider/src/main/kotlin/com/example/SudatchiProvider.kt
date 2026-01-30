@@ -38,7 +38,6 @@ class SudatchiProvider : MainAPI() {
         "$apiUrl/series?page=1&sort=TRENDING_DESC" to "En Tendencia"
     )
 
-    // Helper para manejar las imágenes que vienen como String o como Objeto
     private fun getImageUrl(node: com.fasterxml.jackson.databind.JsonNode?): String? {
         if (node == null || node.isNull) return null
         return if (node.isObject) {
@@ -90,7 +89,6 @@ class SudatchiProvider : MainAPI() {
                 }
                 this.showStatus = statusEnum
 
-                // 1. Procesar Episodios
                 val episodesList = data.episodes?.map { ep ->
                     val subsToSerialize = ep.subtitles ?: emptyList<SubtitleDto>()
                     val subsJson = mapper.writeValueAsString(subsToSerialize)
@@ -106,7 +104,6 @@ class SudatchiProvider : MainAPI() {
 
                 addEpisodes(DubStatus.Subbed, episodesList)
 
-                // 2. Recomendaciones
                 this.recommendations = data.recommendations?.map { rec ->
                     newAnimeSearchResponse(
                         rec.title?.english ?: rec.title?.romaji ?: "Unknown",
@@ -116,7 +113,6 @@ class SudatchiProvider : MainAPI() {
                     }
                 }
 
-                // 3. Info de Próximo Episodio (Logs)
                 data.nextAiring?.let {
                     Log.d(TAG, "Logs: Próximo episodio ${it.ep} en timestamp: ${it.at}")
                 }
@@ -180,8 +176,6 @@ class SudatchiProvider : MainAPI() {
             } ?: emptyList()
         } catch (e: Exception) { emptyList() }
     }
-
-    // --- DTOs ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SeriesDto(val results: List<AnimeDto>? = null)
