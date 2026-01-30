@@ -227,26 +227,32 @@ class PlushdProvider : MainAPI() {
             "Referer" to data
         )
 
+        Log.d("PlushdProvider", "Iniciando carga de links para: $data")
         val doc = app.get(data, headers = headers).document
 
-        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
-            subtitleCallback.invoke(file)
-        }
+        val servers = doc.select("div ul.subselect li")
+        Log.d("PlushdProvider", "Servidores encontrados en el DOM: ${servers.size}")
 
-        doc.select("div ul.subselect li").toList().forEach { serverLi ->
+        servers.forEach { serverLi ->
             try {
+                val serverName = serverLi.text().trim()
                 val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@forEach
 
-                val encodedOne = serverData.toByteArray()
-                val encodedTwo = base64Encode(encodedOne)
+                if (serverData.isNullOrEmpty()) {
+                    Log.w("PlushdProvider", "Servidor $serverName no tiene 'data-server'")
+                    return@forEach
+                }
+
+                val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                val text = app.get(playerUrl, headers = headers).text
+                Log.d("PlushdProvider", "Procesando servidor: $serverName | Player: $playerUrl")
+
+                val response = app.get(playerUrl, headers = headers)
+                val text = response.text
 
                 if (text.contains("bloqueo temporal")) {
-                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
+                    Log.e("PlushdProvider", "BLOQUEO DETECTADO en servidor $serverName")
                     return@forEach
                 }
 
@@ -254,30 +260,40 @@ class PlushdProvider : MainAPI() {
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
+                    Log.d("PlushdProvider", "Link extraído: $link -> Link corregido: $fixedLink")
 
                     val extractorReferer = try {
                         val urlObject = URL(fixedLink)
-                        urlObject.protocol + "://" + urlObject.host + "/"
+                        "${urlObject.protocol}://${urlObject.host}/"
                     } catch (e: Exception) {
-                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
                         playerUrl
                     }
 
-                    loadExtractor(
+                    // Intentamos cargar el extractor
+                    val loaded = loadExtractor(
                         url = fixedLink,
                         referer = extractorReferer,
-                        subtitleCallback = loggingSubtitleCallback,
+                        subtitleCallback = subtitleCallback,
                         callback = callback
                     )
-                    linksFound = true
+
+                    if (loaded) {
+                        Log.i("PlushdProvider", "ÉXITO: Extractor cargó $fixedLink")
+                        linksFound = true
+                    } else {
+                        Log.w("PlushdProvider", "FALLO: Ningún extractor reconoció la URL: $fixedLink")
+                    }
+                } else {
+                    Log.w("PlushdProvider", "No se encontró redirección (Regex fallo) en el player de $serverName")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error fatal procesando servidor: ${e.message}")
             }
 
-            delay(1500L)
+            delay(1000L) // Reducido un poco para mayor velocidad
         }
 
+        Log.d("PlushdProvider", "Carga finalizada. ¿Links encontrados?: $linksFound")
         return linksFound
     }
 }
