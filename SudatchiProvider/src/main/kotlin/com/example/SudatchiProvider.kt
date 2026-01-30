@@ -73,19 +73,20 @@ class SudatchiProvider : MainAPI() {
                 this.tags = data.genres
 
                 val episodesList = data.episodes?.map { ep ->
-                    val fullThumbUrl = ep.imgUrl?.let { path ->
-                        if (path.startsWith("http")) path
-                        else "$mainUrl${if (path.startsWith("/")) "" else "/"}$path"
-                    }
+                    val subsToSerialize = ep.subtitles ?: emptyList<SubtitleDto>()
+                    val subsJson = mapper.writeValueAsString(subsToSerialize)
+                    val encodedSubs = URLEncoder.encode(subsJson, "UTF-8")
 
-                    Log.d("Sudatchi", "Logs: Generando episodio ${ep.number} - Imagen final: $fullThumbUrl")
+                    val videoData = "$apiUrl/streams?episodeId=${ep.id ?: 0}&subs=$encodedSubs"
 
-                    newEpisode("$apiUrl/streams?episodeId=${ep.id ?: 0}") {
+                    Log.d(TAG, "Logs: Preparando ep ${ep.number} con ${subsToSerialize.size} subs")
+
+                    newEpisode(videoData) {
                         this.name = ep.title
                         this.episode = ep.number
-                        this.posterUrl = fullThumbUrl
+                        this.posterUrl = if (ep.imgUrl.isNullOrBlank()) null else "$mainUrl${ep.imgUrl}"
                     }
-                }?.sortedBy { it.episode } ?: emptyList()
+                } ?: emptyList()
 
                 addEpisodes(DubStatus.Subbed, episodesList)
             }
@@ -101,53 +102,37 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === DEBUG SUBTITULOS === Data: $data")
+        Log.d(TAG, "Logs: Data recibida en loadLinks: $data")
 
-        return try {
-            val encodedSubs = data.substringAfter("&subs=", "")
-            if (encodedSubs.isNotEmpty()) {
+        val encodedSubs = data.substringAfter("&subs=", "")
+        if (encodedSubs.isNotEmpty()) {
+            try {
                 val decodedSubs = java.net.URLDecoder.decode(encodedSubs, "UTF-8")
-                Log.d(TAG, "Logs: JSON Decodificado: $decodedSubs")
-
                 val subs: List<SubtitleDto> = mapper.readValue(decodedSubs)
 
                 subs.forEach { sub ->
-                    // Limpiamos bien la ruta
                     val cleanHash = sub.url.removePrefix("/ipfs/").removePrefix("/")
-
-                    // Opción A: Usar el proxy del sitio
                     val subUrl = "$mainUrl/api/proxy/$cleanHash"
 
-                    // Opción B (Respaldo): Gateway oficial de IPFS si el anterior falla
-                    // val subUrl = "https://ipfs.io/ipfs/$cleanHash"
+                    val label = sub.subtitlesName?.name ?: sub.subtitlesName?.language ?: "Sub"
 
-                    val label = sub.subtitlesName?.name ?: "Sub - ${sub.subtitlesName?.language}"
-
-                    Log.d(TAG, "Logs: Intentando cargar sub: [$label]")
-                    Log.d(TAG, "Logs: URL generada: $subUrl")
-
-                    if (subUrl.isNotBlank()) {
-                        subtitleCallback.invoke(
-                            newSubtitleFile(label, subUrl)
-                        )
-                        Log.d(TAG, "Logs: subtitleCallback invocado exitosamente para $label")
-                    }
+                    Log.d(TAG, "Logs: Cargando subtítulo: $label")
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Logs: Error parseando subs en loadLinks: ${e.message}")
             }
-
-            val cleanVideoUrl = data.substringBefore("&subs=")
-            callback.invoke(
-                newExtractorLink(this.name, "Sudatchi", cleanVideoUrl, ExtractorLinkType.M3U8) {
-                    this.referer = "$mainUrl/"
-                    this.headers = apiHeaders
-                }
-            )
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: ERROR FATAL en subs: ${e.message}")
-            e.printStackTrace()
-            false
         }
+
+        val cleanVideoUrl = data.substringBefore("&subs=")
+        callback.invoke(
+            newExtractorLink(this.name, "Sudatchi", cleanVideoUrl, ExtractorLinkType.M3U8) {
+                this.referer = "$mainUrl/"
+                this.headers = apiHeaders
+                this.quality = Qualities.P1080.value
+            }
+        )
+        return true
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -161,6 +146,8 @@ class SudatchiProvider : MainAPI() {
             } ?: emptyList()
         } catch (e: Exception) { emptyList() }
     }
+
+    // --- DTOs ---
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SeriesDto(val results: List<AnimeDto>? = null)
@@ -192,25 +179,21 @@ class SudatchiProvider : MainAPI() {
         val number: Int? = null,
         val title: String? = null,
         val imgUrl: String? = null,
-        val subtitlesDto: List<SubtitleDto>? = null,
-        val subtitles: List<SubtitleDto>? = null
+        @JsonProperty("Subtitles") val subtitles: List<SubtitleDto>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SubtitleDto(
         val url: String,
-        @JsonProperty("SubtitlesName")
-        val subtitlesName: SubtitlesNameDto? = null
+        @JsonProperty("SubtitlesName") val subtitlesName: SubtitlesNameDto? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SubtitlesNameDto(
         val name: String? = null,
-        val language: String? = null
+        val language: String? = null,
+        val id: Int? = null
     )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class LangDto(val name: String? = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class CoverDto(val extraLarge: String? = null)
