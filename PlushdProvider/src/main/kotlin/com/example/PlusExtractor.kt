@@ -47,18 +47,26 @@ class EmturbovidCom : Filesim() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("PlushdProvider", "Extractor Plus (Emturbovid) recibiendo: $url")
-
-        val fixedUrl = url.replace("emturbovid.com", "turbovid.eu")
-            .replace(Regex("/t/|/v/"), "/e/")
-
-        super.getUrl(fixedUrl, referer, subtitleCallback, callback)
+        val fixedUrl = url.replace("emturbovid.com", "turbovid.eu").replace("/e/", "/v/")
+        super.getUrl(fixedUrl, "https://turbovid.eu/", subtitleCallback, callback)
     }
 }
 
 class Vidhide : VidHidePro() {
     override var mainUrl = "https://vidhidepro.com"
-    override var name = "VidhidePro"
+    override var name = "Vidhide Pro"
 
-    override val requiresReferer = true
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        super.getUrl(url, "https://vidhidepro.com/", subtitleCallback, callback)
+    }
+}
+
+class RPMStream : PelisPlusBase() {
+    override var mainUrl = "https://pelisplus.rpmstream.live"
+    override var name = "RPM"
 }
