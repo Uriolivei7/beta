@@ -38,22 +38,34 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         if (url.isBlank()) return url
-
         return when {
-            // Vidhide / Earnvids: El extractor prefiere /e/ para saltar anuncios
-            url.contains("vidhide") || url.contains("mivalyo") || url.contains("dinisglows") || url.contains("dhtpre") -> {
-                url.replace(Regex("vidhideplus\\.com|vidhidepre\\.com|mivalyo\\.com|dinisglows\\.com|dhtpre\\.com"), "vidhidepro.com")
-                    .replace("/v/", "/e/")
+            // Vidhide: Ahora apunta a tu extractor 'Vidhide' con dominio .pro
+            url.contains("vidhide") || url.contains("mivalyo") || url.contains("dinisglows") || url.contains("fviplook") || url.contains("vipanel") -> {
+                val id = url.split("/").lastOrNull() ?: ""
+                "https://vidhidepro.com/e/$id"
             }
 
-            // Netu/Waaw: Forzamos hqq.tv que es el extractor que sí tiene los subs
-            url.contains("waaw.to") || url.contains("netu.to") -> {
-                url.replace(Regex("/[fv]/"), "/e/").replace("waaw.to", "hqq.tv").replace("netu.to", "hqq.tv")
+            // UPFAST: Cambiamos 'upstream.to' por tu dominio de extractor 'https://pelisplus.upns.pro'
+            url.contains("upns.pro") -> {
+                val id = url.split("/").lastOrNull() ?: ""
+                "https://pelisplus.upns.pro/$id"
             }
 
-            // Pelisplus / Upstream / Plus: Limpieza de Hash y normalización
-            url.contains("upns.pro") || url.contains("rpmstream") || url.contains("strp2p") || url.contains("emturbovid") -> {
-                url.replace("/#", "/").replace("emturbovid.com", "turbovid.eu")
+            // P2P: Aseguramos que use el dominio registrado
+            url.contains("strp2p.com") -> {
+                val id = url.split("/").lastOrNull() ?: ""
+                "https://pelisplus.strp2p.com/$id"
+            }
+
+            // Plus: Forzamos el dominio emturbovid para que lo atrape tu clase 'EmturbovidCom'
+            url.contains("turbovid.eu") || url.contains("emturbovid") -> {
+                val id = url.split("/").lastOrNull() ?: ""
+                "https://emturbovid.com/e/$id"
+            }
+
+            // Netu / HQQ: Se mantiene igual
+            url.contains("hqq.tv") || url.contains("waaw.to") -> {
+                url.replace(Regex("/[fv]/"), "/e/").replace("waaw.to", "hqq.tv")
             }
 
             else -> url.replace("/#", "/")
@@ -242,25 +254,18 @@ class PlushdProvider : MainAPI() {
                 val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEach
                 val playerUrl = "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
 
-                Log.d("PlushdProvider", "Procesando: $serverName | Player: $playerUrl")
-
+                // Obtenemos el script del player con el referer correcto
                 val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
                 val text = playerResponse.text
-
                 val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
+                    Log.d("PlushdProvider", "Intentando: $serverName -> $fixedLink")
 
-                    val extractorReferer = when {
-                        fixedLink.contains("vidhide") || fixedLink.contains("hqq") || fixedLink.contains("turbovid") -> playerUrl
-                        fixedLink.contains("upns.pro") || fixedLink.contains("rpmstream") -> "https://pelisplus.upns.pro/"
-                        else -> fixedLink
-                    }
+                    // Si es Vidhide, usamos el playerUrl como Referer para engañar al servidor
+                    val extractorReferer = if (fixedLink.contains("vidhide")) playerUrl else fixedLink
 
-                    Log.d("PlushdProvider", "Cargando Extractor: $fixedLink")
-
-                    // Cargamos el extractor y pasamos el link directamente al callback original
                     val loaded = loadExtractor(
                         url = fixedLink,
                         referer = extractorReferer,
@@ -269,18 +274,18 @@ class PlushdProvider : MainAPI() {
                             subtitleCallback.invoke(sub)
                         },
                         callback = { videoLink ->
+                            // Ya no intentamos modificar videoLink.headers directamente aquí
+                            Log.i("PlushdProvider", "¡ENLACE LISTO!: ${videoLink.url}")
                             linksFound = true
                             callback.invoke(videoLink)
                         }
                     )
                     if (loaded) linksFound = true
-                } else {
-                    Log.w("PlushdProvider", "No se encontró enlace en el script de $serverName")
                 }
             } catch (e: Exception) {
                 Log.e("PlushdProvider", "Error en $serverName: ${e.message}")
             }
-            delay(800L)
+            delay(500L) // Un pequeño delay para no saturar
         }
         return linksFound
     }
