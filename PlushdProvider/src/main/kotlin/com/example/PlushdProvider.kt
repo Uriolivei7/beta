@@ -11,7 +11,7 @@ import kotlinx.coroutines.delay
 import java.net.URL
 
 class PlushdProvider : MainAPI() {
-    override var mainUrl = "https://ww3.tioplus.net"
+    override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
     override val hasMainPage = true
@@ -37,7 +37,22 @@ class PlushdProvider : MainAPI() {
     }
 
     private fun fixPelisplusHostsLinks(url: String): String {
-        return url
+        // 1. Limpiamos cualquier parámetro de hash/anclaje (como el #hlkael que vimos en tus logs)
+        // Esto ayuda a que el extractor no se confunda con caracteres extraños.
+        val cleanUrl = url.split("#")[0]
+
+        return cleanUrl
+            // Mapeo para Vidhide (el que mencionaste que no detectaba)
+            .replaceFirst("https://vidhideplus.com", "https://vidhidepro.com")
+            .replaceFirst("https://vidhidepre.com", "https://vidhidepro.com")
+
+            // Mapeo para Netu / Waaw
+            .replaceFirst("https://waaw.to", "https://netu.to")
+
+            .replaceFirst("https://pelisplus.upns.pro", "https://upstream.to")
+            .replaceFirst("https://pelisplus.rpmstream.live", "https://rpmstream.com")
+            .replaceFirst("https://pelisplus.strp2p.com", "https://strp2p.com")
+
             .replaceFirst("https://hglink.to", "https://streamwish.to")
             .replaceFirst("https://swdyu.com", "https://streamwish.to")
             .replaceFirst("https://cybervynx.com", "https://streamwish.to")
@@ -224,7 +239,7 @@ class PlushdProvider : MainAPI() {
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data
+            "Referer" to "$mainUrl/" 
         )
 
         Log.d("PlushdProvider", "Iniciando carga de links para: $data")
@@ -238,10 +253,7 @@ class PlushdProvider : MainAPI() {
                 val serverName = serverLi.text().trim()
                 val serverData = serverLi.attr("data-server")
 
-                if (serverData.isNullOrEmpty()) {
-                    Log.w("PlushdProvider", "Servidor $serverName no tiene 'data-server'")
-                    return@forEach
-                }
+                if (serverData.isNullOrEmpty()) return@forEach
 
                 val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
