@@ -21,15 +21,21 @@ open class PelisPlusBase : VidStack() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("PelisPlusBase", "🔍 Intentando extraer: $url")
+        Log.d("PelisPlusBase", "🔍 Extrayendo: $url (clase: ${this.name})")
+        var found = false
         val fixedReferer = "https://pelisplus.upns.pro/"
         try {
             super.getUrl(url, fixedReferer, subtitleCallback) { link ->
-                Log.d("PelisPlusBase", "✅ Enlace encontrado: ${link.url}")
+                found = true
+                Log.d("PelisPlusBase", "✅ ENLACE REAL: ${link.name} -> ${link.url}")
                 callback(link)
             }
         } catch (e: Exception) {
             Log.e("PelisPlusBase", "❌ Error: ${e.message}")
+            e.printStackTrace()
+        }
+        if (!found) {
+            Log.w("PelisPlusBase", "⚠️ No se encontró ningún enlace para ${this.name}")
         }
     }
 }
@@ -54,7 +60,6 @@ class RPMStream : PelisPlusBase() {
     override var name = "RPM"
 }
 
-// ============ EMTURBOVID ============
 class EmturbovidCom : Filesim() {
     override var mainUrl = "https://emturbovid.com"
     override var name = "Plus"
@@ -65,14 +70,37 @@ class EmturbovidCom : Filesim() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("EmturbovidCom", "URL recibida: $url")
+        Log.d("EmturbovidCom", "🔍 URL recibida: $url")
+        var found = false
+
         try {
-            // Intentar con URL original primero
-            super.getUrl(url, referer ?: mainUrl, subtitleCallback, callback)
+            // Intentar con URL original
+            super.getUrl(url, referer ?: mainUrl, subtitleCallback) { link ->
+                found = true
+                Log.d("EmturbovidCom", "✅ ENLACE REAL: ${link.name} -> ${link.url}")
+                callback(link)
+            }
         } catch (e: Exception) {
-            Log.e("EmturbovidCom", "Error con URL original, intentando alternativa: ${e.message}")
-            val fixedUrl = url.replace("emturbovid.com", "turbovid.eu").replace("/e/", "/v/")
-            super.getUrl(fixedUrl, "https://turbovid.eu/", subtitleCallback, callback)
+            Log.e("EmturbovidCom", "❌ Error con URL original: ${e.message}")
+        }
+
+        if (!found) {
+            Log.w("EmturbovidCom", "⚠️ Intentando URL alternativa...")
+            try {
+                val fixedUrl = url.replace("emturbovid.com", "turbovid.eu").replace("/e/", "/v/")
+                Log.d("EmturbovidCom", "🔄 URL alternativa: $fixedUrl")
+                super.getUrl(fixedUrl, "https://turbovid.eu/", subtitleCallback) { link ->
+                    found = true
+                    Log.d("EmturbovidCom", "✅ ENLACE REAL (alt): ${link.name} -> ${link.url}")
+                    callback(link)
+                }
+            } catch (e2: Exception) {
+                Log.e("EmturbovidCom", "❌ Error con URL alternativa: ${e2.message}")
+            }
+        }
+
+        if (!found) {
+            Log.w("EmturbovidCom", "⚠️ No se encontró ningún enlace")
         }
     }
 }
@@ -87,14 +115,20 @@ class Vidhide : VidHidePro() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Vidhide", "🔍 Intentando extraer: $url")
+        Log.d("Vidhide", "🔍 Extrayendo: $url")
+        var found = false
         try {
             super.getUrl(url, "https://vidhidepro.com/", subtitleCallback) { link ->
-                Log.d("Vidhide", "✅ Enlace encontrado: ${link.url}")
+                found = true
+                Log.d("Vidhide", "✅ ENLACE REAL: ${link.name} -> ${link.url}")
                 callback(link)
             }
         } catch (e: Exception) {
             Log.e("Vidhide", "❌ Error: ${e.message}")
+            e.printStackTrace()
+        }
+        if (!found) {
+            Log.w("Vidhide", "⚠️ No se encontró ningún enlace")
         }
     }
 }
@@ -116,22 +150,31 @@ class Listeamed : ExtractorApi() {
             val response = app.get(url, referer = referer)
             val html: String = response.text
 
-            Log.d("Listeamed", "📄 HTML length: ${html.length}")
+            Log.d("Listeamed", "📄 HTML recibido: ${html.length} caracteres")
+
+            // Mostrar parte del HTML para debug
+            if (html.length > 100) {
+                Log.d("Listeamed", "📄 Preview: ${html.take(300)}...")
+            }
 
             // Buscar diferentes patrones
             val patterns = listOf(
                 Regex("""file:\s*["']([^"']+)["']"""),
                 Regex("""source:\s*["']([^"']+)["']"""),
                 Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']"""),
-                Regex(""""file":\s*"([^"]+)"""")
+                Regex(""""file":\s*"([^"]+)""""),
+                Regex("""sources:\s*\[\{[^}]*file:\s*["']([^"']+)["']"""),
+                Regex("""https?://[^"'\s]+\.m3u8[^"'\s]*""")
             )
 
-            for (pattern in patterns) {
+            for ((index, pattern) in patterns.withIndex()) {
                 val match = pattern.find(html)
-                val videoUrl: String? = match?.groupValues?.get(1)
+                val videoUrl: String? = match?.groupValues?.getOrNull(1) ?: match?.value
+
+                Log.d("Listeamed", "🔎 Patrón ${index + 1}: ${if (match != null) "encontrado" else "no encontrado"}")
 
                 if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
-                    Log.d("Listeamed", "✅ Video encontrado: $videoUrl")
+                    Log.d("Listeamed", "✅ VIDEO ENCONTRADO: $videoUrl")
 
                     val linkType = if (videoUrl.contains(".m3u8")) {
                         ExtractorLinkType.M3U8
@@ -150,13 +193,12 @@ class Listeamed : ExtractorApi() {
                             this.quality = Qualities.Unknown.value
                         }
                     )
-                    return  // Salir después de encontrar uno
+                    Log.d("Listeamed", "📤 Callback invocado!")
+                    return
                 }
             }
 
-            Log.w("Listeamed", "⚠️ No se encontró URL de video en el HTML")
-            // Log primeros 500 caracteres para debug
-            Log.d("Listeamed", "HTML preview: ${html.take(500)}")
+            Log.w("Listeamed", "⚠️ No se encontró URL de video")
 
         } catch (e: Exception) {
             Log.e("Listeamed", "❌ Error: ${e.message}")
