@@ -73,14 +73,17 @@ class SudatchiProvider : MainAPI() {
                 this.tags = data.genres
 
                 val episodesList = data.episodes?.map { ep ->
-                    val subsToSerialize = ep.subtitlesDto ?: ep.subtitles ?: emptyList<SubtitleDto>()
-                    val subsJson = mapper.writeValueAsString(subsToSerialize)
-                    val encodedSubs = URLEncoder.encode(subsJson, "UTF-8")
+                    val fullThumbUrl = ep.imgUrl?.let { path ->
+                        if (path.startsWith("http")) path
+                        else "$mainUrl${if (path.startsWith("/")) "" else "/"}$path"
+                    }
 
-                    newEpisode("$apiUrl/streams?episodeId=${ep.id ?: 0}&subs=$encodedSubs") {
+                    Log.d("Sudatchi", "Logs: Generando episodio ${ep.number} - Imagen final: $fullThumbUrl")
+
+                    newEpisode("$apiUrl/streams?episodeId=${ep.id ?: 0}") {
                         this.name = ep.title
                         this.episode = ep.number
-                        this.posterUrl = if (ep.coverImage?.startsWith("http") == true) ep.coverImage else "$mainUrl${ep.coverImage}"
+                        this.posterUrl = fullThumbUrl
                     }
                 }?.sortedBy { it.episode } ?: emptyList()
 
@@ -98,38 +101,48 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V7.2 (ESTABLE) ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V8.0 (MODERNO) ===")
 
         return try {
             val encodedSubs = data.substringAfter("&subs=", "")
             if (encodedSubs.isNotEmpty()) {
                 val decodedSubs = java.net.URLDecoder.decode(encodedSubs, "UTF-8")
                 val subs: List<SubtitleDto> = mapper.readValue(decodedSubs)
+
                 subs.forEach { sub ->
-                    val subUrl = if (sub.url.startsWith("http")) sub.url
-                    else "$mainUrl/api/proxy/${sub.url.removePrefix("/ipfs/")}"
-                    val lang = sub.subtitleLang?.name ?: sub.language ?: "Sub"
-                    subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
+                    val subUrl = if (sub.url.startsWith("http")) {
+                        sub.url
+                    } else {
+                        val cleanPath = sub.url.removePrefix("/ipfs/").removePrefix("/")
+                        "$mainUrl/api/proxy/$cleanPath"
+                    }
+
+                    val label = sub.subtitlesName?.name ?: sub.subtitlesName?.language ?: "Sub"
+
+                    Log.d(TAG, "Logs: Sub detectado -> [$label] URL: $subUrl")
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
             }
 
             val cleanVideoUrl = data.substringBefore("&subs=")
+            Log.d(TAG, "Logs: Generando link con newExtractorLink para: $cleanVideoUrl")
 
             callback.invoke(
                 newExtractorLink(
-                    source = name,
+                    source = this.name,
                     name = "Sudatchi",
                     url = cleanVideoUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.referer = "$mainUrl/"
-                    this.headers = apiHeaders
                     this.quality = Qualities.P1080.value
+                    this.headers = apiHeaders
                 }
             )
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -175,7 +188,7 @@ class SudatchiProvider : MainAPI() {
         val id: Int? = null,
         val number: Int? = null,
         val title: String? = null,
-        val coverImage: String? = null,
+        val imgUrl: String? = null,
         val subtitlesDto: List<SubtitleDto>? = null,
         val subtitles: List<SubtitleDto>? = null
     )
@@ -183,7 +196,13 @@ class SudatchiProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SubtitleDto(
         val url: String,
-        val subtitleLang: LangDto? = null,
+        @JsonProperty("SubtitlesName")
+        val subtitlesName: SubtitlesNameDto? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class SubtitlesNameDto(
+        val name: String? = null,
         val language: String? = null
     )
 
