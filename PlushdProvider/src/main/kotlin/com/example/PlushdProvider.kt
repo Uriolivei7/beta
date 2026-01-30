@@ -69,9 +69,18 @@ class PlushdProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst("a h2")?.text() ?: return null
+        var title = this.selectFirst("a h2")?.text() ?: return null
         val link = this.selectFirst("a.itemA")?.attr("href") ?: return null
         val img = this.selectFirst("picture img")?.attr("data-src")
+
+        val yearRegex = Regex("""\s*\((\d{4})\)$""")
+        val match = yearRegex.find(title)
+        val year = match?.groupValues?.get(1)?.toIntOrNull()
+
+        if (match != null) {
+            title = title.replace(yearRegex, "").trim()
+            Log.d("PlushdProvider", "Título limpiado: $title | Año detectado: $year")
+        }
 
         val searchType = when {
             link.contains("/serie") -> TvType.TvSeries
@@ -82,8 +91,14 @@ class PlushdProvider : MainAPI() {
         }
 
         return when (searchType) {
-            TvType.Movie -> newMovieSearchResponse(title, link, searchType) { this.posterUrl = img }
-            else -> newTvSeriesSearchResponse(title, link, searchType) { this.posterUrl = img }
+            TvType.Movie -> newMovieSearchResponse(title, link, searchType) {
+                this.posterUrl = img
+                this.year = year // Asignamos el año aquí
+            }
+            else -> newTvSeriesSearchResponse(title, link, searchType) {
+                this.posterUrl = img
+                this.year = year // Asignamos el año aquí
+            }
         }
     }
 
@@ -114,7 +129,18 @@ class PlushdProvider : MainAPI() {
             else -> TvType.TvSeries
         }
 
-        val title = doc.selectFirst(".slugh1")?.text() ?: ""
+        var title = doc.selectFirst(".slugh1")?.text() ?: ""
+
+        // Aplicamos la misma lógica de limpieza
+        val yearRegex = Regex("""\s*\((\d{4})\)$""")
+        val match = yearRegex.find(title)
+        val year = match?.groupValues?.get(1)?.toIntOrNull()
+
+        if (match != null) {
+            title = title.replace(yearRegex, "").trim()
+            Log.d("PlushdProvider", "Cargando: $title (Año: $year)")
+        }
+
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
         val poster = backimage.replace("original", "w500")
         val description = doc.selectFirst("div.description")?.text() ?: ""
@@ -166,14 +192,12 @@ class PlushdProvider : MainAPI() {
 
         return when (tvType) {
             TvType.TvSeries, TvType.Anime, TvType.AsianDrama -> {
-                newTvSeriesLoadResponse(
-                    title,
-                    url, tvType, epi,
-                ) {
+                newTvSeriesLoadResponse(title, url, tvType, epi) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backimage
                     this.plot = description
                     this.tags = tags
+                    this.year = year // Guardamos el año
                 }
             }
             TvType.Movie -> {
@@ -182,6 +206,7 @@ class PlushdProvider : MainAPI() {
                     this.backgroundPosterUrl = backimage
                     this.plot = description
                     this.tags = tags
+                    this.year = year // Guardamos el año
                 }
             }
             else -> null
