@@ -61,15 +61,18 @@ class LamovieProvider : MainAPI() {
 
     private fun Post.toSearchResult(): SearchResponse {
         val poster = fixImg(images?.poster ?: this.poster)
+        // Limpiamos el (2025) del título para que se vea profesional
         val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
 
         val typeStr = type ?: "movies"
         val tvType = if (typeStr == "movies") TvType.Movie else if (typeStr == "animes") TvType.Anime else TvType.TvSeries
+
         val path = when (tvType) {
             TvType.Movie -> "peliculas"
             TvType.Anime -> "animes"
             else -> "series"
         }
+
         return if (tvType == TvType.Movie) {
             newMovieSearchResponse(cleanTitle, "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
         } else {
@@ -144,20 +147,24 @@ class LamovieProvider : MainAPI() {
         }
 
         return response.apply {
+            // --- RECOMENDACIONES REALES ---
             try {
-                val searchQuery = cleanTitle.take(15) 
-                val searchUrl = "$apiBase/search?postType=any&q=${searchQuery.replace(" ", "+")}&postsPerPage=6"
-                val searchRes = app.get(searchUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
-                val searchJson = parseJson<ApiResponse>(searchRes)
-                this.recommendations = searchJson.data?.posts
-                    ?.filter { it.slug != slug }
-                    ?.map { it.toSearchResult() } ?: emptyList()
+                // Llamamos al endpoint que encontraste usando el ID del post
+                val relatedUrl = "$apiBase/single/related?postId=$id&page=1&postsPerPage=12"
+                val relatedRes = app.get(relatedUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
+
+                // Usamos el ApiResponse que ya tienes para mapear los posts
+                val relatedData = try { parseJson<ApiResponse>(relatedRes) } catch (e: Exception) { null }
+
+                this.recommendations = relatedData?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
+
+                Log.d(TAG, "Logs: Recomendaciones cargadas: ${this.recommendations?.size}")
             } catch (e: Exception) {
-                Log.e(TAG, "Logs: Falló carga de recomendaciones automáticas")
+                Log.e(TAG, "Logs Error: No se pudieron cargar las recomendaciones: ${e.message}")
                 this.recommendations = emptyList()
             }
 
-            Log.d(TAG, "Logs: Load Finalizado: $cleanTitle | Recs: ${this.recommendations?.size}")
+            Log.d(TAG, "Logs: Load Finalizado: $cleanTitle | ID: $id")
         }
     }
 
