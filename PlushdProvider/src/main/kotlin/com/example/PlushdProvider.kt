@@ -230,31 +230,22 @@ class PlushdProvider : MainAPI() {
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data
+            "Referer" to "$mainUrl/"
         )
 
         val doc = app.get(data, headers = headers).document
         val servers = doc.select("div ul.subselect li")
 
         servers.forEach { serverLi ->
-            // Declaramos la variable aquí afuera para que el catch pueda leerla
             val serverName = serverLi.text().trim()
-
             try {
                 val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEach
+                val playerUrl = "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
 
-                val encodedTwo = base64Encode(serverData.toByteArray())
-                val playerUrl = "$mainUrl/player/$encodedTwo"
+                Log.d("PlushdProvider", "Procesando: $serverName | Player: $playerUrl")
 
-                Log.d("PlushdProvider", "Intentando servidor: $serverName")
-
-                val playerResponse = app.get(playerUrl, headers = headers)
+                val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
                 val text = playerResponse.text
-
-                if (text.contains("bloqueo temporal")) {
-                    Log.w("PlushdProvider", "Bloqueo detectado en $serverName")
-                    return@forEach
-                }
 
                 val link = linkRegex.find(text)?.destructured?.component1()
 
@@ -262,31 +253,32 @@ class PlushdProvider : MainAPI() {
                     val fixedLink = fixPelisplusHostsLinks(link)
 
                     val extractorReferer = when {
-                        fixedLink.contains("hqq.tv") || fixedLink.contains("vidhide") -> playerUrl
-                        fixedLink.contains("upns.pro") -> "https://pelisplus.upns.pro/"
+                        fixedLink.contains("vidhide") || fixedLink.contains("hqq") || fixedLink.contains("turbovid") -> playerUrl
+                        fixedLink.contains("upns.pro") || fixedLink.contains("rpmstream") -> "https://pelisplus.upns.pro/"
                         else -> fixedLink
                     }
 
+                    Log.d("PlushdProvider", "Cargando Extractor: $fixedLink")
+
+                    // Cargamos el extractor y pasamos el link directamente al callback original
                     val loaded = loadExtractor(
                         url = fixedLink,
                         referer = extractorReferer,
                         subtitleCallback = { sub ->
-                            Log.i("PlushdProvider", "Subtítulo detectado: ${sub.url}")
+                            Log.i("PlushdProvider", "SUB ENCONTRADO: ${sub.url}")
                             subtitleCallback.invoke(sub)
                         },
-                        callback = { link ->
-                            // Si entra aquí, es porque REALMENTE hay un video
+                        callback = { videoLink ->
                             linksFound = true
-                            callback.invoke(link)
+                            callback.invoke(videoLink)
                         }
                     )
-
-// También marcamos true si el extractor dice que tuvo éxito
                     if (loaded) linksFound = true
+                } else {
+                    Log.w("PlushdProvider", "No se encontró enlace en el script de $serverName")
                 }
             } catch (e: Exception) {
-                // Ahora $serverName ya es accesible aquí
-                Log.e("PlushdProvider", "Error cargando $serverName: ${e.message}")
+                Log.e("PlushdProvider", "Error en $serverName: ${e.message}")
             }
             delay(800L)
         }
