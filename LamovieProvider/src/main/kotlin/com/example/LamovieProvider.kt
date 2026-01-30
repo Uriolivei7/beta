@@ -85,19 +85,15 @@ class LamovieProvider : MainAPI() {
 
         val apiRes = app.get("$apiBase/single/$type?slug=$slug&postType=$type", headers = mapOf("User-Agent" to USER_AGENT)).text
         val responseObj = try { parseJson<SinglePostResponse>(apiRes) } catch (e: Exception) {
-            Log.e(TAG, "Logs Error: Falló parseo de single JSON en load")
+            Log.e(TAG, "Logs Error: Falló parseo de single JSON")
             null
         }
         val postData = responseObj?.data ?: return null
         val id = postData.id ?: return null
 
         val galleryImgs = postData.gallery?.split("\n")?.filter { it.isNotBlank() }
-
         val posterImg = fixImg(postData.images?.poster ?: postData.poster)
-
         val bigImg = fixImg(galleryImgs?.firstOrNull()?.trim() ?: postData.images?.backdrop ?: postData.backdrop)
-
-        val finalMainImg = bigImg ?: posterImg
 
         val response = if (type == "movies") {
             newMovieLoadResponse(postData.title ?: "", url, TvType.Movie, id.toString()) {
@@ -133,7 +129,7 @@ class LamovieProvider : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Logs Error: Falló carga de episodios para ID $id")
+                Log.e(TAG, "Logs: Error en episodios de ID $id")
             }
 
             newTvSeriesLoadResponse(postData.title ?: "", url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
@@ -145,9 +141,11 @@ class LamovieProvider : MainAPI() {
         }
 
         return response.apply {
-            this.recommendations = postData.recommendations?.map { it.toSearchResult() } ?: emptyList()
+            this.recommendations = postData.recommendations?.mapNotNull { rec ->
+                try { rec.toSearchResult() } catch(e: Exception) { null }
+            } ?: emptyList()
 
-            Log.d(TAG, "Logs: Load OK. Poster: $posterImg | Backdrop: $bigImg | Recs: ${this.recommendations?.size}")
+            Log.d(TAG, "Logs: Load Finalizado. Título: ${postData.title} | Recs Encontradas: ${this.recommendations?.size}")
         }
     }
 
