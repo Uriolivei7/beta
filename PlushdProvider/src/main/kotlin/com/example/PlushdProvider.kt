@@ -37,36 +37,32 @@ class PlushdProvider : MainAPI() {
     }
 
     private fun fixPelisplusHostsLinks(url: String): String {
-        // 1. Limpiamos cualquier parámetro de hash/anclaje (como el #hlkael que vimos en tus logs)
-        // Esto ayuda a que el extractor no se confunda con caracteres extraños.
-        val cleanUrl = url.split("#")[0]
+        // En lugar de borrar lo que sigue al #, lo convertimos en una ruta si es necesario
+        var finalUrl = url
+        if (url.contains("upns.pro/#") || url.contains("rpmstream.live/#") || url.contains("strp2p.com/#")) {
+            finalUrl = url.replace("/#", "/")
+        }
 
-        return cleanUrl
-            // Mapeo para Vidhide (el que mencionaste que no detectaba)
+        return finalUrl
+            // Mapeo para Netu (ahora a hqq.tv que es el extractor que maneja subs mejor)
+            .replaceFirst("https://waaw.to/f/", "https://hqq.tv/e/")
+            .replaceFirst("https://waaw.to", "https://hqq.tv")
+
+            // Mapeo para Vidhide
             .replaceFirst("https://vidhideplus.com", "https://vidhidepro.com")
             .replaceFirst("https://vidhidepre.com", "https://vidhidepro.com")
 
-            // Mapeo para Netu / Waaw
-            .replaceFirst("https://waaw.to", "https://netu.to")
+            // Espejos de Upstream/Pelisplus (Mantenemos la ruta)
+            .replaceFirst("pelisplus.upns.pro", "upstream.to")
+            .replaceFirst("pelisplus.rpmstream.live", "rpmstream.com")
+            .replaceFirst("pelisplus.strp2p.com", "strp2p.com")
 
-            .replaceFirst("https://pelisplus.upns.pro", "https://upstream.to")
-            .replaceFirst("https://pelisplus.rpmstream.live", "https://rpmstream.com")
-            .replaceFirst("https://pelisplus.strp2p.com", "https://strp2p.com")
-
+            // Otros
             .replaceFirst("https://hglink.to", "https://streamwish.to")
             .replaceFirst("https://swdyu.com", "https://streamwish.to")
-            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
-            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
-            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
-            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
-            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
-            .replaceFirst("https://sblona.com", "https://watchsb.com")
-            .replaceFirst("https://lulu.st", "https://lulustream.com")
-            .replaceFirst("https://uqload.io", "https://uqload.com")
             .replaceFirst("https://do7go.com", "https://dood.la")
             .replaceFirst("https://doodstream.com", "https://dood.la")
-            .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -239,49 +235,39 @@ class PlushdProvider : MainAPI() {
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to "$mainUrl/" 
+            "Referer" to "$mainUrl/"
         )
 
         Log.d("PlushdProvider", "Iniciando carga de links para: $data")
         val doc = app.get(data, headers = headers).document
-
         val servers = doc.select("div ul.subselect li")
-        Log.d("PlushdProvider", "Servidores encontrados en el DOM: ${servers.size}")
 
         servers.forEach { serverLi ->
             try {
                 val serverName = serverLi.text().trim()
-                val serverData = serverLi.attr("data-server")
-
-                if (serverData.isNullOrEmpty()) return@forEach
+                val serverData = serverLi.attr("data-server") ?: return@forEach
+                if (serverData.isEmpty()) return@forEach
 
                 val encodedTwo = base64Encode(serverData.toByteArray())
                 val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                Log.d("PlushdProvider", "Procesando servidor: $serverName | Player: $playerUrl")
+                val response = app.get(playerUrl, headers = headers).text
+                if (response.contains("bloqueo temporal")) return@forEach
 
-                val response = app.get(playerUrl, headers = headers)
-                val text = response.text
-
-                if (text.contains("bloqueo temporal")) {
-                    Log.e("PlushdProvider", "BLOQUEO DETECTADO en servidor $serverName")
-                    return@forEach
-                }
-
-                val link = linkRegex.find(text)?.destructured?.component1()
+                val link = linkRegex.find(response)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "Link extraído: $link -> Link corregido: $fixedLink")
 
-                    val extractorReferer = try {
-                        val urlObject = URL(fixedLink)
-                        "${urlObject.protocol}://${urlObject.host}/"
-                    } catch (e: Exception) {
+                    // Si el link es de hqq o vidhide, el referer DEBE ser el playerUrl para los subs
+                    val extractorReferer = if (fixedLink.contains("hqq") || fixedLink.contains("vidhide")) {
                         playerUrl
+                    } else {
+                        fixedLink
                     }
 
-                    // Intentamos cargar el extractor
+                    Log.d("PlushdProvider", "Link final: $fixedLink | Referer: $extractorReferer")
+
                     val loaded = loadExtractor(
                         url = fixedLink,
                         referer = extractorReferer,
@@ -290,22 +276,17 @@ class PlushdProvider : MainAPI() {
                     )
 
                     if (loaded) {
-                        Log.i("PlushdProvider", "ÉXITO: Extractor cargó $fixedLink")
+                        Log.i("PlushdProvider", "ÉXITO: Cargado $serverName")
                         linksFound = true
                     } else {
-                        Log.w("PlushdProvider", "FALLO: Ningún extractor reconoció la URL: $fixedLink")
+                        Log.w("PlushdProvider", "FALLO: Sin extractor para $fixedLink")
                     }
-                } else {
-                    Log.w("PlushdProvider", "No se encontró redirección (Regex fallo) en el player de $serverName")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error fatal procesando servidor: ${e.message}")
+                Log.e("PlushdProvider", "Error en servidor: ${e.message}")
             }
-
-            delay(1000L) // Reducido un poco para mayor velocidad
+            delay(1000L)
         }
-
-        Log.d("PlushdProvider", "Carga finalizada. ¿Links encontrados?: $linksFound")
         return linksFound
     }
 }
