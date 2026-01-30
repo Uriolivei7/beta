@@ -38,6 +38,16 @@ class SudatchiProvider : MainAPI() {
         "$apiUrl/series?page=1&sort=TRENDING_DESC" to "En Tendencia"
     )
 
+    // Helper para manejar las imágenes que vienen como String o como Objeto
+    private fun getImageUrl(node: com.fasterxml.jackson.databind.JsonNode?): String? {
+        if (node == null || node.isNull) return null
+        return if (node.isObject) {
+            node.get("extraLarge")?.asText() ?: node.get("large")?.asText()
+        } else {
+            node.asText()
+        }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         return try {
             val response = app.get(request.data, headers = apiHeaders).text
@@ -47,7 +57,7 @@ class SudatchiProvider : MainAPI() {
             data.results?.forEach { anime ->
                 val title = anime.title?.english ?: anime.title?.romaji ?: "Unknown"
                 homeItems.add(newAnimeSearchResponse(title, "$mainUrl/anime/${anime.id}") {
-                    this.posterUrl = anime.coverImage
+                    this.posterUrl = getImageUrl(anime.coverImage)
                 })
             }
 
@@ -72,14 +82,20 @@ class SudatchiProvider : MainAPI() {
                 this.plot = data.description
                 this.tags = data.genres
 
+                // Mapeo de estado
+                val statusEnum = when (data.status?.uppercase()) {
+                    "RELEASING" -> ShowStatus.Ongoing
+                    "FINISHED" -> ShowStatus.Completed
+                    else -> ShowStatus.Ongoing
+                }
+                this.showStatus = statusEnum
+
+                // 1. Procesar Episodios
                 val episodesList = data.episodes?.map { ep ->
                     val subsToSerialize = ep.subtitles ?: emptyList<SubtitleDto>()
                     val subsJson = mapper.writeValueAsString(subsToSerialize)
                     val encodedSubs = URLEncoder.encode(subsJson, "UTF-8")
-
                     val videoData = "$apiUrl/streams?episodeId=${ep.id ?: 0}&subs=$encodedSubs"
-
-                    Log.d(TAG, "Logs: Preparando ep ${ep.number} con ${subsToSerialize.size} subs")
 
                     newEpisode(videoData) {
                         this.name = ep.title
@@ -89,9 +105,27 @@ class SudatchiProvider : MainAPI() {
                 } ?: emptyList()
 
                 addEpisodes(DubStatus.Subbed, episodesList)
+
+                // 2. Recomendaciones
+                this.recommendations = data.recommendations?.map { rec ->
+                    newAnimeSearchResponse(
+                        rec.title?.english ?: rec.title?.romaji ?: "Unknown",
+                        "$mainUrl/anime/${rec.id}"
+                    ) {
+                        this.posterUrl = getImageUrl(rec.coverImage)
+                    }
+                }
+
+                // 3. Info de Próximo Episodio (Logs)
+                data.nextAiring?.let {
+                    Log.d(TAG, "Logs: Próximo episodio ${it.ep} en timestamp: ${it.at}")
+                }
+
+                Log.d(TAG, "Logs: Load finalizado para $title - Status: $statusEnum - Recs: ${this.recommendations?.size ?: 0}")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
@@ -116,7 +150,7 @@ class SudatchiProvider : MainAPI() {
 
                     val label = sub.subtitlesName?.name ?: sub.subtitlesName?.language ?: "Sub"
 
-                    Log.d(TAG, "Logs: Cargando subtítulo: $label")
+                    Log.d(TAG, "Logs: Cargando subtítulo: $label en $subUrl")
                     subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
             } catch (e: Exception) {
@@ -141,7 +175,7 @@ class SudatchiProvider : MainAPI() {
             val data: SeriesDto = mapper.readValue(response)
             data.results?.map { anime ->
                 newAnimeSearchResponse(anime.title?.english ?: anime.title?.romaji ?: "Unknown", "$mainUrl/anime/${anime.id}") {
-                    this.posterUrl = anime.coverImage
+                    this.posterUrl = getImageUrl(anime.coverImage)
                 }
             } ?: emptyList()
         } catch (e: Exception) { emptyList() }
@@ -156,7 +190,13 @@ class SudatchiProvider : MainAPI() {
     data class AnimeDto(
         val id: String? = null,
         val title: TitleDto? = null,
-        val coverImage: String? = null
+        val coverImage: com.fasterxml.jackson.databind.JsonNode? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class NextAiringDto(
+        val ep: Int? = null,
+        val at: Long? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -170,7 +210,10 @@ class SudatchiProvider : MainAPI() {
         val bannerImage: String? = null,
         val genres: List<String>? = null,
         val year: Int? = null,
-        val episodes: List<EpisodeDto>? = null
+        val status: String? = null,
+        val episodes: List<EpisodeDto>? = null,
+        val recommendations: List<AnimeDto>? = null,
+        val nextAiring: NextAiringDto? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
