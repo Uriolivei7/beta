@@ -61,7 +61,6 @@ class LamovieProvider : MainAPI() {
 
     private fun Post.toSearchResult(): SearchResponse {
         val poster = fixImg(images?.poster ?: this.poster)
-        // Limpiamos el (2025) del título para que se vea profesional
         val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
 
         val typeStr = type ?: "movies"
@@ -88,17 +87,26 @@ class LamovieProvider : MainAPI() {
             else -> "movies"
         }
 
-        val apiRes = app.get("$apiBase/single/$type?slug=$slug&postType=$type", headers = mapOf("User-Agent" to USER_AGENT)).text
-        val responseObj = try { parseJson<SinglePostResponse>(apiRes) } catch (e: Exception) {
+        val apiRes = app.get(
+            "$apiBase/single/$type?slug=$slug&postType=$type",
+            headers = mapOf("User-Agent" to USER_AGENT)
+        ).text
+
+        val responseObj = try {
+            parseJson<SinglePostResponse>(apiRes)
+        } catch (e: Exception) {
             Log.e(TAG, "Logs Error: Falló parseo de JSON en load")
             null
         }
+
         val postData = responseObj?.data ?: return null
         val id = postData.id ?: return null
 
         val galleryImgs = postData.gallery?.split("\n")?.filter { it.isNotBlank() }
         val posterImg = fixImg(postData.images?.poster ?: postData.poster)
-        val bigImg = fixImg(galleryImgs?.firstOrNull()?.trim() ?: postData.images?.backdrop ?: postData.backdrop)
+        val bigImg = fixImg(
+            galleryImgs?.firstOrNull()?.trim() ?: postData.images?.backdrop ?: postData.backdrop
+        )
 
         val cleanTitle = postData.title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
         val realYear = postData.release_date?.split("-")?.firstOrNull()?.toIntOrNull()
@@ -110,7 +118,6 @@ class LamovieProvider : MainAPI() {
                 this.plot = postData.overview
                 this.year = realYear
                 this.duration = postData.runtime?.substringBefore(".")?.toIntOrNull()
-                // Tags para quitar el ID numérico de la vista
                 this.tags = listOfNotNull("Película", postData.certification)
             }
         } else {
@@ -124,7 +131,10 @@ class LamovieProvider : MainAPI() {
                 finalSeasons.forEach { sNumStr ->
                     val sNum = sNumStr.toIntOrNull() ?: return@forEach
                     val epRes = if (sNum == 1) firstSeasonRes else {
-                        app.get("$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50", headers = mapOf("User-Agent" to USER_AGENT)).text
+                        app.get(
+                            "$apiBase/single/episodes/list?_id=$id&season=$sNum&page=1&postsPerPage=50",
+                            headers = mapOf("User-Agent" to USER_AGENT)
+                        ).text
                     }
                     val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) { null }
                     epData?.data?.posts?.forEach { epItem ->
@@ -135,32 +145,55 @@ class LamovieProvider : MainAPI() {
                         })
                     }
                 }
-            } catch (e: Exception) { Log.e(TAG, "Logs Error: Falló carga de episodios") }
+            } catch (e: Exception) {
+                Log.e(TAG, "Logs Error: Falló carga de episodios")
+            }
 
-            newTvSeriesLoadResponse(cleanTitle, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
+            newTvSeriesLoadResponse(
+                cleanTitle,
+                url,
+                if (type == "animes") TvType.Anime else TvType.TvSeries,
+                episodesList
+            ) {
                 this.posterUrl = posterImg
                 this.backgroundPosterUrl = bigImg
                 this.plot = postData.overview
                 this.year = realYear
-                this.tags = listOfNotNull(if (type == "animes") "Anime" else "Serie", postData.certification)
+                this.tags = listOfNotNull(
+                    if (type == "animes") "Anime" else "Serie",
+                    postData.certification
+                )
             }
         }
 
         return response.apply {
-            // --- RECOMENDACIONES REALES ---
             try {
-                // Llamamos al endpoint que encontraste usando el ID del post
-                val relatedUrl = "$apiBase/single/related?postId=$id&page=1&postsPerPage=12"
-                val relatedRes = app.get(relatedUrl, headers = mapOf("User-Agent" to USER_AGENT)).text
+                val relatedUrl = "$apiBase/single/related?postId=$id&page=1&tab=connections&postsPerPage=12"
+                Log.d(TAG, "Logs: Consultando Recomendaciones en: $relatedUrl")
 
-                // Usamos el ApiResponse que ya tienes para mapear los posts
-                val relatedData = try { parseJson<ApiResponse>(relatedRes) } catch (e: Exception) { null }
+                val headers = mapOf(
+                    "Accept" to "application/json",
+                    "Referer" to "$mainUrl/",
+                    "User-Agent" to USER_AGENT,
+                    "X-Requested-With" to "XMLHttpRequest"
+                )
 
-                this.recommendations = relatedData?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
+                val relatedRes = app.get(relatedUrl, headers = headers).text
 
-                Log.d(TAG, "Logs: Recomendaciones cargadas: ${this.recommendations?.size}")
+                val relatedData = try {
+                    parseJson<ApiResponse>(relatedRes)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Logs Error: Fallo al parsear JSON de recomendaciones: ${e.message}")
+                    null
+                }
+
+                val recs = relatedData?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
+                this.recommendations = recs
+
+                Log.d(TAG, "Logs: Recomendaciones cargadas con éxito: ${recs.size}")
+
             } catch (e: Exception) {
-                Log.e(TAG, "Logs Error: No se pudieron cargar las recomendaciones: ${e.message}")
+                Log.e(TAG, "Logs Error Recs: ${e.message}")
                 this.recommendations = emptyList()
             }
 
@@ -204,8 +237,6 @@ class LamovieProvider : MainAPI() {
         return true
     }
 
-    // --- DATA CLASSES ---
-
     data class PlayerResponse(val data: PlayerData?)
     data class PlayerData(val embeds: List<EmbedItem>?, val downloads: List<EmbedItem>?)
     data class EmbedItem(val url: String?, val server: String? = null, val lang: String? = null)
@@ -227,8 +258,8 @@ class LamovieProvider : MainAPI() {
         val gallery: String?,
         val rating: String?,
         val runtime: String?,
-        val release_date: String?, // Agregado para sacar el año real
-        val certification: String?, // Agregado para mostrar (PG, R, etc)
+        val release_date: String?,
+        val certification: String?,
         val recommendations: List<Post>? = null
     )
 
