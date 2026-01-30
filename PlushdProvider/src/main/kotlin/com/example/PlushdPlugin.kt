@@ -14,6 +14,6 @@ class PlushdPlugin: Plugin() {
         registerExtractorAPI(EmturbovidCom())
         registerExtractorAPI(Vidhide())
         registerExtractorAPI(RPMStream())
-
+        registerExtractorAPI(Listeamed())
     }
 }

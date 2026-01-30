@@ -243,13 +243,14 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data, headers = headers).document
         val servers = doc.select("div ul.subselect li")
 
+        Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
+
         servers.forEach { serverLi ->
             val serverName = serverLi.text().trim()
             try {
                 val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEach
                 val playerUrl = "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
 
-                // Obtenemos el script del player con el referer correcto
                 val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
                 val text = playerResponse.text
                 val link = linkRegex.find(text)?.destructured?.component1()
@@ -258,7 +259,6 @@ class PlushdProvider : MainAPI() {
                     val fixedLink = fixPelisplusHostsLinks(link)
                     Log.d("PlushdProvider", "Intentando: $serverName -> $fixedLink")
 
-                    // Si es Vidhide, usamos el playerUrl como Referer para engañar al servidor
                     val extractorReferer = when {
                         fixedLink.contains("vidhide") -> playerUrl
                         fixedLink.contains("upns.pro") -> "https://pelisplus.upns.pro/"
@@ -267,27 +267,32 @@ class PlushdProvider : MainAPI() {
                         else -> fixedLink
                     }
 
-                    val loaded = loadExtractor(
-                        url = fixedLink,
-                        referer = extractorReferer,
-                        subtitleCallback = { sub ->
-                            Log.i("PlushdProvider", "SUB ENCONTRADO: ${sub.url}")
-                            subtitleCallback.invoke(sub)
-                        },
-                        callback = { videoLink ->
-                            // Ya no intentamos modificar videoLink.headers directamente aquí
-                            Log.i("PlushdProvider", "¡ENLACE LISTO!: ${videoLink.url}")
-                            linksFound = true
-                            callback.invoke(videoLink)
-                        }
-                    )
-                    if (loaded) linksFound = true
+                    try {
+                        val loaded = loadExtractor(
+                            url = fixedLink,
+                            referer = extractorReferer,
+                            subtitleCallback = subtitleCallback,
+                            callback = { videoLink ->
+                                Log.i("PlushdProvider", "✅ ENLACE ENCONTRADO: ${videoLink.name} - ${videoLink.url}")
+                                linksFound = true
+                                callback.invoke(videoLink)
+                            }
+                        )
+                        Log.d("PlushdProvider", "loadExtractor para $serverName retornó: $loaded")
+                    } catch (e: Exception) {
+                        Log.e("PlushdProvider", "❌ Error en extractor $serverName: ${e.message}")
+                        e.printStackTrace()
+                    }
+                } else {
+                    Log.w("PlushdProvider", "⚠️ No se encontró link en $serverName")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error en $serverName: ${e.message}")
+                Log.e("PlushdProvider", "Error general en $serverName: ${e.message}")
             }
-            delay(500L) // Un pequeño delay para no saturar
+            delay(500L)
         }
+
+        Log.d("PlushdProvider", "Total links encontrados: $linksFound")
         return linksFound
     }
 
