@@ -101,47 +101,50 @@ class SudatchiProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS V8.0 (MODERNO) ===")
+        Log.d(TAG, "Logs: === DEBUG SUBTITULOS === Data: $data")
 
         return try {
             val encodedSubs = data.substringAfter("&subs=", "")
             if (encodedSubs.isNotEmpty()) {
                 val decodedSubs = java.net.URLDecoder.decode(encodedSubs, "UTF-8")
+                Log.d(TAG, "Logs: JSON Decodificado: $decodedSubs")
+
                 val subs: List<SubtitleDto> = mapper.readValue(decodedSubs)
 
                 subs.forEach { sub ->
-                    val subUrl = if (sub.url.startsWith("http")) {
-                        sub.url
-                    } else {
-                        val cleanPath = sub.url.removePrefix("/ipfs/").removePrefix("/")
-                        "$mainUrl/api/proxy/$cleanPath"
+                    // Limpiamos bien la ruta
+                    val cleanHash = sub.url.removePrefix("/ipfs/").removePrefix("/")
+
+                    // Opción A: Usar el proxy del sitio
+                    val subUrl = "$mainUrl/api/proxy/$cleanHash"
+
+                    // Opción B (Respaldo): Gateway oficial de IPFS si el anterior falla
+                    // val subUrl = "https://ipfs.io/ipfs/$cleanHash"
+
+                    val label = sub.subtitlesName?.name ?: "Sub - ${sub.subtitlesName?.language}"
+
+                    Log.d(TAG, "Logs: Intentando cargar sub: [$label]")
+                    Log.d(TAG, "Logs: URL generada: $subUrl")
+
+                    if (subUrl.isNotBlank()) {
+                        subtitleCallback.invoke(
+                            newSubtitleFile(label, subUrl)
+                        )
+                        Log.d(TAG, "Logs: subtitleCallback invocado exitosamente para $label")
                     }
-
-                    val label = sub.subtitlesName?.name ?: sub.subtitlesName?.language ?: "Sub"
-
-                    Log.d(TAG, "Logs: Sub detectado -> [$label] URL: $subUrl")
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
             }
 
             val cleanVideoUrl = data.substringBefore("&subs=")
-            Log.d(TAG, "Logs: Generando link con newExtractorLink para: $cleanVideoUrl")
-
             callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = "Sudatchi",
-                    url = cleanVideoUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
+                newExtractorLink(this.name, "Sudatchi", cleanVideoUrl, ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
-                    this.quality = Qualities.P1080.value
                     this.headers = apiHeaders
                 }
             )
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: ERROR FATAL en subs: ${e.message}")
             e.printStackTrace()
             false
         }
