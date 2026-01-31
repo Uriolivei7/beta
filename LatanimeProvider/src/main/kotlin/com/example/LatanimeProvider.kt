@@ -45,33 +45,20 @@ class LatanimeProvider : MainAPI() {
         }
     }
 
-    // --- LIMPIEZA DE TÍTULOS MEJORADA ---
     private fun cleanTitle(rawTitle: String): String {
         val languageRegex = Regex("""(?i)\s*\b(Latino|Castellano|Subtitulado|Español|Japonés|Japones)\b""")
         val yearRegex = Regex("""\s*\((\d{4})\)""")
-        val cleaned = rawTitle
+        return rawTitle
             .replace(languageRegex, "")
             .replace(yearRegex, "")
             .replace(Regex("""\s+"""), " ")
             .trim()
-
-        Log.d("LatanimePlugin", "Título limpiado: '$rawTitle' -> '$cleaned'")
-        return cleaned
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val urls = listOf(
-            Pair("$mainUrl/emision", "En emisión"),
-            Pair("$mainUrl/animes?fecha=false&genero=false&letra=false&categoria=Película", "Películas"),
-            Pair("$mainUrl/animes", "Animes"),
-        )
-
         val items = ArrayList<HomePageList>()
-
         try {
             val mainDoc = app.get(mainUrl).document
-
-            // Carousel
             val carouselItems = mainDoc.select("div.carousel-item a[href*=/anime/], div.carousel-item a[href*=/pelicula/]").mapNotNull { element ->
                 val itemUrl = element.attr("href")
                 val title = element.selectFirst("span.span-slider")?.text()?.trim() ?: ""
@@ -83,22 +70,6 @@ class LatanimeProvider : MainAPI() {
                 } else null
             }
             if (carouselItems.isNotEmpty()) items.add(HomePageList("Destacados", carouselItems))
-
-            // Secciones
-            urls.forEach { (url, name) ->
-                val doc = app.get(url).document
-                val home = doc.select("div.col-md-4, div.col-lg-3, div.col-xl-2, div.col-6").mapNotNull { article ->
-                    val linkElement = article.selectFirst("a[href*=/anime/], a[href*=/pelicula/]") ?: return@mapNotNull null
-                    val itemUrl = linkElement.attr("href")
-                    val title = linkElement.selectFirst("h3.my-1, h3")?.text()?.trim() ?: linkElement.attr("title").trim()
-                    val imgElement = linkElement.selectFirst("img.img-fluid2, img.img-fluid, img")
-
-                    newAnimeSearchResponse(cleanTitle(title), fixUrl(itemUrl)) {
-                        this.posterUrl = fixUrl(imgElement?.attr("data-src")?.ifBlank { imgElement.attr("src") } ?: "")
-                    }
-                }
-                if (home.isNotEmpty()) items.add(HomePageList(name, home))
-            }
         } catch (e: Exception) {
             Log.e("LatanimeProvider", "Error en getMainPage: ${e.message}")
         }
@@ -106,60 +77,63 @@ class LatanimeProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val response = app.get("$mainUrl/buscar?q=$query", interceptor = cloudflareKiller)
-        val doc = response.document
+        val doc = app.get("$mainUrl/buscar?q=$query").document
         return doc.select("div.col-md-4.col-lg-3.col-xl-2.col-6.my-3").mapNotNull { article ->
             val itemLink = article.selectFirst("a")
             val title = itemLink?.selectFirst("div.seriedetails h3.my-1")?.text() ?: ""
             val href = itemLink?.attr("href") ?: return@mapNotNull null
-            val imageElement = article.selectFirst("img.img-fluid2")
-
             newAnimeSearchResponse(cleanTitle(title), fixUrl(href)) {
-                this.type = TvType.Anime
-                this.posterUrl = fixUrl(imageElement?.attr("data-src")?.ifBlank { imageElement.attr("src") } ?: "")
+                val img = article.selectFirst("img")
+                this.posterUrl = fixUrl(img?.attr("data-src")?.ifBlank { img.attr("src") } ?: "")
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("LatanimeProvider", "Iniciando carga de metadatos para: $url")
+        Log.d("LatanimeProvider", "Cargando: $url")
         val document = app.get(url).document
         val rawTitle = document.selectFirst("div.col-lg-9 h2")?.text()?.trim() ?: ""
 
-        // --- LÓGICA DE IDIOMAS Y ETIQUETAS ---
+        // Extraer el año antes de limpiar el título
+        val foundYear = Regex("""\((\d{4})\)""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+
         val tags = document.select("a[href*=/genero/] div.btn").map { it.text().trim() }
             .filter { !it.contains(Regex("(?i)Latino|Castellano|Subtitulado|Japonés|Japones")) }
             .toMutableList()
 
-        val isLatino = rawTitle.contains("Latino", true)
-        val isCastellano = rawTitle.contains("Castellano", true)
-        val isJapones = rawTitle.contains("Japonés", true) || rawTitle.contains("Japones", true)
-
-        when {
-            isLatino -> tags.add(0, "Latino")
-            isCastellano -> tags.add(0, "Castellano")
-            isJapones -> {
-                tags.add(0, "Subtitulado")
-                tags.add(1, "Japonés")
-            }
-            else -> tags.add(0, "Subtitulado") // Por defecto si no hay nada
+        if (rawTitle.contains("Latino", true)) tags.add(0, "Latino")
+        else if (rawTitle.contains("Castellano", true)) tags.add(0, "Castellano")
+        else if (rawTitle.contains("Japonés", true) || rawTitle.contains("Japones", true)) {
+            tags.add(0, "Subtitulado")
+            tags.add(1, "Japonés")
+        } else {
+            tags.add(0, "Subtitulado")
         }
 
         val poster = document.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
         val description = document.selectFirst("p.my-2.opacity-75")?.text()?.trim() ?: ""
 
-        val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapIndexedNotNull { _, element ->
+        // --- PROCESAMIENTO DE EPISODIOS CORREGIDO ---
+        val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapNotNull { element ->
             val epUrl = element.attr("href")
-            val epTitleText = element.selectFirst("div.cap-layout")?.text()?.trim() ?: ""
-            val epNum = Regex("""(\d+)""").find(epUrl + epTitleText)?.value?.toIntOrNull()
+            val epText = element.selectFirst("div.cap-layout")?.text()?.trim() ?: ""
+
+            // Regex mejorada: busca "episodio-X" en la URL para evitar confundirse con el año
+            val epNum = Regex("""episodio-(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""(\d+)""").find(epText)?.value?.toIntOrNull()
 
             if (epUrl.isNotBlank() && epNum != null) {
                 newEpisode(fixUrl(epUrl)) {
-                    this.name = "Capítulo $epNum"
+                    this.name = "Episodio $epNum"
                     this.episode = epNum
                 }
-            } else null
+            } else {
+                Log.w("LatanimeProvider", "No se pudo extraer número de episodio de: $epUrl")
+                null
+            }
         }.reversed()
+
+        Log.d("LatanimeProvider", "Total episodios cargados: ${episodes.size}")
 
         val tvType = if (url.contains("/pelicula/")) TvType.Movie else TvType.Anime
 
@@ -168,12 +142,14 @@ class LatanimeProvider : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
+                this.year = foundYear
             }
         } else {
             newTvSeriesLoadResponse(cleanTitle(rawTitle), url, tvType, episodes) {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
+                this.year = foundYear
                 this.showStatus = if (document.html().contains("En emisión", true)) ShowStatus.Ongoing else ShowStatus.Completed
             }
         }
@@ -185,24 +161,18 @@ class LatanimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("LatanimeProvider", "Extrayendo links de episodio: $data")
-        val doc = app.get(data, interceptor = cloudflareKiller).document
+        val doc = app.get(data).document
         var found = false
-
         doc.select("ul.cap_repro li#play-video").forEach { playerElement ->
             val encodedUrl = playerElement.selectFirst("a.play-video")?.attr("data-player")
             if (!encodedUrl.isNullOrEmpty()) {
-                val urlDecoded = base64Decode(encodedUrl)
-                val finalUrl = urlDecoded.replace("https://monoschinos2.com/reproductor?url=", "")
-                    .replace("https://sblona.com", "https://watchsb.com")
-
+                val finalUrl = base64Decode(encodedUrl).replace("https://monoschinos2.com/reproductor?url=", "")
                 if (finalUrl.isNotEmpty()) {
                     loadExtractor(finalUrl, mainUrl, subtitleCallback, callback)
                     found = true
                 }
             }
         }
-        if (!found) Log.e("LatanimeProvider", "Fallo: No se encontraron enlaces de video para $data")
         return found
     }
 }
