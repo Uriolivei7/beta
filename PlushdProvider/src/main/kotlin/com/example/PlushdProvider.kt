@@ -213,68 +213,52 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO DE ENLACES ---")
-        Log.d("PlushdProvider", "URL de origen: $data")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO CON DATOS DE RED ---")
 
         val doc = app.get(data).document
-
-        // Capturamos todos los elementos de servidor
         val servers = doc.select("ul.subselect li[data-server]")
-
-        if (servers.isEmpty()) {
-            Log.e("PlushdProvider", "FALLO: No se detectaron servidores. ¿Cambió el HTML?")
-            return false
-        }
 
         servers.forEach { element ->
             val serverHash = element.attr("data-server")
             val serverName = element.selectFirst("span")?.text() ?: "Unknown"
 
-            Log.d("PlushdProvider", "Procesando [$serverName] con Hash: $serverHash")
-
-            if (serverHash.isNotBlank()) {
-                try {
-                    val response = app.get(
-                        "$mainUrl/reproductor?h=$serverHash",
-                        referer = data,
-                        headers = mapOf(
-                            "X-Requested-With" to "XMLHttpRequest",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        )
+            try {
+                // Intentamos la petición con los headers exactos que pide el servidor para no dar 404
+                val response = app.get(
+                    "$mainUrl/reproductor?h=$serverHash",
+                    referer = data, // Muy importante: la web de origen
+                    headers = mapOf(
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                        "Upgrade-Insecure-Requests" to "1"
                     )
+                )
 
-                    val playerHtml = response.text
-                    Log.d("PlushdProvider", "Respuesta recibida para $serverName (Longitud: ${playerHtml.length})")
+                val html = response.text
+                Log.d("PlushdProvider", "Respuesta de $serverName: ${response.code}")
 
-                    // Buscamos el iframe o un enlace directo en el HTML del reproductor
-                    val iframe = response.document.selectFirst("iframe")?.attr("src")
+                // Buscamos el iframe que apunta a callistanise, earvids, etc.
+                val iframe = response.document.selectFirst("iframe")?.attr("src")
 
-                    if (!iframe.isNullOrBlank()) {
-                        val finalUrl = if (iframe.startsWith("//")) "https:$iframe" else iframe
-                        Log.d("PlushdProvider", "¡ÉXITO! Iframe encontrado: $finalUrl")
+                if (!iframe.isNullOrBlank()) {
+                    val cleanedIframe = if (iframe.startsWith("//")) "https:$iframe" else iframe
+                    Log.d("PlushdProvider", "Link del servidor encontrado: $cleanedIframe")
 
-                        loadExtractor(finalUrl, data, subtitleCallback, callback)
-                    } else {
-                        // Si no hay iframe, buscamos scripts que contengan "location.href" o "window.location"
-                        val redirectScript = Regex("window\\.location\\.href\\s*=\\s*\"(.*?)\"").find(playerHtml)
-                        val redirectUrl = redirectScript?.groupValues?.get(1)
-
-                        if (!redirectUrl.isNullOrBlank()) {
-                            Log.d("PlushdProvider", "Redirección detectada por Script: $redirectUrl")
-                            loadExtractor(redirectUrl, data, subtitleCallback, callback)
-                        } else {
-                            Log.w("PlushdProvider", "AVISO: No se halló Iframe ni redirección en el reproductor de $serverName")
-                            // Log extra para ver qué devolvió el servidor en caso de error
-                            Log.v("PlushdProvider", "Cuerpo de respuesta: ${playerHtml.take(200)}...")
-                        }
+                    // Cargamos el extractor
+                    loadExtractor(cleanedIframe, data, subtitleCallback, callback)
+                } else {
+                    // Si el iframe no está, buscamos el link "pelado" en el script
+                    // A veces viene como "var url = 'https://...';"
+                    val regexLink = Regex("""(?:https?:)?//[^\s"'<>]+(?:callistanise|earnvids|pixibay)[^\s"'<>]*""").find(html)
+                    regexLink?.value?.let { link ->
+                        val finalLink = if (link.startsWith("//")) "https:$link" else link
+                        Log.d("PlushdProvider", "Link detectado por Regex: $finalLink")
+                        loadExtractor(finalLink, data, subtitleCallback, callback)
                     }
-                } catch (e: Exception) {
-                    Log.e("PlushdProvider", "ERROR CRÍTICO en $serverName: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.e("PlushdProvider", "Error al cargar $serverName: ${e.message}")
             }
         }
-
-        Log.d("PlushdProvider", "--- FIN DEL RASTREO ---")
         return true
     }
 
