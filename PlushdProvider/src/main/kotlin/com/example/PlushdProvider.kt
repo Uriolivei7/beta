@@ -154,27 +154,30 @@ class PlushdProvider : MainAPI() {
         // 1. Imagen de Fondo (Banner Horizontal)
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
 
-        // 2. Poster Vertical (El que quieres para Favoritos)
-        // Buscamos específicamente la imagen que está en la columna de datos (izquierda)
-        var verticalPoster = doc.selectFirst(".data .poster img, .data img, .itemA img")?.let {
-            it.attr("data-src").ifBlank { it.attr("src") }
+        // 2. Poster Vertical (Simplificado para evitar el aviso del IDE)
+        var verticalPoster = doc.select(".data img, .poster img, picture img").firstNotNullOfOrNull {
+            val src = it.attr("data-src").ifBlank { it.attr("src") }
+            // Filtramos: que no sea el fondo, que sea de tmdb y que no sea un logo
+            if (src.isNotBlank() && src != backimage && src.contains("tmdb.org") && !src.contains("logo")) {
+                src
+            } else null
+        }?.replace("original", "w342")
+
+        // 3. Fallback: Si no encontró nada, intenta buscar por el atributo alt o usa el fondo
+        if (verticalPoster.isNullOrBlank()) {
+            verticalPoster = doc.selectFirst("img[alt*='$title'], .itemA img")?.let {
+                it.attr("data-src").ifBlank { it.attr("src") }
+            }?.replace("original", "w342") ?: backimage
         }
 
-        // Si el selector anterior falló o nos dio la misma imagen horizontal,
-        // buscamos cualquier imagen que NO sea el backimage
-        if (verticalPoster.isNullOrBlank() || verticalPoster == backimage) {
-            verticalPoster = doc.select("img").firstOrNull {
-                val src = it.attr("data-src").ifBlank { it.attr("src") }
-                src.isNotBlank() && src != backimage && !src.contains("logo")
-            }?.let { it.attr("data-src").ifBlank { it.attr("src") } } ?: backimage
-        }
-
-        Log.d("PlushdProvider", "Poster capturado para Favoritos: $verticalPoster")
+        Log.d("PlushdProvider", "Poster FINAL para Favoritos: $verticalPoster")
+        Log.d("PlushdProvider", "Background para Ficha: $backimage")
 
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }
         val epi = ArrayList<Episode>()
 
+        // ... (tu lógica de episodios se queda igual)
         if (tvType != TvType.Movie) {
             val script = doc.select("script").firstOrNull { it.html().contains("seasonsJson = ") }?.html()
             if (!script.isNullOrEmpty()) {
@@ -252,51 +255,88 @@ class PlushdProvider : MainAPI() {
         Log.d("PlushdProvider", "═══════════════════════════════════════")
         Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
 
-        // SOLO PROBAR EL PRIMER SERVIDOR PARA DEBUG
-        val serverLi = servers.firstOrNull() ?: return false
-        val serverName = serverLi.text().trim()
+        servers.forEachIndexed { index, serverLi ->
+            val serverName = serverLi.text().trim()
+            try {
+                val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEachIndexed
 
-        try {
-            val serverData = serverLi.attr("data-server")
-            val playerUrl = "$mainUrl/player/$serverData"
+                Log.d("PlushdProvider", "[$index] $serverName")
+                Log.d("PlushdProvider", "  📋 data-server (base64): $serverData")
 
-            Log.d("PlushdProvider", "Testing: $serverName")
-            Log.d("PlushdProvider", "data-server: $serverData")
-            Log.d("PlushdProvider", "playerUrl: $playerUrl")
+                // ⭐ DECODIFICAR BASE64 DOS VECES
+                try {
+                    // Primera decodificación
+                    val decoded1 = Base64.decode(serverData, Base64.DEFAULT)
+                    val decoded1Str = String(decoded1, Charsets.UTF_8)
+                    Log.d("PlushdProvider", "  🔓 Primera decodificación: $decoded1Str")
 
-            val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
-            val text = playerResponse.text
+                    // Segunda decodificación
+                    val decoded2 = Base64.decode(decoded1Str, Base64.DEFAULT)
+                    val finalUrl = String(decoded2, Charsets.UTF_8)
+                    Log.d("PlushdProvider", "  🔓 Segunda decodificación (URL FINAL): $finalUrl")
 
-            Log.d("PlushdProvider", "═══════════════════════════════════════")
-            Log.d("PlushdProvider", "RESPUESTA COMPLETA DEL PLAYER:")
-            Log.d("PlushdProvider", text)
-            Log.d("PlushdProvider", "═══════════════════════════════════════")
+                    if (finalUrl.startsWith("http")) {
+                        val fixedLink = fixPelisplusHostsLinks(finalUrl)
+                        Log.d("PlushdProvider", "  ✅ Link procesado: $fixedLink")
 
-            // Intentar diferentes patrones
-            val patterns = listOf(
-                Regex("window\\.location\\.href\\s*=\\s*'([^']*)'"),
-                Regex("window\\.location\\.href\\s*=\\s*\"([^\"]*)\""),
-                Regex("window\\.location\\s*=\\s*'([^']*)'"),
-                Regex("window\\.location\\s*=\\s*\"([^\"]*)\""),
-                Regex("location\\.href\\s*=\\s*'([^']*)'"),
-                Regex("location\\.href\\s*=\\s*\"([^\"]*)\""),
-                Regex("https?://[^\\s'\"<>]+(?:vidhide|upns|emturbovid|listeamed|hqq)[^\\s'\"<>]+")
-            )
+                        val extractorReferer = when {
+                            fixedLink.contains("vidhide") -> mainUrl
+                            fixedLink.contains("upns.pro") -> "https://pelisplus.upns.pro/"
+                            fixedLink.contains("strp2p.com") -> "https://pelisplus.strp2p.com/"
+                            fixedLink.contains("emturbovid.com") -> "https://emturbovid.com/"
+                            fixedLink.contains("listeamed.net") -> "https://listeamed.net/"
+                            else -> fixedLink
+                        }
 
-            for ((index, pattern) in patterns.withIndex()) {
-                val match = pattern.find(text)
-                if (match != null) {
-                    val link = match.groupValues.getOrNull(1) ?: match.value
-                    Log.d("PlushdProvider", "Patrón $index encontró: $link")
+                        try {
+                            val tempLinks = mutableListOf<ExtractorLink>()
+
+                            loadExtractor(
+                                url = fixedLink,
+                                referer = extractorReferer,
+                                subtitleCallback = subtitleCallback,
+                                callback = { link ->
+                                    tempLinks.add(link)
+                                    Log.d("PlushdProvider", "    ➜ Link: ${link.name} | ${link.quality}p")
+                                }
+                            )
+
+                            if (tempLinks.isNotEmpty()) {
+                                allLinks.addAll(tempLinks)
+                                Log.d("PlushdProvider", "  ✅ $serverName: ${tempLinks.size} enlaces")
+                            } else {
+                                Log.w("PlushdProvider", "  ⚠️ $serverName: 0 enlaces")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("PlushdProvider", "  ❌ Error extractor: ${e.message}")
+                        }
+                    } else {
+                        Log.w("PlushdProvider", "  ⚠️ URL decodificada inválida: $finalUrl")
+                    }
+
+                } catch (e: Exception) {
+                    Log.e("PlushdProvider", "  ❌ Error decodificando base64: ${e.message}")
                 }
+
+            } catch (e: Exception) {
+                Log.e("PlushdProvider", "  ❌ Error general: ${e.message}")
+                e.printStackTrace()
             }
 
-        } catch (e: Exception) {
-            Log.e("PlushdProvider", "Error: ${e.message}")
-            e.printStackTrace()
+            if (index < servers.size - 1) delay(300L)
         }
 
-        return false
+        Log.d("PlushdProvider", "═══════════════════════════════════════")
+        Log.d("PlushdProvider", "TOTAL ENLACES CAPTURADOS: ${allLinks.size}")
+
+        allLinks.forEach { link ->
+            Log.d("PlushdProvider", "📤 Enviando: ${link.name} | ${link.url}")
+            callback(link)
+        }
+
+        Log.d("PlushdProvider", "═══════════════════════════════════════")
+
+        return allLinks.isNotEmpty()
     }
 
 }
