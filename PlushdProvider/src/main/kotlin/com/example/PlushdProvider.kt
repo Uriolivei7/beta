@@ -203,67 +203,90 @@ class PlushdProvider : MainAPI() {
         }
     }
 
+    private fun fixPelisplusHostsLinks(url: String): String {
+        return url
+            .replaceFirst("https://hglink.to", "https://streamwish.to")
+            .replaceFirst("https://swdyu.com", "https://streamwish.to")
+            .replaceFirst("https://cybervynx.com", "https://streamwish.to")
+            .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+            .replaceFirst("https://sblona.com", "https://watchsb.com")
+            .replaceFirst("https://lulu.st", "https://lulustream.com")
+            .replaceFirst("https://uqload.io", "https://uqload.com")
+            .replaceFirst("https://do7go.com", "https://dood.la")
+            .replaceFirst("https://doodstream.com", "https://dood.la")
+            .replaceFirst("https://streamtape.com", "https://streamtape.cc")
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO CARGA DINÁMICA ---")
+        var linksFound = false
+        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
-        val mainPage = app.get(data)
-        val doc = mainPage.document
-        val servers = doc.select("ul.subselect li[data-server]")
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to data
+        )
 
-        servers.forEach { element ->
-            val serverHash = element.attr("data-server")
-            val serverName = element.selectFirst("span")?.text() ?: "Server"
+        val doc = app.get(data, headers = headers).document
 
-            Log.d("PlushdProvider", "[LOG] Solicitando servidor: $serverName")
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
+            subtitleCallback.invoke(file)
+        }
 
+        doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
-                // 1. IMPORTANTE: Usamos la URL de la página actual (data) como referer
-                // Esto evita que siempre se reproduzca lo mismo.
-                val repoResponse = app.get(
-                    "$mainUrl/reproductor?h=$serverHash",
-                    referer = data,
-                    headers = mapOf(
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
-                    )
-                )
+                val serverData = serverLi.attr("data-server")
+                if (serverData.isNullOrEmpty()) return@forEach
 
-                if (repoResponse.code == 200) {
-                    val html = repoResponse.text
-                    // Buscamos el ID real de este video específico
-                    val realIdMatch = Regex("""/v/([a-zA-Z0-9]{8,15})""").find(html)
-                    val realId = realIdMatch?.groupValues?.get(1)
+                val encodedOne = serverData.toByteArray()
+                val encodedTwo = base64Encode(encodedOne)
+                val playerUrl = "$mainUrl/player/$encodedTwo"
 
-                    if (realId != null) {
-                        Log.d("PlushdProvider", "[LOG] ID encontrado para este video: $realId")
-                        val finalUrl = "https://callistanise.com/v/$realId"
+                val text = app.get(playerUrl, headers = headers).text
 
-                        callback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "$name - $serverName",
-                                url = finalUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = finalUrl
-                            }
-                        )
-                        // El extractor automático buscará el M3U8 nuevo de este ID
-                        loadExtractor(finalUrl, finalUrl, subtitleCallback, callback)
+                if (text.contains("bloqueo temporal")) {
+                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
+                    return@forEach
+                }
+
+                val link = linkRegex.find(text)?.destructured?.component1()
+
+                if (!link.isNullOrBlank()) {
+                    val fixedLink = fixPelisplusHostsLinks(link)
+
+                    val extractorReferer = try {
+                        val urlObject = URL(fixedLink)
+                        urlObject.protocol + "://" + urlObject.host + "/"
+                    } catch (e: Exception) {
+                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
+                        playerUrl
                     }
-                } else {
-                    Log.e("PlushdProvider", "[ERROR] El servidor respondió ${repoResponse.code} para este link")
+
+                    loadExtractor(
+                        url = fixedLink,
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = callback
+                    )
+                    linksFound = true
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "[ERROR] Falló la conexión: ${e.message}")
+                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
             }
+
+            delay(1500L)
         }
-        return true
+
+        return linksFound
     }
 
 }
