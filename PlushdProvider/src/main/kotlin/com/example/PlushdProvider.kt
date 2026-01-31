@@ -7,9 +7,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
 import java.net.URL
 
@@ -238,7 +235,7 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data, headers = headers).document
 
         val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider_Subs", "Subtítulo encontrado. URL: ${file.url}")
+            Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
             subtitleCallback.invoke(file)
         }
 
