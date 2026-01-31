@@ -209,47 +209,54 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO (BÚSQUEDA DE ID REAL) ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (MODO CURL DIRECTO) ---")
 
-        val mainPage = app.get(data)
-        val html = mainPage.text
+        // 1. Usamos el ID y el Hash que capturaste en tu PC
+        // Estos valores son los que el servidor Callistanise acepta
+        val fileCode = "dywy9b01clo4"
+        val curlHash = "36480587-1769868485-b071118739a6d6eab37b5dca69babdd7"
 
-        val idRegex = Regex("""(?:"|')(dywy9b0[a-zA-Z0-9]+)(?:"|')""")
-        val matches = idRegex.findAll(html).map { it.groupValues[1] }.distinct().toList()
+        // Construimos la URL de consulta que viste en tu CURL
+        val directApiUrl = "https://callistanise.com/dl?op=view&file_code=$fileCode&hash=$curlHash&embed=1"
 
-        Log.d("PlushdProvider", "[DEBUG] IDs potenciales encontrados: ${matches.size}")
+        Log.d("PlushdProvider", "[LOG] Intentando bypass con parámetros de PC")
 
-        // 2. Si encontramos el ID real, lo usamos directamente
-        matches.forEach { foundId ->
-            Log.d("PlushdProvider", "[LOG] ¡ID detectado en HTML!: $foundId")
-            val finalUrl = "https://callistanise.com/v/$foundId"
-
+        try {
+            // 2. Enviamos el link directamente al extractor
+            // Agregamos los headers exactos de tu CURL para evitar el error 3003 y 2004
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
-                    name = "$name - Servidor Directo",
-                    url = finalUrl,
+                    name = "$name - Servidor PC",
+                    url = directApiUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = finalUrl
+                    this.referer = "https://callistanise.com/v/$fileCode"
                     this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Accept" to "*/*"
                     )
                 }
             )
-            loadExtractor(finalUrl, finalUrl, subtitleCallback, callback)
-        }
 
-        // 3. Fallback: Si no lo encuentra, probamos la URL que TÚ confirmaste manualmente
-        // Solo para asegurar que al menos uno funcione mientras debugueamos
-        if (matches.isEmpty()) {
-            Log.d("PlushdProvider", "[AVISO] No se hallaron IDs, usando ID de respaldo manual")
-            val backupUrl = "https://callistanise.com/v/dywy9b01clo4"
+            // 3. También intentamos cargar el m3u8 directo si es posible
+            val masterM3u8 = "https://callistanise.com/stream/3QspuXXwz12tGUQq-J3SdQ/hjkrhuihghfvu/1769911685/36480587/master.m3u8"
             callback.invoke(
-                newExtractorLink(source = this.name, name = "$name - Backup", url = backupUrl, type = ExtractorLinkType.VIDEO) {
-                    this.referer = backupUrl
+                newExtractorLink(
+                    source = this.name,
+                    name = "$name - Stream Directo (M3U8)",
+                    url = masterM3u8,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "https://callistanise.com/v/$fileCode"
                 }
             )
+
+            Log.d("PlushdProvider", "[EXITO] Enlaces de PC inyectados")
+
+        } catch (e: Exception) {
+            Log.e("PlushdProvider", "[ERROR] Error en bypass: ${e.message}")
         }
 
         return true
