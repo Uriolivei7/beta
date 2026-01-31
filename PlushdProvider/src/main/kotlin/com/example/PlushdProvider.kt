@@ -156,33 +156,33 @@ class PlushdProvider : MainAPI() {
         }
 
         // 1. Imagen de Fondo (Banner Horizontal)
-        val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
+        // Extraemos la URL de donde tú encontraste: el div con clase 'bg'
+        val backimage = doc.selectFirst(".bg")?.attr("style")?.let {
+            Regex("url\\(\"?(.*?)\"?\\)").find(it)?.groupValues?.get(1)
+        } ?: doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
 
-        // 2. Poster Vertical (Buscando la imagen principal de la serie)
-        var verticalPoster = doc.select(".data img, .poster img, picture img").firstNotNullOfOrNull {
+        var verticalPoster = doc.select(".poster img, .data img").firstNotNullOfOrNull {
             val src = it.attr("data-src").ifBlank { it.attr("src") }
 
+            // Filtro: Debe ser de TMDB, no debe ser el fondo horizontal,
+            // y NO debe ser de episodios o temporadas.
             if (src.isNotBlank() &&
-                src != backimage &&
+                !src.contains("nGfjgUlES2WuYrHXNNF4fbGe2Eq") && // Evita específicamente ese fondo
                 src.contains("tmdb.org") &&
                 !src.contains("/episodes/") &&
-                !src.contains("/seasons/") && // <--- ESTO descarta las fotos de temporadas
-                !src.contains("logo")
+                !src.contains("/seasons/")
             ) {
                 src
             } else null
-        }?.replace("original", "w342")
+        }?.replace("original", "w342") // Forzamos el tamaño vertical del search
 
-        // 3. Si lo anterior falló, intentamos sacar la imagen del Search (que suele ser la primera en el HTML)
+        // 3. Si no encontró nada con los filtros, intentamos el primer tag de imagen limpio
         if (verticalPoster.isNullOrBlank()) {
-            verticalPoster = doc.selectFirst(".itemA img, picture img")?.let {
-                val src = it.attr("data-src").ifBlank { it.attr("src") }
-                if (!src.contains("/seasons/") && !src.contains("/episodes/")) src else null
-            }?.replace("original", "w342") ?: backimage.replace("original", "w342")
+            verticalPoster = doc.selectFirst(".poster img")?.attr("src")?.replace("original", "w342") ?: backimage
         }
 
-        Log.d("PlushdProvider", "Poster FINAL (Debe ser el del Search): $verticalPoster")
-        Log.d("PlushdProvider", "Background FINAL (Horizontal): $backimage")
+        Log.d("PlushdProvider", "Poster que se guardará en Favoritos: $verticalPoster")
+        Log.d("PlushdProvider", "Fondo de la ficha: $backimage")
 
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }

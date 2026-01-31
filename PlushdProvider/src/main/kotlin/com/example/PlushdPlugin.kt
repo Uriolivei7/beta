@@ -1,30 +1,24 @@
 package com.example
 
-import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 import android.util.Log
+import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
 
 @CloudstreamPlugin
-class PlushdPlugin: Plugin() {
+class PlushdPlugin : Plugin() {
     override fun load(context: Context) {
         Log.d("PlushdPlugin", "🚀 Cargando PlusHD Plugin...")
 
-        // Registrar provider principal
         registerMainAPI(PlushdProvider())
         Log.d("PlushdPlugin", "✅ Provider registrado")
 
-        // Registrar extractores
-        registerExtractorAPI(PelisplusUpnsPro())
-        registerExtractorAPI(PelisplusUpnsPro2())
-        registerExtractorAPI(PelisplusUpnsPro3())
-        registerExtractorAPI(EmturbovidCom())
-        registerExtractorAPI(Vidhide())
-        registerExtractorAPI(RPMStream())
-        registerExtractorAPI(Listeamed())
+        // Extractores personalizados
         registerExtractorAPI(Callistanise())
         registerExtractorAPI(TurbovidHLS())
         registerExtractorAPI(WaawTo())
+        registerExtractorAPI(Listeamed())
+        registerExtractorAPI(PelisplusUpns())
 
         Log.d("PlushdPlugin", "✅ Todos los extractores registrados")
         Log.d("PlushdPlugin", "🎉 Plugin cargado completamente")
