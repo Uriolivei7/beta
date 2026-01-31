@@ -123,18 +123,15 @@ class LatanimeProvider : MainAPI() {
 
         val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapNotNull { element ->
             val epUrl = element.attr("href")
-            val capLayout = element.selectFirst("div.cap-layout")
-            val epTitle = capLayout?.text()?.trim() ?: ""
 
             val epNum = Regex("""episodio-(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
-                ?: Regex("""(\d+)""").find(epTitle)?.value?.toIntOrNull()
 
             val imgElement = element.selectFirst("img")
             val epPoster = fixUrl(imgElement?.attr("data-src")?.ifBlank { imgElement.attr("src") } ?: "")
 
             if (epUrl.isNotBlank() && epNum != null) {
                 newEpisode(fixUrl(epUrl)) {
-                    this.name = epTitle.ifBlank { "Capítulo $epNum" }
+                    this.name = "Capítulo $epNum"
                     this.episode = epNum
                     this.posterUrl = epPoster
                 }
