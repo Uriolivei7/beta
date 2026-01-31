@@ -81,7 +81,6 @@ class Callistanise : ExtractorApi() {
             val tldCandidates = words.filter { it in validTlds }
 
             // Path numbers - formato 0XXXX (5 dígitos empezando con 0)
-            // Estos son los paths reales del servidor
             val pathNumbers = words.filter { it.matches(Regex("0\\d{4}")) }
             Log.d("Callistanise", "Path numbers (0XXXX): $pathNumbers")
 
@@ -131,7 +130,7 @@ class Callistanise : ExtractorApi() {
             Log.d("Callistanise", "Cortos con números: $shortWithNumbers")
             Log.d("Callistanise", "Mixed: $allMixedCandidates")
 
-            // Determinar token y subdomain
+            // Determinar token, subdomain y dominios
             val token: String
             val subdomain: String
             val domainCandidates: List<String>
@@ -143,10 +142,14 @@ class Callistanise : ExtractorApi() {
                     subdomain = sorted[1].first
                     domainCandidates = longDomains + shortWithNumbers
                 }
-                allMixedCandidates.size == 1 && shortWithNumbers.isNotEmpty() -> {
+                allMixedCandidates.size == 1 -> {
                     token = allMixedCandidates[0]
-                    subdomain = shortWithNumbers.first()
-                    domainCandidates = longDomains + shortWithNumbers.drop(1)
+                    subdomain = shortWithNumbers.firstOrNull() ?: run {
+                        Log.e("Callistanise", "No hay subdomain")
+                        return
+                    }
+                    // IMPORTANTE: Incluir dominios largos cuando solo hay 1 mixed
+                    domainCandidates = longDomains
                 }
                 else -> {
                     Log.e("Callistanise", "No hay suficientes candidatos")
@@ -156,30 +159,24 @@ class Callistanise : ExtractorApi() {
 
             Log.d("Callistanise", "Token: $token")
             Log.d("Callistanise", "Subdomain: $subdomain")
+            Log.d("Callistanise", "Dominios a probar: $domainCandidates")
 
-            if (domainCandidates.isEmpty() && shortWithNumbers.isEmpty()) {
+            if (domainCandidates.isEmpty()) {
                 Log.e("Callistanise", "No hay dominios")
                 return
             }
 
-            val formats = listOf("_,l,n,h,", "_,l,n,")
+            val formats = listOf("_,l,n,h,", "_,l,n,", "_n,h,", "_l,n,")
             var hlsUrl: String? = null
             var workingDomain: String? = null
             var workingTld: String? = null
             var workingPath: String? = null
 
-            val domainsToTry = if (domainCandidates.isNotEmpty()) domainCandidates else shortWithNumbers
+            Log.d("Callistanise", "Probando - Dominios: ${domainCandidates.size}, TLDs: ${tldCandidates.size}, Paths: ${pathNumbers.size}")
 
-            // Priorizar paths que empiezan con 0 (formato 0XXXX)
-            val pathsToTry = pathNumbers.ifEmpty {
-                words.filter { it.matches(Regex("\\d{5}")) }.take(10)
-            }
-
-            Log.d("Callistanise", "Probando - Dominios: ${domainsToTry.size}, TLDs: ${tldCandidates.size}, Paths: ${pathsToTry.size}")
-
-            outerLoop@ for (domain in domainsToTry.take(5)) {
+            outerLoop@ for (domain in domainCandidates.take(5)) {
                 for (tld in tldCandidates) {
-                    for (pathNumber in pathsToTry.take(8)) {
+                    for (pathNumber in pathNumbers.take(10)) {
                         for (format in formats) {
                             val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
 
