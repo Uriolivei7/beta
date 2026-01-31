@@ -28,56 +28,94 @@ class Callistanise : ExtractorApi() {
         try {
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer" to (referer ?: mainUrl),
-                "Accept" to "*/*",
-                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
+                "Referer" to (referer ?: "https://tioplus.app/")
             )
 
             val response = app.get(url, headers = headers).text
-            Log.d("Callistanise", "📄 HTML: ${response.length} caracteres")
 
-            val patterns = listOf(
-                Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']"""),
-                Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']"""),
-                Regex("""file:\s*["']([^"']+)["']"""),
-                Regex("""source:\s*["']([^"']+)["']"""),
-                Regex(""""file":\s*"([^"]+)""""),
-                Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']"""),
-                Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""")
-            )
+            // Extraer el ID del video de la URL
+            val videoId = url.split("/").lastOrNull { it.isNotEmpty() } ?: return
+            Log.d("Callistanise", "📹 Video ID: $videoId")
 
-            for (pattern in patterns) {
-                val match = pattern.find(response)
-                if (match != null) {
-                    var videoUrl = match.groupValues.getOrElse(1) { match.value }
-                    videoUrl = videoUrl.replace("\\", "").trim()
+            // Buscar el diccionario del packed script
+            val dictRegex = Regex("""'([^']+)'\.split\('\|'\)\)\)""")
+            val dictMatch = dictRegex.find(response)
 
-                    if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
-                        Log.d("Callistanise", "✅ VIDEO: $videoUrl")
+            if (dictMatch != null) {
+                val words = dictMatch.groupValues[1].split("|")
+                Log.d("Callistanise", "📝 Diccionario: ${words.size} palabras")
 
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = name,
-                                url = videoUrl,
-                                type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = url
-                                this.quality = Qualities.Unknown.value
-                                this.headers = mapOf(
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                    "Referer" to url,
-                                    "Origin" to mainUrl
-                                )
-                            }
-                        )
-                        return
-                    }
+                // Buscar el subdominio (algo como rnzt2t4xvku08)
+                val subdomain = words.find { it.matches(Regex("[a-zA-Z0-9]{10,}")) && !it.contains(".") }
+                // Buscar el token (algo como LFDu7HStkKAt)
+                val token = words.find { it.matches(Regex("[a-zA-Z0-9]{10,14}")) && it != subdomain }
+
+                Log.d("Callistanise", "🌐 Subdomain: $subdomain, Token: $token")
+
+                if (subdomain != null && token != null) {
+                    // Construir la URL del m3u8
+                    // Formato: https://SUBDOMAIN.riverstonelearninghub.sbs/TOKEN/hls3/XX/XXXXX/VIDEOID_,l,n,.urlset/master.txt
+
+                    // Buscar los números de ruta (como 01, 02145)
+                    val pathNumbers = words.filter { it.matches(Regex("^\\d{2,5}$")) }.take(2)
+
+                    val hlsUrl = "https://$subdomain.riverstonelearninghub.sbs/$token/hls3/${pathNumbers.getOrElse(0) { "01" }}/${pathNumbers.getOrElse(1) { "02145" }}/${videoId}_,l,n,.urlset/master.txt"
+
+                    Log.d("Callistanise", "✅ URL construida: $hlsUrl")
+
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = hlsUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = url
+                            this.quality = Qualities.Unknown.value
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to url,
+                                "Origin" to "https://callistanise.com"
+                            )
+                        }
+                    )
+                    return
                 }
             }
 
-            Log.w("Callistanise", "⚠️ No se encontró video")
-            Log.d("Callistanise", "📄 Preview: ${response.take(2000)}")
+            // Fallback: buscar URL directamente
+            val directPatterns = listOf(
+                Regex("""(https?://[^\s"']+riverstonelearninghub[^\s"']+master\.[^\s"']+)"""),
+                Regex("""(https?://[^\s"']+\.urlset/master\.[^\s"']+)""")
+            )
+
+            for (pattern in directPatterns) {
+                val match = pattern.find(response)
+                if (match != null) {
+                    val videoUrl = match.groupValues[1].replace("\\", "")
+                    Log.d("Callistanise", "✅ URL directa: $videoUrl")
+
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = videoUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = url
+                            this.quality = Qualities.Unknown.value
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to url,
+                                "Origin" to "https://callistanise.com"
+                            )
+                        }
+                    )
+                    return
+                }
+            }
+
+            Log.w("Callistanise", "⚠️ No se pudo extraer URL")
 
         } catch (e: Exception) {
             Log.e("Callistanise", "❌ Error: ${e.message}")
