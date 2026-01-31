@@ -60,20 +60,17 @@ class Callistanise : ExtractorApi() {
                 "stretching", "download", "minochinos", "vidhide", "datalayer"
             )
 
-            // Buscar DOMINIO
+            // Buscar TODOS los dominios posibles (palabras largas solo minúsculas)
             val domainCandidates = words.filter { word ->
-                word.length >= 15 && word.matches(Regex("[a-z]+")) && word.lowercase() !in jsKeywords
+                word.length >= 15 &&
+                        word.matches(Regex("[a-z]+")) &&
+                        word.lowercase() !in jsKeywords
             }
-            val domain = domainCandidates.firstOrNull()
+            Log.d("Callistanise", "Domain candidates: $domainCandidates")
 
-            // Buscar TLD
-            val tld = words.find { it == "store" }
-                ?: words.find { it == "shop" }
-                ?: words.find { it == "cfd" }
-                ?: words.find { it == "sbs" }
-                ?: "sbs"
-
-            Log.d("Callistanise", "Domain: $domain, TLD: $tld")
+            // Buscar TODOS los TLDs posibles
+            val tldCandidates = words.filter { it in listOf("store", "shop", "cfd", "sbs", "com", "net") }
+            Log.d("Callistanise", "TLD candidates: $tldCandidates")
 
             // Candidatos con mayúsculas Y minúsculas
             val mixedCandidates = words.filter { word ->
@@ -93,41 +90,118 @@ class Callistanise : ExtractorApi() {
                 return
             }
 
-            // Buscar índices en el diccionario original
+            // Ordenar por índice
             val indices = mixedCandidates.map { candidate ->
                 Pair(candidate, words.indexOf(candidate))
             }.sortedBy { it.second }
 
-            Log.d("Callistanise", "Indices: $indices")
+            val token = indices[0].first
+            val subdomain = indices[1].first
 
-            // ⭐ CORREGIDO: PRIMERO = TOKEN, SEGUNDO = SUBDOMAIN (no el último)
-            val token = indices[0].first      // Primer candidato (index más bajo)
-            val subdomain = indices[1].first  // Segundo candidato (NO el último)
-
-            Log.d("Callistanise", "Token: $token (index: ${indices[0].second})")
-            Log.d("Callistanise", "Subdomain: $subdomain (index: ${indices[1].second})")
-
-            if (domain == null) {
-                Log.e("Callistanise", "No se encontró domain")
-                return
-            }
+            Log.d("Callistanise", "Token: $token")
+            Log.d("Callistanise", "Subdomain: $subdomain")
 
             // Path number
             val pathNumber = words.find { it.matches(Regex("0\\d{4}")) } ?: "02145"
 
-            // Formato
-            val fileFormat = "_,l,n,h,"
+            // Detectar formato: buscar si hay 'h' cerca de 'l' y 'n' en el diccionario
+            // Si el índice de 'h' está entre los índices de 'l' y 'n', usar formato con h
+            val indexL = words.indexOf("l")
+            val indexN = words.indexOf("n")
+            val indexH = words.indexOf("h")
+            val useH = indexH > 0 && indexH > indexL && indexH < indexN + 5
+            val fileFormat = if (useH) "_,l,n,h," else "_,l,n,"
+            Log.d("Callistanise", "File format: $fileFormat (indexL=$indexL, indexN=$indexN, indexH=$indexH)")
 
-            // Construir URL
-            val hlsUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${fileFormat}.urlset/master.txt"
+            // Intentar construir URLs con diferentes combinaciones de dominio/tld
+            var hlsUrl: String? = null
+            var workingDomain: String? = null
+            var workingTld: String? = null
+
+            // Probar cada combinación
+            for (domain in domainCandidates) {
+                for (tld in tldCandidates) {
+                    val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${fileFormat}.urlset/master.txt"
+                    Log.d("Callistanise", "Probando: $testUrl")
+
+                    try {
+                        val testResponse = app.get(testUrl, headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to "https://callistanise.com/"
+                        ), timeout = 5)
+
+                        if (testResponse.code == 200) {
+                            hlsUrl = testUrl
+                            workingDomain = domain
+                            workingTld = tld
+                            Log.d("Callistanise", "✅ URL válida encontrada!")
+                            break
+                        }
+                    } catch (e: Exception) {
+                        // Continuar probando
+                    }
+                }
+                if (hlsUrl != null) break
+            }
+
+            // Si no encontró con el formato actual, probar con el otro formato
+            if (hlsUrl == null) {
+                val altFormat = if (useH) "_,l,n," else "_,l,n,h,"
+                Log.d("Callistanise", "Probando formato alternativo: $altFormat")
+
+                for (domain in domainCandidates) {
+                    for (tld in tldCandidates) {
+                        val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${altFormat}.urlset/master.txt"
+
+                        try {
+                            val testResponse = app.get(testUrl, headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to "https://callistanise.com/"
+                            ), timeout = 5)
+
+                            if (testResponse.code == 200) {
+                                hlsUrl = testUrl
+                                workingDomain = domain
+                                workingTld = tld
+                                Log.d("Callistanise", "✅ URL válida con formato alternativo!")
+                                break
+                            }
+                        } catch (e: Exception) {
+                            // Continuar
+                        }
+                    }
+                    if (hlsUrl != null) break
+                }
+            }
+
+            if (hlsUrl == null) {
+                Log.e("Callistanise", "No se encontró URL válida")
+                return
+            }
+
             Log.d("Callistanise", "URL FINAL: $hlsUrl")
 
-            // Subtítulos
+            // Subtítulos - buscar en la página
             val subtitleFile = words.find { it.contains(videoId) && it.contains("_spa") }
-            if (subtitleFile != null) {
-                val subUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${subtitleFile}.vtt"
-                Log.d("Callistanise", "📝 Subtítulo: $subUrl")
-                subtitleCallback.invoke(newSubtitleFile(lang = "Español", url = subUrl))
+            if (subtitleFile != null && workingDomain != null && workingTld != null) {
+                val subUrl = "https://${subdomain.lowercase()}.$workingDomain.$workingTld/$token/hls3/01/$pathNumber/${subtitleFile}.vtt"
+                Log.d("Callistanise", "📝 Probando subtítulo: $subUrl")
+
+                try {
+                    val subResponse = app.get(subUrl, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer" to "https://callistanise.com/"
+                    ), timeout = 5)
+
+                    if (subResponse.code == 200 && subResponse.text.contains("WEBVTT")) {
+                        Log.d("Callistanise", "✅ Subtítulo válido!")
+                        subtitleCallback.invoke(newSubtitleFile(lang = "Español", url = subUrl))
+                    } else {
+                        Log.d("Callistanise", "⚠️ Subtítulo no válido o vacío")
+                    }
+                } catch (e: Exception) {
+                    Log.d("Callistanise", "⚠️ Error cargando subtítulo: ${e.message}")
+                }
             }
 
             callback.invoke(
