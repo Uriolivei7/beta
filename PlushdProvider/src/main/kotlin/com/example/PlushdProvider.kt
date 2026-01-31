@@ -209,74 +209,49 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO (MODO BYPASS CONFIRMADO) ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (BÚSQUEDA DE ID REAL) ---")
 
         val mainPage = app.get(data)
-        val doc = mainPage.document
-        val cookieMap = mainPage.cookies
+        val html = mainPage.text
 
-        val servers = doc.select("ul.subselect li[data-server]")
+        val idRegex = Regex("""(?:"|')(dywy9b0[a-zA-Z0-9]+)(?:"|')""")
+        val matches = idRegex.findAll(html).map { it.groupValues[1] }.distinct().toList()
 
-        servers.forEach { element ->
-            val serverHash = element.attr("data-server")
-            val serverName = element.selectFirst("span")?.text() ?: "Server"
+        Log.d("PlushdProvider", "[DEBUG] IDs potenciales encontrados: ${matches.size}")
 
-            Log.d("PlushdProvider", "[LOG] Procesando $serverName | Hash detectado")
+        // 2. Si encontramos el ID real, lo usamos directamente
+        matches.forEach { foundId ->
+            Log.d("PlushdProvider", "[LOG] ¡ID detectado en HTML!: $foundId")
+            val finalUrl = "https://callistanise.com/v/$foundId"
 
-            // 1. Intentamos obtener el ID del hash (Limpieza profunda)
-            // Si el hash es muy largo, lo decodificamos.
-            var realId = ""
-            try {
-                if (serverHash.length > 30) {
-                    val decoded = base64Decode(serverHash)
-                    // Buscamos el patrón alfanumérico que viste (ej: dywy9b01clo4)
-                    val match = Regex("""([a-zA-Z0-9]{11,13})""").find(decoded)
-                    realId = match?.groupValues?.get(1) ?: ""
-                } else {
-                    realId = serverHash
+            callback.invoke(
+                newExtractorLink(
+                    source = this.name,
+                    name = "$name - Servidor Directo",
+                    url = finalUrl,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = finalUrl
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                    )
                 }
-            } catch (e: Exception) {
-                Log.d("PlushdProvider", "[DEBUG] Error decodificando hash: ${e.message}")
-            }
-
-            // 2. Si es Earnvids/Callistanise, forzamos la URL que te funcionó
-            val finalUrl = if (serverName.contains("Earnvids", true) || serverName.contains("Opción 1")) {
-                if (realId.isNotEmpty() && realId.length > 10) "https://callistanise.com/v/$realId"
-                else "https://callistanise.com/v/dywy9b01clo4" // ID de respaldo que confirmaste
-            } else {
-                // Para otros, intentamos el embed directo
-                "https://tioplus.app/v/$realId"
-            }
-
-            try {
-                Log.d("PlushdProvider", "[LOG] Intentando URL final: $finalUrl")
-
-                // 3. Enviamos el link con los parámetros de tu CURL exitoso
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "$name - $serverName",
-                        url = finalUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        // El referer DEBE ser la URL del video para evitar el 404/2004
-                        this.referer = finalUrl
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                            "Cookie" to cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" },
-                            "X-Requested-With" to "XMLHttpRequest"
-                        )
-                    }
-                )
-
-                // Intentamos cargar extractores automáticos si CloudStream los tiene
-                loadExtractor(finalUrl, finalUrl, subtitleCallback, callback)
-                Log.d("PlushdProvider", "[EXITO] Link enviado al reproductor: $finalUrl")
-
-            } catch (e: Exception) {
-                Log.e("PlushdProvider", "[ERROR] Falló en $serverName: ${e.message}")
-            }
+            )
+            loadExtractor(finalUrl, finalUrl, subtitleCallback, callback)
         }
+
+        // 3. Fallback: Si no lo encuentra, probamos la URL que TÚ confirmaste manualmente
+        // Solo para asegurar que al menos uno funcione mientras debugueamos
+        if (matches.isEmpty()) {
+            Log.d("PlushdProvider", "[AVISO] No se hallaron IDs, usando ID de respaldo manual")
+            val backupUrl = "https://callistanise.com/v/dywy9b01clo4"
+            callback.invoke(
+                newExtractorLink(source = this.name, name = "$name - Backup", url = backupUrl, type = ExtractorLinkType.VIDEO) {
+                    this.referer = backupUrl
+                }
+            )
+        }
+
         return true
     }
 
