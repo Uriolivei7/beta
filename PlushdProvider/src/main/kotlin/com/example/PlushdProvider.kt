@@ -65,7 +65,6 @@ class PlushdProvider : MainAPI() {
 
         if (match != null) {
             title = title.replace(yearRegex, "").trim()
-            Log.d("PlushdProvider", "Título limpiado: $title | Año detectado: $year")
         }
 
         val searchType = when {
@@ -142,9 +141,6 @@ class PlushdProvider : MainAPI() {
             verticalPoster = doc.selectFirst(".poster img")?.attr("src")?.replace("original", "w342") ?: backimage
         }
 
-        Log.d("PlushdProvider", "Poster que se guardará en Favoritos: $verticalPoster")
-        Log.d("PlushdProvider", "Fondo de la ficha: $backimage")
-
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }
         val epi = ArrayList<Episode>()
@@ -213,55 +209,62 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO (BYPASS 404) ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (VERSIÓN CURL-FIX) ---")
 
-        val doc = app.get(data).document
-        // Buscamos los servidores en la lista
+        val mainResponse = app.get(data)
+        val doc = mainResponse.document
+        val cookies = mainResponse.cookies
+
         val servers = doc.select("ul.subselect li[data-server]")
+        Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
 
         servers.forEach { element ->
             val serverHash = element.attr("data-server")
-            val serverName = element.selectFirst("span")?.text() ?: "Server"
+            val serverName = element.selectFirst("span")?.text() ?: "Desconocido"
 
-            Log.d("PlushdProvider", "Procesando $serverName con hash: $serverHash")
+            Log.d("PlushdProvider", "[LOG] Procesando: $serverName | Hash Original: ${serverHash.take(15)}...")
 
-            // Estrategia 1: Construir el link de Callistanise/Earnvids directamente
-            // Basado en lo que viste en la web: /v/ o /dl?op=view...
-            if (serverName.contains("Earnvids", ignoreCase = true) || serverName.contains("Opción 1")) {
-                val directUrl = "https://callistanise.com/v/$serverHash"
-                Log.d("PlushdProvider", "Intentando link directo: $directUrl")
-                loadExtractor(directUrl, data, subtitleCallback, callback)
-            }
-
-            // Estrategia 2: Intentar la petición con un User-Agent de Chrome real
             try {
-                val response = app.get(
-                    "$mainUrl/reproductor?h=$serverHash",
+                val repoResponse = app.get(
+                    url = "$mainUrl/reproductor?h=$serverHash",
                     referer = data,
+                    cookies = cookies,
                     headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
                         "X-Requested-With" to "XMLHttpRequest"
                     )
                 )
 
-                if (response.code == 200) {
-                    Log.d("PlushdProvider", "¡ÉXITO! Respuesta 200 para $serverName")
-                    val iframe = response.document.selectFirst("iframe")?.attr("src")
-                    iframe?.let {
-                        val finalIframe = if (it.startsWith("//")) "https:$it" else it
-                        loadExtractor(finalIframe, data, subtitleCallback, callback)
+                Log.d("PlushdProvider", "[LOG] Respuesta de $serverName: ${repoResponse.code}")
+
+                if (repoResponse.code == 200) {
+                    val html = repoResponse.text
+
+                    val realIdMatch = Regex("""/v/([a-zA-Z0-9]{10,15})""").find(html)
+                    val realId = realIdMatch?.groupValues?.get(1)
+
+                    if (realId != null) {
+                        val finalUrl = "https://callistanise.com/v/$realId"
+                        Log.d("PlushdProvider", "[EXITO] ID real encontrado ($realId). Cargando: $finalUrl")
+                        loadExtractor(finalUrl, data, subtitleCallback, callback)
+                    } else {
+                        val iframe = repoResponse.document.selectFirst("iframe")?.attr("src")
+                        if (!iframe.isNullOrBlank()) {
+                            val fixedIframe = if (iframe.startsWith("//")) "https:$iframe" else iframe
+                            Log.d("PlushdProvider", "[LOG] Iframe detectado: $fixedIframe")
+                            loadExtractor(fixedIframe, data, subtitleCallback, callback)
+                        } else {
+                            Log.w("PlushdProvider", "[AVISO] No se encontró ID ni Iframe en el HTML de $serverName")
+                            Log.d("PlushdProvider", "[DEBUG] HTML snippet: ${html.take(200)}")
+                        }
                     }
                 } else {
-                    Log.e("PlushdProvider", "Error ${response.code} en $serverName")
-
-                    // Si falla, intentamos una búsqueda manual en el texto por si hay URLs escondidas
-                    val rawHtml = response.text
-                    val foundUrl = Regex("""https?://[\w\d.\/-]+\?(?:h|file|v)=$serverHash""").find(rawHtml)?.value
-                    foundUrl?.let { loadExtractor(it, data, subtitleCallback, callback) }
+                    Log.e("PlushdProvider", "[ERROR] El servidor respondió ${repoResponse.code} para el hash $serverHash")
                 }
+
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Fallo crítico en $serverName: ${e.message}")
+                Log.e("PlushdProvider", "[CRÍTICO] Error en $serverName: ${e.message}")
             }
         }
         return true
