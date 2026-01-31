@@ -57,6 +57,8 @@ class LatanimeProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
+
+        // 1. Carousel / Destacados
         try {
             val mainDoc = app.get(mainUrl).document
             val carouselItems = mainDoc.select("div.carousel-item a[href*=/anime/], div.carousel-item a[href*=/pelicula/]").mapNotNull { element ->
@@ -71,8 +73,37 @@ class LatanimeProvider : MainAPI() {
             }
             if (carouselItems.isNotEmpty()) items.add(HomePageList("Destacados", carouselItems))
         } catch (e: Exception) {
-            Log.e("LatanimeProvider", "Error en getMainPage: ${e.message}")
+            Log.e("LatanimeProvider", "Error cargando Carousel: ${e.message}")
         }
+
+        // 2. Otras Secciones (Emisión, Películas, Animes)
+        val sections = listOf(
+            Pair("$mainUrl/emision", "En emisión"),
+            Pair("$mainUrl/animes?fecha=false&genero=false&letra=false&categoria=Película", "Películas"),
+            Pair("$mainUrl/animes", "Animes Recientes"),
+        )
+
+        sections.forEach { (url, sectionName) ->
+            try {
+                val doc = app.get(url).document
+                val home = doc.select("div.col-md-4, div.col-lg-3, div.col-xl-2, div.col-6").mapNotNull { article ->
+                    val linkElement = article.selectFirst("a[href*=/anime/], a[href*=/pelicula/]") ?: return@mapNotNull null
+                    val itemUrl = linkElement.attr("href")
+                    val title = linkElement.selectFirst("h3.my-1, h3")?.text()?.trim()
+                        ?: linkElement.attr("title").trim()
+
+                    val imgElement = linkElement.selectFirst("img.img-fluid2, img.img-fluid, img")
+
+                    newAnimeSearchResponse(cleanTitle(title), fixUrl(itemUrl)) {
+                        this.posterUrl = fixUrl(imgElement?.attr("data-src")?.ifBlank { imgElement.attr("src") } ?: "")
+                    }
+                }
+                if (home.isNotEmpty()) items.add(HomePageList(sectionName, home))
+            } catch (e: Exception) {
+                Log.e("LatanimeProvider", "Error cargando sección $sectionName: ${e.message}")
+            }
+        }
+
         return newHomePageResponse(items)
     }
 
@@ -90,11 +121,10 @@ class LatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("LatanimeProvider", "Cargando: $url")
+        Log.d("LatanimeProvider", "Cargando metadatos: $url")
         val document = app.get(url).document
         val rawTitle = document.selectFirst("div.col-lg-9 h2")?.text()?.trim() ?: ""
 
-        // Extraer el año antes de limpiar el título
         val foundYear = Regex("""\((\d{4})\)""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
 
         val tags = document.select("a[href*=/genero/] div.btn").map { it.text().trim() }
@@ -113,24 +143,19 @@ class LatanimeProvider : MainAPI() {
         val poster = document.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
         val description = document.selectFirst("p.my-2.opacity-75")?.text()?.trim() ?: ""
 
-        // --- PROCESAMIENTO DE EPISODIOS CORREGIDO ---
         val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapNotNull { element ->
             val epUrl = element.attr("href")
             val epText = element.selectFirst("div.cap-layout")?.text()?.trim() ?: ""
 
-            // Regex mejorada: busca "episodio-X" en la URL para evitar confundirse con el año
             val epNum = Regex("""episodio-(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
                 ?: Regex("""(\d+)""").find(epText)?.value?.toIntOrNull()
 
             if (epUrl.isNotBlank() && epNum != null) {
                 newEpisode(fixUrl(epUrl)) {
-                    this.name = "Episodio $epNum"
+                    this.name = "Capítulo $epNum"
                     this.episode = epNum
                 }
-            } else {
-                Log.w("LatanimeProvider", "No se pudo extraer número de episodio de: $epUrl")
-                null
-            }
+            } else null
         }.reversed()
 
         Log.d("LatanimeProvider", "Total episodios cargados: ${episodes.size}")
