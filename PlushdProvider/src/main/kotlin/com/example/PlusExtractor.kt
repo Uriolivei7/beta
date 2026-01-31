@@ -43,7 +43,7 @@ class Callistanise : ExtractorApi() {
 
             val words = dictMatch.groupValues[1].split("|")
 
-            // Lista completa de palabras JS a ignorar
+            // Lista de palabras JS a ignorar (en minúsculas)
             val jsKeywords = setOf(
                 "currentfile", "audiotracks", "decodedlink", "settimeout", "shouldswitch",
                 "textcontent", "startswith", "localstorage", "codefrommessage", "errormessage",
@@ -58,26 +58,27 @@ class Callistanise : ExtractorApi() {
                 "qualitylabels", "advertising", "backgroundopacity", "transparent",
                 "backgroundcolor", "fontfamily", "fontopacity", "userfontscale", "thumbnails",
                 "androidhls", "timeslider", "controlbar", "fullscreenorientationlock",
-                "stretching", "download", "minochinos", "prototype", "constructor",
-                "undefined", "function", "return", "object", "string", "number", "boolean"
+                "stretching", "download", "minochinos", "vidhide", "datalayer"
             )
 
-            // Buscar DOMINIO
+            // Buscar DOMINIO (solo minúsculas, 15+ chars)
             val domainCandidates = words.filter { word ->
-                word.length >= 15 && word.matches(Regex("[a-z]+"))
+                word.length >= 15 && word.matches(Regex("[a-z]+")) && word.lowercase() !in jsKeywords
             }
             val domain = domainCandidates.firstOrNull()
 
-            // Buscar TLD
-            val tld = words.find { it in listOf("store", "shop", "sbs", "com", "net") } ?: "sbs"
+            // Buscar TLD (priorizar store y shop sobre com)
+            val tld = words.find { it == "store" }
+                ?: words.find { it == "shop" }
+                ?: words.find { it == "sbs" }
+                ?: "sbs"
 
             Log.d("Callistanise", "Domain: $domain, TLD: $tld")
 
-            // Candidatos SOLO los que tienen números (esto excluye palabras JS)
-            val realCandidates = words.filter { word ->
+            // Candidatos: tienen mayúsculas Y minúsculas, NO son keywords JS
+            val mixedCandidates = words.filter { word ->
                 word.length in 10..20 &&
                         word.matches(Regex("[a-zA-Z0-9]+")) &&
-                        word.any { it.isDigit() } &&  // DEBE tener al menos un número
                         word.any { it.isUpperCase() } &&
                         word.any { it.isLowerCase() } &&
                         word.lowercase() !in jsKeywords &&
@@ -85,19 +86,29 @@ class Callistanise : ExtractorApi() {
                         !word.contains(videoId, ignoreCase = true)
             }
 
-            Log.d("Callistanise", "Real candidates: $realCandidates")
+            Log.d("Callistanise", "Mixed candidates: $mixedCandidates")
 
-            if (realCandidates.size < 2) {
-                Log.e("Callistanise", "No hay suficientes candidatos reales")
+            // Filtrar: priorizar los que tienen números
+            val withNumbers = mixedCandidates.filter { word -> word.any { it.isDigit() } }
+            val withoutNumbers = mixedCandidates.filter { word -> !word.any { it.isDigit() } }
+
+            Log.d("Callistanise", "With numbers: $withNumbers")
+            Log.d("Callistanise", "Without numbers: $withoutNumbers")
+
+            // Combinar: primero los que tienen números, luego los que no
+            val allCandidates = withNumbers + withoutNumbers
+
+            if (allCandidates.size < 2) {
+                Log.e("Callistanise", "No hay suficientes candidatos")
                 return
             }
 
             // Ordenar por longitud
-            val sortedCandidates = realCandidates.sortedBy { it.length }
+            val sortedCandidates = allCandidates.sortedBy { it.length }
 
-            // TOKEN: el más corto (12 chars típicamente)
+            // TOKEN: el más corto (10-14 chars)
             val token = sortedCandidates.first()
-            // SUBDOMAIN: el más largo (15-17 chars típicamente)
+            // SUBDOMAIN: el más largo (14-18 chars)
             val subdomain = sortedCandidates.last()
 
             Log.d("Callistanise", "Token: $token (${token.length} chars)")
@@ -111,7 +122,7 @@ class Callistanise : ExtractorApi() {
             // Path number
             val pathNumber = words.find { it.matches(Regex("0\\d{4}")) } ?: "02145"
 
-            // Formato (detectar si tiene 'h')
+            // Formato
             val fileFormat = if (words.contains("h")) "_,l,n,h," else "_,l,n,"
 
             // Construir URL
