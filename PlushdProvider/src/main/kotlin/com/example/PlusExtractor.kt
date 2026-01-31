@@ -60,19 +60,22 @@ class Callistanise : ExtractorApi() {
                 "stretching", "download", "minochinos", "vidhide", "datalayer"
             )
 
-            // Buscar TODOS los dominios posibles (palabras largas solo minúsculas)
+            // Buscar dominios - ahora incluye los que tienen números y son más cortos
             val domainCandidates = words.filter { word ->
-                word.length >= 15 &&
-                        word.matches(Regex("[a-z]+")) &&
-                        word.lowercase() !in jsKeywords
+                word.length in 8..25 &&
+                        word.matches(Regex("[a-z0-9]+")) &&
+                        word.any { it.isLetter() } &&
+                        word.lowercase() !in jsKeywords &&
+                        !word.all { it.isDigit() }
             }
             Log.d("Callistanise", "Domain candidates: $domainCandidates")
 
-            // Buscar TODOS los TLDs posibles
-            val tldCandidates = words.filter { it in listOf("store", "shop", "cfd", "sbs", "com", "net") }
+            // Buscar TLDs - agregar cyou y space
+            val validTlds = listOf("store", "shop", "cfd", "sbs", "cyou", "space", "com", "net")
+            val tldCandidates = words.filter { it in validTlds }
             Log.d("Callistanise", "TLD candidates: $tldCandidates")
 
-            // Candidatos con mayúsculas Y minúsculas
+            // Candidatos para token/subdomain (mayúsculas Y minúsculas)
             val mixedCandidates = words.filter { word ->
                 word.length in 10..20 &&
                         word.matches(Regex("[a-zA-Z0-9]+")) &&
@@ -104,54 +107,19 @@ class Callistanise : ExtractorApi() {
             // Path number
             val pathNumber = words.find { it.matches(Regex("0\\d{4}")) } ?: "02145"
 
-            // Detectar formato: buscar si hay 'h' cerca de 'l' y 'n' en el diccionario
-            // Si el índice de 'h' está entre los índices de 'l' y 'n', usar formato con h
-            val indexL = words.indexOf("l")
-            val indexN = words.indexOf("n")
-            val indexH = words.indexOf("h")
-            val useH = indexH > 0 && indexH > indexL && indexH < indexN + 5
-            val fileFormat = if (useH) "_,l,n,h," else "_,l,n,"
-            Log.d("Callistanise", "File format: $fileFormat (indexL=$indexL, indexN=$indexN, indexH=$indexH)")
+            // Formatos a probar
+            val formats = listOf("_,l,n,", "_,l,n,h,")
 
-            // Intentar construir URLs con diferentes combinaciones de dominio/tld
             var hlsUrl: String? = null
             var workingDomain: String? = null
             var workingTld: String? = null
 
             // Probar cada combinación
-            for (domain in domainCandidates) {
-                for (tld in tldCandidates) {
-                    val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${fileFormat}.urlset/master.txt"
-                    Log.d("Callistanise", "Probando: $testUrl")
-
-                    try {
-                        val testResponse = app.get(testUrl, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "https://callistanise.com/"
-                        ), timeout = 5)
-
-                        if (testResponse.code == 200) {
-                            hlsUrl = testUrl
-                            workingDomain = domain
-                            workingTld = tld
-                            Log.d("Callistanise", "✅ URL válida encontrada!")
-                            break
-                        }
-                    } catch (e: Exception) {
-                        // Continuar probando
-                    }
-                }
-                if (hlsUrl != null) break
-            }
-
-            // Si no encontró con el formato actual, probar con el otro formato
-            if (hlsUrl == null) {
-                val altFormat = if (useH) "_,l,n," else "_,l,n,h,"
-                Log.d("Callistanise", "Probando formato alternativo: $altFormat")
-
+            outerLoop@ for (format in formats) {
                 for (domain in domainCandidates) {
                     for (tld in tldCandidates) {
-                        val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${altFormat}.urlset/master.txt"
+                        val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
+                        Log.d("Callistanise", "Probando: $testUrl")
 
                         try {
                             val testResponse = app.get(testUrl, headers = mapOf(
@@ -163,14 +131,13 @@ class Callistanise : ExtractorApi() {
                                 hlsUrl = testUrl
                                 workingDomain = domain
                                 workingTld = tld
-                                Log.d("Callistanise", "✅ URL válida con formato alternativo!")
-                                break
+                                Log.d("Callistanise", "✅ URL válida encontrada!")
+                                break@outerLoop
                             }
                         } catch (e: Exception) {
-                            // Continuar
+                            // Continuar probando
                         }
                     }
-                    if (hlsUrl != null) break
                 }
             }
 
@@ -181,7 +148,7 @@ class Callistanise : ExtractorApi() {
 
             Log.d("Callistanise", "URL FINAL: $hlsUrl")
 
-            // Subtítulos - buscar en la página
+            // Subtítulos
             val subtitleFile = words.find { it.contains(videoId) && it.contains("_spa") }
             if (subtitleFile != null && workingDomain != null && workingTld != null) {
                 val subUrl = "https://${subdomain.lowercase()}.$workingDomain.$workingTld/$token/hls3/01/$pathNumber/${subtitleFile}.vtt"
@@ -195,12 +162,10 @@ class Callistanise : ExtractorApi() {
 
                     if (subResponse.code == 200 && subResponse.text.contains("WEBVTT")) {
                         Log.d("Callistanise", "✅ Subtítulo válido!")
-                        subtitleCallback.invoke(newSubtitleFile(lang = "Español", url = subUrl))
-                    } else {
-                        Log.d("Callistanise", "⚠️ Subtítulo no válido o vacío")
+                        subtitleCallback.invoke(SubtitleFile(lang = "Español", url = subUrl))
                     }
                 } catch (e: Exception) {
-                    Log.d("Callistanise", "⚠️ Error cargando subtítulo: ${e.message}")
+                    Log.d("Callistanise", "⚠️ Error subtítulo: ${e.message}")
                 }
             }
 
