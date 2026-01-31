@@ -44,27 +44,40 @@ class Callistanise : ExtractorApi() {
             val words = dictMatch.groupValues[1].split("|")
             Log.d("Callistanise", "Total palabras: ${words.size}")
 
+            // Keywords de JS a ignorar (en minúsculas para comparar)
             val jsKeywords = setOf(
-                "function", "settings", "jwplayer", "document", "position", "expanded",
-                "location", "controls", "captions", "undefined", "focusable", "protocol",
-                "mousedown", "download11", "surface1", "sdkloader", "complete", "mosevura",
-                "unescape", "pop3done", "vastdone2", "vastdone1", "aboutlink", "abouttext",
-                "insecure", "vpaidmode", "progress", "duration", "minochinos", "background",
-                "googleapis", "callistanise", "application", "advertising", "transparent",
-                "thumbnails", "androidhls", "timeslider", "controlbar", "stretching",
-                "currentfile", "audiotracks", "decodedlink", "settimeout", "shouldswitch",
-                "textcontent", "startswith", "localstorage", "codefrommessage", "errormessage",
-                "switchedlink", "errorcount", "appendchild", "createelement", "getaudiotracks",
-                "removeclass", "currenttime", "lasterrortime", "createlayer", "parsefromstring",
-                "setcurrentaudiotrack", "playbackrates", "getplaylistitem", "currenttracks",
-                "insertafter", "getposition", "currenttrack", "audiotrackchanged", "toggleclass",
-                "firstframe", "networkerror", "fragloaderror", "removechild", "parentnode",
-                "setattribute", "innerwidth", "innerheight", "togmtstring", "createcookiesec",
-                "queryselector", "pickdirect", "documentelement", "encodeuricomponent",
-                "playbackratecontrols", "qualitylabels", "backgroundopacity", "backgroundcolor",
-                "fontfamily", "fontopacity", "userfontscale", "fullscreenorientationlock",
-                "download", "vidhide", "datalayer", "dramiyos", "master", "urlset", "hls3",
-                "hls", "sources", "tracks", "default", "label", "kind", "file", "type"
+                "errorcode", "scripttag", "seekdone", "addbutton", "nextindex",
+                "parseint", "domparser", "reloadkey", "codematch", "dualsound",
+                "addclass", "hasclass", "getconfig", "tostring", "samesite",
+                "ajaxsetup", "function", "settings", "jwplayer", "document",
+                "position", "expanded", "location", "controls", "captions",
+                "undefined", "focusable", "protocol", "mousedown", "download11",
+                "surface1", "sdkloader", "complete", "mosevura", "unescape",
+                "pop3done", "vastdone2", "vastdone1", "aboutlink", "abouttext",
+                "insecure", "vpaidmode", "progress", "duration", "minochinos",
+                "background", "googleapis", "callistanise", "application",
+                "advertising", "transparent", "thumbnails", "androidhls",
+                "timeslider", "controlbar", "stretching", "currentfile",
+                "audiotracks", "decodedlink", "settimeout", "shouldswitch",
+                "textcontent", "startswith", "localstorage", "codefrommessage",
+                "errormessage", "switchedlink", "errorcount", "appendchild",
+                "createelement", "getaudiotracks", "removeclass", "currenttime",
+                "lasterrortime", "createlayer", "parsefromstring",
+                "setcurrentaudiotrack", "playbackrates", "getplaylistitem",
+                "currenttracks", "insertafter", "getposition", "currenttrack",
+                "audiotrackchanged", "toggleclass", "firstframe", "networkerror",
+                "fragloaderror", "removechild", "parentnode", "setattribute",
+                "innerwidth", "innerheight", "togmtstring", "createcookiesec",
+                "queryselector", "pickdirect", "documentelement",
+                "encodeuricomponent", "playbackratecontrols", "qualitylabels",
+                "backgroundopacity", "backgroundcolor", "fontfamily",
+                "fontopacity", "userfontscale", "fullscreenorientationlock",
+                "download", "vidhide", "datalayer", "dramiyos", "master",
+                "urlset", "hls3", "hls", "sources", "tracks", "default",
+                "label", "kind", "file", "type", "getitem", "setitem",
+                "indexof", "length", "replace", "split", "join", "push",
+                "slice", "substr", "substring", "charat", "charcodeat",
+                "fromcharcode", "match", "search", "test", "exec"
             )
 
             // TLDs válidos
@@ -79,7 +92,7 @@ class Callistanise : ExtractorApi() {
                         word.lowercase() !in jsKeywords
             }
 
-            // Dominios CORTOS con números (tipo 8nyb72g7yaf)
+            // Dominios CORTOS con números (tipo 8nyb72g7yaf) - excluir los que empiezan con "tt"
             val shortDomainsWithNumbers = words.filter { word ->
                 word.length in 8..15 &&
                         word.matches(Regex("[a-z0-9]+")) &&
@@ -87,58 +100,63 @@ class Callistanise : ExtractorApi() {
                         word.any { it.isLetter() } &&
                         word.lowercase() !in jsKeywords &&
                         word != videoId &&
+                        !word.startsWith("tt") && // Excluir ttXXXX
                         !word.startsWith("0")
             }
 
-            // Combinar: primero largos, luego cortos con números
             val domainCandidates = longDomains + shortDomainsWithNumbers
             Log.d("Callistanise", "Dominios largos: $longDomains")
-            Log.d("Callistanise", "Dominios cortos con nums: $shortDomainsWithNumbers")
+            Log.d("Callistanise", "Dominios cortos: $shortDomainsWithNumbers")
 
-            // Mixed case candidates (token y subdomain)
+            // Mixed case candidates - SOLO los que tienen números Y mayúsculas mezcladas
+            // Esto excluye palabras JS como "errorCode", "scriptTag", etc.
             val mixedCandidates = words.filter { word ->
-                word.length in 8..25 &&
+                word.length in 10..20 &&
                         word.matches(Regex("[a-zA-Z0-9]+")) &&
                         word.any { it.isUpperCase() } &&
                         word.any { it.isLowerCase() } &&
+                        word.any { it.isDigit() } && // DEBE tener números
                         word.lowercase() !in jsKeywords
             }
-            Log.d("Callistanise", "Mixed candidates: $mixedCandidates")
+
+            Log.d("Callistanise", "Mixed con números: $mixedCandidates")
+
+            // Si no encontramos mixed con números, buscar por patrón específico
+            val tokenSubdomainCandidates = if (mixedCandidates.size >= 2) {
+                mixedCandidates
+            } else {
+                // Buscar tokens que tengan patrón aleatorio (mayúsculas + minúsculas + números)
+                words.filter { word ->
+                    word.length in 10..20 &&
+                            word.matches(Regex("[a-zA-Z0-9]+")) &&
+                            word.any { it.isUpperCase() } &&
+                            word.any { it.isLowerCase() } &&
+                            word.lowercase() !in jsKeywords &&
+                            // Excluir patrones de camelCase típicos de JS
+                            !word.matches(Regex("^[a-z]+[A-Z][a-z]+\$")) && // errorCode, scriptTag
+                            !word.matches(Regex("^[a-z]+[A-Z][a-z]+[A-Z]?[a-z]*\$")) && // seekDone, addButton
+                            // Debe tener al menos un número O múltiples mayúsculas no consecutivas
+                            (word.any { it.isDigit() } || word.count { it.isUpperCase() } >= 2)
+                }
+            }
+
+            Log.d("Callistanise", "Token/Subdomain candidatos: $tokenSubdomainCandidates")
 
             // Path number
             val pathNumber = words.find { it.matches(Regex("0\\d{4,5}")) } ?: "02145"
             Log.d("Callistanise", "Path number: $pathNumber")
 
-            // Determinar token y subdomain
-            val token: String
-            val subdomain: String
-
-            if (mixedCandidates.size >= 2) {
-                // Caso normal: 2+ mixed candidates
-                val sorted = mixedCandidates.map { Pair(it, words.indexOf(it)) }.sortedBy { it.second }
-                token = sorted[0].first
-                subdomain = sorted[1].first
-            } else if (mixedCandidates.size == 1) {
-                // Solo 1 mixed candidate - buscar subdomain en otros lugares
-                token = mixedCandidates[0]
-
-                // Buscar subdomain alternativo (alfanumérico que empiece con número o letra minúscula)
-                val altSubdomain = words.find { word ->
-                    word.length in 10..20 &&
-                            word.matches(Regex("[a-z0-9]+")) &&
-                            word.any { it.isDigit() } &&
-                            word != token.lowercase() &&
-                            word !in domainCandidates &&
-                            word != videoId &&
-                            word.lowercase() !in jsKeywords
-                }
-
-                subdomain = altSubdomain ?: shortDomainsWithNumbers.firstOrNull() ?: return
-                Log.d("Callistanise", "Usando subdomain alternativo: $subdomain")
-            } else {
-                Log.e("Callistanise", "No hay mixed candidates")
+            if (tokenSubdomainCandidates.size < 2) {
+                Log.e("Callistanise", "No hay suficientes candidatos válidos")
                 return
             }
+
+            // Ordenar por índice y tomar los primeros 2
+            val sorted = tokenSubdomainCandidates.map { Pair(it, words.indexOf(it)) }
+                .sortedBy { it.second }
+
+            val token = sorted[0].first
+            val subdomain = sorted[1].first
 
             Log.d("Callistanise", "Token: $token")
             Log.d("Callistanise", "Subdomain: $subdomain")
@@ -156,7 +174,6 @@ class Callistanise : ExtractorApi() {
             outerLoop@ for (domain in domainCandidates.take(8)) {
                 for (tld in tldCandidates) {
                     for (format in formats) {
-                        // Probar con subdomain en minúsculas
                         val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
 
                         try {
@@ -172,38 +189,6 @@ class Callistanise : ExtractorApi() {
                                 workingTld = tld
                                 Log.d("Callistanise", "✅ URL válida: $hlsUrl")
                                 break@outerLoop
-                            }
-                        } catch (e: Exception) {
-                            // Continuar
-                        }
-                    }
-                }
-            }
-
-            // Si no funcionó, probar con el dominio corto como subdomain
-            if (hlsUrl == null && shortDomainsWithNumbers.isNotEmpty()) {
-                Log.d("Callistanise", "Intentando con dominio corto como subdomain...")
-
-                val shortDomain = shortDomainsWithNumbers.first()
-
-                outerLoop2@ for (tld in tldCandidates) {
-                    for (format in formats) {
-                        // Formato alternativo: subdominio.dominiocorto.tld
-                        val testUrl = "https://${subdomain.lowercase()}.$shortDomain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
-
-                        try {
-                            Log.d("Callistanise", "Alt probando: $testUrl")
-                            val testResponse = app.get(testUrl, headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to "https://callistanise.com/"
-                            ), timeout = 4)
-
-                            if (testResponse.code == 200 && testResponse.text.contains("#EXTM3U")) {
-                                hlsUrl = testUrl
-                                workingDomain = shortDomain
-                                workingTld = tld
-                                Log.d("Callistanise", "✅ URL válida (alt): $hlsUrl")
-                                break@outerLoop2
                             }
                         } catch (e: Exception) {
                             // Continuar
