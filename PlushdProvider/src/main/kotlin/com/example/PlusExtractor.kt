@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -32,66 +33,8 @@ class Callistanise : ExtractorApi() {
             val videoId = url.substringAfterLast("/").substringBefore("?")
             Log.d("Callistanise", "Video ID: $videoId")
 
-            // ══════════════════════════════════════════════════════════
-            // EXTRAER SUBTÍTULOS
-            // ══════════════════════════════════════════════════════════
-
-            // Patrón para buscar tracks/subtítulos en el HTML
-            // Ejemplo: {file:"/dl?...","label":"Español","kind":"captions"}
-            val subtitlePatterns = listOf(
-                Regex("""\{[^}]*file\s*:\s*["']([^"']+)["'][^}]*label\s*:\s*["']([^"']+)["'][^}]*kind\s*:\s*["']captions["'][^}]*\}"""),
-                Regex("""\{[^}]*kind\s*:\s*["']captions["'][^}]*file\s*:\s*["']([^"']+)["'][^}]*label\s*:\s*["']([^"']+)["'][^}]*\}"""),
-                Regex("""file\s*:\s*["']([^"']+\.vtt[^"']*)["']"""),
-                Regex("""file\s*:\s*["']([^"']+\.srt[^"']*)["']"""),
-                Regex("""["']?file["']?\s*:\s*["']([^"']+(?:caption|subtitle|sub)[^"']*)["']""", RegexOption.IGNORE_CASE)
-            )
-
-            // Buscar subtítulos en el HTML
-            for (pattern in subtitlePatterns) {
-                val matches = pattern.findAll(response)
-                for (match in matches) {
-                    val subUrl = match.groupValues.getOrElse(1) { "" }
-                    val subLabel = match.groupValues.getOrElse(2) { "Español" }
-
-                    if (subUrl.isNotEmpty() && (subUrl.contains("vtt") || subUrl.contains("srt") || subUrl.contains("caption") || subUrl.contains("dl?"))) {
-                        val fullSubUrl = if (subUrl.startsWith("http")) {
-                            subUrl
-                        } else if (subUrl.startsWith("/")) {
-                            "$mainUrl$subUrl"
-                        } else {
-                            "$mainUrl/$subUrl"
-                        }
-
-                        Log.d("Callistanise", "📝 Subtítulo encontrado: $subLabel -> $fullSubUrl")
-
-                        subtitleCallback.invoke(
-                            SubtitleFile(
-                                lang = subLabel,
-                                url = fullSubUrl
-                            )
-                        )
-                    }
-                }
-            }
-
-            // También buscar en el diccionario packed por URLs de subtítulos
             val dictRegex = Regex("""'([^']+)'\.split\('\|'\)\)\)""")
             val dictMatch = dictRegex.find(response)
-
-            if (dictMatch != null) {
-                val words = dictMatch.groupValues[1].split("|")
-
-                // Buscar palabras que parezcan rutas de subtítulos
-                words.forEach { word ->
-                    if (word.contains("_spa") || word.contains("_sub") || word.contains("caption")) {
-                        Log.d("Callistanise", "📝 Posible subtítulo en diccionario: $word")
-                    }
-                }
-            }
-
-            // ══════════════════════════════════════════════════════════
-            // EXTRAER VIDEO (código existente)
-            // ══════════════════════════════════════════════════════════
 
             if (dictMatch == null) {
                 Log.e("Callistanise", "No se encontró diccionario")
@@ -100,11 +43,7 @@ class Callistanise : ExtractorApi() {
 
             val words = dictMatch.groupValues[1].split("|")
 
-            val candidates = words.filter {
-                it.length >= 10 &&
-                        it.matches(Regex("[a-zA-Z0-9]+"))
-            }
-
+            // Palabras a ignorar (keywords de JS)
             val ignoreWords = setOf(
                 "currentfile", "audiotracks", "decodedlink", "settimeout", "shouldswitch",
                 "textcontent", "startswith", "localstorage", "codefrommessage", "errormessage",
@@ -119,61 +58,80 @@ class Callistanise : ExtractorApi() {
                 "qualitylabels", "advertising", "backgroundopacity", "transparent",
                 "backgroundcolor", "fontfamily", "fontopacity", "userfontscale", "thumbnails",
                 "androidhls", "timeslider", "controlbar", "fullscreenorientationlock",
-                "stretching", "riverstonelearninghub", "download11", "minochinos",
-                "systemdocumentation"
+                "stretching", "riverstonelearninghub", "download11", "minochinos"
             )
 
-            val token = candidates.find { word ->
-                word.length in 10..16 &&
-                        word.any { it.isUpperCase() } &&
-                        word.any { it.isLowerCase() } &&
+            // Filtrar candidatos válidos
+            val candidates = words.filter { word ->
+                word.length >= 10 &&
+                        word.matches(Regex("[a-zA-Z0-9]+")) &&
                         word.lowercase() !in ignoreWords &&
-                        !word.startsWith("tt") &&
-                        !word.contains(videoId, ignoreCase = true)
-            }
-
-            val subdomain = candidates.find { word ->
-                word.length in 12..20 &&
-                        word.any { it.isDigit() } &&
-                        word.any { it.isLetter() } &&
-                        word.lowercase() !in ignoreWords &&
-                        word != token &&
                         !word.startsWith("tt") &&
                         !word.contains(videoId, ignoreCase = true) &&
-                        word.count { it.isDigit() } >= 1 &&
-                        word.count { it.isDigit() } <= 5
+                        !word.all { it.isDigit() } // No solo números
             }
 
-            Log.d("Callistanise", "Token: $token")
-            Log.d("Callistanise", "Subdomain: $subdomain")
+            Log.d("Callistanise", "Candidatos: $candidates")
+
+            // TOKEN: 10-14 chars, tiene mayúsculas Y minúsculas mezcladas
+            // Ejemplo: LFDu7HStkKAt
+            var token: String? = null
+            for (word in candidates) {
+                if (word.length in 10..14 &&
+                    word.any { it.isUpperCase() } &&
+                    word.any { it.isLowerCase() }) {
+                    token = word
+                    Log.d("Callistanise", "Token candidato: $word")
+                    break
+                }
+            }
+
+            // SUBDOMAIN: 13-16 chars, tiene mayúsculas, minúsculas Y números
+            // Ejemplo: RNzT2t4XVKU08
+            var subdomain: String? = null
+            for (word in candidates) {
+                if (word != token &&
+                    word.length in 13..18 &&
+                    word.any { it.isUpperCase() } &&
+                    word.any { it.isLowerCase() } &&
+                    word.any { it.isDigit() }) {
+                    subdomain = word
+                    Log.d("Callistanise", "Subdomain candidato: $word")
+                    break
+                }
+            }
+
+            Log.d("Callistanise", "Token FINAL: $token")
+            Log.d("Callistanise", "Subdomain FINAL: $subdomain")
 
             if (token == null || subdomain == null) {
-                Log.e("Callistanise", "No se encontró token o subdomain")
+                Log.e("Callistanise", "No se encontró token o subdomain válido")
                 return
             }
 
-            // Construir URL del video
-            val hlsUrl = "https://${subdomain.lowercase()}.riverstonelearninghub.sbs/$token/hls3/01/02145/${videoId}_,l,n,.urlset/master.txt"
-
-            Log.d("Callistanise", "URL FINAL: $hlsUrl")
-
-            // También intentar obtener subtítulos del mismo servidor
-            val subUrl = "https://${subdomain.lowercase()}.riverstonelearninghub.sbs/$token/hls3/01/02145/${videoId}_spa.vtt"
-            try {
-                val subResponse = app.get(subUrl, headers = headers)
-                if (subResponse.code == 200) {
-                    Log.d("Callistanise", "📝 Subtítulo del CDN encontrado: $subUrl")
-                    subtitleCallback.invoke(
-                        SubtitleFile(
-                            lang = "Español",
-                            url = subUrl
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                Log.d("Callistanise", "No hay subtítulo en CDN")
+            // Buscar subtítulos
+            val subtitleFile = words.find {
+                it.contains(videoId) && it.contains("_spa")
             }
 
+            // Construir URL
+            val hlsUrl = "https://${subdomain.lowercase()}.riverstonelearninghub.sbs/$token/hls3/01/02145/${videoId}_,l,n,.urlset/master.txt"
+            Log.d("Callistanise", "URL FINAL: $hlsUrl")
+
+            // Agregar subtítulos
+            if (subtitleFile != null) {
+                val subUrl = "https://${subdomain.lowercase()}.riverstonelearninghub.sbs/$token/hls3/01/02145/${subtitleFile}.vtt"
+                Log.d("Callistanise", "📝 Subtítulo: $subUrl")
+
+                subtitleCallback.invoke(
+                    newSubtitleFile(
+                        lang = "Español",
+                        url = subUrl
+                    )
+                )
+            }
+
+            // Enviar enlace
             callback.invoke(
                 newExtractorLink(
                     source = name,
