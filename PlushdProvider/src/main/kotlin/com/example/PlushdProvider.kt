@@ -7,6 +7,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.delay
 import java.net.URL
 
@@ -151,33 +154,40 @@ class PlushdProvider : MainAPI() {
             title = title.replace(yearRegex, "").trim()
         }
 
-        // 1. Imagen de Fondo (Banner Horizontal)
+        // 1. Banner Horizontal (Ficha)
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
 
-        // 2. Poster Vertical (Simplificado para evitar el aviso del IDE)
-        var verticalPoster = doc.select(".data img, .poster img, picture img").firstNotNullOfOrNull {
+        // 2. Poster Vertical (Exacto como el Search/MainPage)
+        // Buscamos primero en el contenedor principal de datos (.data) que es el más fiable
+        var verticalPoster = doc.select(".data img, .poster img").firstNotNullOfOrNull {
             val src = it.attr("data-src").ifBlank { it.attr("src") }
-            // Filtramos: que no sea el fondo, que sea de tmdb y que no sea un logo
-            if (src.isNotBlank() && src != backimage && src.contains("tmdb.org") && !src.contains("logo")) {
+
+            // Filtro estricto: TMDB + NO episodios + NO seasons + NO logo
+            if (src.isNotBlank() &&
+                src != backimage &&
+                src.contains("tmdb.org") &&
+                !src.contains("/episodes/") &&
+                !src.contains("/seasons/") &&
+                !src.contains("logo")
+            ) {
                 src
             } else null
-        }?.replace("original", "w342")
+        }?.replace("original", "w342") // Forzamos el tamaño vertical del buscador
 
-        // 3. Fallback: Si no encontró nada, intenta buscar por el atributo alt o usa el fondo
+        // 3. Fallback de seguridad
         if (verticalPoster.isNullOrBlank()) {
-            verticalPoster = doc.selectFirst("img[alt*='$title'], .itemA img")?.let {
+            verticalPoster = doc.selectFirst(".itemA img")?.let {
                 it.attr("data-src").ifBlank { it.attr("src") }
             }?.replace("original", "w342") ?: backimage
         }
 
-        Log.d("PlushdProvider", "Poster FINAL para Favoritos: $verticalPoster")
-        Log.d("PlushdProvider", "Background para Ficha: $backimage")
+        Log.d("PlushdProvider", "Poster FINAL (Vertical): $verticalPoster")
+        Log.d("PlushdProvider", "Background FINAL (Horizontal): $backimage")
 
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }
         val epi = ArrayList<Episode>()
 
-        // ... (tu lógica de episodios se queda igual)
         if (tvType != TvType.Movie) {
             val script = doc.select("script").firstOrNull { it.html().contains("seasonsJson = ") }?.html()
             if (!script.isNullOrEmpty()) {
@@ -244,96 +254,206 @@ class PlushdProvider : MainAPI() {
     ): Boolean {
         val allLinks = mutableListOf<ExtractorLink>()
 
+        // Múltiples patrones para capturar URLs
+        val urlPatterns = listOf(
+            Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]"""),
+            Regex("""location\.href\s*=\s*['"]([^'"]+)['"]"""),
+            Regex("""window\.open\s*\(\s*['"]([^'"]+)['"]"""),
+            Regex("""src\s*=\s*['"]([^'"]*(?:embed|player|e/)[^'"]+)['"]"""),
+            Regex("""iframe[^>]+src\s*=\s*['"]([^'"]+)['"]"""),
+            Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"""),
+            Regex("""source\s*:\s*['"]([^'"]+)['"]"""),
+            Regex(""""url"\s*:\s*"([^"]+)""""),
+            Regex("""https?://[^\s'"<>]+(?:\.m3u8|\.mp4|/embed/|/e/|/player/)[^\s'"<>]*""")
+        )
+
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer" to "$mainUrl/"
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to data,
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
         )
 
         val doc = app.get(data, headers = headers).document
         val servers = doc.select("div ul.subselect li")
 
         Log.d("PlushdProvider", "═══════════════════════════════════════")
+        Log.d("PlushdProvider", "URL: $data")
         Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
+
+        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("PlushdProvider", "📝 Subtítulo: ${file.url}")
+            subtitleCallback.invoke(file)
+        }
 
         servers.forEachIndexed { index, serverLi ->
             val serverName = serverLi.text().trim()
+
             try {
-                val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEachIndexed
+                val serverData = serverLi.attr("data-server")
+                if (serverData.isNullOrEmpty()) {
+                    Log.w("PlushdProvider", "[$index] $serverName - Sin data-server")
+                    return@forEachIndexed
+                }
 
                 Log.d("PlushdProvider", "[$index] $serverName")
-                Log.d("PlushdProvider", "  📋 data-server (base64): $serverData")
+                Log.d("PlushdProvider", "  📋 data-server: $serverData")
 
-                // ⭐ DECODIFICAR BASE64 DOS VECES
-                try {
-                    // Primera decodificación
-                    val decoded1 = Base64.decode(serverData, Base64.DEFAULT)
-                    val decoded1Str = String(decoded1, Charsets.UTF_8)
-                    Log.d("PlushdProvider", "  🔓 Primera decodificación: $decoded1Str")
+                // Codificar a Base64 para la API del player
+                val encodedData = Base64.encodeToString(
+                    serverData.toByteArray(Charsets.UTF_8),
+                    Base64.NO_WRAP
+                )
+                val playerUrl = "$mainUrl/player/$encodedData"
 
-                    // Segunda decodificación
-                    val decoded2 = Base64.decode(decoded1Str, Base64.DEFAULT)
-                    val finalUrl = String(decoded2, Charsets.UTF_8)
-                    Log.d("PlushdProvider", "  🔓 Segunda decodificación (URL FINAL): $finalUrl")
+                Log.d("PlushdProvider", "  🔗 Player URL: $playerUrl")
 
-                    if (finalUrl.startsWith("http")) {
-                        val fixedLink = fixPelisplusHostsLinks(finalUrl)
-                        Log.d("PlushdProvider", "  ✅ Link procesado: $fixedLink")
+                // Hacer petición al player
+                val playerResponse = try {
+                    app.get(playerUrl, headers = headers, timeout = 15)
+                } catch (e: Exception) {
+                    Log.e("PlushdProvider", "  ❌ Error en petición: ${e.message}")
+                    return@forEachIndexed
+                }
 
-                        val extractorReferer = when {
-                            fixedLink.contains("vidhide") -> mainUrl
-                            fixedLink.contains("upns.pro") -> "https://pelisplus.upns.pro/"
-                            fixedLink.contains("strp2p.com") -> "https://pelisplus.strp2p.com/"
-                            fixedLink.contains("emturbovid.com") -> "https://emturbovid.com/"
-                            fixedLink.contains("listeamed.net") -> "https://listeamed.net/"
-                            else -> fixedLink
+                val responseText = playerResponse.text
+
+                // Verificar bloqueo temporal
+                if (responseText.contains("bloqueo temporal", ignoreCase = true)) {
+                    Log.w("PlushdProvider", "  ⚠️ Bloqueo temporal detectado")
+                    delay(2000L) // Esperar más tiempo
+                    return@forEachIndexed
+                }
+
+                // Buscar URLs con todos los patrones
+                val foundUrls = mutableSetOf<String>()
+
+                for (pattern in urlPatterns) {
+                    pattern.findAll(responseText).forEach { match ->
+                        val url = match.groupValues.getOrNull(1) ?: match.value
+                        if (url.startsWith("http") && !url.contains("javascript")) {
+                            foundUrls.add(url.trim())
+                        }
+                    }
+                }
+
+                Log.d("PlushdProvider", "  🔍 URLs encontradas: ${foundUrls.size}")
+
+                if (foundUrls.isEmpty()) {
+                    // Intentar parsear como HTML y buscar iframes
+                    val playerDoc = playerResponse.document
+                    playerDoc.select("iframe[src]").forEach { iframe ->
+                        val iframeSrc = iframe.attr("src")
+                        if (iframeSrc.startsWith("http")) {
+                            foundUrls.add(iframeSrc)
+                        }
+                    }
+
+                    // Buscar en scripts
+                    playerDoc.select("script").forEach { script ->
+                        val scriptText = script.html()
+                        for (pattern in urlPatterns) {
+                            pattern.findAll(scriptText).forEach { match ->
+                                val url = match.groupValues.getOrNull(1) ?: match.value
+                                if (url.startsWith("http")) {
+                                    foundUrls.add(url.trim())
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Procesar cada URL encontrada
+                foundUrls.forEach { rawUrl ->
+                    try {
+                        val fixedLink = fixPelisplusHostsLinks(rawUrl)
+                        Log.d("PlushdProvider", "  ➜ Procesando: $fixedLink")
+
+                        val extractorReferer = try {
+                            val urlObject = java.net.URL(fixedLink)
+                            "${urlObject.protocol}://${urlObject.host}/"
+                        } catch (e: Exception) {
+                            mainUrl
                         }
 
-                        try {
+                        // Si es un enlace directo m3u8/mp4, agregarlo directamente
+                        if (fixedLink.contains(".m3u8") || fixedLink.contains(".mp4")) {
+                            val quality = when {
+                                fixedLink.contains("1080") -> 1080
+                                fixedLink.contains("720") -> 720
+                                fixedLink.contains("480") -> 480
+                                fixedLink.contains("360") -> 360
+                                else -> Qualities.Unknown.value
+                            }
+
+                            callback(
+                                newExtractorLink(
+                                    source = this.name,
+                                    name = "$serverName - Directo",
+                                    url = fixedLink,
+                                    type = if (fixedLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = extractorReferer
+                                    this.quality = quality
+                                }
+                            )
+                            allLinks.add(
+                                newExtractorLink(
+                                    source = this.name,
+                                    name = serverName,
+                                    url = fixedLink,
+                                    type = if (fixedLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = extractorReferer
+                                    this.quality = quality
+                                }
+                            )
+                            Log.d("PlushdProvider", "    ✅ Enlace directo agregado")
+                        } else {
+                            // Usar extractor
                             val tempLinks = mutableListOf<ExtractorLink>()
 
                             loadExtractor(
                                 url = fixedLink,
                                 referer = extractorReferer,
-                                subtitleCallback = subtitleCallback,
+                                subtitleCallback = loggingSubtitleCallback,
                                 callback = { link ->
                                     tempLinks.add(link)
-                                    Log.d("PlushdProvider", "    ➜ Link: ${link.name} | ${link.quality}p")
+                                    callback(link)
+                                    Log.d("PlushdProvider", "    ✅ ${link.name} | ${link.quality}p")
                                 }
                             )
 
-                            if (tempLinks.isNotEmpty()) {
-                                allLinks.addAll(tempLinks)
-                                Log.d("PlushdProvider", "  ✅ $serverName: ${tempLinks.size} enlaces")
-                            } else {
-                                Log.w("PlushdProvider", "  ⚠️ $serverName: 0 enlaces")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("PlushdProvider", "  ❌ Error extractor: ${e.message}")
-                        }
-                    } else {
-                        Log.w("PlushdProvider", "  ⚠️ URL decodificada inválida: $finalUrl")
-                    }
+                            allLinks.addAll(tempLinks)
 
-                } catch (e: Exception) {
-                    Log.e("PlushdProvider", "  ❌ Error decodificando base64: ${e.message}")
+                            if (tempLinks.isEmpty()) {
+                                Log.w("PlushdProvider", "    ⚠️ Extractor no devolvió enlaces")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PlushdProvider", "    ❌ Error procesando URL: ${e.message}")
+                    }
+                }
+
+                if (foundUrls.isEmpty()) {
+                    Log.w("PlushdProvider", "  ⚠️ No se encontraron URLs en la respuesta")
+                    // Debug: mostrar parte de la respuesta
+                    Log.d("PlushdProvider", "  📄 Respuesta (primeros 500 chars): ${responseText.take(500)}")
                 }
 
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "  ❌ Error general: ${e.message}")
+                Log.e("PlushdProvider", "[$index] $serverName - Error general: ${e.message}")
                 e.printStackTrace()
             }
 
-            if (index < servers.size - 1) delay(300L)
+            // Delay entre servidores para evitar rate limiting
+            if (index < servers.size - 1) {
+                delay(1000L)
+            }
         }
 
         Log.d("PlushdProvider", "═══════════════════════════════════════")
-        Log.d("PlushdProvider", "TOTAL ENLACES CAPTURADOS: ${allLinks.size}")
-
-        allLinks.forEach { link ->
-            Log.d("PlushdProvider", "📤 Enviando: ${link.name} | ${link.url}")
-            callback(link)
-        }
-
+        Log.d("PlushdProvider", "TOTAL ENLACES: ${allLinks.size}")
         Log.d("PlushdProvider", "═══════════════════════════════════════")
 
         return allLinks.isNotEmpty()
