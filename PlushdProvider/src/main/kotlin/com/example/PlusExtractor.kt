@@ -9,9 +9,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
-// ═══════════════════════════════════════════════════════════════
-// CALLISTANISE (Earnvids/Vidhide)
-// ═══════════════════════════════════════════════════════════════
 class Callistanise : ExtractorApi() {
     override var mainUrl = "https://callistanise.com"
     override var name = "Earnvids"
@@ -33,11 +30,9 @@ class Callistanise : ExtractorApi() {
 
             val response = app.get(url, headers = headers).text
 
-            // Extraer el ID del video de la URL
-            val videoId = url.split("/").lastOrNull { it.isNotEmpty() } ?: return
+            val videoId = url.substringAfterLast("/").substringBefore("?")
             Log.d("Callistanise", "📹 Video ID: $videoId")
 
-            // Buscar el diccionario del packed script
             val dictRegex = Regex("""'([^']+)'\.split\('\|'\)\)\)""")
             val dictMatch = dictRegex.find(response)
 
@@ -45,21 +40,26 @@ class Callistanise : ExtractorApi() {
                 val words = dictMatch.groupValues[1].split("|")
                 Log.d("Callistanise", "📝 Diccionario: ${words.size} palabras")
 
-                // Buscar el subdominio (algo como rnzt2t4xvku08)
-                val subdomain = words.find { it.matches(Regex("[a-zA-Z0-9]{10,}")) && !it.contains(".") }
-                // Buscar el token (algo como LFDu7HStkKAt)
-                val token = words.find { it.matches(Regex("[a-zA-Z0-9]{10,14}")) && it != subdomain }
+                val subdomain = words.find {
+                    it.matches(Regex("[a-zA-Z0-9]{10,}")) &&
+                            !it.contains(".") &&
+                            it.any { c -> c.isLetter() }
+                }
+
+                val token = words.find {
+                    it.matches(Regex("[a-zA-Z0-9]{10,14}")) &&
+                            it != subdomain &&
+                            it.any { c -> c.isUpperCase() }
+                }
 
                 Log.d("Callistanise", "🌐 Subdomain: $subdomain, Token: $token")
 
                 if (subdomain != null && token != null) {
-                    // Construir la URL del m3u8
-                    // Formato: https://SUBDOMAIN.riverstonelearninghub.sbs/TOKEN/hls3/XX/XXXXX/VIDEOID_,l,n,.urlset/master.txt
+                    val pathNumbers = words.filter { it.matches(Regex("^\\d{2,5}$")) }
+                    val path1 = pathNumbers.getOrNull(0) ?: "01"
+                    val path2 = pathNumbers.getOrNull(1) ?: "02145"
 
-                    // Buscar los números de ruta (como 01, 02145)
-                    val pathNumbers = words.filter { it.matches(Regex("^\\d{2,5}$")) }.take(2)
-
-                    val hlsUrl = "https://$subdomain.riverstonelearninghub.sbs/$token/hls3/${pathNumbers.getOrElse(0) { "01" }}/${pathNumbers.getOrElse(1) { "02145" }}/${videoId}_,l,n,.urlset/master.txt"
+                    val hlsUrl = "https://$subdomain.riverstonelearninghub.sbs/$token/hls3/$path1/$path2/${videoId}_,l,n,.urlset/master.txt"
 
                     Log.d("Callistanise", "✅ URL construida: $hlsUrl")
 
@@ -70,43 +70,11 @@ class Callistanise : ExtractorApi() {
                             url = hlsUrl,
                             type = ExtractorLinkType.M3U8
                         ) {
-                            this.referer = url
+                            this.referer = "https://callistanise.com/"
                             this.quality = Qualities.Unknown.value
                             this.headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to url,
-                                "Origin" to "https://callistanise.com"
-                            )
-                        }
-                    )
-                    return
-                }
-            }
-
-            // Fallback: buscar URL directamente
-            val directPatterns = listOf(
-                Regex("""(https?://[^\s"']+riverstonelearninghub[^\s"']+master\.[^\s"']+)"""),
-                Regex("""(https?://[^\s"']+\.urlset/master\.[^\s"']+)""")
-            )
-
-            for (pattern in directPatterns) {
-                val match = pattern.find(response)
-                if (match != null) {
-                    val videoUrl = match.groupValues[1].replace("\\", "")
-                    Log.d("Callistanise", "✅ URL directa: $videoUrl")
-
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = videoUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = url
-                            this.quality = Qualities.Unknown.value
-                            this.headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to url,
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                "Referer" to "https://callistanise.com/",
                                 "Origin" to "https://callistanise.com"
                             )
                         }
@@ -123,9 +91,6 @@ class Callistanise : ExtractorApi() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// TURBOVIDHLS (Plus/EmTurbovid)
-// ═══════════════════════════════════════════════════════════════
 class TurbovidHLS : ExtractorApi() {
     override var mainUrl = "https://turbovidhls.com"
     override var name = "Plus"
@@ -142,19 +107,17 @@ class TurbovidHLS : ExtractorApi() {
         try {
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer" to (referer ?: mainUrl)
+                "Referer" to (referer ?: "https://tioplus.app/")
             )
 
             val response = app.get(url, headers = headers).text
             Log.d("TurbovidHLS", "📄 HTML: ${response.length} caracteres")
 
             val patterns = listOf(
-                Regex("""file:\s*["']([^"']+)["']"""),
-                Regex("""source:\s*["']([^"']+)["']"""),
-                Regex(""""file":\s*"([^"]+)""""),
-                Regex(""""sources":\s*\[.*?"file":\s*"([^"]+)""""),
-                Regex("""var\s+source\s*=\s*["']([^"']+)["']"""),
-                Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""")
+                Regex("""file\s*:\s*["']([^"']+)["']"""),
+                Regex(""""file"\s*:\s*"([^"]+)""""),
+                Regex("""source\s*:\s*["']([^"']+)["']"""),
+                Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""")
             )
 
             for (pattern in patterns) {
@@ -173,12 +136,12 @@ class TurbovidHLS : ExtractorApi() {
                                 url = videoUrl,
                                 type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             ) {
-                                this.referer = url
+                                this.referer = "https://turbovidhls.com/"
                                 this.quality = Qualities.Unknown.value
                                 this.headers = mapOf(
                                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                                    "Referer" to url,
-                                    "Origin" to mainUrl
+                                    "Referer" to "https://turbovidhls.com/",
+                                    "Origin" to "https://turbovidhls.com"
                                 )
                             }
                         )
@@ -186,9 +149,6 @@ class TurbovidHLS : ExtractorApi() {
                     }
                 }
             }
-
-            Log.w("TurbovidHLS", "⚠️ No se encontró video")
-            Log.d("TurbovidHLS", "📄 Preview: ${response.take(2000)}")
 
         } catch (e: Exception) {
             Log.e("TurbovidHLS", "❌ Error: ${e.message}")
