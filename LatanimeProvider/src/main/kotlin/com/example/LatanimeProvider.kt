@@ -6,8 +6,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.nicehttp.NiceResponse
-import kotlinx.coroutines.delay
 import java.util.*
 
 class LatanimeProvider : MainAPI() {
@@ -54,8 +52,6 @@ class LatanimeProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
-
-        // Carousel
         try {
             val mainDoc = app.get(mainUrl).document
             val carouselItems = mainDoc.select("div.carousel-item a[href*=/anime/], div.carousel-item a[href*=/pelicula/]").mapNotNull { element ->
@@ -71,7 +67,6 @@ class LatanimeProvider : MainAPI() {
             if (carouselItems.isNotEmpty()) items.add(HomePageList("Destacados", carouselItems))
         } catch (e: Exception) { Log.e("LatanimeProvider", "Error Carousel: ${e.message}") }
 
-        // Secciones
         val sections = listOf(
             Pair("$mainUrl/emision", "En emisión"),
             Pair("$mainUrl/animes?fecha=false&genero=false&letra=false&categoria=Película", "Películas"),
@@ -95,7 +90,22 @@ class LatanimeProvider : MainAPI() {
         return newHomePageResponse(items)
     }
 
+    override suspend fun search(query: String): List<SearchResponse> {
+        val doc = app.get("$mainUrl/buscar?q=$query").document
+        return doc.select("div.col-md-4, div.col-lg-3, div.col-xl-2, div.col-6").mapNotNull { article ->
+            val link = article.selectFirst("a") ?: return@mapNotNull null
+            val title = article.selectFirst("h3")?.text() ?: link.attr("title") ?: ""
+            val href = link.attr("href")
+
+            newAnimeSearchResponse(cleanTitle(title), fixUrl(href)) {
+                val img = article.selectFirst("img")
+                this.posterUrl = fixUrl(img?.attr("data-src")?.ifBlank { img.attr("src") } ?: "")
+            }
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse? {
+        Log.d("LatanimeProvider", "Cargando: $url")
         val document = app.get(url).document
         val rawTitle = document.selectFirst("div.col-lg-9 h2")?.text()?.trim() ?: ""
         val foundYear = Regex("""\((\d{4})\)""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
