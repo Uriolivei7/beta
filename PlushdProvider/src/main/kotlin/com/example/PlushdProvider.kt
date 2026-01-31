@@ -143,24 +143,27 @@ class PlushdProvider : MainAPI() {
         }
 
         var title = doc.selectFirst(".slugh1")?.text() ?: ""
-
         val yearRegex = Regex("""\s*\((\d{4})\)$""")
         val match = yearRegex.find(title)
         val year = match?.groupValues?.get(1)?.toIntOrNull()
 
         if (match != null) {
             title = title.replace(yearRegex, "").trim()
-            Log.d("PlushdProvider", "Cargando: $title (Año: $year)")
         }
 
-        // --- SOLUCIÓN PARA EL POSTER VERTICAL ---
-        // Buscamos la imagen que está dentro del contenedor de la información, que es la vertical
-        val verticalPoster = doc.selectFirst(".data picture img, .poster img")?.let {
-            it.attr("data-src").ifBlank { it.attr("src") }
-        }
-
-        // El fondo horizontal para que la ficha se vea pro
+        // 1. Banner horizontal (Fondo)
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
+
+        // 2. Poster Vertical (Exactamente como en MainPage/Search)
+        // Buscamos la imagen principal que representa a la serie/peli en la ficha técnica
+        val verticalPoster = doc.selectFirst(".itemA picture img, .poster picture img, .data picture img")?.let {
+            it.attr("data-src").ifBlank { it.attr("src") }
+        } ?: doc.selectFirst("picture img")?.let {
+            it.attr("data-src").ifBlank { it.attr("src") }
+        } ?: backimage // Fallback por si acaso
+
+        Log.d("PlushdProvider", "Poster capturado para Favoritos: $verticalPoster")
+        // --------------------------------------------
 
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }
@@ -170,8 +173,8 @@ class PlushdProvider : MainAPI() {
             val script = doc.select("script").firstOrNull { it.html().contains("seasonsJson = ") }?.html()
             if (!script.isNullOrEmpty()) {
                 val jsonRegex = Regex("seasonsJson\\s*=\\s*(\\{[^;]*\\});")
-                val match = jsonRegex.find(script)
-                val jsonscript: String? = match?.groupValues?.get(1)
+                val matchJson = jsonRegex.find(script)
+                val jsonscript = matchJson?.groupValues?.get(1)
 
                 if (!jsonscript.isNullOrEmpty()) {
                     try {
@@ -185,14 +188,12 @@ class PlushdProvider : MainAPI() {
                                 val realimg = if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${img.replace("\\/", "/")}"
                                 val epurl = "$url/season/$seasonNum/episode/$epNum"
                                 if (epTitle != null && seasonNum != null && epNum != null) {
-                                    epi.add(
-                                        newEpisode(epurl) {
-                                            this.name = epTitle
-                                            this.season = seasonNum
-                                            this.episode = epNum
-                                            this.posterUrl = realimg
-                                        }
-                                    )
+                                    epi.add(newEpisode(epurl) {
+                                        this.name = epTitle
+                                        this.season = seasonNum
+                                        this.episode = epNum
+                                        this.posterUrl = realimg
+                                    })
                                 }
                             }
                         }
@@ -206,9 +207,8 @@ class PlushdProvider : MainAPI() {
         return when (tvType) {
             TvType.TvSeries, TvType.Anime, TvType.AsianDrama -> {
                 newTvSeriesLoadResponse(title, url, tvType, epi) {
-                    // AQUÍ ESTÁ EL TRUCO:
-                    this.posterUrl = verticalPoster // El que Cloudstream guarda para favoritos
-                    this.backgroundPosterUrl = backimage // El que se ve de fondo en la app
+                    this.posterUrl = verticalPoster
+                    this.backgroundPosterUrl = backimage
                     this.plot = description
                     this.tags = tags
                     this.year = year
@@ -251,14 +251,25 @@ class PlushdProvider : MainAPI() {
             val serverName = serverLi.text().trim()
             try {
                 val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEachIndexed
-                val playerUrl = "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
+
+                // ⭐ USAR DIRECTAMENTE el data-server (ya está en base64)
+                val playerUrl = "$mainUrl/player/$serverData"
+
+                Log.d("PlushdProvider", "[$index] $serverName")
+                Log.d("PlushdProvider", "  📋 data-server: $serverData")
+                Log.d("PlushdProvider", "  🔗 playerUrl: $playerUrl")
 
                 val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
-                val link = linkRegex.find(playerResponse.text)?.destructured?.component1()
+                val text = playerResponse.text
+
+                // Debug: mostrar parte del texto de respuesta
+                Log.d("PlushdProvider", "  📄 Response length: ${text.length}")
+
+                val link = linkRegex.find(text)?.destructured?.component1()
 
                 if (!link.isNullOrBlank()) {
                     val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "[$index] $serverName -> $fixedLink")
+                    Log.d("PlushdProvider", "  ✅ Link encontrado: $fixedLink")
 
                     val extractorReferer = when {
                         fixedLink.contains("vidhide") -> playerUrl
@@ -270,7 +281,6 @@ class PlushdProvider : MainAPI() {
                     }
 
                     try {
-                        // Capturar en lista local primero
                         val tempLinks = mutableListOf<ExtractorLink>()
 
                         loadExtractor(
@@ -279,11 +289,10 @@ class PlushdProvider : MainAPI() {
                             subtitleCallback = subtitleCallback,
                             callback = { link ->
                                 tempLinks.add(link)
-                                Log.d("PlushdProvider", "  ➜ Link capturado: ${link.name} | Quality: ${link.quality}")
+                                Log.d("PlushdProvider", "    ➜ Link: ${link.name} | ${link.quality}p")
                             }
                         )
 
-                        // Agregar a la lista principal
                         if (tempLinks.isNotEmpty()) {
                             allLinks.addAll(tempLinks)
                             Log.d("PlushdProvider", "  ✅ $serverName: ${tempLinks.size} enlaces")
@@ -293,9 +302,16 @@ class PlushdProvider : MainAPI() {
                     } catch (e: Exception) {
                         Log.e("PlushdProvider", "  ❌ Error $serverName: ${e.message}")
                     }
+                } else {
+                    Log.w("PlushdProvider", "  ⚠️ No se encontró link en respuesta")
+                    // Debug: mostrar primeros 500 caracteres de la respuesta
+                    if (text.length > 0) {
+                        Log.d("PlushdProvider", "  📄 Response preview: ${text.take(500)}")
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error en servidor $serverName: ${e.message}")
+                Log.e("PlushdProvider", "  ❌ Error general: ${e.message}")
+                e.printStackTrace()
             }
 
             if (index < servers.size - 1) delay(300L)
@@ -304,7 +320,6 @@ class PlushdProvider : MainAPI() {
         Log.d("PlushdProvider", "═══════════════════════════════════════")
         Log.d("PlushdProvider", "TOTAL ENLACES CAPTURADOS: ${allLinks.size}")
 
-        // Ahora pasamos TODOS los enlaces al callback de una vez
         allLinks.forEach { link ->
             Log.d("PlushdProvider", "📤 Enviando: ${link.name} | ${link.url}")
             callback(link)
