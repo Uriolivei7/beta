@@ -20,8 +20,7 @@ class Callistanise : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Callistanise", "========== INICIO EXTRACCION ==========")
-        Log.d("Callistanise", "URL entrada: $url")
+        Log.d("Callistanise", "========== INICIO ==========")
 
         try {
             val headers = mapOf(
@@ -30,116 +29,82 @@ class Callistanise : ExtractorApi() {
             )
 
             val response = app.get(url, headers = headers).text
-            Log.d("Callistanise", "Response length: ${response.length}")
-
             val videoId = url.substringAfterLast("/").substringBefore("?")
             Log.d("Callistanise", "Video ID: $videoId")
 
-            // MÉTODO 1: Buscar URL directa en el HTML (a veces está sin ofuscar)
-            val directUrlPattern = Regex("""(https?://[a-zA-Z0-9]+\.riverstonelearninghub\.[a-z]+/[^"'\s]+master\.[^"'\s]+)""")
-            val directMatch = directUrlPattern.find(response)
-
-            if (directMatch != null) {
-                val hlsUrl = directMatch.value.replace("\\", "")
-                Log.d("Callistanise", "URL DIRECTA ENCONTRADA: $hlsUrl")
-
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = hlsUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "https://callistanise.com/"
-                        this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "https://callistanise.com/",
-                            "Origin" to "https://callistanise.com"
-                        )
-                    }
-                )
-                return
-            }
-
-            // MÉTODO 2: Buscar en el diccionario packed
+            // Buscar el diccionario packed
             val dictRegex = Regex("""'([^']+)'\.split\('\|'\)\)\)""")
             val dictMatch = dictRegex.find(response)
 
             if (dictMatch == null) {
-                Log.e("Callistanise", "NO SE ENCONTRO DICCIONARIO")
+                Log.e("Callistanise", "No se encontró diccionario")
                 return
             }
 
             val words = dictMatch.groupValues[1].split("|")
-            Log.d("Callistanise", "Palabras totales: ${words.size}")
+            Log.d("Callistanise", "Total palabras: ${words.size}")
 
-            // Buscar el subdomain: debe tener formato como "rnzt2t4xvku08"
-            // - Solo minúsculas y números
-            // - Longitud entre 12-16 caracteres
-            // - Contiene tanto letras como números mezclados
-            val subdomain = words.find { word ->
-                word.length in 12..20 &&
-                        word.matches(Regex("[a-z0-9]+")) &&
-                        word.count { it.isDigit() } >= 2 &&
-                        word.count { it.isLetter() } >= 4 &&
-                        !word.contains("file") &&
-                        !word.contains("track") &&
-                        !word.contains("player") &&
-                        !word.contains("source")
+            // Filtrar candidatos (10+ chars, alfanumérico)
+            val candidates = words.filter {
+                it.length >= 10 &&
+                        it.matches(Regex("[a-zA-Z0-9]+"))
             }
+            Log.d("Callistanise", "Candidatos: $candidates")
 
-            // Buscar el token: formato como "LFDu7HStkKAt"
-            // - Mezcla de mayúsculas, minúsculas y números
-            // - Longitud entre 10-14 caracteres
-            val token = words.find { word ->
+            // Lista de palabras a ignorar (keywords de JS y del player)
+            val ignoreWords = setOf(
+                "currentfile", "audiotracks", "decodedlink", "settimeout", "shouldswitch",
+                "textcontent", "startswith", "localstorage", "codefrommessage", "errormessage",
+                "switchedlink", "errorcount", "appendchild", "createelement", "getaudiotracks",
+                "removeclass", "currenttime", "lasterrortime", "createlayer", "parsefromstring",
+                "setcurrentaudiotrack", "playbackrates", "getplaylistitem", "currenttracks",
+                "insertafter", "getposition", "currenttrack", "audiotrackchanged", "toggleclass",
+                "firstframe", "networkerror", "fragloaderror", "removechild", "parentnode",
+                "background", "setattribute", "innerwidth", "innerheight", "googleapis",
+                "callistanise", "togmtstring", "createcookiesec", "queryselector", "pickdirect",
+                "documentelement", "encodeuricomponent", "application", "playbackratecontrols",
+                "qualitylabels", "advertising", "backgroundopacity", "transparent",
+                "backgroundcolor", "fontfamily", "fontopacity", "userfontscale", "thumbnails",
+                "androidhls", "timeslider", "controlbar", "fullscreenorientationlock",
+                "stretching", "riverstonelearninghub", "download11", "minochinos"
+            )
+
+            // Buscar el TOKEN: tiene mayúsculas Y minúsculas, 10-14 chars
+            // Ejemplo: LFDu7HStkKAt
+            val token = candidates.find { word ->
                 word.length in 10..16 &&
-                        word.matches(Regex("[a-zA-Z0-9]+")) &&
                         word.any { it.isUpperCase() } &&
                         word.any { it.isLowerCase() } &&
-                        word != subdomain &&
-                        !word.contains("Tracks") &&
-                        !word.contains("File") &&
-                        !word.contains("Player")
+                        word.lowercase() !in ignoreWords &&
+                        !word.startsWith("tt") &&
+                        !word.contains(videoId, ignoreCase = true)
             }
 
-            Log.d("Callistanise", "Subdomain encontrado: $subdomain")
+            // Buscar el SUBDOMAIN: mezcla de mayúsculas/minúsculas y números
+            // Ejemplo: RNzT2t4XVKU08 (se convierte a minúsculas en la URL)
+            val subdomain = candidates.find { word ->
+                word.length in 12..20 &&
+                        word.any { it.isDigit() } &&
+                        word.any { it.isLetter() } &&
+                        word.lowercase() !in ignoreWords &&
+                        word != token &&
+                        !word.startsWith("tt") &&
+                        !word.contains(videoId, ignoreCase = true) &&
+                        // El subdomain real tiene números mezclados con letras
+                        word.count { it.isDigit() } >= 1 &&
+                        word.count { it.isDigit() } <= 5
+            }
+
             Log.d("Callistanise", "Token encontrado: $token")
+            Log.d("Callistanise", "Subdomain encontrado: $subdomain")
 
-            // Si no encontró, buscar alternativas
-            if (subdomain == null || token == null) {
-                // Buscar cualquier palabra que parezca un hash/token largo
-                val possibleTokens = words.filter {
-                    it.length >= 10 &&
-                            it.matches(Regex("[a-zA-Z0-9]+")) &&
-                            !it.matches(Regex("[a-z]+")) && // No solo minúsculas
-                            !it.contains("File") &&
-                            !it.contains("Track") &&
-                            !it.contains("Player") &&
-                            !it.contains("source")
-                }
-                Log.d("Callistanise", "Tokens posibles: ${possibleTokens.take(10)}")
-
-                val possibleSubdomains = words.filter {
-                    it.length in 10..20 &&
-                            it.matches(Regex("[a-z0-9]+")) &&
-                            it.any { c -> c.isDigit() }
-                }
-                Log.d("Callistanise", "Subdomains posibles: ${possibleSubdomains.take(10)}")
-            }
-
-            if (subdomain == null || token == null) {
-                Log.e("Callistanise", "No se pudo extraer subdomain o token")
+            if (token == null || subdomain == null) {
+                Log.e("Callistanise", "No se encontró token o subdomain")
                 return
             }
 
-            // Path numbers - buscar específicamente 01 y 02145
-            val path1 = words.find { it == "01" } ?: "01"
-            val path2 = words.find { it == "02145" } ?: words.find { it.matches(Regex("0\\d{4}")) } ?: "02145"
-
-            Log.d("Callistanise", "Path1: $path1, Path2: $path2")
-
-            val hlsUrl = "https://$subdomain.riverstonelearninghub.sbs/$token/hls3/$path1/$path2/${videoId}_,l,n,.urlset/master.txt"
+            // Construir URL (subdomain en minúsculas)
+            val hlsUrl = "https://${subdomain.lowercase()}.riverstonelearninghub.sbs/$token/hls3/01/02145/${videoId}_,l,n,.urlset/master.txt"
 
             Log.d("Callistanise", "========================================")
             Log.d("Callistanise", "URL FINAL: $hlsUrl")
@@ -164,7 +129,6 @@ class Callistanise : ExtractorApi() {
 
         } catch (e: Exception) {
             Log.e("Callistanise", "ERROR: ${e.message}")
-            e.printStackTrace()
         }
     }
 }
