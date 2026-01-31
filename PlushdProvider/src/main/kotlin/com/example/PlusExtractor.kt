@@ -85,95 +85,62 @@ class Callistanise : ExtractorApi() {
             val pathNumbers = words.filter { it.matches(Regex("0\\d{4}")) }
             Log.d("Callistanise", "Paths: $pathNumbers")
 
+            // Excluir palabras que contienen el videoId
+            fun isValidCandidate(word: String): Boolean {
+                return !word.contains(videoId) &&
+                        !word.startsWith(videoId) &&
+                        !word.endsWith("0000") &&
+                        word.lowercase() !in jsKeywords
+            }
+
             // Dominios LARGOS sin números (15-30 chars)
             val longDomains = words.filter { word ->
                 word.length in 15..30 &&
                         word.matches(Regex("[a-z]+")) &&
-                        word.lowercase() !in jsKeywords
+                        isValidCandidate(word)
             }
 
-            // Dominios MEDIANOS sin números (8-14 chars)
-            val mediumDomains = words.filter { word ->
-                word.length in 8..14 &&
-                        word.matches(Regex("[a-z]+")) &&
-                        word.lowercase() !in jsKeywords &&
-                        word !in validTlds
-            }
-
-            // Dominios/subdominios con números (8-20 chars)
+            // Dominios/subdominios con números (8-15 chars)
             val withNumbers = words.filter { word ->
-                word.length in 8..20 &&
+                word.length in 8..15 &&
                         word.matches(Regex("[a-z0-9]+")) &&
                         word.any { it.isDigit() } &&
                         word.any { it.isLetter() } &&
-                        word.lowercase() !in jsKeywords &&
-                        word != videoId &&
+                        isValidCandidate(word) &&
                         !word.startsWith("tt") &&
-                        !word.startsWith("0") &&
-                        !word.all { it.isDigit() }
+                        !word.startsWith("0")
             }
 
-            // Mixed case con números
-            val mixedWithNumbers = words.filter { word ->
+            // Mixed case (subdomain en la URL)
+            val mixedCandidates = words.filter { word ->
                 word.length in 10..20 &&
                         word.matches(Regex("[a-zA-Z0-9]+")) &&
                         word.any { it.isUpperCase() } &&
                         word.any { it.isLowerCase() } &&
-                        word.any { it.isDigit() } &&
                         word.lowercase() !in jsKeywords
             }
 
-            // Mixed case sin números pero aleatorio
-            val mixedWithoutNumbers = words.filter { word ->
-                word.length in 10..18 &&
-                        word.matches(Regex("[a-zA-Z]+")) &&
-                        word.any { it.isUpperCase() } &&
-                        word.any { it.isLowerCase() } &&
-                        word.lowercase() !in jsKeywords &&
-                        word.count { it.isUpperCase() } >= 2 &&
-                        !word.matches(Regex("^[a-z]+[A-Z][a-z]+$"))
-            }
-
-            val allMixedCandidates = (mixedWithNumbers + mixedWithoutNumbers).distinct()
-            val allDomainCandidates = (longDomains + mediumDomains + withNumbers).distinct()
-
             Log.d("Callistanise", "Dominios largos: $longDomains")
-            Log.d("Callistanise", "Dominios medianos: $mediumDomains")
-            Log.d("Callistanise", "Con números: $withNumbers")
-            Log.d("Callistanise", "Mixed: $allMixedCandidates")
+            Log.d("Callistanise", "Con números (token): $withNumbers")
+            Log.d("Callistanise", "Mixed (subdomain): $mixedCandidates")
 
-            // Determinar token, subdomain y dominios
-            val token: String
-            val subdomain: String
-            val domainCandidates: List<String>
-
-            when {
-                allMixedCandidates.size >= 2 -> {
-                    val sorted = allMixedCandidates.map { Pair(it, words.indexOf(it)) }.sortedBy { it.second }
-                    token = sorted[0].first
-                    subdomain = sorted[1].first
-                    // Usar todos los dominios disponibles
-                    domainCandidates = allDomainCandidates.filter { it != subdomain.lowercase() }
-                }
-                allMixedCandidates.size == 1 && withNumbers.isNotEmpty() -> {
-                    token = allMixedCandidates[0]
-                    subdomain = withNumbers.first()
-                    domainCandidates = longDomains + mediumDomains + withNumbers.drop(1)
-                }
-                allMixedCandidates.size == 1 && (longDomains.isNotEmpty() || mediumDomains.isNotEmpty()) -> {
-                    token = allMixedCandidates[0]
-                    // Buscar subdomain en withNumbers o usar el primer dominio
-                    subdomain = withNumbers.firstOrNull() ?: (longDomains + mediumDomains).first()
-                    domainCandidates = (longDomains + mediumDomains).filter { it != subdomain }
-                }
-                else -> {
-                    Log.e("Callistanise", "No hay suficientes candidatos")
-                    return
-                }
+            if (mixedCandidates.isEmpty()) {
+                Log.e("Callistanise", "No hay mixed candidates")
+                return
             }
 
-            Log.d("Callistanise", "Token: $token")
-            Log.d("Callistanise", "Subdomain: $subdomain")
+            // ESTRUCTURA CORRECTA:
+            // https://[MIXED_lowercase].[DOMINIO].[TLD]/[CON_NUMEROS]/hls3/01/[PATH]/[videoId]_format
+
+            val subdomain = mixedCandidates.first() // Mixed va como subdomain
+            val token = withNumbers.firstOrNull() ?: mixedCandidates.getOrNull(1) ?: run {
+                Log.e("Callistanise", "No hay token")
+                return
+            }
+            val domainCandidates = longDomains + withNumbers.filter { it != token }
+
+            Log.d("Callistanise", "Subdomain (mixed): $subdomain")
+            Log.d("Callistanise", "Token (con números): $token")
             Log.d("Callistanise", "Dominios a probar: $domainCandidates")
 
             if (domainCandidates.isEmpty()) {
@@ -198,6 +165,7 @@ class Callistanise : ExtractorApi() {
                 for (tld in tldCandidates) {
                     for (pathNumber in pathNumbers.take(10)) {
                         for (format in formats) {
+                            // ESTRUCTURA: subdomain.domain.tld/token/hls3/01/path/videoId_format
                             val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
 
                             try {
@@ -216,6 +184,41 @@ class Callistanise : ExtractorApi() {
                                 }
                             } catch (e: Exception) {
                                 // Continuar
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Si no funcionó, probar con estructura alternativa (token y subdomain invertidos)
+            if (hlsUrl == null && mixedCandidates.size >= 2) {
+                Log.d("Callistanise", "Probando estructura alternativa...")
+                val altSubdomain = mixedCandidates[1]
+                val altToken = mixedCandidates[0]
+
+                outerLoop2@ for (domain in domainCandidates.take(5)) {
+                    for (tld in tldCandidates) {
+                        for (pathNumber in pathNumbers.take(8)) {
+                            for (format in formats) {
+                                val testUrl = "https://${altSubdomain.lowercase()}.$domain.$tld/$altToken/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
+
+                                try {
+                                    val testResponse = app.get(testUrl, headers = mapOf(
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                        "Referer" to "https://callistanise.com/"
+                                    ), timeout = 3)
+
+                                    if (testResponse.code == 200 && testResponse.text.contains("#EXTM3U")) {
+                                        hlsUrl = testUrl
+                                        workingDomain = domain
+                                        workingTld = tld
+                                        workingPath = pathNumber
+                                        Log.d("Callistanise", "✅ URL válida (alt): $hlsUrl")
+                                        break@outerLoop2
+                                    }
+                                } catch (e: Exception) {
+                                    // Continuar
+                                }
                             }
                         }
                     }
