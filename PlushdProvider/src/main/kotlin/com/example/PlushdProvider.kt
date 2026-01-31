@@ -41,31 +41,32 @@ class PlushdProvider : MainAPI() {
 
     private fun fixPelisplusHostsLinks(url: String): String {
         if (url.isBlank()) return url
-        // Quitamos el # y cualquier espacio
         val cleanUrl = url.replace("/#", "/").replace("#", "").trim()
 
         return when {
-            cleanUrl.contains("vidhide") || cleanUrl.contains("mivalyo") -> {
+            // Vidhide -> va a callistanise.com/v/
+            cleanUrl.contains("vidhide") || cleanUrl.contains("vidhidepro") -> {
                 val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://vidhidepro.com/e/$id" // Vidhide SÍ usa /e/
+                "https://callistanise.com/v/$id"
             }
-            cleanUrl.contains("upns.pro") -> {
-                val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://pelisplus.upns.pro/$id" // Upstream NO usa /e/ habitualmente aquí
-            }
-            cleanUrl.contains("strp2p.com") -> {
-                val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://pelisplus.strp2p.com/$id"
-            }
+            // EmTurbovid -> va a turbovidhls.com/t/
             cleanUrl.contains("emturbovid") -> {
                 val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://emturbovid.com/e/$id"
+                "https://turbovidhls.com/t/$id"
             }
-            // Para Netu/HQQ que vimos en tu log (waaw.to)
-            cleanUrl.contains("waaw.to") || cleanUrl.contains("hqq.tv") -> {
-                val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://hqq.tv/e/$id"
+            // HQQ/Netu -> mantener waaw.to
+            cleanUrl.contains("hqq.tv") || cleanUrl.contains("netu") -> {
+                // Cambiar hqq.tv a waaw.to si es necesario
+                cleanUrl.replace("hqq.tv", "waaw.to")
             }
+            // waaw.to se queda igual
+            cleanUrl.contains("waaw.to") -> cleanUrl
+            // Listeamed se queda igual
+            cleanUrl.contains("listeamed") -> cleanUrl
+            // UPNS
+            cleanUrl.contains("upns.pro") -> cleanUrl
+            // strp2p
+            cleanUrl.contains("strp2p.com") -> cleanUrl
             else -> cleanUrl
         }
     }
@@ -154,34 +155,33 @@ class PlushdProvider : MainAPI() {
             title = title.replace(yearRegex, "").trim()
         }
 
-        // 1. Banner Horizontal (Ficha)
+        // 1. Imagen de Fondo (Banner Horizontal)
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
 
-        // 2. Poster Vertical (Exacto como el Search/MainPage)
-        // Buscamos primero en el contenedor principal de datos (.data) que es el más fiable
-        var verticalPoster = doc.select(".data img, .poster img").firstNotNullOfOrNull {
+        // 2. Poster Vertical (Buscando la imagen principal de la serie)
+        var verticalPoster = doc.select(".data img, .poster img, picture img").firstNotNullOfOrNull {
             val src = it.attr("data-src").ifBlank { it.attr("src") }
 
-            // Filtro estricto: TMDB + NO episodios + NO seasons + NO logo
             if (src.isNotBlank() &&
                 src != backimage &&
                 src.contains("tmdb.org") &&
                 !src.contains("/episodes/") &&
-                !src.contains("/seasons/") &&
+                !src.contains("/seasons/") && // <--- ESTO descarta las fotos de temporadas
                 !src.contains("logo")
             ) {
                 src
             } else null
-        }?.replace("original", "w342") // Forzamos el tamaño vertical del buscador
+        }?.replace("original", "w342")
 
-        // 3. Fallback de seguridad
+        // 3. Si lo anterior falló, intentamos sacar la imagen del Search (que suele ser la primera en el HTML)
         if (verticalPoster.isNullOrBlank()) {
-            verticalPoster = doc.selectFirst(".itemA img")?.let {
-                it.attr("data-src").ifBlank { it.attr("src") }
-            }?.replace("original", "w342") ?: backimage
+            verticalPoster = doc.selectFirst(".itemA img, picture img")?.let {
+                val src = it.attr("data-src").ifBlank { it.attr("src") }
+                if (!src.contains("/seasons/") && !src.contains("/episodes/")) src else null
+            }?.replace("original", "w342") ?: backimage.replace("original", "w342")
         }
 
-        Log.d("PlushdProvider", "Poster FINAL (Vertical): $verticalPoster")
+        Log.d("PlushdProvider", "Poster FINAL (Debe ser el del Search): $verticalPoster")
         Log.d("PlushdProvider", "Background FINAL (Horizontal): $backimage")
 
         val description = doc.selectFirst("div.description")?.text() ?: ""

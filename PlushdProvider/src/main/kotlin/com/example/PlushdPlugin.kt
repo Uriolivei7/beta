@@ -22,6 +22,9 @@ class PlushdPlugin: Plugin() {
         registerExtractorAPI(Vidhide())
         registerExtractorAPI(RPMStream())
         registerExtractorAPI(Listeamed())
+        registerExtractorAPI(Callistanise())
+        registerExtractorAPI(TurbovidHLS())
+        registerExtractorAPI(WaawTo())
 
         Log.d("PlushdPlugin", "✅ Todos los extractores registrados")
         Log.d("PlushdPlugin", "🎉 Plugin cargado completamente")
