@@ -46,19 +46,22 @@ class LatanimeProvider : MainAPI() {
     }
 
     private fun cleanTitle(rawTitle: String): String {
-        val languageRegex = Regex("""(?i)\s*\b(Latino|Castellano|Subtitulado|Español|Japonés|Japones)\b""")
+        val junkRegex = Regex("""(?i)\s*\b(Latino|Castellano|Subtitulado|Español|Japonés|Japones|Audio)\b""")
         val yearRegex = Regex("""\s*\((\d{4})\)""")
-        return rawTitle
-            .replace(languageRegex, "")
+
+        var cleaned = rawTitle
+            .replace(junkRegex, "")
             .replace(yearRegex, "")
+            .replace("()", "")
             .replace(Regex("""\s+"""), " ")
             .trim()
+
+        return cleaned
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
 
-        // 1. Carousel / Destacados
         try {
             val mainDoc = app.get(mainUrl).document
             val carouselItems = mainDoc.select("div.carousel-item a[href*=/anime/], div.carousel-item a[href*=/pelicula/]").mapNotNull { element ->
@@ -73,10 +76,9 @@ class LatanimeProvider : MainAPI() {
             }
             if (carouselItems.isNotEmpty()) items.add(HomePageList("Destacados", carouselItems))
         } catch (e: Exception) {
-            Log.e("LatanimeProvider", "Error cargando Carousel: ${e.message}")
+            Log.e("LatanimeProvider", "Error en Carousel: ${e.message}")
         }
 
-        // 2. Otras Secciones (Emisión, Películas, Animes)
         val sections = listOf(
             Pair("$mainUrl/emision", "En emisión"),
             Pair("$mainUrl/animes?fecha=false&genero=false&letra=false&categoria=Película", "Películas"),
@@ -89,9 +91,7 @@ class LatanimeProvider : MainAPI() {
                 val home = doc.select("div.col-md-4, div.col-lg-3, div.col-xl-2, div.col-6").mapNotNull { article ->
                     val linkElement = article.selectFirst("a[href*=/anime/], a[href*=/pelicula/]") ?: return@mapNotNull null
                     val itemUrl = linkElement.attr("href")
-                    val title = linkElement.selectFirst("h3.my-1, h3")?.text()?.trim()
-                        ?: linkElement.attr("title").trim()
-
+                    val title = linkElement.selectFirst("h3.my-1, h3")?.text()?.trim() ?: linkElement.attr("title").trim()
                     val imgElement = linkElement.selectFirst("img.img-fluid2, img.img-fluid, img")
 
                     newAnimeSearchResponse(cleanTitle(title), fixUrl(itemUrl)) {
@@ -100,10 +100,9 @@ class LatanimeProvider : MainAPI() {
                 }
                 if (home.isNotEmpty()) items.add(HomePageList(sectionName, home))
             } catch (e: Exception) {
-                Log.e("LatanimeProvider", "Error cargando sección $sectionName: ${e.message}")
+                Log.e("LatanimeProvider", "Error en sección $sectionName: ${e.message}")
             }
         }
-
         return newHomePageResponse(items)
     }
 
@@ -121,14 +120,14 @@ class LatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("LatanimeProvider", "Cargando metadatos: $url")
+        Log.d("LatanimeProvider", "Cargando: $url")
         val document = app.get(url).document
         val rawTitle = document.selectFirst("div.col-lg-9 h2")?.text()?.trim() ?: ""
 
         val foundYear = Regex("""\((\d{4})\)""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
 
         val tags = document.select("a[href*=/genero/] div.btn").map { it.text().trim() }
-            .filter { !it.contains(Regex("(?i)Latino|Castellano|Subtitulado|Japonés|Japones")) }
+            .filter { !it.contains(Regex("(?i)Latino|Castellano|Subtitulado|Japonés|Japones|Audio")) }
             .toMutableList()
 
         if (rawTitle.contains("Latino", true)) tags.add(0, "Latino")
@@ -146,7 +145,6 @@ class LatanimeProvider : MainAPI() {
         val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapNotNull { element ->
             val epUrl = element.attr("href")
             val epText = element.selectFirst("div.cap-layout")?.text()?.trim() ?: ""
-
             val epNum = Regex("""episodio-(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
                 ?: Regex("""(\d+)""").find(epText)?.value?.toIntOrNull()
 
@@ -157,8 +155,6 @@ class LatanimeProvider : MainAPI() {
                 }
             } else null
         }.reversed()
-
-        Log.d("LatanimeProvider", "Total episodios cargados: ${episodes.size}")
 
         val tvType = if (url.contains("/pelicula/")) TvType.Movie else TvType.Anime
 
