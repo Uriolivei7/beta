@@ -39,37 +39,6 @@ class PlushdProvider : MainAPI() {
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
-    private fun fixPelisplusHostsLinks(url: String): String {
-        if (url.isBlank()) return url
-        val cleanUrl = url.replace("/#", "/").replace("#", "").trim()
-
-        return when {
-            // Vidhide -> va a callistanise.com/v/
-            cleanUrl.contains("vidhide") || cleanUrl.contains("vidhidepro") -> {
-                val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://callistanise.com/v/$id"
-            }
-            // EmTurbovid -> va a turbovidhls.com/t/
-            cleanUrl.contains("emturbovid") -> {
-                val id = cleanUrl.split("/").last { it.isNotBlank() }
-                "https://turbovidhls.com/t/$id"
-            }
-            // HQQ/Netu -> mantener waaw.to
-            cleanUrl.contains("hqq.tv") || cleanUrl.contains("netu") -> {
-                // Cambiar hqq.tv a waaw.to si es necesario
-                cleanUrl.replace("hqq.tv", "waaw.to")
-            }
-            // waaw.to se queda igual
-            cleanUrl.contains("waaw.to") -> cleanUrl
-            // Listeamed se queda igual
-            cleanUrl.contains("listeamed") -> cleanUrl
-            // UPNS
-            cleanUrl.contains("upns.pro") -> cleanUrl
-            // strp2p
-            cleanUrl.contains("strp2p.com") -> cleanUrl
-            else -> cleanUrl
-        }
-    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get("$mainUrl/${request.data}/$page").document
@@ -110,11 +79,11 @@ class PlushdProvider : MainAPI() {
         return when (searchType) {
             TvType.Movie -> newMovieSearchResponse(title, link, searchType) {
                 this.posterUrl = img
-                this.year = year // Asignamos el año aquí
+                this.year = year
             }
             else -> newTvSeriesSearchResponse(title, link, searchType) {
                 this.posterUrl = img
-                this.year = year // Asignamos el año aquí
+                this.year = year
             }
         }
     }
@@ -124,9 +93,6 @@ class PlushdProvider : MainAPI() {
         val results = document.select("article.item").mapNotNull { it.toSearchResult() }
         return results
     }
-
-
-    data class MainTemporada(val elements: Map<String, List<MainTemporadaElement>>)
 
     data class MainTemporadaElement(
         val title: String? = null,
@@ -155,8 +121,6 @@ class PlushdProvider : MainAPI() {
             title = title.replace(yearRegex, "").trim()
         }
 
-        // 1. Imagen de Fondo (Banner Horizontal)
-        // Extraemos la URL de donde tú encontraste: el div con clase 'bg'
         val backimage = doc.selectFirst(".bg")?.attr("style")?.let {
             Regex("url\\(\"?(.*?)\"?\\)").find(it)?.groupValues?.get(1)
         } ?: doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
@@ -164,19 +128,16 @@ class PlushdProvider : MainAPI() {
         var verticalPoster = doc.select(".poster img, .data img").firstNotNullOfOrNull {
             val src = it.attr("data-src").ifBlank { it.attr("src") }
 
-            // Filtro: Debe ser de TMDB, no debe ser el fondo horizontal,
-            // y NO debe ser de episodios o temporadas.
             if (src.isNotBlank() &&
-                !src.contains("nGfjgUlES2WuYrHXNNF4fbGe2Eq") && // Evita específicamente ese fondo
+                !src.contains("nGfjgUlES2WuYrHXNNF4fbGe2Eq") &&
                 src.contains("tmdb.org") &&
                 !src.contains("/episodes/") &&
                 !src.contains("/seasons/")
             ) {
                 src
             } else null
-        }?.replace("original", "w342") // Forzamos el tamaño vertical del search
+        }?.replace("original", "w342")
 
-        // 3. Si no encontró nada con los filtros, intentamos el primer tag de imagen limpio
         if (verticalPoster.isNullOrBlank()) {
             verticalPoster = doc.selectFirst(".poster img")?.attr("src")?.replace("original", "w342") ?: backimage
         }
@@ -252,211 +213,69 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val allLinks = mutableListOf<ExtractorLink>()
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO DE ENLACES ---")
+        Log.d("PlushdProvider", "URL de origen: $data")
 
-        // Múltiples patrones para capturar URLs
-        val urlPatterns = listOf(
-            Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]"""),
-            Regex("""location\.href\s*=\s*['"]([^'"]+)['"]"""),
-            Regex("""window\.open\s*\(\s*['"]([^'"]+)['"]"""),
-            Regex("""src\s*=\s*['"]([^'"]*(?:embed|player|e/)[^'"]+)['"]"""),
-            Regex("""iframe[^>]+src\s*=\s*['"]([^'"]+)['"]"""),
-            Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]"""),
-            Regex("""source\s*:\s*['"]([^'"]+)['"]"""),
-            Regex(""""url"\s*:\s*"([^"]+)""""),
-            Regex("""https?://[^\s'"<>]+(?:\.m3u8|\.mp4|/embed/|/e/|/player/)[^\s'"<>]*""")
-        )
+        val doc = app.get(data).document
 
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data,
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
-        )
+        // Capturamos todos los elementos de servidor
+        val servers = doc.select("ul.subselect li[data-server]")
 
-        val doc = app.get(data, headers = headers).document
-        val servers = doc.select("div ul.subselect li")
-
-        Log.d("PlushdProvider", "═══════════════════════════════════════")
-        Log.d("PlushdProvider", "URL: $data")
-        Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
-
-        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider", "📝 Subtítulo: ${file.url}")
-            subtitleCallback.invoke(file)
+        if (servers.isEmpty()) {
+            Log.e("PlushdProvider", "FALLO: No se detectaron servidores. ¿Cambió el HTML?")
+            return false
         }
 
-        servers.forEachIndexed { index, serverLi ->
-            val serverName = serverLi.text().trim()
+        servers.forEach { element ->
+            val serverHash = element.attr("data-server")
+            val serverName = element.selectFirst("span")?.text() ?: "Unknown"
 
-            try {
-                val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) {
-                    Log.w("PlushdProvider", "[$index] $serverName - Sin data-server")
-                    return@forEachIndexed
-                }
+            Log.d("PlushdProvider", "Procesando [$serverName] con Hash: $serverHash")
 
-                Log.d("PlushdProvider", "[$index] $serverName")
-                Log.d("PlushdProvider", "  📋 data-server: $serverData")
+            if (serverHash.isNotBlank()) {
+                try {
+                    val response = app.get(
+                        "$mainUrl/reproductor?h=$serverHash",
+                        referer = data,
+                        headers = mapOf(
+                            "X-Requested-With" to "XMLHttpRequest",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        )
+                    )
 
-                // Codificar a Base64 para la API del player
-                val encodedData = Base64.encodeToString(
-                    serverData.toByteArray(Charsets.UTF_8),
-                    Base64.NO_WRAP
-                )
-                val playerUrl = "$mainUrl/player/$encodedData"
+                    val playerHtml = response.text
+                    Log.d("PlushdProvider", "Respuesta recibida para $serverName (Longitud: ${playerHtml.length})")
 
-                Log.d("PlushdProvider", "  🔗 Player URL: $playerUrl")
+                    // Buscamos el iframe o un enlace directo en el HTML del reproductor
+                    val iframe = response.document.selectFirst("iframe")?.attr("src")
 
-                // Hacer petición al player
-                val playerResponse = try {
-                    app.get(playerUrl, headers = headers, timeout = 15)
-                } catch (e: Exception) {
-                    Log.e("PlushdProvider", "  ❌ Error en petición: ${e.message}")
-                    return@forEachIndexed
-                }
+                    if (!iframe.isNullOrBlank()) {
+                        val finalUrl = if (iframe.startsWith("//")) "https:$iframe" else iframe
+                        Log.d("PlushdProvider", "¡ÉXITO! Iframe encontrado: $finalUrl")
 
-                val responseText = playerResponse.text
+                        loadExtractor(finalUrl, data, subtitleCallback, callback)
+                    } else {
+                        // Si no hay iframe, buscamos scripts que contengan "location.href" o "window.location"
+                        val redirectScript = Regex("window\\.location\\.href\\s*=\\s*\"(.*?)\"").find(playerHtml)
+                        val redirectUrl = redirectScript?.groupValues?.get(1)
 
-                // Verificar bloqueo temporal
-                if (responseText.contains("bloqueo temporal", ignoreCase = true)) {
-                    Log.w("PlushdProvider", "  ⚠️ Bloqueo temporal detectado")
-                    delay(2000L) // Esperar más tiempo
-                    return@forEachIndexed
-                }
-
-                // Buscar URLs con todos los patrones
-                val foundUrls = mutableSetOf<String>()
-
-                for (pattern in urlPatterns) {
-                    pattern.findAll(responseText).forEach { match ->
-                        val url = match.groupValues.getOrNull(1) ?: match.value
-                        if (url.startsWith("http") && !url.contains("javascript")) {
-                            foundUrls.add(url.trim())
-                        }
-                    }
-                }
-
-                Log.d("PlushdProvider", "  🔍 URLs encontradas: ${foundUrls.size}")
-
-                if (foundUrls.isEmpty()) {
-                    // Intentar parsear como HTML y buscar iframes
-                    val playerDoc = playerResponse.document
-                    playerDoc.select("iframe[src]").forEach { iframe ->
-                        val iframeSrc = iframe.attr("src")
-                        if (iframeSrc.startsWith("http")) {
-                            foundUrls.add(iframeSrc)
-                        }
-                    }
-
-                    // Buscar en scripts
-                    playerDoc.select("script").forEach { script ->
-                        val scriptText = script.html()
-                        for (pattern in urlPatterns) {
-                            pattern.findAll(scriptText).forEach { match ->
-                                val url = match.groupValues.getOrNull(1) ?: match.value
-                                if (url.startsWith("http")) {
-                                    foundUrls.add(url.trim())
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Procesar cada URL encontrada
-                foundUrls.forEach { rawUrl ->
-                    try {
-                        val fixedLink = fixPelisplusHostsLinks(rawUrl)
-                        Log.d("PlushdProvider", "  ➜ Procesando: $fixedLink")
-
-                        val extractorReferer = try {
-                            val urlObject = java.net.URL(fixedLink)
-                            "${urlObject.protocol}://${urlObject.host}/"
-                        } catch (e: Exception) {
-                            mainUrl
-                        }
-
-                        // Si es un enlace directo m3u8/mp4, agregarlo directamente
-                        if (fixedLink.contains(".m3u8") || fixedLink.contains(".mp4")) {
-                            val quality = when {
-                                fixedLink.contains("1080") -> 1080
-                                fixedLink.contains("720") -> 720
-                                fixedLink.contains("480") -> 480
-                                fixedLink.contains("360") -> 360
-                                else -> Qualities.Unknown.value
-                            }
-
-                            callback(
-                                newExtractorLink(
-                                    source = this.name,
-                                    name = "$serverName - Directo",
-                                    url = fixedLink,
-                                    type = if (fixedLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = extractorReferer
-                                    this.quality = quality
-                                }
-                            )
-                            allLinks.add(
-                                newExtractorLink(
-                                    source = this.name,
-                                    name = serverName,
-                                    url = fixedLink,
-                                    type = if (fixedLink.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = extractorReferer
-                                    this.quality = quality
-                                }
-                            )
-                            Log.d("PlushdProvider", "    ✅ Enlace directo agregado")
+                        if (!redirectUrl.isNullOrBlank()) {
+                            Log.d("PlushdProvider", "Redirección detectada por Script: $redirectUrl")
+                            loadExtractor(redirectUrl, data, subtitleCallback, callback)
                         } else {
-                            // Usar extractor
-                            val tempLinks = mutableListOf<ExtractorLink>()
-
-                            loadExtractor(
-                                url = fixedLink,
-                                referer = extractorReferer,
-                                subtitleCallback = loggingSubtitleCallback,
-                                callback = { link ->
-                                    tempLinks.add(link)
-                                    callback(link)
-                                    Log.d("PlushdProvider", "    ✅ ${link.name} | ${link.quality}p")
-                                }
-                            )
-
-                            allLinks.addAll(tempLinks)
-
-                            if (tempLinks.isEmpty()) {
-                                Log.w("PlushdProvider", "    ⚠️ Extractor no devolvió enlaces")
-                            }
+                            Log.w("PlushdProvider", "AVISO: No se halló Iframe ni redirección en el reproductor de $serverName")
+                            // Log extra para ver qué devolvió el servidor en caso de error
+                            Log.v("PlushdProvider", "Cuerpo de respuesta: ${playerHtml.take(200)}...")
                         }
-                    } catch (e: Exception) {
-                        Log.e("PlushdProvider", "    ❌ Error procesando URL: ${e.message}")
                     }
+                } catch (e: Exception) {
+                    Log.e("PlushdProvider", "ERROR CRÍTICO en $serverName: ${e.message}")
                 }
-
-                if (foundUrls.isEmpty()) {
-                    Log.w("PlushdProvider", "  ⚠️ No se encontraron URLs en la respuesta")
-                    // Debug: mostrar parte de la respuesta
-                    Log.d("PlushdProvider", "  📄 Respuesta (primeros 500 chars): ${responseText.take(500)}")
-                }
-
-            } catch (e: Exception) {
-                Log.e("PlushdProvider", "[$index] $serverName - Error general: ${e.message}")
-                e.printStackTrace()
-            }
-
-            // Delay entre servidores para evitar rate limiting
-            if (index < servers.size - 1) {
-                delay(1000L)
             }
         }
 
-        Log.d("PlushdProvider", "═══════════════════════════════════════")
-        Log.d("PlushdProvider", "TOTAL ENLACES: ${allLinks.size}")
-        Log.d("PlushdProvider", "═══════════════════════════════════════")
-
-        return allLinks.isNotEmpty()
+        Log.d("PlushdProvider", "--- FIN DEL RASTREO ---")
+        return true
     }
 
 }
