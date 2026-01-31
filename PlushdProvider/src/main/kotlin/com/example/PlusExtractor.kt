@@ -66,7 +66,7 @@ class Callistanise : ExtractorApi() {
             }
             val domain = domainCandidates.firstOrNull()
 
-            // Buscar TLD (agregar cfd)
+            // Buscar TLD
             val tld = words.find { it == "store" }
                 ?: words.find { it == "shop" }
                 ?: words.find { it == "cfd" }
@@ -93,22 +93,19 @@ class Callistanise : ExtractorApi() {
                 return
             }
 
-            // ⭐ NUEVO: Buscar índices en el diccionario original
-            // El que aparece PRIMERO en el diccionario suele ser el TOKEN
-            // El que aparece DESPUÉS suele ser el SUBDOMAIN
+            // Buscar índices en el diccionario original
             val indices = mixedCandidates.map { candidate ->
                 Pair(candidate, words.indexOf(candidate))
             }.sortedBy { it.second }
 
             Log.d("Callistanise", "Indices: $indices")
 
-            // El PRIMERO en aparecer es el TOKEN
-            val token = indices.first().first
-            // El SEGUNDO en aparecer es el SUBDOMAIN
-            val subdomain = indices.last().first
+            // ⭐ CORREGIDO: PRIMERO = TOKEN, SEGUNDO = SUBDOMAIN (no el último)
+            val token = indices[0].first      // Primer candidato (index más bajo)
+            val subdomain = indices[1].first  // Segundo candidato (NO el último)
 
-            Log.d("Callistanise", "Token: $token (index: ${indices.first().second})")
-            Log.d("Callistanise", "Subdomain: $subdomain (index: ${indices.last().second})")
+            Log.d("Callistanise", "Token: $token (index: ${indices[0].second})")
+            Log.d("Callistanise", "Subdomain: $subdomain (index: ${indices[1].second})")
 
             if (domain == null) {
                 Log.e("Callistanise", "No se encontró domain")
@@ -118,7 +115,7 @@ class Callistanise : ExtractorApi() {
             // Path number
             val pathNumber = words.find { it.matches(Regex("0\\d{4}")) } ?: "02145"
 
-            // Formato siempre con 'h'
+            // Formato
             val fileFormat = "_,l,n,h,"
 
             // Construir URL
@@ -130,7 +127,7 @@ class Callistanise : ExtractorApi() {
             if (subtitleFile != null) {
                 val subUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${subtitleFile}.vtt"
                 Log.d("Callistanise", "📝 Subtítulo: $subUrl")
-                subtitleCallback.invoke(SubtitleFile(lang = "Español", url = subUrl))
+                subtitleCallback.invoke(newSubtitleFile(lang = "Español", url = subUrl))
             }
 
             callback.invoke(
