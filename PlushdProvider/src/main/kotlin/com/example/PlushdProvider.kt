@@ -151,19 +151,25 @@ class PlushdProvider : MainAPI() {
             title = title.replace(yearRegex, "").trim()
         }
 
-        // 1. Banner horizontal (Fondo)
+        // 1. Imagen de Fondo (Banner Horizontal)
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
 
-        // 2. Poster Vertical (Exactamente como en MainPage/Search)
-        // Buscamos la imagen principal que representa a la serie/peli en la ficha técnica
-        val verticalPoster = doc.selectFirst(".itemA picture img, .poster picture img, .data picture img")?.let {
+        // 2. Poster Vertical (El que quieres para Favoritos)
+        // Buscamos específicamente la imagen que está en la columna de datos (izquierda)
+        var verticalPoster = doc.selectFirst(".data .poster img, .data img, .itemA img")?.let {
             it.attr("data-src").ifBlank { it.attr("src") }
-        } ?: doc.selectFirst("picture img")?.let {
-            it.attr("data-src").ifBlank { it.attr("src") }
-        } ?: backimage // Fallback por si acaso
+        }
+
+        // Si el selector anterior falló o nos dio la misma imagen horizontal,
+        // buscamos cualquier imagen que NO sea el backimage
+        if (verticalPoster.isNullOrBlank() || verticalPoster == backimage) {
+            verticalPoster = doc.select("img").firstOrNull {
+                val src = it.attr("data-src").ifBlank { it.attr("src") }
+                src.isNotBlank() && src != backimage && !src.contains("logo")
+            }?.let { it.attr("data-src").ifBlank { it.attr("src") } } ?: backimage
+        }
 
         Log.d("PlushdProvider", "Poster capturado para Favoritos: $verticalPoster")
-        // --------------------------------------------
 
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }
@@ -233,7 +239,6 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
         val allLinks = mutableListOf<ExtractorLink>()
 
         val headers = mapOf(
@@ -247,87 +252,51 @@ class PlushdProvider : MainAPI() {
         Log.d("PlushdProvider", "═══════════════════════════════════════")
         Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
 
-        servers.forEachIndexed { index, serverLi ->
-            val serverName = serverLi.text().trim()
-            try {
-                val serverData = serverLi.attr("data-server").takeIf { it.isNotEmpty() } ?: return@forEachIndexed
+        // SOLO PROBAR EL PRIMER SERVIDOR PARA DEBUG
+        val serverLi = servers.firstOrNull() ?: return false
+        val serverName = serverLi.text().trim()
 
-                // ⭐ USAR DIRECTAMENTE el data-server (ya está en base64)
-                val playerUrl = "$mainUrl/player/$serverData"
+        try {
+            val serverData = serverLi.attr("data-server")
+            val playerUrl = "$mainUrl/player/$serverData"
 
-                Log.d("PlushdProvider", "[$index] $serverName")
-                Log.d("PlushdProvider", "  📋 data-server: $serverData")
-                Log.d("PlushdProvider", "  🔗 playerUrl: $playerUrl")
+            Log.d("PlushdProvider", "Testing: $serverName")
+            Log.d("PlushdProvider", "data-server: $serverData")
+            Log.d("PlushdProvider", "playerUrl: $playerUrl")
 
-                val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
-                val text = playerResponse.text
+            val playerResponse = app.get(playerUrl, headers = mapOf("Referer" to data))
+            val text = playerResponse.text
 
-                // Debug: mostrar parte del texto de respuesta
-                Log.d("PlushdProvider", "  📄 Response length: ${text.length}")
+            Log.d("PlushdProvider", "═══════════════════════════════════════")
+            Log.d("PlushdProvider", "RESPUESTA COMPLETA DEL PLAYER:")
+            Log.d("PlushdProvider", text)
+            Log.d("PlushdProvider", "═══════════════════════════════════════")
 
-                val link = linkRegex.find(text)?.destructured?.component1()
+            // Intentar diferentes patrones
+            val patterns = listOf(
+                Regex("window\\.location\\.href\\s*=\\s*'([^']*)'"),
+                Regex("window\\.location\\.href\\s*=\\s*\"([^\"]*)\""),
+                Regex("window\\.location\\s*=\\s*'([^']*)'"),
+                Regex("window\\.location\\s*=\\s*\"([^\"]*)\""),
+                Regex("location\\.href\\s*=\\s*'([^']*)'"),
+                Regex("location\\.href\\s*=\\s*\"([^\"]*)\""),
+                Regex("https?://[^\\s'\"<>]+(?:vidhide|upns|emturbovid|listeamed|hqq)[^\\s'\"<>]+")
+            )
 
-                if (!link.isNullOrBlank()) {
-                    val fixedLink = fixPelisplusHostsLinks(link)
-                    Log.d("PlushdProvider", "  ✅ Link encontrado: $fixedLink")
-
-                    val extractorReferer = when {
-                        fixedLink.contains("vidhide") -> playerUrl
-                        fixedLink.contains("upns.pro") -> "https://pelisplus.upns.pro/"
-                        fixedLink.contains("strp2p.com") -> "https://pelisplus.strp2p.com/"
-                        fixedLink.contains("emturbovid.com") -> "https://emturbovid.com/"
-                        fixedLink.contains("listeamed.net") -> "https://listeamed.net/"
-                        else -> fixedLink
-                    }
-
-                    try {
-                        val tempLinks = mutableListOf<ExtractorLink>()
-
-                        loadExtractor(
-                            url = fixedLink,
-                            referer = extractorReferer,
-                            subtitleCallback = subtitleCallback,
-                            callback = { link ->
-                                tempLinks.add(link)
-                                Log.d("PlushdProvider", "    ➜ Link: ${link.name} | ${link.quality}p")
-                            }
-                        )
-
-                        if (tempLinks.isNotEmpty()) {
-                            allLinks.addAll(tempLinks)
-                            Log.d("PlushdProvider", "  ✅ $serverName: ${tempLinks.size} enlaces")
-                        } else {
-                            Log.w("PlushdProvider", "  ⚠️ $serverName: 0 enlaces")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("PlushdProvider", "  ❌ Error $serverName: ${e.message}")
-                    }
-                } else {
-                    Log.w("PlushdProvider", "  ⚠️ No se encontró link en respuesta")
-                    // Debug: mostrar primeros 500 caracteres de la respuesta
-                    if (text.length > 0) {
-                        Log.d("PlushdProvider", "  📄 Response preview: ${text.take(500)}")
-                    }
+            for ((index, pattern) in patterns.withIndex()) {
+                val match = pattern.find(text)
+                if (match != null) {
+                    val link = match.groupValues.getOrNull(1) ?: match.value
+                    Log.d("PlushdProvider", "Patrón $index encontró: $link")
                 }
-            } catch (e: Exception) {
-                Log.e("PlushdProvider", "  ❌ Error general: ${e.message}")
-                e.printStackTrace()
             }
 
-            if (index < servers.size - 1) delay(300L)
+        } catch (e: Exception) {
+            Log.e("PlushdProvider", "Error: ${e.message}")
+            e.printStackTrace()
         }
 
-        Log.d("PlushdProvider", "═══════════════════════════════════════")
-        Log.d("PlushdProvider", "TOTAL ENLACES CAPTURADOS: ${allLinks.size}")
-
-        allLinks.forEach { link ->
-            Log.d("PlushdProvider", "📤 Enviando: ${link.name} | ${link.url}")
-            callback(link)
-        }
-
-        Log.d("PlushdProvider", "═══════════════════════════════════════")
-
-        return allLinks.isNotEmpty()
+        return false
     }
 
 }
