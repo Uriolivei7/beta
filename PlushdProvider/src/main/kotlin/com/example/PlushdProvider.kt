@@ -213,50 +213,55 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO CON DATOS DE RED ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (BYPASS 404) ---")
 
         val doc = app.get(data).document
+        // Buscamos los servidores en la lista
         val servers = doc.select("ul.subselect li[data-server]")
 
         servers.forEach { element ->
             val serverHash = element.attr("data-server")
-            val serverName = element.selectFirst("span")?.text() ?: "Unknown"
+            val serverName = element.selectFirst("span")?.text() ?: "Server"
 
+            Log.d("PlushdProvider", "Procesando $serverName con hash: $serverHash")
+
+            // Estrategia 1: Construir el link de Callistanise/Earnvids directamente
+            // Basado en lo que viste en la web: /v/ o /dl?op=view...
+            if (serverName.contains("Earnvids", ignoreCase = true) || serverName.contains("Opción 1")) {
+                val directUrl = "https://callistanise.com/v/$serverHash"
+                Log.d("PlushdProvider", "Intentando link directo: $directUrl")
+                loadExtractor(directUrl, data, subtitleCallback, callback)
+            }
+
+            // Estrategia 2: Intentar la petición con un User-Agent de Chrome real
             try {
-                // Intentamos la petición con los headers exactos que pide el servidor para no dar 404
                 val response = app.get(
                     "$mainUrl/reproductor?h=$serverHash",
-                    referer = data, // Muy importante: la web de origen
+                    referer = data,
                     headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                        "Upgrade-Insecure-Requests" to "1"
+                        "X-Requested-With" to "XMLHttpRequest"
                     )
                 )
 
-                val html = response.text
-                Log.d("PlushdProvider", "Respuesta de $serverName: ${response.code}")
-
-                // Buscamos el iframe que apunta a callistanise, earvids, etc.
-                val iframe = response.document.selectFirst("iframe")?.attr("src")
-
-                if (!iframe.isNullOrBlank()) {
-                    val cleanedIframe = if (iframe.startsWith("//")) "https:$iframe" else iframe
-                    Log.d("PlushdProvider", "Link del servidor encontrado: $cleanedIframe")
-
-                    // Cargamos el extractor
-                    loadExtractor(cleanedIframe, data, subtitleCallback, callback)
-                } else {
-                    // Si el iframe no está, buscamos el link "pelado" en el script
-                    // A veces viene como "var url = 'https://...';"
-                    val regexLink = Regex("""(?:https?:)?//[^\s"'<>]+(?:callistanise|earnvids|pixibay)[^\s"'<>]*""").find(html)
-                    regexLink?.value?.let { link ->
-                        val finalLink = if (link.startsWith("//")) "https:$link" else link
-                        Log.d("PlushdProvider", "Link detectado por Regex: $finalLink")
-                        loadExtractor(finalLink, data, subtitleCallback, callback)
+                if (response.code == 200) {
+                    Log.d("PlushdProvider", "¡ÉXITO! Respuesta 200 para $serverName")
+                    val iframe = response.document.selectFirst("iframe")?.attr("src")
+                    iframe?.let {
+                        val finalIframe = if (it.startsWith("//")) "https:$it" else it
+                        loadExtractor(finalIframe, data, subtitleCallback, callback)
                     }
+                } else {
+                    Log.e("PlushdProvider", "Error ${response.code} en $serverName")
+
+                    // Si falla, intentamos una búsqueda manual en el texto por si hay URLs escondidas
+                    val rawHtml = response.text
+                    val foundUrl = Regex("""https?://[\w\d.\/-]+\?(?:h|file|v)=$serverHash""").find(rawHtml)?.value
+                    foundUrl?.let { loadExtractor(it, data, subtitleCallback, callback) }
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error al cargar $serverName: ${e.message}")
+                Log.e("PlushdProvider", "Fallo crítico en $serverName: ${e.message}")
             }
         }
         return true
