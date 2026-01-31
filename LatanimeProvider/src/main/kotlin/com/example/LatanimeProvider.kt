@@ -61,14 +61,12 @@ class LatanimeProvider : MainAPI() {
         val items = ArrayList<HomePageList>()
 
         try {
-            // Primero, obtener el carousel/slider de la página principal
             val mainDoc = app.get(mainUrl).document
             val carouselItems = mainDoc.select("div.carousel-item a[href*=/anime/], div.carousel-item a[href*=/pelicula/]").mapNotNull { element ->
                 val itemUrl = element.attr("href")
                 val title = element.selectFirst("span.span-slider")?.text()?.trim() ?: ""
                 val description = element.selectFirst("p.p-slider")?.text()?.trim()
 
-                // Obtener imagen del carousel (primero intenta data-src, luego src)
                 val posterElement = element.selectFirst("img.preview-image, img.d-block")
                 val poster = posterElement?.attr("data-src")?.ifBlank {
                     posterElement.attr("src")
@@ -86,11 +84,9 @@ class LatanimeProvider : MainAPI() {
                 items.add(HomePageList("Destacados", carouselItems))
             }
 
-            // Luego obtener las otras secciones
             urls.forEach { (url, name) ->
                 val doc = app.get(url).document
 
-                // Selector más general para encontrar los animes
                 val home = doc.select("div.col-md-4, div.col-lg-3, div.col-xl-2, div.col-6").mapNotNull { article ->
                     val linkElement = article.selectFirst("a[href*=/anime/], a[href*=/pelicula/]")
                     if (linkElement == null) return@mapNotNull null
@@ -105,7 +101,6 @@ class LatanimeProvider : MainAPI() {
                         return@mapNotNull null
                     }
 
-                    // Buscar imagen con varios selectores posibles
                     val imgElement = linkElement.selectFirst("img.img-fluid2, img.img-fluid, img")
                     val poster = imgElement?.let {
                         it.attr("data-src").ifBlank { it.attr("src") }
@@ -187,118 +182,111 @@ class LatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("LatanimeProvider", "Cargando: $url")
+        Log.d("LatanimeProvider", "==== INICIANDO CARGA: $url ====")
 
         val document = app.get(url).document
 
-        val title = document.selectFirst("div.col-lg-9 h2")?.text()?.trim()
+        // 1. Obtener Título Original y Limpiar
+        val rawTitle = document.selectFirst("div.col-lg-9 h2")?.text()?.trim()
             ?: document.selectFirst("h2")?.text()?.trim()
             ?: ""
 
+        // Regex para detectar y extraer información
+        val dubRegex = Regex("""(?i)\b(Latino|Castellano|Subtitulado|Español)\b""")
+        val yearRegex = Regex("""\s*\((\d{4})\)""")
+
+        // Detectamos el idioma antes de borrarlo del título
+        val audioFound = dubRegex.find(rawTitle)?.value?.trim() ?: "Subtitulado"
+        val isDubbed = rawTitle.contains("Latino", ignoreCase = true) || rawTitle.contains("Castellano", ignoreCase = true)
+
+        // Limpiamos el título: Quitamos el idioma y el año entre paréntesis, pero dejamos la temporada (S1, S2, etc.)
+        val cleanTitle = rawTitle
+            .replace(dubRegex, "")
+            .replace(yearRegex, "")
+            .replace(Regex("""\s+"""), " ") // Eliminar espacios dobles
+            .trim()
+
+        // 2. Metadatos (Año, Poster, Descripción)
         val poster = document.selectFirst("meta[property=og:image]")?.attr("content")
-            ?: document.selectFirst("div.col-lg-3 img")?.attr("src")
-            ?: ""
+            ?: document.selectFirst("div.col-lg-3 img")?.attr("src") ?: ""
 
         val description = document.selectFirst("p.my-2.opacity-75")?.text()?.trim()
-            ?: document.selectFirst("div.col-lg-9 p:contains(Los cazadores)")?.text()?.trim()
-            ?: ""
+            ?: document.selectFirst("div.col-lg-9 p:contains(Los cazadores)")?.text()?.trim() ?: ""
 
+        // Intentar sacar el año del título primero, si no, del texto de la web
+        val yearFromTitle = yearRegex.find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
         val dateText = document.selectFirst("span.span-tiempo")?.text() ?: ""
-        val year = Regex("\\b(\\d{4})\\b").find(dateText)?.value?.toIntOrNull()
+        val year = yearFromTitle ?: Regex("\\b(\\d{4})\\b").find(dateText)?.value?.toIntOrNull()
 
-        val totalEpisodesText = document.selectFirst("p:contains(Episodios:)")?.text() ?: ""
-        val totalEpisodes = Regex("\\d+").find(totalEpisodesText)?.value?.toIntOrNull()
+        // 3. Tags (Géneros + Idioma como etiqueta)
+        val tags = document.select("a[href*=/genero/] div.btn").map { it.text().trim() }.toMutableList()
+        if (!tags.contains(audioFound)) tags.add(0, audioFound) // Añade "Latino" o "Sub" al inicio de las etiquetas
 
-        val tags = document.select("a[href*=/genero/] div.btn").map {
-            it.text().trim()
-        }.filter { it.isNotBlank() }
+        // 4. Logs de depuración
+        Log.d("LatanimeProvider", "[DATOS] Original: $rawTitle")
+        Log.d("LatanimeProvider", "[DATOS] Limpio: $cleanTitle")
+        Log.d("LatanimeProvider", "[DATOS] Año: $year | Audio: $audioFound")
+        Log.d("LatanimeProvider", "[DATOS] Tags: $tags")
 
-        val status = when {
-            document.html().contains("En emisión", ignoreCase = true) -> ShowStatus.Ongoing
-            document.html().contains("Finalizado", ignoreCase = true) -> ShowStatus.Completed
-            totalEpisodes != null && totalEpisodes > 0 -> ShowStatus.Completed
-            else -> ShowStatus.Ongoing
-        }
-
-        Log.d("LatanimeProvider", "Título: $title")
-        Log.d("LatanimeProvider", "Descripción: ${description.take(100)}...")
-        Log.d("LatanimeProvider", "Año: $year")
-        Log.d("LatanimeProvider", "Tags: $tags")
-        Log.d("LatanimeProvider", "Total episodios: $totalEpisodes")
-
-        // Extraer episodios
+        // 5. Extracción de Episodios
         val episodeElements = document.select("div[style*='max-height: 400px'] a[href*=episodio]")
-        Log.d("LatanimeProvider", "Elementos de episodios encontrados: ${episodeElements.size}")
+        Log.d("LatanimeProvider", "[INFO] Episodios encontrados en HTML: ${episodeElements.size}")
 
         val episodes = episodeElements.mapIndexedNotNull { index, element ->
             try {
                 val epUrl = element.attr("href")
-                val capLayout = element.selectFirst("div.cap-layout")
-                val epTitle = capLayout?.text()?.trim() ?: ""
+                val epTitleText = element.selectFirst("div.cap-layout")?.text()?.trim() ?: ""
 
                 val epNum = Regex("(?:episodio|capitulo)[\\s-]*(\\d+)", RegexOption.IGNORE_CASE)
-                    .find(epUrl + epTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
-
-                val imgElement = element.selectFirst("img")
-                val epPosterRaw = imgElement?.attr("data-src")?.ifBlank {
-                    imgElement.attr("src")
-                }
-
-                val epPoster = when {
-                    epPosterRaw.isNullOrBlank() -> null
-                    epPosterRaw.startsWith("http") -> epPosterRaw
-                    epPosterRaw.startsWith("//") -> "https:$epPosterRaw"
-                    epPosterRaw.startsWith("/") -> "https://latanime.org$epPosterRaw"
-                    else -> "https://latanime.org/$epPosterRaw"
-                }
+                    .find(epUrl + epTitleText)?.groupValues?.getOrNull(1)?.toIntOrNull()
 
                 if (epUrl.isNotBlank() && epNum != null) {
-                    val fullUrl = if (epUrl.startsWith("http")) epUrl else "https://latanime.org$epUrl"
-
-                    newEpisode(fullUrl) {
-                        this.name = epTitle.ifBlank { "Episodio $epNum" }
+                    newEpisode(fixUrl(epUrl)) {
+                        this.name = epTitleText.ifBlank { "Episodio $epNum" }
                         this.episode = epNum
-                        this.posterUrl = epPoster
+                        // Extraer poster del episodio si existe
+                        val img = element.selectFirst("img")
+                        this.posterUrl = fixUrl(img?.attr("data-src")?.ifBlank { img.attr("src") } ?: "")
                     }
-                } else null
+                } else {
+                    Log.w("LatanimeProvider", "[WARN] No se pudo parsear episodio en índice $index (URL: $epUrl)")
+                    null
+                }
             } catch (e: Exception) {
-                Log.e("LatanimeProvider", "Error procesando episodio $index: ${e.message}")
+                Log.e("LatanimeProvider", "[ERROR] Error en episodio $index: ${e.message}")
                 null
             }
         }
 
-        Log.d("LatanimeProvider", "Total episodios procesados: ${episodes.size}")
-
+        // 6. Determinar Tipo y Respuesta
         val tvType = when {
             url.contains("/pelicula/") -> TvType.Movie
-            tags.contains("OVA") -> TvType.OVA
+            tags.contains("OVA") || tags.contains("Especial") -> TvType.OVA
             else -> TvType.Anime
         }
 
+        // 1. Decidimos qué etiqueta de audio poner
+        val audioLabel = if (isDubbed) "Latino" else "Subtitulado"
+
+        // 2. Nos aseguramos de que el audio esté en la lista de etiquetas
+        if (!tags.contains(audioLabel)) {
+            tags.add(0, audioLabel)
+        }
+
         return if (tvType == TvType.Movie) {
-            newMovieLoadResponse(
-                name = title,
-                url = url,
-                type = tvType,
-                dataUrl = url
-            ) {
+            newMovieLoadResponse(cleanTitle, url, tvType, url) {
                 this.posterUrl = poster
                 this.plot = description
-                this.tags = tags
+                this.tags = tags // El audio aparecerá aquí como etiqueta
                 this.year = year
             }
         } else {
-            newTvSeriesLoadResponse(
-                name = title,
-                url = url,
-                type = tvType,
-                episodes = episodes
-            ) {
+            newTvSeriesLoadResponse(cleanTitle, url, tvType, episodes) {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
                 this.year = year
-                this.showStatus = status
+                this.showStatus = if (document.html().contains("En emisión", true)) ShowStatus.Ongoing else ShowStatus.Completed
             }
         }
     }
