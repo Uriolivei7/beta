@@ -209,62 +209,63 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO (VERSIÓN CURL-FIX) ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (API ESTRICTA) ---")
 
-        val mainResponse = app.get(data)
-        val doc = mainResponse.document
-        val cookies = mainResponse.cookies
-
+        val doc = app.get(data).document
         val servers = doc.select("ul.subselect li[data-server]")
-        Log.d("PlushdProvider", "Servidores encontrados: ${servers.size}")
 
         servers.forEach { element ->
             val serverHash = element.attr("data-server")
-            val serverName = element.selectFirst("span")?.text() ?: "Desconocido"
+            val serverName = element.selectFirst("span")?.text() ?: "Server"
 
-            Log.d("PlushdProvider", "[LOG] Procesando: $serverName | Hash Original: ${serverHash.take(15)}...")
+            Log.d("PlushdProvider", "[LOG] Procesando $serverName | Hash: ${serverHash.take(15)}...")
+
+            // 1. Limpieza de ID (Basado en tus hallazgos de PC)
+            var cleanId = serverHash
+            if (serverHash.length > 25) {
+                try {
+                    val decoded = base64Decode(serverHash)
+                    val match = Regex("""([a-zA-Z0-9]{11,14})""").find(decoded)
+                    if (match != null) {
+                        cleanId = match.groupValues[1]
+                        Log.d("PlushdProvider", "[LOG] ID real extraído: $cleanId")
+                    }
+                } catch (e: Exception) { }
+            }
+
+            // 2. Definición de URL y tipo
+            val embedUrl = if (serverName.contains("Earnvids", true) || serverName.contains("Opción 1")) {
+                "https://callistanise.com/v/$cleanId"
+            } else {
+                "$mainUrl/reproductor?h=$serverHash"
+            }
+
+            val linkType = if (embedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
 
             try {
-                val repoResponse = app.get(
-                    url = "$mainUrl/reproductor?h=$serverHash",
-                    referer = data,
-                    cookies = cookies,
-                    headers = mapOf(
+                // 3. USO CORRECTO SEGÚN TU DECLARACIÓN
+                val link = newExtractorLink(
+                    source = this.name,
+                    name = "$name - $serverName",
+                    url = embedUrl,
+                    type = linkType
+                ) {
+                    this.referer = "https://callistanise.com/"
+                    this.quality = Qualities.Unknown.value
+                    this.headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                        "Accept" to "*/*",
                         "X-Requested-With" to "XMLHttpRequest"
                     )
-                )
-
-                Log.d("PlushdProvider", "[LOG] Respuesta de $serverName: ${repoResponse.code}")
-
-                if (repoResponse.code == 200) {
-                    val html = repoResponse.text
-
-                    val realIdMatch = Regex("""/v/([a-zA-Z0-9]{10,15})""").find(html)
-                    val realId = realIdMatch?.groupValues?.get(1)
-
-                    if (realId != null) {
-                        val finalUrl = "https://callistanise.com/v/$realId"
-                        Log.d("PlushdProvider", "[EXITO] ID real encontrado ($realId). Cargando: $finalUrl")
-                        loadExtractor(finalUrl, data, subtitleCallback, callback)
-                    } else {
-                        val iframe = repoResponse.document.selectFirst("iframe")?.attr("src")
-                        if (!iframe.isNullOrBlank()) {
-                            val fixedIframe = if (iframe.startsWith("//")) "https:$iframe" else iframe
-                            Log.d("PlushdProvider", "[LOG] Iframe detectado: $fixedIframe")
-                            loadExtractor(fixedIframe, data, subtitleCallback, callback)
-                        } else {
-                            Log.w("PlushdProvider", "[AVISO] No se encontró ID ni Iframe en el HTML de $serverName")
-                            Log.d("PlushdProvider", "[DEBUG] HTML snippet: ${html.take(200)}")
-                        }
-                    }
-                } else {
-                    Log.e("PlushdProvider", "[ERROR] El servidor respondió ${repoResponse.code} para el hash $serverHash")
                 }
 
+                callback.invoke(link)
+
+                // 4. Intentamos el extractor automático también
+                loadExtractor(embedUrl, "https://callistanise.com/", subtitleCallback, callback)
+                Log.d("PlushdProvider", "[EXITO] Link generado y enviado: $embedUrl")
+
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "[CRÍTICO] Error en $serverName: ${e.message}")
+                Log.e("PlushdProvider", "[ERROR] Falló en $serverName: ${e.message}")
             }
         }
         return true
