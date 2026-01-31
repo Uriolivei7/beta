@@ -209,60 +209,61 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO (BYPASS ERROR 2004) ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (MODO RECOLECTOR DE IDS) ---")
 
-        // 1. Capturamos la respuesta completa para obtener las Cookies de sesión
-        val mainResponse = app.get(data)
-        val doc = mainResponse.document
-        val cookieMap = mainResponse.cookies // Esto es vital para evitar el error 2004
-
+        val mainPage = app.get(data)
+        val doc = mainPage.document
         val servers = doc.select("ul.subselect li[data-server]")
 
         servers.forEach { element ->
             val serverHash = element.attr("data-server")
             val serverName = element.selectFirst("span")?.text() ?: "Server"
 
-            Log.d("PlushdProvider", "[LOG] Procesando $serverName")
-
-            var cleanId = serverHash
-            if (serverHash.length > 25) {
-                try {
-                    val decoded = base64Decode(serverHash)
-                    val match = Regex("""([a-zA-Z0-9]{11,14})""").find(decoded)
-                    if (match != null) cleanId = match.groupValues[1]
-                } catch (e: Exception) { }
-            }
-
-            val embedUrl = if (serverName.contains("Earnvids", true) || serverName.contains("Opción 1")) {
-                "https://callistanise.com/v/$cleanId"
-            } else {
-                "$mainUrl/reproductor?h=$serverHash"
-            }
+            Log.d("PlushdProvider", "[LOG] Entrando a reproductor para: $serverName")
 
             try {
-                // 2. Usamos el inicializador para pasar las cookies y headers del CURL
-                val link = newExtractorLink(
-                    source = this.name,
-                    name = "$name - $serverName",
-                    url = embedUrl,
-                    type = if (embedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = "https://callistanise.com/v/$cleanId"
-                    this.quality = Qualities.P720.value
-                    // Inyectamos las cookies y el User-Agent que el servidor espera
-                    this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                        "Cookie" to cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" },
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "Accept" to "*/*"
-                    )
+                // Entramos a la URL que genera el reproductor en el sitio
+                val repoResponse = app.get(
+                    "$mainUrl/reproductor?h=$serverHash",
+                    referer = data,
+                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                )
+
+                if (repoResponse.code == 200) {
+                    val html = repoResponse.text
+
+                    // BUSCAMOS EL ID REAL (como dywy9b01clo4) en el HTML del reproductor
+                    // Buscamos cualquier link que tenga /v/ seguido de letras y números
+                    val realIdMatch = Regex("""/v/([a-zA-Z0-9]{8,15})""").find(html)
+                    val realId = realIdMatch?.groupValues?.get(1)
+
+                    if (realId != null) {
+                        val finalUrl = "https://callistanise.com/v/$realId"
+                        Log.d("PlushdProvider", "[LOG] ¡ID REAL CAZADO!: $realId")
+
+                        callback.invoke(
+                            newExtractorLink(
+                                source = this.name,
+                                name = "$name - $serverName",
+                                url = finalUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "https://callistanise.com/v/$realId"
+                                this.headers = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                                )
+                            }
+                        )
+                        // Ayudamos a CloudStream a extraer el video automáticamente
+                        loadExtractor(finalUrl, "https://callistanise.com/", subtitleCallback, callback)
+                    } else {
+                        Log.w("PlushdProvider", "[AVISO] No se halló ID en el HTML de $serverName")
+                    }
+                } else {
+                    Log.e("PlushdProvider", "[ERROR] Reproductor dio ${repoResponse.code} para $serverName")
                 }
-
-                callback.invoke(link)
-                Log.d("PlushdProvider", "[EXITO] Link con cookies enviado: $embedUrl")
-
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "[ERROR] Falló en $serverName: ${e.message}")
+                Log.e("PlushdProvider", "[ERROR] Fallo crítico: ${e.message}")
             }
         }
         return true
