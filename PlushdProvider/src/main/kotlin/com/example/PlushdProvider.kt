@@ -144,7 +144,6 @@ class PlushdProvider : MainAPI() {
 
         var title = doc.selectFirst(".slugh1")?.text() ?: ""
 
-        // Aplicamos la misma lógica de limpieza
         val yearRegex = Regex("""\s*\((\d{4})\)$""")
         val match = yearRegex.find(title)
         val year = match?.groupValues?.get(1)?.toIntOrNull()
@@ -155,7 +154,11 @@ class PlushdProvider : MainAPI() {
         }
 
         val backimage = doc.selectFirst("head meta[property=og:image]")?.attr("content") ?: ""
-        val poster = backimage.replace("original", "w500")
+
+        val verticalPoster = doc.selectFirst(".poster img, .itemA img, picture img")?.let {
+            it.attr("data-src").ifBlank { it.attr("src") }
+        } ?: backimage.replace("original", "w500") 
+
         val description = doc.selectFirst("div.description")?.text() ?: ""
         val tags = doc.select("div.home__slider .genres:contains(Generos) a").map { it.text() }
         val epi = ArrayList<Episode>()
@@ -170,19 +173,13 @@ class PlushdProvider : MainAPI() {
                 if (!jsonscript.isNullOrEmpty()) {
                     try {
                         val seasonsMap = parseJson<Map<String, List<MainTemporadaElement>>>(jsonscript)
-                        seasonsMap.values.map { list ->
-                            list.map { info ->
+                        seasonsMap.values.forEach { list ->
+                            list.forEach { info ->
                                 val epTitle = info.title
                                 val seasonNum = info.season
                                 val epNum = info.episode
                                 val img = info.image
-                                val realimg =
-                                    if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${
-                                        img.replace(
-                                            "\\/",
-                                            "/"
-                                        )
-                                    }"
+                                val realimg = if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${img.replace("\\/", "/")}"
                                 val epurl = "$url/season/$seasonNum/episode/$epNum"
                                 if (epTitle != null && seasonNum != null && epNum != null) {
                                     epi.add(
@@ -206,20 +203,20 @@ class PlushdProvider : MainAPI() {
         return when (tvType) {
             TvType.TvSeries, TvType.Anime, TvType.AsianDrama -> {
                 newTvSeriesLoadResponse(title, url, tvType, epi) {
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = backimage
+                    this.posterUrl = verticalPoster // Vertical para "Continuar viendo"
+                    this.backgroundPosterUrl = backimage // Horizontal para el fondo de la ficha
                     this.plot = description
                     this.tags = tags
-                    this.year = year // Guardamos el año
+                    this.year = year
                 }
             }
             TvType.Movie -> {
                 newMovieLoadResponse(title, url, tvType, url) {
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = backimage
+                    this.posterUrl = verticalPoster // Vertical
+                    this.backgroundPosterUrl = backimage // Horizontal
                     this.plot = description
                     this.tags = tags
-                    this.year = year // Guardamos el año
+                    this.year = year
                 }
             }
             else -> null
