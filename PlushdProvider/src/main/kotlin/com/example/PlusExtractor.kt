@@ -77,30 +77,40 @@ class Callistanise : ExtractorApi() {
             )
 
             // TLDs válidos
-            val validTlds = listOf("cyou", "space", "cfd", "sbs", "store", "shop", "com", "net", "site", "xyz")
+            val validTlds = listOf("cyou", "space", "cfd", "sbs", "store", "shop", "com", "net", "site", "xyz", "online", "cloud", "pro")
             val tldCandidates = words.filter { it in validTlds }
+            Log.d("Callistanise", "TLDs: $tldCandidates")
 
             // Path numbers - formato 0XXXX (5 dígitos empezando con 0)
             val pathNumbers = words.filter { it.matches(Regex("0\\d{4}")) }
-            Log.d("Callistanise", "Path numbers (0XXXX): $pathNumbers")
+            Log.d("Callistanise", "Paths: $pathNumbers")
 
-            // Dominios LARGOS sin números
+            // Dominios LARGOS sin números (15-30 chars)
             val longDomains = words.filter { word ->
                 word.length in 15..30 &&
                         word.matches(Regex("[a-z]+")) &&
                         word.lowercase() !in jsKeywords
             }
 
-            // Dominios/subdominios con números
-            val shortWithNumbers = words.filter { word ->
-                word.length in 8..15 &&
+            // Dominios MEDIANOS sin números (8-14 chars)
+            val mediumDomains = words.filter { word ->
+                word.length in 8..14 &&
+                        word.matches(Regex("[a-z]+")) &&
+                        word.lowercase() !in jsKeywords &&
+                        word !in validTlds
+            }
+
+            // Dominios/subdominios con números (8-20 chars)
+            val withNumbers = words.filter { word ->
+                word.length in 8..20 &&
                         word.matches(Regex("[a-z0-9]+")) &&
                         word.any { it.isDigit() } &&
                         word.any { it.isLetter() } &&
                         word.lowercase() !in jsKeywords &&
                         word != videoId &&
                         !word.startsWith("tt") &&
-                        !word.startsWith("0")
+                        !word.startsWith("0") &&
+                        !word.all { it.isDigit() }
             }
 
             // Mixed case con números
@@ -125,9 +135,11 @@ class Callistanise : ExtractorApi() {
             }
 
             val allMixedCandidates = (mixedWithNumbers + mixedWithoutNumbers).distinct()
+            val allDomainCandidates = (longDomains + mediumDomains + withNumbers).distinct()
 
             Log.d("Callistanise", "Dominios largos: $longDomains")
-            Log.d("Callistanise", "Cortos con números: $shortWithNumbers")
+            Log.d("Callistanise", "Dominios medianos: $mediumDomains")
+            Log.d("Callistanise", "Con números: $withNumbers")
             Log.d("Callistanise", "Mixed: $allMixedCandidates")
 
             // Determinar token, subdomain y dominios
@@ -140,16 +152,19 @@ class Callistanise : ExtractorApi() {
                     val sorted = allMixedCandidates.map { Pair(it, words.indexOf(it)) }.sortedBy { it.second }
                     token = sorted[0].first
                     subdomain = sorted[1].first
-                    domainCandidates = longDomains + shortWithNumbers
+                    // Usar todos los dominios disponibles
+                    domainCandidates = allDomainCandidates.filter { it != subdomain.lowercase() }
                 }
-                allMixedCandidates.size == 1 -> {
+                allMixedCandidates.size == 1 && withNumbers.isNotEmpty() -> {
                     token = allMixedCandidates[0]
-                    subdomain = shortWithNumbers.firstOrNull() ?: run {
-                        Log.e("Callistanise", "No hay subdomain")
-                        return
-                    }
-                    // IMPORTANTE: Incluir dominios largos cuando solo hay 1 mixed
-                    domainCandidates = longDomains
+                    subdomain = withNumbers.first()
+                    domainCandidates = longDomains + mediumDomains + withNumbers.drop(1)
+                }
+                allMixedCandidates.size == 1 && (longDomains.isNotEmpty() || mediumDomains.isNotEmpty()) -> {
+                    token = allMixedCandidates[0]
+                    // Buscar subdomain en withNumbers o usar el primer dominio
+                    subdomain = withNumbers.firstOrNull() ?: (longDomains + mediumDomains).first()
+                    domainCandidates = (longDomains + mediumDomains).filter { it != subdomain }
                 }
                 else -> {
                     Log.e("Callistanise", "No hay suficientes candidatos")
@@ -166,6 +181,11 @@ class Callistanise : ExtractorApi() {
                 return
             }
 
+            if (pathNumbers.isEmpty()) {
+                Log.e("Callistanise", "No hay path numbers")
+                return
+            }
+
             val formats = listOf("_,l,n,h,", "_,l,n,", "_n,h,", "_l,n,")
             var hlsUrl: String? = null
             var workingDomain: String? = null
@@ -174,7 +194,7 @@ class Callistanise : ExtractorApi() {
 
             Log.d("Callistanise", "Probando - Dominios: ${domainCandidates.size}, TLDs: ${tldCandidates.size}, Paths: ${pathNumbers.size}")
 
-            outerLoop@ for (domain in domainCandidates.take(5)) {
+            outerLoop@ for (domain in domainCandidates.take(8)) {
                 for (tld in tldCandidates) {
                     for (pathNumber in pathNumbers.take(10)) {
                         for (format in formats) {
