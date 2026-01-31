@@ -44,7 +44,6 @@ class Callistanise : ExtractorApi() {
             val words = dictMatch.groupValues[1].split("|")
             Log.d("Callistanise", "Total palabras: ${words.size}")
 
-            // Keywords de JS a ignorar (en minúsculas para comparar)
             val jsKeywords = setOf(
                 "errorcode", "scripttag", "seekdone", "addbutton", "nextindex",
                 "parseint", "domparser", "reloadkey", "codematch", "dualsound",
@@ -74,124 +73,133 @@ class Callistanise : ExtractorApi() {
                 "fontopacity", "userfontscale", "fullscreenorientationlock",
                 "download", "vidhide", "datalayer", "dramiyos", "master",
                 "urlset", "hls3", "hls", "sources", "tracks", "default",
-                "label", "kind", "file", "type", "getitem", "setitem",
-                "indexof", "length", "replace", "split", "join", "push",
-                "slice", "substr", "substring", "charat", "charcodeat",
-                "fromcharcode", "match", "search", "test", "exec"
+                "label", "kind", "file", "type"
             )
 
             // TLDs válidos
             val validTlds = listOf("cyou", "space", "cfd", "sbs", "store", "shop", "com", "net", "site", "xyz")
             val tldCandidates = words.filter { it in validTlds }
-            Log.d("Callistanise", "TLDs: $tldCandidates")
 
-            // Dominios LARGOS sin números (tipo pinehavenculinaryhouse)
+            // Path numbers - formato 0XXXX (5 dígitos empezando con 0)
+            // Estos son los paths reales del servidor
+            val pathNumbers = words.filter { it.matches(Regex("0\\d{4}")) }
+            Log.d("Callistanise", "Path numbers (0XXXX): $pathNumbers")
+
+            // Dominios LARGOS sin números
             val longDomains = words.filter { word ->
                 word.length in 15..30 &&
                         word.matches(Regex("[a-z]+")) &&
                         word.lowercase() !in jsKeywords
             }
 
-            // Dominios CORTOS con números (tipo 8nyb72g7yaf) - excluir los que empiezan con "tt"
-            val shortDomainsWithNumbers = words.filter { word ->
+            // Dominios/subdominios con números
+            val shortWithNumbers = words.filter { word ->
                 word.length in 8..15 &&
                         word.matches(Regex("[a-z0-9]+")) &&
                         word.any { it.isDigit() } &&
                         word.any { it.isLetter() } &&
                         word.lowercase() !in jsKeywords &&
                         word != videoId &&
-                        !word.startsWith("tt") && // Excluir ttXXXX
+                        !word.startsWith("tt") &&
                         !word.startsWith("0")
             }
 
-            val domainCandidates = longDomains + shortDomainsWithNumbers
-            Log.d("Callistanise", "Dominios largos: $longDomains")
-            Log.d("Callistanise", "Dominios cortos: $shortDomainsWithNumbers")
-
-            // Mixed case candidates - SOLO los que tienen números Y mayúsculas mezcladas
-            // Esto excluye palabras JS como "errorCode", "scriptTag", etc.
-            val mixedCandidates = words.filter { word ->
+            // Mixed case con números
+            val mixedWithNumbers = words.filter { word ->
                 word.length in 10..20 &&
                         word.matches(Regex("[a-zA-Z0-9]+")) &&
                         word.any { it.isUpperCase() } &&
                         word.any { it.isLowerCase() } &&
-                        word.any { it.isDigit() } && // DEBE tener números
+                        word.any { it.isDigit() } &&
                         word.lowercase() !in jsKeywords
             }
 
-            Log.d("Callistanise", "Mixed con números: $mixedCandidates")
+            // Mixed case sin números pero aleatorio
+            val mixedWithoutNumbers = words.filter { word ->
+                word.length in 10..18 &&
+                        word.matches(Regex("[a-zA-Z]+")) &&
+                        word.any { it.isUpperCase() } &&
+                        word.any { it.isLowerCase() } &&
+                        word.lowercase() !in jsKeywords &&
+                        word.count { it.isUpperCase() } >= 2 &&
+                        !word.matches(Regex("^[a-z]+[A-Z][a-z]+$"))
+            }
 
-            // Si no encontramos mixed con números, buscar por patrón específico
-            val tokenSubdomainCandidates = if (mixedCandidates.size >= 2) {
-                mixedCandidates
-            } else {
-                // Buscar tokens que tengan patrón aleatorio (mayúsculas + minúsculas + números)
-                words.filter { word ->
-                    word.length in 10..20 &&
-                            word.matches(Regex("[a-zA-Z0-9]+")) &&
-                            word.any { it.isUpperCase() } &&
-                            word.any { it.isLowerCase() } &&
-                            word.lowercase() !in jsKeywords &&
-                            // Excluir patrones de camelCase típicos de JS
-                            !word.matches(Regex("^[a-z]+[A-Z][a-z]+\$")) && // errorCode, scriptTag
-                            !word.matches(Regex("^[a-z]+[A-Z][a-z]+[A-Z]?[a-z]*\$")) && // seekDone, addButton
-                            // Debe tener al menos un número O múltiples mayúsculas no consecutivas
-                            (word.any { it.isDigit() } || word.count { it.isUpperCase() } >= 2)
+            val allMixedCandidates = (mixedWithNumbers + mixedWithoutNumbers).distinct()
+
+            Log.d("Callistanise", "Dominios largos: $longDomains")
+            Log.d("Callistanise", "Cortos con números: $shortWithNumbers")
+            Log.d("Callistanise", "Mixed: $allMixedCandidates")
+
+            // Determinar token y subdomain
+            val token: String
+            val subdomain: String
+            val domainCandidates: List<String>
+
+            when {
+                allMixedCandidates.size >= 2 -> {
+                    val sorted = allMixedCandidates.map { Pair(it, words.indexOf(it)) }.sortedBy { it.second }
+                    token = sorted[0].first
+                    subdomain = sorted[1].first
+                    domainCandidates = longDomains + shortWithNumbers
+                }
+                allMixedCandidates.size == 1 && shortWithNumbers.isNotEmpty() -> {
+                    token = allMixedCandidates[0]
+                    subdomain = shortWithNumbers.first()
+                    domainCandidates = longDomains + shortWithNumbers.drop(1)
+                }
+                else -> {
+                    Log.e("Callistanise", "No hay suficientes candidatos")
+                    return
                 }
             }
-
-            Log.d("Callistanise", "Token/Subdomain candidatos: $tokenSubdomainCandidates")
-
-            // Path number
-            val pathNumber = words.find { it.matches(Regex("0\\d{4,5}")) } ?: "02145"
-            Log.d("Callistanise", "Path number: $pathNumber")
-
-            if (tokenSubdomainCandidates.size < 2) {
-                Log.e("Callistanise", "No hay suficientes candidatos válidos")
-                return
-            }
-
-            // Ordenar por índice y tomar los primeros 2
-            val sorted = tokenSubdomainCandidates.map { Pair(it, words.indexOf(it)) }
-                .sortedBy { it.second }
-
-            val token = sorted[0].first
-            val subdomain = sorted[1].first
 
             Log.d("Callistanise", "Token: $token")
             Log.d("Callistanise", "Subdomain: $subdomain")
 
-            if (domainCandidates.isEmpty()) {
-                Log.e("Callistanise", "No hay dominios candidatos")
+            if (domainCandidates.isEmpty() && shortWithNumbers.isEmpty()) {
+                Log.e("Callistanise", "No hay dominios")
                 return
             }
 
-            val formats = listOf("_,l,n,", "_,l,n,h,", "_n,h,", "_l,n,h,", "_,n,h,")
+            val formats = listOf("_,l,n,h,", "_,l,n,")
             var hlsUrl: String? = null
             var workingDomain: String? = null
             var workingTld: String? = null
+            var workingPath: String? = null
 
-            outerLoop@ for (domain in domainCandidates.take(8)) {
+            val domainsToTry = if (domainCandidates.isNotEmpty()) domainCandidates else shortWithNumbers
+
+            // Priorizar paths que empiezan con 0 (formato 0XXXX)
+            val pathsToTry = pathNumbers.ifEmpty {
+                words.filter { it.matches(Regex("\\d{5}")) }.take(10)
+            }
+
+            Log.d("Callistanise", "Probando - Dominios: ${domainsToTry.size}, TLDs: ${tldCandidates.size}, Paths: ${pathsToTry.size}")
+
+            outerLoop@ for (domain in domainsToTry.take(5)) {
                 for (tld in tldCandidates) {
-                    for (format in formats) {
-                        val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
+                    for (pathNumber in pathsToTry.take(8)) {
+                        for (format in formats) {
+                            val testUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${format}.urlset/master.txt"
 
-                        try {
-                            Log.d("Callistanise", "Probando: $testUrl")
-                            val testResponse = app.get(testUrl, headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to "https://callistanise.com/"
-                            ), timeout = 4)
+                            try {
+                                val testResponse = app.get(testUrl, headers = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                    "Referer" to "https://callistanise.com/"
+                                ), timeout = 3)
 
-                            if (testResponse.code == 200 && testResponse.text.contains("#EXTM3U")) {
-                                hlsUrl = testUrl
-                                workingDomain = domain
-                                workingTld = tld
-                                Log.d("Callistanise", "✅ URL válida: $hlsUrl")
-                                break@outerLoop
+                                if (testResponse.code == 200 && testResponse.text.contains("#EXTM3U")) {
+                                    hlsUrl = testUrl
+                                    workingDomain = domain
+                                    workingTld = tld
+                                    workingPath = pathNumber
+                                    Log.d("Callistanise", "✅ URL válida: $hlsUrl")
+                                    break@outerLoop
+                                }
+                            } catch (e: Exception) {
+                                // Continuar
                             }
-                        } catch (e: Exception) {
-                            // Continuar
                         }
                     }
                 }
@@ -206,8 +214,8 @@ class Callistanise : ExtractorApi() {
 
             // Subtítulos
             val subtitleFile = words.find { it.contains(videoId) && it.contains("_spa") }
-            if (subtitleFile != null && workingDomain != null && workingTld != null) {
-                val subUrl = "https://${subdomain.lowercase()}.$workingDomain.$workingTld/$token/hls3/01/$pathNumber/${subtitleFile}.vtt"
+            if (subtitleFile != null && workingDomain != null && workingTld != null && workingPath != null) {
+                val subUrl = "https://${subdomain.lowercase()}.$workingDomain.$workingTld/$token/hls3/01/$workingPath/${subtitleFile}.vtt"
                 try {
                     val subResponse = app.get(subUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
