@@ -182,18 +182,49 @@ class LatanimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
+        Log.d("LatanimeProvider", "Buscando links en: $data")
+        val response = app.get(data, interceptor = cloudflareKiller)
+        val doc = response.document
         var found = false
+
+        val playerKeyEncoded = doc.selectFirst("div.player")?.attr("data-key")
+        val playerKey = if (!playerKeyEncoded.isNullOrEmpty()) {
+            base64Decode(playerKeyEncoded)
+        } else {
+            "https://latanime.org/reproductor?url="
+        }
+
+        Log.d("LatanimeProvider", "Player Key detectada: $playerKey")
+
         doc.select("ul.cap_repro li#play-video").forEach { playerElement ->
+            val serverName = playerElement.text().trim().lowercase()
             val encodedUrl = playerElement.selectFirst("a.play-video")?.attr("data-player")
+
             if (!encodedUrl.isNullOrEmpty()) {
-                val finalUrl = base64Decode(encodedUrl).replace("https://monoschinos2.com/reproductor?url=", "")
-                if (finalUrl.isNotEmpty()) {
+                val decodedPart = base64Decode(encodedUrl)
+
+                var finalUrl = if (decodedPart.startsWith("http")) {
+                    decodedPart
+                } else {
+                    "$playerKey$decodedPart"
+                }
+
+                finalUrl = finalUrl.replace("https://latanime.org/reproductor?url=", "")
+                    .replace("https://monoschinos2.com/reproductor?url=", "")
+                    .replace("https://sblona.com", "https://watchsb.com")
+
+                Log.d("LatanimeProvider", "Intentando extraer ($serverName): $finalUrl")
+
+                try {
                     loadExtractor(finalUrl, mainUrl, subtitleCallback, callback)
                     found = true
+                } catch (e: Exception) {
+                    Log.e("LatanimeProvider", "Error al cargar extractor para $serverName: ${e.message}")
                 }
             }
         }
+
+        if (!found) Log.e("LatanimeProvider", "No se pudo obtener ningún link válido para: $data")
         return found
     }
 }
