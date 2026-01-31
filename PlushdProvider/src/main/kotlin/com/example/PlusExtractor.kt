@@ -43,66 +43,76 @@ class Callistanise : ExtractorApi() {
 
             val words = dictMatch.groupValues[1].split("|")
 
-            // Buscar DOMINIO (palabra larga solo minúsculas, 15+ chars)
+            // Lista completa de palabras JS a ignorar
+            val jsKeywords = setOf(
+                "currentfile", "audiotracks", "decodedlink", "settimeout", "shouldswitch",
+                "textcontent", "startswith", "localstorage", "codefrommessage", "errormessage",
+                "switchedlink", "errorcount", "appendchild", "createelement", "getaudiotracks",
+                "removeclass", "currenttime", "lasterrortime", "createlayer", "parsefromstring",
+                "setcurrentaudiotrack", "playbackrates", "getplaylistitem", "currenttracks",
+                "insertafter", "getposition", "currenttrack", "audiotrackchanged", "toggleclass",
+                "firstframe", "networkerror", "fragloaderror", "removechild", "parentnode",
+                "background", "setattribute", "innerwidth", "innerheight", "googleapis",
+                "callistanise", "togmtstring", "createcookiesec", "queryselector", "pickdirect",
+                "documentelement", "encodeuricomponent", "application", "playbackratecontrols",
+                "qualitylabels", "advertising", "backgroundopacity", "transparent",
+                "backgroundcolor", "fontfamily", "fontopacity", "userfontscale", "thumbnails",
+                "androidhls", "timeslider", "controlbar", "fullscreenorientationlock",
+                "stretching", "download", "minochinos", "prototype", "constructor",
+                "undefined", "function", "return", "object", "string", "number", "boolean"
+            )
+
+            // Buscar DOMINIO
             val domainCandidates = words.filter { word ->
-                word.length >= 15 &&
-                        word.matches(Regex("[a-z]+"))
+                word.length >= 15 && word.matches(Regex("[a-z]+"))
             }
-            val domain = domainCandidates.firstOrNull {
-                it != "riverstonelearninghub" || domainCandidates.size == 1
-            } ?: domainCandidates.firstOrNull()
+            val domain = domainCandidates.firstOrNull()
 
             // Buscar TLD
             val tld = words.find { it in listOf("store", "shop", "sbs", "com", "net") } ?: "sbs"
 
             Log.d("Callistanise", "Domain: $domain, TLD: $tld")
 
-            // Buscar SUBDOMAIN y TOKEN
-            // Ambos tienen mayúsculas y minúsculas, pero:
-            // - SUBDOMAIN: puede empezar con número, 15-17 chars
-            // - TOKEN: 12 chars, empieza con letra mayúscula
-
-            val mixedCandidates = words.filter { word ->
+            // Candidatos SOLO los que tienen números (esto excluye palabras JS)
+            val realCandidates = words.filter { word ->
                 word.length in 10..20 &&
                         word.matches(Regex("[a-zA-Z0-9]+")) &&
+                        word.any { it.isDigit() } &&  // DEBE tener al menos un número
                         word.any { it.isUpperCase() } &&
                         word.any { it.isLowerCase() } &&
+                        word.lowercase() !in jsKeywords &&
                         !word.startsWith("tt") &&
                         !word.contains(videoId, ignoreCase = true)
             }
 
-            Log.d("Callistanise", "Mixed candidates: $mixedCandidates")
+            Log.d("Callistanise", "Real candidates: $realCandidates")
 
-            // TOKEN: 12 chars, tiene mayúsculas al inicio
-            val token = mixedCandidates.find { word ->
-                word.length == 12 && word[0].isUpperCase()
-            } ?: mixedCandidates.find { word ->
-                word.length in 10..14 && word.any { it.isUpperCase() }
-            }
-
-            // SUBDOMAIN: 15-17 chars, puede empezar con número
-            val subdomain = mixedCandidates.find { word ->
-                word.length in 15..17 && word != token
-            } ?: mixedCandidates.find { word ->
-                word.length > 12 && word != token
-            }
-
-            Log.d("Callistanise", "Token: $token")
-            Log.d("Callistanise", "Subdomain: $subdomain")
-
-            if (subdomain == null || token == null || domain == null) {
-                Log.e("Callistanise", "Faltan valores")
-                Log.d("Callistanise", "DEBUG candidates: $mixedCandidates")
-                Log.d("Callistanise", "DEBUG domains: $domainCandidates")
+            if (realCandidates.size < 2) {
+                Log.e("Callistanise", "No hay suficientes candidatos reales")
                 return
             }
 
-            // Path number (5 dígitos)
+            // Ordenar por longitud
+            val sortedCandidates = realCandidates.sortedBy { it.length }
+
+            // TOKEN: el más corto (12 chars típicamente)
+            val token = sortedCandidates.first()
+            // SUBDOMAIN: el más largo (15-17 chars típicamente)
+            val subdomain = sortedCandidates.last()
+
+            Log.d("Callistanise", "Token: $token (${token.length} chars)")
+            Log.d("Callistanise", "Subdomain: $subdomain (${subdomain.length} chars)")
+
+            if (domain == null) {
+                Log.e("Callistanise", "No se encontró domain")
+                return
+            }
+
+            // Path number
             val pathNumber = words.find { it.matches(Regex("0\\d{4}")) } ?: "02145"
 
-            // Formato de archivo
-            val hasH = words.any { it == "h" }
-            val fileFormat = if (hasH) "_,l,n,h," else "_,l,n,"
+            // Formato (detectar si tiene 'h')
+            val fileFormat = if (words.contains("h")) "_,l,n,h," else "_,l,n,"
 
             // Construir URL
             val hlsUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${videoId}${fileFormat}.urlset/master.txt"
@@ -113,7 +123,7 @@ class Callistanise : ExtractorApi() {
             if (subtitleFile != null) {
                 val subUrl = "https://${subdomain.lowercase()}.$domain.$tld/$token/hls3/01/$pathNumber/${subtitleFile}.vtt"
                 Log.d("Callistanise", "📝 Subtítulo: $subUrl")
-                subtitleCallback.invoke(SubtitleFile(lang = "Español", url = subUrl))
+                subtitleCallback.invoke(newSubtitleFile(lang = "Español", url = subUrl))
             }
 
             callback.invoke(
