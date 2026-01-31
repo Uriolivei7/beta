@@ -209,60 +209,57 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("PlushdProvider", "--- INICIANDO RASTREO (API ESTRICTA) ---")
+        Log.d("PlushdProvider", "--- INICIANDO RASTREO (BYPASS ERROR 2004) ---")
 
-        val doc = app.get(data).document
+        // 1. Capturamos la respuesta completa para obtener las Cookies de sesión
+        val mainResponse = app.get(data)
+        val doc = mainResponse.document
+        val cookieMap = mainResponse.cookies // Esto es vital para evitar el error 2004
+
         val servers = doc.select("ul.subselect li[data-server]")
 
         servers.forEach { element ->
             val serverHash = element.attr("data-server")
             val serverName = element.selectFirst("span")?.text() ?: "Server"
 
-            Log.d("PlushdProvider", "[LOG] Procesando $serverName | Hash: ${serverHash.take(15)}...")
+            Log.d("PlushdProvider", "[LOG] Procesando $serverName")
 
-            // 1. Limpieza de ID (Basado en tus hallazgos de PC)
             var cleanId = serverHash
             if (serverHash.length > 25) {
                 try {
                     val decoded = base64Decode(serverHash)
                     val match = Regex("""([a-zA-Z0-9]{11,14})""").find(decoded)
-                    if (match != null) {
-                        cleanId = match.groupValues[1]
-                        Log.d("PlushdProvider", "[LOG] ID real extraído: $cleanId")
-                    }
+                    if (match != null) cleanId = match.groupValues[1]
                 } catch (e: Exception) { }
             }
 
-            // 2. Definición de URL y tipo
             val embedUrl = if (serverName.contains("Earnvids", true) || serverName.contains("Opción 1")) {
                 "https://callistanise.com/v/$cleanId"
             } else {
                 "$mainUrl/reproductor?h=$serverHash"
             }
 
-            val linkType = if (embedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-
             try {
-                // 3. USO CORRECTO SEGÚN TU DECLARACIÓN
+                // 2. Usamos el inicializador para pasar las cookies y headers del CURL
                 val link = newExtractorLink(
                     source = this.name,
                     name = "$name - $serverName",
                     url = embedUrl,
-                    type = linkType
+                    type = if (embedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = "https://callistanise.com/"
-                    this.quality = Qualities.Unknown.value
+                    this.referer = "https://callistanise.com/v/$cleanId"
+                    this.quality = Qualities.P720.value
+                    // Inyectamos las cookies y el User-Agent que el servidor espera
                     this.headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                        "X-Requested-With" to "XMLHttpRequest"
+                        "Cookie" to cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" },
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Accept" to "*/*"
                     )
                 }
 
                 callback.invoke(link)
-
-                // 4. Intentamos el extractor automático también
-                loadExtractor(embedUrl, "https://callistanise.com/", subtitleCallback, callback)
-                Log.d("PlushdProvider", "[EXITO] Link generado y enviado: $embedUrl")
+                Log.d("PlushdProvider", "[EXITO] Link con cookies enviado: $embedUrl")
 
             } catch (e: Exception) {
                 Log.e("PlushdProvider", "[ERROR] Falló en $serverName: ${e.message}")
