@@ -123,20 +123,32 @@ class LatanimeProvider : MainAPI() {
 
         val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapNotNull { element ->
             val epUrl = element.attr("href")
+            val capLayout = element.selectFirst("div.cap-layout")
+            val epTitle = capLayout?.text()?.trim() ?: ""
+
             val epNum = Regex("""episodio-(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""(\d+)""").find(epTitle)?.value?.toIntOrNull()
+
+            val imgElement = element.selectFirst("img")
+            val epPoster = fixUrl(imgElement?.attr("data-src")?.ifBlank { imgElement.attr("src") } ?: "")
+
             if (epUrl.isNotBlank() && epNum != null) {
                 newEpisode(fixUrl(epUrl)) {
-                    this.name = "Capítulo $epNum"
+                    this.name = epTitle.ifBlank { "Capítulo $epNum" }
                     this.episode = epNum
+                    this.posterUrl = epPoster
                 }
             } else null
         }.reversed()
+
+        Log.d("LatanimeProvider", "Episodios cargados: ${episodes.size}")
 
         return newTvSeriesLoadResponse(cleanTitle(rawTitle), url, TvType.Anime, episodes) {
             this.posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content")
             this.plot = document.selectFirst("p.my-2.opacity-75")?.text()?.trim()
             this.tags = tags
             this.year = foundYear
+            this.showStatus = if (document.html().contains("En emisión", true)) ShowStatus.Ongoing else ShowStatus.Completed
         }
     }
 
