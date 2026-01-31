@@ -38,7 +38,11 @@ class Callistanise : ExtractorApi() {
 
             if (dictMatch != null) {
                 val words = dictMatch.groupValues[1].split("|")
-                Log.d("Callistanise", "📝 Diccionario: ${words.size} palabras")
+                Log.d("Callistanise", "📝 Total palabras: ${words.size}")
+
+                // Mostrar algunas palabras para debug
+                Log.d("Callistanise", "📝 Primeras 20 palabras: ${words.take(20)}")
+                Log.d("Callistanise", "📝 Últimas 20 palabras: ${words.takeLast(20)}")
 
                 val subdomain = words.find {
                     it.matches(Regex("[a-zA-Z0-9]{10,}")) &&
@@ -52,16 +56,19 @@ class Callistanise : ExtractorApi() {
                             it.any { c -> c.isUpperCase() }
                 }
 
-                Log.d("Callistanise", "🌐 Subdomain: $subdomain, Token: $token")
+                Log.d("Callistanise", "🌐 Subdomain encontrado: $subdomain")
+                Log.d("Callistanise", "🔑 Token encontrado: $token")
+
+                val pathNumbers = words.filter { it.matches(Regex("^\\d{2,5}$")) }
+                Log.d("Callistanise", "📂 Path numbers: $pathNumbers")
 
                 if (subdomain != null && token != null) {
-                    val pathNumbers = words.filter { it.matches(Regex("^\\d{2,5}$")) }
                     val path1 = pathNumbers.getOrNull(0) ?: "01"
                     val path2 = pathNumbers.getOrNull(1) ?: "02145"
 
                     val hlsUrl = "https://$subdomain.riverstonelearninghub.sbs/$token/hls3/$path1/$path2/${videoId}_,l,n,.urlset/master.txt"
 
-                    Log.d("Callistanise", "✅ URL construida: $hlsUrl")
+                    Log.d("Callistanise", "✅ URL FINAL: $hlsUrl")
 
                     callback.invoke(
                         newExtractorLink(
@@ -80,13 +87,16 @@ class Callistanise : ExtractorApi() {
                         }
                     )
                     return
+                } else {
+                    Log.w("Callistanise", "⚠️ No se encontró subdomain o token")
                 }
+            } else {
+                Log.w("Callistanise", "⚠️ No se encontró diccionario packed")
             }
-
-            Log.w("Callistanise", "⚠️ No se pudo extraer URL")
 
         } catch (e: Exception) {
             Log.e("Callistanise", "❌ Error: ${e.message}")
+            e.printStackTrace()
         }
     }
 }
