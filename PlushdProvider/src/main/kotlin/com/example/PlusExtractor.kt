@@ -152,12 +152,6 @@ class Listeamed : ExtractorApi() {
 
             Log.d("Listeamed", "📄 HTML recibido: ${html.length} caracteres")
 
-            // Mostrar parte del HTML para debug
-            if (html.length > 100) {
-                Log.d("Listeamed", "📄 Preview: ${html.take(300)}...")
-            }
-
-            // Buscar diferentes patrones
             val patterns = listOf(
                 Regex("""file:\s*["']([^"']+)["']"""),
                 Regex("""source:\s*["']([^"']+)["']"""),
@@ -176,23 +170,18 @@ class Listeamed : ExtractorApi() {
                 if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
                     Log.d("Listeamed", "✅ VIDEO ENCONTRADO: $videoUrl")
 
-                    val linkType = if (videoUrl.contains(".m3u8")) {
-                        ExtractorLinkType.M3U8
-                    } else {
-                        ExtractorLinkType.VIDEO
-                    }
-
                     callback.invoke(
                         newExtractorLink(
                             source = name,
                             name = name,
                             url = videoUrl,
-                            type = linkType
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         ) {
                             this.referer = url
                             this.quality = Qualities.Unknown.value
                         }
                     )
+
                     Log.d("Listeamed", "📤 Callback invocado!")
                     return
                 }
