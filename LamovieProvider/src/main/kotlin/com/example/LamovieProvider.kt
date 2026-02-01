@@ -5,7 +5,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.Score
 
 class LamovieProvider : MainAPI() {
     override var mainUrl = "https://la.movie"
@@ -97,30 +99,35 @@ class LamovieProvider : MainAPI() {
         val responseObj = try {
             parseJson<SinglePostResponse>(apiRes)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error: Falló parseo de JSON en load - ${e.message}")
+            Log.e(TAG, "Logs Error: Falló parseo de JSON en load")
             null
         }
 
         val postData = responseObj?.data ?: return null
         val id = postData.id ?: return null
 
-        val galleryImgs = postData.gallery?.split("\n")?.filter { it.isNotBlank() }
         val posterImg = fixImg(postData.images?.poster ?: postData.poster)
-        val bigImg = fixImg(
-            galleryImgs?.firstOrNull()?.trim() ?: postData.images?.backdrop ?: postData.backdrop
-        )
+        val backdropImg = fixImg(postData.images?.backdrop ?: postData.backdrop)
 
         val cleanTitle = postData.title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
         val realYear = postData.release_date?.split("-")?.firstOrNull()?.toIntOrNull()
 
+        val scoreValue = postData.imdb_rating?.times(100)?.toInt()
+        val trailerUrl = postData.trailer?.let { "https://www.youtube.com/watch?v=$it" }
+
         val response = if (type == "movies") {
             newMovieLoadResponse(cleanTitle, url, TvType.Movie, id.toString()) {
                 this.posterUrl = posterImg
-                this.backgroundPosterUrl = bigImg
+                this.backgroundPosterUrl = backdropImg
                 this.plot = postData.overview
                 this.year = realYear
-                this.duration = postData.runtime?.substringBefore(".")?.toIntOrNull()
-                this.tags = listOfNotNull("Película", postData.certification)
+                this.score = Score.from10(postData.imdb_rating?.toString())
+                this.addTrailer(trailerUrl)
+
+                val tagsList = mutableListOf<String>()
+                tagsList.add("Película")
+                postData.certification?.let { tagsList.add(it) }
+                this.tags = tagsList
             }
         } else {
             val episodesList = mutableListOf<Episode>()
@@ -138,10 +145,7 @@ class LamovieProvider : MainAPI() {
                             headers = mapOf("User-Agent" to USER_AGENT)
                         ).text
                     }
-                    val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) {
-                        Log.e(TAG, "Logs Error: Falló parseo de episodios Temporada $sNum")
-                        null
-                    }
+                    val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) { null }
 
                     epData?.data?.posts?.forEach { epItem ->
                         val rawName = epItem.title ?: ""
@@ -151,13 +155,12 @@ class LamovieProvider : MainAPI() {
                             this.name = if(cleanEpName.isEmpty()) rawName else cleanEpName
                             this.season = sNum
                             this.episode = epItem.episode_number
-                            this.posterUrl = bigImg ?: posterImg
+                            this.posterUrl = backdropImg ?: posterImg
                         })
                     }
                 }
-                Log.d(TAG, "Logs: Se cargaron ${episodesList.size} episodios exitosamente")
             } catch (e: Exception) {
-                Log.e(TAG, "Logs Error: Falló carga de episodios - ${e.message}")
+                Log.e(TAG, "Logs Error: Falló carga de episodios")
             }
 
             newTvSeriesLoadResponse(
@@ -167,13 +170,17 @@ class LamovieProvider : MainAPI() {
                 episodesList
             ) {
                 this.posterUrl = posterImg
-                this.backgroundPosterUrl = bigImg
+                this.backgroundPosterUrl = backdropImg
                 this.plot = postData.overview
                 this.year = realYear
-                this.tags = listOfNotNull(
-                    if (type == "animes") "Anime" else "Serie",
-                    postData.certification
-                )
+                this.score = Score.from10(postData.imdb_rating?.toString())
+                this.addTrailer(trailerUrl)
+
+                val infoTags = mutableListOf<String>()
+                infoTags.add(if (type == "animes") "Anime" else "Serie")
+                postData.certification?.let { infoTags.add(it) }
+                postData.original_title?.let { infoTags.add("Original: $it") }
+                this.tags = infoTags
             }
         }
 
@@ -202,6 +209,7 @@ class LamovieProvider : MainAPI() {
             Log.d(TAG, "Logs: Load Finalizado con éxito para: $cleanTitle")
         }
     }
+
 
     override suspend fun loadLinks(
         data: String,
@@ -262,11 +270,21 @@ class LamovieProvider : MainAPI() {
         val runtime: String?,
         val release_date: String?,
         val certification: String?,
+        val trailer: String?,
+        val imdb_rating: Double?,
+        val original_title: String?,
+        val genres: List<Int>?,
+        val lang: List<Int>?,
+        val quality: List<Int>?,
         val recommendations: List<Post>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class Images(val poster: String?, val backdrop: String? = null)
+    data class Images(
+        val poster: String?,
+        val backdrop: String?,
+        val logo: String?
+    )
 
     data class EpisodeListResponse(val data: EpisodeListData?)
     data class EpisodeListData(val posts: List<EpisodePostItem>?, val seasons: List<String>?)
