@@ -138,16 +138,20 @@ class LamovieProvider : MainAPI() {
                             headers = mapOf("User-Agent" to USER_AGENT)
                         ).text
                     }
-                    val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) { null }
+                    val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) {
+                        Log.e(TAG, "Logs Error: Falló parseo de episodios Temporada $sNum")
+                        null
+                    }
 
                     epData?.data?.posts?.forEach { epItem ->
-                        val cleanEpName = epItem.title?.replace(Regex("(?i)Temporada\\s*\\d+\\s*"), "")?.trim()
+                        val rawName = epItem.title ?: ""
+                        val cleanEpName = rawName.replace(Regex(".*(?=(Episodio|Episode))", RegexOption.IGNORE_CASE), "").trim()
 
                         episodesList.add(newEpisode(epItem.id.toString()) {
-                            this.name = cleanEpName
+                            this.name = if(cleanEpName.isEmpty()) rawName else cleanEpName
                             this.season = sNum
                             this.episode = epItem.episode_number
-                            this.posterUrl = posterImg ?: bigImg
+                            this.posterUrl = bigImg ?: posterImg
                         })
                     }
                 }
