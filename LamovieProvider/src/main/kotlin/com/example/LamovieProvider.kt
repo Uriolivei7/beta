@@ -87,6 +87,8 @@ class LamovieProvider : MainAPI() {
             else -> "movies"
         }
 
+        Log.d(TAG, "Logs: Iniciando carga de $type con slug: $slug")
+
         val apiRes = app.get(
             "$apiBase/single/$type?slug=$slug&postType=$type",
             headers = mapOf("User-Agent" to USER_AGENT)
@@ -95,7 +97,7 @@ class LamovieProvider : MainAPI() {
         val responseObj = try {
             parseJson<SinglePostResponse>(apiRes)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error: Falló parseo de JSON en load")
+            Log.e(TAG, "Logs Error: Falló parseo de JSON en load - ${e.message}")
             null
         }
 
@@ -137,16 +139,21 @@ class LamovieProvider : MainAPI() {
                         ).text
                     }
                     val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) { null }
+
                     epData?.data?.posts?.forEach { epItem ->
+                        val cleanEpName = epItem.title?.replace(Regex("(?i)Temporada\\s*\\d+\\s*"), "")?.trim()
+
                         episodesList.add(newEpisode(epItem.id.toString()) {
-                            this.name = epItem.title?.replace(Regex("^.*?Temporada"), "Temporada")?.trim()
+                            this.name = cleanEpName
                             this.season = sNum
                             this.episode = epItem.episode_number
+                            this.posterUrl = posterImg ?: bigImg
                         })
                     }
                 }
+                Log.d(TAG, "Logs: Se cargaron ${episodesList.size} episodios exitosamente")
             } catch (e: Exception) {
-                Log.e(TAG, "Logs Error: Falló carga de episodios")
+                Log.e(TAG, "Logs Error: Falló carga de episodios - ${e.message}")
             }
 
             newTvSeriesLoadResponse(
@@ -169,8 +176,6 @@ class LamovieProvider : MainAPI() {
         return response.apply {
             try {
                 val relatedUrl = "$apiBase/single/related?postId=$id&page=1&tab=connections&postsPerPage=12"
-                Log.d(TAG, "Logs: Consultando Recomendaciones en: $relatedUrl")
-
                 val headers = mapOf(
                     "Accept" to "application/json",
                     "Referer" to "$mainUrl/",
@@ -179,25 +184,18 @@ class LamovieProvider : MainAPI() {
                 )
 
                 val relatedRes = app.get(relatedUrl, headers = headers).text
-
-                val relatedData = try {
-                    parseJson<ApiResponse>(relatedRes)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Logs Error: Fallo al parsear JSON de recomendaciones: ${e.message}")
-                    null
-                }
+                val relatedData = try { parseJson<ApiResponse>(relatedRes) } catch (e: Exception) { null }
 
                 val recs = relatedData?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
                 this.recommendations = recs
 
-                Log.d(TAG, "Logs: Recomendaciones cargadas con éxito: ${recs.size}")
-
+                Log.d(TAG, "Logs: Recomendaciones cargadas: ${recs.size}")
             } catch (e: Exception) {
                 Log.e(TAG, "Logs Error Recs: ${e.message}")
                 this.recommendations = emptyList()
             }
 
-            Log.d(TAG, "Logs: Load Finalizado: $cleanTitle | ID: $id")
+            Log.d(TAG, "Logs: Load Finalizado con éxito para: $cleanTitle")
         }
     }
 
