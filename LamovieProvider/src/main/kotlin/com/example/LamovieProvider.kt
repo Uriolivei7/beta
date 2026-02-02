@@ -134,8 +134,10 @@ class LamovieProvider : MainAPI() {
                     val epData = try { parseJson<EpisodeListResponse>(epRes) } catch (e: Exception) { null }
 
                     epData?.data?.posts?.forEach { epItem ->
-                        val episodeId = epItem.id.toString()
-                        episodesList.add(newEpisode(episodeId) {
+                        val rawId = epItem.id.toString()
+                        val cleanId = Regex("""\d+""").find(rawId)?.value ?: rawId
+
+                        episodesList.add(newEpisode(cleanId) {
                             this.name = epItem.title ?: "Episodio ${epItem.episode_number}"
                             this.season = sNum
                             this.episode = epItem.episode_number
@@ -195,7 +197,10 @@ class LamovieProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "Logs: Intentando cargar enlaces para ID: $data")
 
-        val playerUrl = "$apiBase/player?postId=$data&demo=0"
+        val cleanData = Regex("""\d+""").find(data)?.value ?: data
+        Log.d(TAG, "Logs: ID Original: $data -> ID Limpio: $cleanData")
+
+        val playerUrl = "$apiBase/player?postId=$cleanData&demo=0"
 
         val res = try {
             val response = app.get(playerUrl, headers = mapOf("Referer" to "$mainUrl/"))
