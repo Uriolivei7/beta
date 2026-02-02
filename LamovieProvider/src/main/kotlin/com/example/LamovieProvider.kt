@@ -23,16 +23,23 @@ class LamovieProvider : MainAPI() {
 
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        val cleanUrl = url.trim()
+        val cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
 
-        return when {
+        val formattedUrl = when {
             cleanUrl.startsWith("http") -> cleanUrl
-            cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("/backdrops/") || cleanUrl.startsWith("/logos/") -> {
-                "$mainUrl$cleanUrl"
-            }
-            cleanUrl.startsWith("/") -> "https://image.tmdb.org/t/p/original$cleanUrl"
-            else -> "$mainUrl/$cleanUrl"
+
+            cleanUrl.startsWith("/thumbs/") ||
+                    cleanUrl.startsWith("/backdrops/") ||
+                    cleanUrl.startsWith("/logos/") ||
+                    cleanUrl.contains("wp-content") -> "${mainUrl.trimEnd('/')}/${cleanUrl.trimStart('/')}"
+
+            cleanUrl.startsWith("/") && cleanUrl.length > 20 -> "https://image.tmdb.org/t/p/original$cleanUrl"
+
+            else -> "${mainUrl.trimEnd('/')}/${cleanUrl.trimStart('/')}"
         }
+
+        Log.d("LaMovieImg", "URL Original: $url -> Generada: $formattedUrl")
+        return formattedUrl
     }
 
     override val mainPage = mainPageOf(
@@ -57,10 +64,11 @@ class LamovieProvider : MainAPI() {
     }
 
     private fun Post.toSearchResult(): SearchResponse {
-        val posterImg = fixImg(this.images?.poster ?: this.poster)
-        val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
+        val posterImg = fixImg(this.images?.poster ?: this.poster ?: this.images?.backdrop ?: this.backdrop)
 
+        val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: "Sin título"
         val typeStr = type ?: "movies"
+
         val tvType = when (typeStr) {
             "movies" -> TvType.Movie
             "animes" -> TvType.Anime
@@ -273,16 +281,14 @@ class LamovieProvider : MainAPI() {
         val release_date: String? = null,
         val certification: String? = null,
         val trailer: String? = null,
-        val imdb_rating: Any? = null, 
+        val imdb_rating: Any? = null,
         val original_title: String? = null,
         val episodes_count: Int? = null
     )
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
     data class Images(
-        val poster: String?,
-        val backdrop: String?,
-        val logo: String?
+        val poster: String? = null,
+        val backdrop: String? = null
     )
 
     data class EpisodeListResponse(val data: EpisodeListData?)
