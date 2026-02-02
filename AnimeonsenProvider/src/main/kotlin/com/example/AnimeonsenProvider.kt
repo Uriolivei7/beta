@@ -202,7 +202,7 @@ class AnimeonsenProvider : MainAPI() {
         val cleanPath = if (data.contains("animeonsen.xyz/")) data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
 
-        Log.d(TAG, "Logs: Cargando links para $cleanPath")
+        Log.d(TAG, "Logs: Intentando evadir bloqueo para $cleanPath")
 
         return try {
             val response = app.get(
@@ -220,9 +220,13 @@ class AnimeonsenProvider : MainAPI() {
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
 
-                    val finalSubUrl = if (subUrl.contains("?")) "$subUrl&token=$token" else "$subUrl?token=$token"
+                    val finalSubUrl = if (subUrl.contains("?")) {
+                        "$subUrl&token=$token&format=ass"
+                    } else {
+                        "$subUrl?token=$token&format=ass"
+                    }
 
-                    Log.d(TAG, "Logs: Enviando Subtítulo al reproductor: $langName | URL: $finalSubUrl")
+                    Log.d(TAG, "Logs: Enviando Sub con headers: $langName")
 
                     subtitleCallback(newSubtitleFile(langName, finalSubUrl))
                 }
@@ -236,7 +240,11 @@ class AnimeonsenProvider : MainAPI() {
                     type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = mainUrl
-                    this.headers = mapOf("Authorization" to "Bearer $token")
+                    this.headers = mapOf(
+                        "Authorization" to "Bearer $token",
+                        "User-Agent" to userAgent,
+                        "Referer" to mainUrl
+                    )
                     this.quality = Qualities.P1080.value
                 })
                 true
