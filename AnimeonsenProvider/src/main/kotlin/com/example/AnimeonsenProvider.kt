@@ -202,14 +202,12 @@ class AnimeonsenProvider : MainAPI() {
         val cleanPath = if (data.contains("animeonsen.xyz/")) data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
 
-        Log.d(TAG, "Logs: Descargando y procesando subtítulos localmente para evitar bloqueo")
-
         return try {
             val response = app.get(
                 "$apiUrl/content/$cleanPath",
                 headers = mapOf(
                     "Authorization" to "Bearer $token",
-                    "Referer" to "https://www.animeonsen.xyz/",
+                    "Referer" to mainUrl,
                     "User-Agent" to userAgent
                 )
             )
@@ -220,28 +218,9 @@ class AnimeonsenProvider : MainAPI() {
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
 
-                    val subResponse = app.get(
-                        "$subUrl?token=$token",
-                        headers = mapOf(
-                            "Referer" to "https://www.animeonsen.xyz/",
-                            "User-Agent" to userAgent
-                        )
-                    )
+                    val finalSubUrl = "$subUrl?format=ass&token=$token#.ass"
 
-                    if (subResponse.text.isNotEmpty() && subResponse.text.contains("Script Info")) {
-                        Log.d(TAG, "Logs: Procesando archivo ASS para $langName")
-
-                        val base64Sub = android.util.Base64.encodeToString(
-                            subResponse.text.toByteArray(),
-                            android.util.Base64.NO_WRAP
-                        )
-
-                        val dataUri = "data:application/x-subtitle-ass;base64,$base64Sub"
-
-                        subtitleCallback(newSubtitleFile(langName, dataUri))
-                    } else {
-                        Log.e(TAG, "Logs: El servidor devolvió subtítulo vacío o bloqueo para $langName")
-                    }
+                    subtitleCallback(newSubtitleFile(langName, finalSubUrl))
                 }
 
                 val isDash = videoUrl.contains(".mpd")
@@ -252,17 +231,12 @@ class AnimeonsenProvider : MainAPI() {
                     url = videoUrl,
                     type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = "https://www.animeonsen.xyz/"
-                    this.headers = mapOf(
-                        "Authorization" to "Bearer $token",
-                        "User-Agent" to userAgent
-                    )
-                    this.quality = Qualities.P1080.value
+                    this.referer = mainUrl
+                    this.quality = Qualities.P720.value
                 })
                 true
             } else false
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error Crítico: ${e.message}")
             false
         }
     }
