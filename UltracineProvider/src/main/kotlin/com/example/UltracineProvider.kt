@@ -178,13 +178,25 @@ class UltracineProvider : MainAPI() {
                         EmbedPlayUpnOne().getUrl(cleanLink, targetUrl, subtitleCallback, callback)
                     }
 
-                    // Caso específico para el error "Failed to decrypt"
-                    cleanLink.contains("playembedapi.site") -> {
-                        Log.d("ULTRACINE", "Usando extractor dedicado para playembedapi")
-                        // Intentamos cargarlo con VidStack pero asegurando el Referer
+                    cleanLink.contains("playembedapi.site") || cleanLink.contains("iamcdn.net") -> {
+                        Log.d("ULTRACINE", "Detectado sistema SoTrym/Abyss. Intentando bypass...")
+
+                        // Este servidor es extremadamente sensible al User-Agent y al Referer
+                        val headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                            "Referer" to "https://assistirseriesonline.icu/",
+                            "Origin" to "https://assistirseriesonline.icu",
+                            "X-Requested-With" to "XMLHttpRequest"
+                        )
+
+                        // Intentamos extraer usando una clase VidStack personalizada que pase los headers correctos
                         object : com.lagradost.cloudstream3.extractors.VidStack() {
-                            override var name = "PlayEmbedAPI"
+                            override var name = "SoTrym Player"
                             override var mainUrl = "https://playembedapi.site"
+                            // Forzamos a que use nuestros headers en cada petición interna
+                            override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+                                super.getUrl(url, "https://assistirseriesonline.icu/", subtitleCallback, callback)
+                            }
                         }.getUrl(cleanLink, "https://assistirseriesonline.icu/", subtitleCallback, callback)
                     }
 
