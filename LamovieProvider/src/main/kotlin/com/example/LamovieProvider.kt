@@ -25,21 +25,17 @@ class LamovieProvider : MainAPI() {
         if (url.isNullOrBlank()) return null
         val cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
 
-        val formattedUrl = when {
+        return when {
             cleanUrl.startsWith("http") -> cleanUrl
 
             cleanUrl.startsWith("/thumbs/") ||
                     cleanUrl.startsWith("/backdrops/") ||
-                    cleanUrl.startsWith("/logos/") ||
-                    cleanUrl.contains("wp-content") -> "${mainUrl.trimEnd('/')}/${cleanUrl.trimStart('/')}"
+                    cleanUrl.startsWith("/logos/") -> "$mainUrl$cleanUrl"
 
-            cleanUrl.startsWith("/") && cleanUrl.length > 20 -> "https://image.tmdb.org/t/p/original$cleanUrl"
+            cleanUrl.startsWith("/") -> "https://image.tmdb.org/t/p/original$cleanUrl"
 
-            else -> "${mainUrl.trimEnd('/')}/${cleanUrl.trimStart('/')}"
+            else -> "$mainUrl/$cleanUrl"
         }
-
-        Log.d("LaMovieImg", "URL Original: $url -> Generada: $formattedUrl")
-        return formattedUrl
     }
 
     override val mainPage = mainPageOf(
@@ -64,16 +60,11 @@ class LamovieProvider : MainAPI() {
     }
 
     private fun Post.toSearchResult(): SearchResponse {
-        val posterImg = fixImg(this.images?.poster ?: this.poster ?: this.images?.backdrop ?: this.backdrop)
+        val posterImg = fixImg(this.images?.poster ?: this.poster ?: this.backdrop)
+        val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
 
-        val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: "Sin título"
         val typeStr = type ?: "movies"
-
-        val tvType = when (typeStr) {
-            "movies" -> TvType.Movie
-            "animes" -> TvType.Anime
-            else -> TvType.TvSeries
-        }
+        val tvType = if (typeStr == "movies") TvType.Movie else if (typeStr == "animes") TvType.Anime else TvType.TvSeries
 
         val path = when (tvType) {
             TvType.Movie -> "peliculas"
@@ -210,6 +201,7 @@ class LamovieProvider : MainAPI() {
                 val relatedRes = app.get(relatedUrl, headers = headers).text
                 val relatedData = try { parseJson<ApiResponse>(relatedRes) } catch (e: Exception) { null }
 
+                // Aquí se usa toSearchResult() que ya debe tener la lógica de fixImg actualizada
                 val recs = relatedData?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
                 this.recommendations = recs
 
@@ -286,9 +278,11 @@ class LamovieProvider : MainAPI() {
         val episodes_count: Int? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class Images(
-        val poster: String? = null,
-        val backdrop: String? = null
+        val poster: String?,
+        val backdrop: String?,
+        val logo: String?
     )
 
     data class EpisodeListResponse(val data: EpisodeListData?)
