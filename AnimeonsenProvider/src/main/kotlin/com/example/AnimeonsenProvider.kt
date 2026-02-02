@@ -221,19 +221,22 @@ class AnimeonsenProvider : MainAPI() {
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
 
                     val subResponse = app.get(
-                        "$subUrl?token=$token&format=srt",
+                        "$subUrl?token=$token",
                         headers = mapOf(
                             "Referer" to "https://www.animeonsen.xyz/",
-                            "Origin" to "https://www.animeonsen.xyz",
                             "User-Agent" to userAgent
                         )
                     )
 
-                    if (subResponse.text.isNotEmpty() && !subResponse.text.contains("blocked")) {
-                        Log.d(TAG, "Logs: Subtítulo [$langName] descargado con éxito (${subResponse.text.take(20)}...)")
+                    if (subResponse.text.isNotEmpty() && subResponse.text.contains("Script Info")) {
+                        Log.d(TAG, "Logs: Procesando archivo ASS para $langName")
 
-                        val base64Sub = android.util.Base64.encodeToString(subResponse.text.toByteArray(), android.util.Base64.NO_WRAP)
-                        val dataUri = "data:text/plain;base64,$base64Sub"
+                        val base64Sub = android.util.Base64.encodeToString(
+                            subResponse.text.toByteArray(),
+                            android.util.Base64.NO_WRAP
+                        )
+
+                        val dataUri = "data:application/x-subtitle-ass;base64,$base64Sub"
 
                         subtitleCallback(newSubtitleFile(langName, dataUri))
                     } else {
