@@ -220,13 +220,10 @@ class AnimeonsenProvider : MainAPI() {
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
 
-                    val finalSubUrl = if (subUrl.contains("?")) {
-                        "$subUrl&token=$token"
-                    } else {
-                        "$subUrl?token=$token"
-                    }
+                    val finalSubUrl = if (subUrl.contains("?")) "$subUrl&token=$token" else "$subUrl?token=$token"
 
-                    Log.d(TAG, "Logs: Subtítulo cargado correctamente [$langName]")
+                    Log.d(TAG, "Logs: Enviando Subtítulo al reproductor: $langName | URL: $finalSubUrl")
+
                     subtitleCallback(newSubtitleFile(langName, finalSubUrl))
                 }
 
@@ -239,7 +236,7 @@ class AnimeonsenProvider : MainAPI() {
                     type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = mainUrl
-                    // Forzamos 1080p para mejor calidad
+                    this.headers = mapOf("Authorization" to "Bearer $token")
                     this.quality = Qualities.P1080.value
                 })
                 true
