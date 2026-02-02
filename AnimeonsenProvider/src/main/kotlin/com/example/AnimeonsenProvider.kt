@@ -124,8 +124,7 @@ class AnimeonsenProvider : MainAPI() {
         val details = AppUtils.parseJson<AnimeDetailsDto>(detailsRes)
         val displayTitle = details.content_title_en ?: details.content_title ?: "Anime"
 
-        // --- IMÁGENES NÍTIDAS UNIFICADAS ---
-        val highResImg = "$apiUrl/image/original/$contentId"
+        val posterImg = "$apiUrl/image/210x300/$contentId"
 
         val episodesList = try {
             val epResponse = app.get("$apiUrl/content/$contentId/episodes", headers = mapOf("Authorization" to "Bearer $token")).text
@@ -133,62 +132,48 @@ class AnimeonsenProvider : MainAPI() {
 
             epMap.map { (epKey, item) ->
                 newEpisode("$contentId/video/$epKey") {
-                    this.name = item.contentTitle_episode_en ?: item.contentTitle_episode_jp ?: "Episodio $epKey"
+                    this.name = item.contentTitle_episode_en ?: item.contentTitle_episode_jp ?: "Episode $epKey"
                     this.episode = epKey.toIntOrNull()
-                    // Usamos el mismo poster nítido para episodios
-                    this.posterUrl = highResImg
+                    this.posterUrl = posterImg
                 }
             }.sortedBy { it.episode }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error: Falló carga de episodios")
+            Log.e(TAG, "Logs Error: Falló carga de episodios: ${e.message}")
             emptyList()
         }
 
-        val specialRecs = mutableListOf<SearchResponse>()
-
-        // Lógica de Temporadas
-        details.previous_season?.takeIf { it.isNotBlank() && it != "null" }?.let { prevId ->
-            specialRecs.add(newAnimeSearchResponse("⏪ Temporada Anterior", "$apiUrl/content/$prevId", TvType.Anime) {
-                this.posterUrl = "$apiUrl/image/original/$prevId"
-            })
-        }
-
-        details.next_season?.takeIf { it.isNotBlank() && it != "null" }?.let { nextId ->
-            specialRecs.add(newAnimeSearchResponse("⏩ Temporada Siguiente", "$apiUrl/content/$nextId", TvType.Anime) {
-                this.posterUrl = "$apiUrl/image/original/$nextId"
-            })
-        }
-
-        // Relacionados
-        try {
+        val recommendedAnimes = try {
             val recJson = app.get("$apiUrl/content/$contentId/related", headers = mapOf("Authorization" to "Bearer $token")).text
             val recData = AppUtils.parseJson<List<AnimeListItem>>(recJson)
-            recData.forEach { item ->
-                specialRecs.add(newAnimeSearchResponse(item.content_title_en ?: item.content_title ?: "", "$apiUrl/content/${item.content_id}", TvType.Anime) {
-                    this.posterUrl = "$apiUrl/image/original/${item.content_id}"
-                })
-            }
-        } catch (e: Exception) { Log.e(TAG, "Logs: Error en recomendados") }
+            recData.map { it.toSearchResponse() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error en recomendados")
+            emptyList()
+        }
 
         return newAnimeLoadResponse(displayTitle, url, TvType.Anime) {
-            this.posterUrl = highResImg
-            this.backgroundPosterUrl = highResImg
+            this.posterUrl = posterImg
             this.plot = details.mal_data?.synopsis
+
             this.score = Score.from10(details.mal_data?.mean_score)
 
-            // Tags (Clasificación + Géneros)
-            val infoTags = mutableListOf<String>()
-            details.mal_data?.rating?.let { infoTags.add(it.uppercase()) }
-            details.mal_data?.genres?.forEach { genre -> infoTags.add(genre.name) }
-            this.tags = infoTags
+            val tagsList = mutableListOf<String>()
+            details.mal_data?.rating?.let { tagsList.add(it.uppercase()) }
+            details.mal_data?.genres?.forEach { genre -> tagsList.add(genre.name) }
+            this.tags = tagsList
 
             this.year = details.content_year
-            this.showStatus = if (details.mal_data?.status == "finished_airing") ShowStatus.Completed else ShowStatus.Ongoing
 
-            this.recommendations = specialRecs
+            this.showStatus = when (details.mal_data?.status) {
+                "finished_airing" -> ShowStatus.Completed
+                "currently_airing" -> ShowStatus.Ongoing
+                else -> null
+            }
+
+            this.recommendations = recommendedAnimes
             addEpisodes(DubStatus.Subbed, episodesList)
 
-            Log.d(TAG, "Logs: Load completo para $displayTitle")
+            Log.d(TAG, "Logs: Load finalizado para $displayTitle. Score: ${details.mal_data?.mean_score}")
         }
     }
 
@@ -216,10 +201,8 @@ class AnimeonsenProvider : MainAPI() {
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
-                // Procesar subtítulos
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
-                    // Agregamos el token a los subtítulos si el API lo requiere
                     val finalSubUrl = "$subUrl?format=ass&token=$token#.ass"
                     subtitleCallback(newSubtitleFile(langName, finalSubUrl))
                 }
@@ -233,7 +216,7 @@ class AnimeonsenProvider : MainAPI() {
                     type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = mainUrl
-                    this.quality = Qualities.P1080.value // Intentamos forzar 1080p si está disponible
+                    this.quality = Qualities.P1080.value
                 })
                 true
             } else false
