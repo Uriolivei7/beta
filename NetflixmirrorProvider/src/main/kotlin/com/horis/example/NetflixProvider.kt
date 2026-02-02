@@ -216,8 +216,14 @@ class NetflixProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val (title, id) = parseJson<LoadData>(data)
-        Log.i(TAG, "loadLinks: Buscando enlaces para $title (ID: $id)")
+        val (title, id) = try {
+            parseJson<LoadData>(data)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parseando LoadData: ${e.message}")
+            return false
+        }
+
+        Log.i(TAG, "Iniciando loadLinks para: $title (ID: $id)")
 
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -225,43 +231,67 @@ class NetflixProvider : MainAPI() {
             "hd" to "on"
         )
 
+        val playlistUrl = "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
+        Log.d(TAG, "Solicitando playlist a: $playlistUrl")
+
         val res = app.get(
-            "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
+            playlistUrl,
             headers = headers,
             referer = "$newUrl/home",
             cookies = cookies
         )
 
-        val playlist = res.parsed<PlayList>()
+        Log.d(TAG, "Respuesta de playlist (primeros 100 caracteres): ${res.text.take(100)}")
+
+        val playlist = try {
+            res.parsed<PlayList>()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al parsear el JSON de la playlist: ${e.message}")
+            return false
+        }
 
         playlist.forEach { item ->
-            item.sources.forEach {
-                val qualityLabel = it.label ?: "HLS"
-                val linkName = "${this.name} $qualityLabel"
+            item.sources.forEach { source ->
+                val rawFile = source.file ?: ""
+                val finalUrl = if (rawFile.startsWith("http")) {
+                    rawFile
+                } else {
+                    "$newUrl${rawFile.replace("/tv/", "/")}"
+                }
 
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        linkName,
-                        """$newUrl${it.file?.replace("/tv/", "/") ?: ""}""",
+                Log.d(TAG, "Procesando source: ${source.label} | URL Base: $finalUrl")
+
+                try {
+                    val link = newExtractorLink(
+                        source = this.name,
+                        name = "${this.name} ${source.label ?: "HLS"}",
+                        url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$newUrl/"
+                        this.quality = getQualityFromName(source.label ?: "")
                         this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Android) ExoPlayer",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Accept" to "*/*",
                             "Cookie" to "hd=on"
                         )
-                        this.quality = getQualityFromName(it.file?.substringAfter("q=", "")?.substringBefore("&") ?: "")
                     }
-                )
-                Log.d(TAG, "Link añadido: $linkName")
+
+                    callback.invoke(link)
+                    Log.i(TAG, "Enlace enviado exitosamente: ${link.name}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error crítico al crear el link para ${source.label}: ${e.message}")
+                    Log.e(TAG, "Trace: ", e)
+                }
             }
 
             item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
+                val subUrl = httpsify(track.file.toString())
+                Log.d(TAG, "Subtítulo encontrado: ${track.label} -> $subUrl")
                 subtitleCallback.invoke(
                     newSubtitleFile(
                         track.label.toString(),
-                        httpsify(track.file.toString()),
+                        subUrl
                     ) {
                         this.headers = mapOf("Referer" to "$newUrl/")
                     }
