@@ -166,32 +166,39 @@ class UltracineProvider : MainAPI() {
         finalLinks.forEach { link ->
             Log.i("ULTRACINE", "Procesando servidor: $link")
             try {
+                // Limpieza de URL: Algunos links vienen con backslashes del JSON de Gleam
+                val cleanLink = link.replace("\\/", "/")
+
                 when {
-                    link.contains("embedplay.upns") -> {
-                        Log.d("ULTRACINE", "Usando EmbedPlayUpnsPro")
-                        EmbedPlayUpnsPro().getUrl(link, targetUrl, subtitleCallback, callback)
+                    cleanLink.contains("embedplay.upns") -> {
+                        EmbedPlayUpnsPro().getUrl(cleanLink, targetUrl, subtitleCallback, callback)
                     }
 
-                    link.contains("embedplay.upn.one") -> {
-                        Log.d("ULTRACINE", "Usando EmbedPlayUpnOne")
-                        EmbedPlayUpnOne().getUrl(link, targetUrl, subtitleCallback, callback)
+                    cleanLink.contains("embedplay.upn.one") -> {
+                        EmbedPlayUpnOne().getUrl(cleanLink, targetUrl, subtitleCallback, callback)
                     }
 
-                    link.contains("playembedapi.site") || link.contains("embedplay") -> {
-                        Log.d("ULTRACINE", "Dominio desconocido pero compatible con VidStack. Forzando...")
+                    // Caso específico para el error "Failed to decrypt"
+                    cleanLink.contains("playembedapi.site") -> {
+                        Log.d("ULTRACINE", "Usando extractor dedicado para playembedapi")
+                        // Intentamos cargarlo con VidStack pero asegurando el Referer
                         object : com.lagradost.cloudstream3.extractors.VidStack() {
-                            override var name = "EmbedPlay Generic"
-                            override var mainUrl = link
-                        }.getUrl(link, targetUrl, subtitleCallback, callback)
+                            override var name = "PlayEmbedAPI"
+                            override var mainUrl = "https://playembedapi.site"
+                        }.getUrl(cleanLink, "https://assistirseriesonline.icu/", subtitleCallback, callback)
                     }
 
                     else -> {
-                        Log.d("ULTRACINE", "Intentando con extractores genéricos del sistema")
-                        loadExtractor(link, targetUrl, subtitleCallback, callback)
+                        // Para otros como vidsrc, intentamos cargarlo normalmente
+                        loadExtractor(cleanLink, targetUrl, subtitleCallback, callback)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("ULTRACINE", "Error al procesar el link $link: ${e.message}")
+                Log.e("ULTRACINE", "Fallo crítico en $link: ${e.message}")
+                // Log de apoyo para ver si el error sigue siendo el mismo
+                if (e.message?.contains("decrypt") == true) {
+                    Log.w("ULTRACINE", "El servidor cambió las llaves de cifrado. Se requiere actualización del extractor VidStack.")
+                }
             }
         }
 
