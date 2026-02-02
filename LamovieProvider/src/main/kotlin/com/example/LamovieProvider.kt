@@ -136,11 +136,21 @@ class LamovieProvider : MainAPI() {
                     epData?.data?.posts?.forEach { epItem ->
                         val rawId = epItem.id.toString()
                         val cleanId = Regex("""\d+""").find(rawId)?.value ?: rawId
+                        val epNum = epItem.episode_number
 
                         episodesList.add(newEpisode(cleanId) {
-                            this.name = epItem.title ?: "Episodio ${epItem.episode_number}"
+                            val apiTitle = epItem.title ?: ""
+
+                            this.name = if (apiTitle.contains(Regex("Temporada|Episodio", RegexOption.IGNORE_CASE))) {
+                                "Episodio $epNum"
+                            } else if (apiTitle.isNullOrBlank()) {
+                                "Episodio $epNum"
+                            } else {
+                                apiTitle
+                            }
+
                             this.season = sNum
-                            this.episode = epItem.episode_number
+                            this.episode = epNum
                             this.posterUrl = fixImg(epItem.still_path) ?: bigImg ?: posterImg
                             this.description = epItem.overview
                             this.runTime = epItem.runtime?.toDoubleOrNull()?.toInt()
