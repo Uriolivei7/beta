@@ -115,7 +115,7 @@ class UltracineProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         if (data.isBlank()) {
-            Log.d("ULTRACINE", "Error: data está vacío.")
+            Log.e("ULTRACINE", "Error: data está vacío.")
             return false
         }
 
@@ -123,71 +123,79 @@ class UltracineProvider : MainAPI() {
 
         val targetUrl = when {
             data.matches(Regex("\\d+")) -> {
-                val url = "https://assistirseriesonline.icu/episodio/$data"
-                Log.d("ULTRACINE", "Data es numérico (ID de episodio). Generando URL: $url")
-                url
+                "https://assistirseriesonline.icu/episodio/$data"
             }
-
             data.contains("ultracine.org") && data.split("/").last().matches(Regex("\\d+")) -> {
-                val url = "https://assistirseriesonline.icu/episodio/${data.split("/").last()}"
-                Log.d("ULTRACINE", "Data es link de ultracine con ID. Redirigiendo a: $url")
-                url
+                "https://assistirseriesonline.icu/episodio/${data.split("/").last()}"
             }
-
             data.contains("ultracine.org") -> {
-                Log.d("ULTRACINE", "Data es link de película. Buscando iframe en: $data")
                 val doc = app.get(data).document
-                val iframe = doc.selectFirst("iframe[src*='assistirseriesonline.icu']")?.attr("src")
-                Log.d("ULTRACINE", "Iframe encontrado: $iframe")
-                iframe ?: data
+                doc.selectFirst("iframe[src*='assistirseriesonline.icu']")?.attr("src") ?: data
             }
-
-            else -> {
-                Log.d("ULTRACINE", "Usando data original como target: $data")
-                data
-            }
+            else -> data
         }
+
+        Log.d("ULTRACINE", "URL de extracción final: $targetUrl")
 
         val response = app.get(targetUrl)
-        if (response.code != 200) {
-            Log.e("ULTRACINE", "Error de conexión: Código ${response.code} en $targetUrl")
-            return false
-        }
-
         val document = response.document
-        val links = extractEmbedLinks(document)
 
-        Log.d("ULTRACINE", "Se extrajeron ${links.size} enlaces de servidores.")
+        val links = mutableListOf<String>()
 
-        if (links.isEmpty()) {
-            Log.w("ULTRACINE", "No se encontraron enlaces. HTML de la página: ${document.html().take(300)}...")
+        val buttons = document.select("button[data-source]").mapNotNull { it.attr("data-source") }
+        links.addAll(buttons)
+
+        val iframes = document.select("div#player iframe, div.play-overlay iframe").mapNotNull { it.attr("src") }
+        links.addAll(iframes)
+
+        document.select("script").forEach { script ->
+            val scriptData = script.data()
+            if (scriptData.contains("gleam.config")) {
+                Log.d("ULTRACINE", "Detectado script de configuración Gleam, buscando URLs...")
+                val regex = Regex("""https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(/[^"']*)?""")
+                val found = regex.findAll(scriptData).map { it.value }.filter {
+                    it.contains("embed") || it.contains("player") || it.contains("v=")
+                }
+                links.addAll(found)
+            }
         }
 
-        links.forEach { link ->
-            Log.i("ULTRACINE_DEBUG", "Procesando servidor: $link")
+        val finalLinks = links.distinct().filter { it.isNotBlank() }
+        Log.d("ULTRACINE", "Total de enlaces únicos encontrados: ${finalLinks.size}")
+
+        finalLinks.forEach { link ->
+            Log.i("ULTRACINE", "Procesando servidor: $link")
             try {
                 when {
                     link.contains("embedplay.upns") -> {
-                        Log.d("ULTRACINE", "Ejecutando extractor EmbedPlayUpnsPro")
+                        Log.d("ULTRACINE", "Usando EmbedPlayUpnsPro")
                         EmbedPlayUpnsPro().getUrl(link, targetUrl, subtitleCallback, callback)
                     }
 
                     link.contains("embedplay.upn.one") -> {
-                        Log.d("ULTRACINE", "Ejecutando extractor EmbedPlayUpnOne")
+                        Log.d("ULTRACINE", "Usando EmbedPlayUpnOne")
                         EmbedPlayUpnOne().getUrl(link, targetUrl, subtitleCallback, callback)
                     }
 
+                    link.contains("playembedapi.site") || link.contains("embedplay") -> {
+                        Log.d("ULTRACINE", "Dominio desconocido pero compatible con VidStack. Forzando...")
+                        object : com.lagradost.cloudstream3.extractors.VidStack() {
+                            override var name = "EmbedPlay Generic"
+                            override var mainUrl = link
+                        }.getUrl(link, targetUrl, subtitleCallback, callback)
+                    }
+
                     else -> {
-                        Log.d("ULTRACINE", "Ejecutando loadExtractor genérico")
+                        Log.d("ULTRACINE", "Intentando con extractores genéricos del sistema")
                         loadExtractor(link, targetUrl, subtitleCallback, callback)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("ULTRACINE", "Fallo al extraer link $link: ${e.message}")
+                Log.e("ULTRACINE", "Error al procesar el link $link: ${e.message}")
             }
         }
 
-        return links.isNotEmpty()
+        return finalLinks.isNotEmpty()
     }
 
     private fun parseEpisodes(doc: Document): List<Episode> {
