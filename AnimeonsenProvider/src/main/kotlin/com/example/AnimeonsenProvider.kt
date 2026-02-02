@@ -99,14 +99,16 @@ class AnimeonsenProvider : MainAPI() {
             if (response.code == 404) return emptyList()
             val res = AppUtils.parseJson<SearchResponseDto>(response.text)
             res.result?.map { it.toSearchResponse() } ?: emptyList()
-        } catch (e: Exception) { emptyList() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Logs Error Search: ${e.message}")
+            emptyList()
+        }
     }
 
     private fun AnimeListItem.toSearchResponse(): SearchResponse {
         val title = this.content_title_en ?: this.content_title ?: "Unknown"
         return newAnimeSearchResponse(title, this.content_id) {
-            // Para búsqueda usamos original para que se vea nítido
-            this.posterUrl = "https://api.animeonsen.xyz/v4/image/original/${this@toSearchResponse.content_id}"
+            this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/${this@toSearchResponse.content_id}"
         }
     }
 
@@ -142,19 +144,33 @@ class AnimeonsenProvider : MainAPI() {
             emptyList()
         }
 
-        val recommendedAnimes = try {
+        val combinedRecs = mutableListOf<SearchResponse>()
+
+        details.previous_season?.takeIf { it.isNotBlank() && it != "null" }?.let { prevId ->
+            combinedRecs.add(newAnimeSearchResponse("⏪ Temporada Anterior", prevId, TvType.Anime) {
+                this.posterUrl = "$apiUrl/image/210x300/$prevId"
+            })
+        }
+
+        details.next_season?.takeIf { it.isNotBlank() && it != "null" }?.let { nextId ->
+            combinedRecs.add(newAnimeSearchResponse("⏩ Temporada Siguiente", nextId, TvType.Anime) {
+                this.posterUrl = "$apiUrl/image/210x300/$nextId"
+            })
+        }
+
+        try {
             val recJson = app.get("$apiUrl/content/$contentId/related", headers = mapOf("Authorization" to "Bearer $token")).text
             val recData = AppUtils.parseJson<List<AnimeListItem>>(recJson)
-            recData.map { it.toSearchResponse() }
+            recData.forEach { item ->
+                combinedRecs.add(item.toSearchResponse())
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en recomendados")
-            emptyList()
         }
 
         return newAnimeLoadResponse(displayTitle, url, TvType.Anime) {
             this.posterUrl = posterImg
             this.plot = details.mal_data?.synopsis
-
             this.score = Score.from10(details.mal_data?.mean_score)
 
             val tagsList = mutableListOf<String>()
@@ -170,10 +186,10 @@ class AnimeonsenProvider : MainAPI() {
                 else -> null
             }
 
-            this.recommendations = recommendedAnimes
+            this.recommendations = combinedRecs
             addEpisodes(DubStatus.Subbed, episodesList)
 
-            Log.d(TAG, "Logs: Load finalizado para $displayTitle. Score: ${details.mal_data?.mean_score}")
+            Log.d(TAG, "Logs: Load completo para $displayTitle. Score: ${details.mal_data?.mean_score}")
         }
     }
 
