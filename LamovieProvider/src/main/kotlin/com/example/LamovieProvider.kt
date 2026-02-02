@@ -23,19 +23,14 @@ class LamovieProvider : MainAPI() {
 
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        val cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
+        val cleanUrl = url.trim()
 
         return when {
-            cleanUrl.startsWith("http") -> {
-                if (cleanUrl.contains("tmdb.org")) cleanUrl.replace(Regex("/t/p/w\\d+/"), "/t/p/original/")
-                else cleanUrl
+            cleanUrl.startsWith("http") -> cleanUrl
+            cleanUrl.startsWith("/thumbs/") || cleanUrl.startsWith("/backdrops/") || cleanUrl.startsWith("/logos/") -> {
+                "$mainUrl$cleanUrl"
             }
-            cleanUrl.startsWith("/") && (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".png")) && !cleanUrl.contains("backdrops") -> {
-                "https://image.tmdb.org/t/p/original$cleanUrl"
-            }
-            cleanUrl.startsWith("/") -> {
-                "$mainUrl/wp-content/uploads${cleanUrl}"
-            }
+            cleanUrl.startsWith("/") -> "https://image.tmdb.org/t/p/original$cleanUrl"
             else -> "$mainUrl/$cleanUrl"
         }
     }
@@ -62,11 +57,15 @@ class LamovieProvider : MainAPI() {
     }
 
     private fun Post.toSearchResult(): SearchResponse {
-        val poster = fixImg(images?.poster ?: this.poster)
+        val posterImg = fixImg(this.images?.poster ?: this.poster)
         val cleanTitle = title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
 
         val typeStr = type ?: "movies"
-        val tvType = if (typeStr == "movies") TvType.Movie else if (typeStr == "animes") TvType.Anime else TvType.TvSeries
+        val tvType = when (typeStr) {
+            "movies" -> TvType.Movie
+            "animes" -> TvType.Anime
+            else -> TvType.TvSeries
+        }
 
         val path = when (tvType) {
             TvType.Movie -> "peliculas"
@@ -74,10 +73,16 @@ class LamovieProvider : MainAPI() {
             else -> "series"
         }
 
+        val url = "$mainUrl/$path/$slug"
+
         return if (tvType == TvType.Movie) {
-            newMovieSearchResponse(cleanTitle, "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
+            newMovieSearchResponse(cleanTitle, url, tvType) {
+                this.posterUrl = posterImg
+            }
         } else {
-            newTvSeriesSearchResponse(cleanTitle, "$mainUrl/$path/$slug", tvType) { this.posterUrl = poster }
+            newTvSeriesSearchResponse(cleanTitle, url, tvType) {
+                this.posterUrl = posterImg
+            }
         }
     }
 
@@ -112,7 +117,7 @@ class LamovieProvider : MainAPI() {
         val cleanTitle = postData.title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
         val realYear = postData.release_date?.split("-")?.firstOrNull()?.toIntOrNull()
 
-        val scoreValue = postData.imdb_rating?.times(100)?.toInt()
+        val ratingStr = postData.imdb_rating?.toString()
         val trailerUrl = postData.trailer?.let { "https://www.youtube.com/watch?v=$it" }
 
         val response = if (type == "movies") {
@@ -121,7 +126,7 @@ class LamovieProvider : MainAPI() {
                 this.backgroundPosterUrl = backdropImg
                 this.plot = postData.overview
                 this.year = realYear
-                this.score = Score.from10(postData.imdb_rating?.toString())
+                this.score = Score.from10(ratingStr)
                 this.addTrailer(trailerUrl)
 
                 val tagsList = mutableListOf<String>()
@@ -173,7 +178,7 @@ class LamovieProvider : MainAPI() {
                 this.backgroundPosterUrl = backdropImg
                 this.plot = postData.overview
                 this.year = realYear
-                this.score = Score.from10(postData.imdb_rating?.toString())
+                this.score = Score.from10(ratingStr)
                 this.addTrailer(trailerUrl)
 
                 val infoTags = mutableListOf<String>()
@@ -209,7 +214,6 @@ class LamovieProvider : MainAPI() {
             Log.d(TAG, "Logs: Load Finalizado con éxito para: $cleanTitle")
         }
     }
-
 
     override suspend fun loadLinks(
         data: String,
@@ -258,25 +262,20 @@ class LamovieProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class Post(
         @JsonProperty("_id") val id: Int?,
-        val title: String?,
-        val slug: String?,
-        val type: String?,
-        val overview: String?,
-        val images: Images?,
-        val poster: String?,
-        val backdrop: String?,
-        val gallery: String?,
-        val rating: String?,
-        val runtime: String?,
-        val release_date: String?,
-        val certification: String?,
-        val trailer: String?,
-        val imdb_rating: Double?,
-        val original_title: String?,
-        val genres: List<Int>?,
-        val lang: List<Int>?,
-        val quality: List<Int>?,
-        val recommendations: List<Post>? = null
+        val title: String? = null,
+        val slug: String? = null,
+        val type: String? = null,
+        val overview: String? = null,
+        val images: Images? = null,
+        val poster: String? = null,
+        val backdrop: String? = null,
+        val rating: String? = null,
+        val release_date: String? = null,
+        val certification: String? = null,
+        val trailer: String? = null,
+        val imdb_rating: Any? = null, 
+        val original_title: String? = null,
+        val episodes_count: Int? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
