@@ -166,10 +166,17 @@ class UltracineProvider : MainAPI() {
         finalLinks.forEach { link ->
             Log.i("ULTRACINE", "Procesando servidor: $link")
             try {
-                // Limpieza de URL: Algunos links vienen con backslashes del JSON de Gleam
                 val cleanLink = link.replace("\\/", "/")
 
                 when {
+                    // 1. PRIORIDAD: VidSrc (Suele ser el más estable)
+                    cleanLink.contains("vidsrc-embed.ru") || cleanLink.contains("vidsrc") -> {
+                        Log.d("ULTRACINE", "Usando extractor dedicado para VidSrc")
+                        // Importante: VidSrc requiere su propio dominio como referer
+                        loadExtractor(cleanLink, "https://vidsrc-embed.ru/", subtitleCallback, callback)
+                    }
+
+                    // 2. Servidores conocidos por tus extractores
                     cleanLink.contains("embedplay.upns") -> {
                         EmbedPlayUpnsPro().getUrl(cleanLink, targetUrl, subtitleCallback, callback)
                     }
@@ -178,38 +185,35 @@ class UltracineProvider : MainAPI() {
                         EmbedPlayUpnOne().getUrl(cleanLink, targetUrl, subtitleCallback, callback)
                     }
 
-                    cleanLink.contains("playembedapi.site") || cleanLink.contains("iamcdn.net") -> {
-                        Log.d("ULTRACINE", "Detectado sistema SoTrym/Abyss. Intentando bypass...")
+                    // 3. Sistema SoTrym (El del error de decrypt)
+                    cleanLink.contains("playembedapi.site") || cleanLink.contains("iamcdn") -> {
+                        Log.d("ULTRACINE", "Intentando SoTrym con Referer estricto...")
 
-                        // Este servidor es extremadamente sensible al User-Agent y al Referer
-                        val headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                            "Referer" to "https://assistirseriesonline.icu/",
-                            "Origin" to "https://assistirseriesonline.icu",
-                            "X-Requested-With" to "XMLHttpRequest"
-                        )
-
-                        // Intentamos extraer usando una clase VidStack personalizada que pase los headers correctos
-                        object : com.lagradost.cloudstream3.extractors.VidStack() {
-                            override var name = "SoTrym Player"
+                        val soTrymExtractor = object : com.lagradost.cloudstream3.extractors.VidStack() {
+                            override var name = "SoTrym"
                             override var mainUrl = "https://playembedapi.site"
-                            // Forzamos a que use nuestros headers en cada petición interna
-                            override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-                                super.getUrl(url, "https://assistirseriesonline.icu/", subtitleCallback, callback)
-                            }
-                        }.getUrl(cleanLink, "https://assistirseriesonline.icu/", subtitleCallback, callback)
+                        }
+
+                        // Intentamos obtenerlo forzando el referer de la web de origen
+                        soTrymExtractor.getUrl(
+                            cleanLink,
+                            "https://assistirseriesonline.icu/",
+                            subtitleCallback,
+                            callback
+                        )
                     }
 
                     else -> {
-                        // Para otros como vidsrc, intentamos cargarlo normalmente
+                        Log.d("ULTRACINE", "Probando loadExtractor genérico para: $link")
                         loadExtractor(cleanLink, targetUrl, subtitleCallback, callback)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("ULTRACINE", "Fallo crítico en $link: ${e.message}")
-                // Log de apoyo para ver si el error sigue siendo el mismo
+                Log.e("ULTRACINE", "Error en link $link: ${e.message}")
+
+                // Si falla por descifrado, imprimimos un aviso especial pero seguimos con el siguiente
                 if (e.message?.contains("decrypt") == true) {
-                    Log.w("ULTRACINE", "El servidor cambió las llaves de cifrado. Se requiere actualización del extractor VidStack.")
+                    Log.w("ULTRACINE", "Saltando servidor por cifrado incompatible. Intentando siguiente...")
                 }
             }
         }
