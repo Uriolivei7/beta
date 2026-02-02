@@ -147,13 +147,13 @@ class AnimeonsenProvider : MainAPI() {
         val combinedRecs = mutableListOf<SearchResponse>()
 
         details.previous_season?.takeIf { it.isNotBlank() && it != "null" }?.let { prevId ->
-            combinedRecs.add(newAnimeSearchResponse("⏪ Temporada Anterior", prevId, TvType.Anime) {
+            combinedRecs.add(newAnimeSearchResponse("⏪ Previous Season", prevId, TvType.Anime) {
                 this.posterUrl = "$apiUrl/image/210x300/$prevId"
             })
         }
 
         details.next_season?.takeIf { it.isNotBlank() && it != "null" }?.let { nextId ->
-            combinedRecs.add(newAnimeSearchResponse("⏩ Temporada Siguiente", nextId, TvType.Anime) {
+            combinedRecs.add(newAnimeSearchResponse("⏩ Next Season", nextId, TvType.Anime) {
                 this.posterUrl = "$apiUrl/image/210x300/$nextId"
             })
         }
@@ -215,54 +215,42 @@ class AnimeonsenProvider : MainAPI() {
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
+                Log.d(TAG, "Logs: Procesando ${res.uri.subtitles.size} subtítulos")
+
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
-                    try {
-                        val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
+                    val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
 
-                        val subResponse = app.get(
-                            "$subUrl?token=$token&format=ass",
-                            headers = mapOf("Referer" to mainUrl, "User-Agent" to userAgent)
-                        ).text
+                    val finalSubUrl = if (subUrl.contains("?")) "$subUrl&format=ass" else "$subUrl?format=ass"
 
-                        val cleanSub = subResponse.trim().removePrefix("\uFEFF")
-
-                        if (cleanSub.contains("Script Info") || cleanSub.isNotBlank()) {
-                            val base64Sub = android.util.Base64.encodeToString(
-                                cleanSub.toByteArray(),
-                                android.util.Base64.NO_WRAP
+                    subtitleCallback.invoke(
+                        newSubtitleFile(langName, finalSubUrl) {
+                            this.headers = mapOf(
+                                "Authorization" to "Bearer $token",
+                                "Referer" to mainUrl,
+                                "User-Agent" to userAgent
                             )
-
-                            val dataUri = "data:application/x-subtitle-ass;base64,$base64Sub#.ass"
-
-                            subtitleCallback.invoke(
-                                newSubtitleFile(
-                                    lang = langName,
-                                    url = dataUri
-                                )
-                            )
-                            Log.d(TAG, "Logs: Subtítulo [$langName] inyectado")
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Logs: Falló sub $langPrefix: ${e.message}")
-                    }
+                    )
                 }
 
                 val isDash = videoUrl.contains(".mpd")
 
-                callback(newExtractorLink(
-                    source = this.name,
-                    name = this.name,
-                    url = videoUrl,
-                    type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = mainUrl 
-                    this.headers = mapOf(
-                        "Authorization" to "Bearer $token",
-                        "User-Agent" to userAgent,
-                        "Referer" to mainUrl
-                    )
-                    this.quality = Qualities.P720.value
-                })
+                callback(
+                    newExtractorLink(
+                        source = this.name,
+                        name = this.name,
+                        url = videoUrl,
+                        type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
+                    ) {
+                        this.quality = Qualities.P720.value
+                        this.referer = mainUrl
+                        this.headers = mapOf(
+                            "Authorization" to "Bearer $token",
+                            "User-Agent" to userAgent,
+                            "Referer" to mainUrl
+                        )
+                    }
+                )
                 true
             } else false
         } catch (e: Exception) {
