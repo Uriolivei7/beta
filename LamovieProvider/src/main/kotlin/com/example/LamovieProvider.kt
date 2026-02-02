@@ -96,8 +96,12 @@ class LamovieProvider : MainAPI() {
         val postData = responseObj?.data ?: return null
         val id = postData.id ?: return null
 
+        val galleryImgs = postData.gallery?.split("\n")?.filter { it.isNotBlank() }
         val posterImg = fixImg(postData.images?.poster ?: postData.poster)
-        val backdropImg = fixImg(postData.images?.backdrop ?: postData.backdrop)
+        val bigImg = fixImg(
+            galleryImgs?.firstOrNull()?.trim() ?: postData.images?.backdrop ?: postData.backdrop
+        )
+
         val cleanTitle = postData.title?.replace(Regex("\\(\\d{4}\\)$"), "")?.trim() ?: ""
         val realYear = postData.release_date?.split("-")?.firstOrNull()?.toIntOrNull()
         val trailerUrl = postData.trailer?.let { "https://www.youtube.com/watch?v=$it" }
@@ -105,7 +109,7 @@ class LamovieProvider : MainAPI() {
         val response = if (type == "movies") {
             newMovieLoadResponse(cleanTitle, url, TvType.Movie, id.toString()) {
                 this.posterUrl = posterImg
-                this.backgroundPosterUrl = backdropImg
+                this.backgroundPosterUrl = bigImg
                 this.plot = postData.overview
                 this.year = realYear
                 this.score = Score.from10(postData.imdb_rating)
@@ -131,7 +135,7 @@ class LamovieProvider : MainAPI() {
                             this.name = "Episodio ${epItem.episode_number}"
                             this.season = sNum
                             this.episode = epItem.episode_number
-                            this.posterUrl = backdropImg ?: posterImg
+                            this.posterUrl = bigImg ?: posterImg
                         })
                     }
                 }
@@ -139,7 +143,7 @@ class LamovieProvider : MainAPI() {
 
             newTvSeriesLoadResponse(cleanTitle, url, if (type == "animes") TvType.Anime else TvType.TvSeries, episodesList) {
                 this.posterUrl = posterImg
-                this.backgroundPosterUrl = backdropImg
+                this.backgroundPosterUrl = bigImg
                 this.plot = postData.overview
                 this.year = realYear
                 this.score = Score.from10(postData.imdb_rating)
@@ -202,7 +206,9 @@ class LamovieProvider : MainAPI() {
         val images: Images?,
         val poster: String?,
         val backdrop: String?,
+        val gallery: String?,
         val rating: String?,
+        val runtime: String?,
         val release_date: String?,
         val certification: String?,
         val trailer: String?,
