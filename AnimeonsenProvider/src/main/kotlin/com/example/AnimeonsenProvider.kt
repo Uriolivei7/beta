@@ -215,39 +215,38 @@ class AnimeonsenProvider : MainAPI() {
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
-                // --- PROCESAMIENTO DE SUBTÍTULOS ---
                 res.uri.subtitles.forEach { (langPrefix, subUrl) ->
                     try {
                         val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
 
-                        // Descargamos el contenido del subtítulo manualmente
                         val subResponse = app.get(
                             "$subUrl?token=$token&format=ass",
-                            headers = mapOf(
-                                "Referer" to mainUrl,
-                                "User-Agent" to userAgent
-                            )
+                            headers = mapOf("Referer" to mainUrl, "User-Agent" to userAgent)
                         ).text
 
-                        if (subResponse.isNotBlank() && subResponse.contains("Script Info")) {
-                            // Convertimos a Base64 para inyectarlo directamente
+                        val cleanSub = subResponse.trim().removePrefix("\uFEFF")
+
+                        if (cleanSub.contains("Script Info") || cleanSub.isNotBlank()) {
                             val base64Sub = android.util.Base64.encodeToString(
-                                subResponse.toByteArray(),
+                                cleanSub.toByteArray(),
                                 android.util.Base64.NO_WRAP
                             )
 
-                            // Usamos el MIME type application/x-subtitle-ass
-                            val dataUri = "data:application/x-subtitle-ass;base64,$base64Sub"
+                            val dataUri = "data:application/x-subtitle-ass;base64,$base64Sub#.ass"
 
-                            subtitleCallback(newSubtitleFile(langName, dataUri))
-                            Log.d(TAG, "Logs: Subtítulo [$langName] inyectado con éxito")
+                            subtitleCallback.invoke(
+                                newSubtitleFile(
+                                    lang = langName,
+                                    url = dataUri
+                                )
+                            )
+                            Log.d(TAG, "Logs: Subtítulo [$langName] inyectado")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Logs: Error descargando subtítulo $langPrefix: ${e.message}")
+                        Log.e(TAG, "Logs: Falló sub $langPrefix: ${e.message}")
                     }
                 }
 
-                // --- PROCESAMIENTO DE VIDEO ---
                 val isDash = videoUrl.contains(".mpd")
 
                 callback(newExtractorLink(
@@ -256,18 +255,18 @@ class AnimeonsenProvider : MainAPI() {
                     url = videoUrl,
                     type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = mainUrl
-                    // Agregamos headers al link de video por si acaso
+                    this.referer = mainUrl 
                     this.headers = mapOf(
                         "Authorization" to "Bearer $token",
-                        "User-Agent" to userAgent
+                        "User-Agent" to userAgent,
+                        "Referer" to mainUrl
                     )
                     this.quality = Qualities.P720.value
                 })
                 true
             } else false
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs Error Crítico loadLinks: ${e.message}")
             false
         }
     }
