@@ -268,130 +268,71 @@ class NetflixProvider : MainAPI() {
             return false
         }
 
-        Log.i(TAG, "Iniciando extracción para: $title (ID: $id)")
-
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "ott" to "nf",
-            "hd" to "on"
-        )
-
         val playlistUrl = "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.d(TAG, "URL de Playlist: $playlistUrl")
+        Log.d(TAG, "Solicitando Playlist: $playlistUrl")
 
         val res = try {
-            app.get(playlistUrl, headers = headers, referer = "$newUrl/home", cookies = cookies, timeout = 15)
+            app.get(
+                playlistUrl,
+                headers = headers,
+                referer = "$newUrl/home",
+                cookies = mapOf("t_hash_t" to cookie_value, "ott" to "nf", "hd" to "on"),
+                timeout = 15
+            )
         } catch (e: Exception) {
             Log.e(TAG, "ERROR DE RED: ${e.message}")
-            return false
-        }
-
-        Log.i(TAG, "Respuesta: HTTP ${res.code}")
-
-        if (res.code != 200 || res.text.isEmpty()) {
-            Log.e(TAG, "ERROR: Respuesta inválida")
             return false
         }
 
         val playlist = try {
             res.parsed<PlayList>()
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR DE PARSEO: ${e.message}")
+            Log.e(TAG, "ERROR DE PARSEO JSON: ${e.message}")
             return false
         }
 
-        Log.d(TAG, "Playlist: ${playlist.size} items")
-
         var linksFound = 0
-        val processedUrls = mutableSetOf<String>()
-
-        playlist.forEachIndexed { index, item ->
+        playlist.forEach { item ->
             item.sources.forEach { source ->
-                val rawFile = source.file ?: ""
-                if (rawFile.isBlank()) return@forEach
+                val rawFile = source.file ?: return@forEach
+                val finalUrl = if (rawFile.startsWith("http")) rawFile else "$newUrl${rawFile.replace("/tv/", "/")}"
 
-                val finalUrl = if (rawFile.startsWith("http")) {
-                    rawFile
-                } else {
-                    "$newUrl${rawFile.replace("/tv/", "/")}"
-                }
+                Log.d(TAG, "Evaluando Source: ${source.label} | URL: $finalUrl")
 
                 try {
-                    val m3u8Response = app.get(
-                        finalUrl,
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "$newUrl/"
-                        ),
-                        timeout = 15
-                    )
-
-                    if (!m3u8Response.text.startsWith("#EXTM3U")) {
-                        Log.w(TAG, "⚠️ No es M3U8 válido: ${source.label}")
-                        return@forEach
-                    }
-
-                    val lines = m3u8Response.text.lines()
-                    var i = 0
-                    while (i < lines.size) {
-                        val line = lines[i].trim()
-
-                        if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                            val resolution = Regex("RESOLUTION=(\\d+)x(\\d+)")
-                                .find(line)?.groupValues?.get(2)?.toIntOrNull()
-
-                            if (i + 1 < lines.size) {
-                                val streamUrl = lines[i + 1].trim()
-
-                                if (streamUrl.startsWith("http") && !processedUrls.contains(streamUrl)) {
-                                    processedUrls.add(streamUrl)
-
-                                    val quality = when {
-                                        resolution != null && resolution >= 1080 -> Qualities.P1080.value
-                                        resolution != null && resolution >= 720 -> Qualities.P720.value
-                                        resolution != null && resolution >= 480 -> Qualities.P480.value
-                                        else -> Qualities.Unknown.value
-                                    }
-
-                                    val link = newExtractorLink(
-                                        source = this.name,
-                                        name = "${this.name} ${resolution}p",
-                                        url = streamUrl,
-                                        type = ExtractorLinkType.M3U8
-                                    ) {
-                                        this.referer = "$newUrl/"
-                                        this.quality = quality
-                                        this.headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                            "Referer" to "$newUrl/",
-                                            "Origin" to "https://net51.cc",
-                                            "Accept" to "*/*"
-                                        )
-                                    }
-
-                                    callback.invoke(link)
-                                    linksFound++
-                                    Log.i(TAG, "✅ Stream [#$linksFound]: ${resolution}p")
-                                }
-                            }
+                    callback.invoke(
+                        newExtractorLink(
+                            source = this.name,
+                            name = "${this.name} ${source.label ?: "HLS"}",
+                            url = finalUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "$newUrl/"
+                            this.quality = getQualityFromName(source.label ?: "")
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to "$newUrl/",
+                                "Origin" to "https://net51.cc",
+                                "Accept" to "*/*"
+                            )
                         }
-                        i++
-                    }
-
+                    )
+                    linksFound++
+                    Log.i(TAG, "✅ Enlace enviado: ${source.label}")
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error procesando ${source.label}: ${e.message}")
+                    Log.e(TAG, "❌ Error al crear link: ${e.message}")
                 }
             }
 
+            // Subtítulos
             item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 val subUrl = httpsify(track.file.toString())
-                subtitleCallback.invoke(
-                    newSubtitleFile(track.label.toString(), subUrl)
-                )
+                Log.d(TAG, "Subtítulo: ${track.label} -> $subUrl")
+                subtitleCallback.invoke(newSubtitleFile(track.label.toString(), subUrl))
             }
         }
 
-        Log.i(TAG, "✅ Total links: $linksFound")
+        Log.i(TAG, "✅ Total links cargados: $linksFound")
         return linksFound > 0
     }
 
