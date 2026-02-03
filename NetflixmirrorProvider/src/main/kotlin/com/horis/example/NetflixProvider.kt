@@ -210,6 +210,35 @@ class NetflixProvider : MainAPI() {
         return episodes
     }
 
+    init {
+        val client = app.baseClient.newBuilder()
+            .addInterceptor(NetflixInterceptor())
+            .build()
+        app.baseClient = client
+    }
+
+    private class NetflixInterceptor : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val url = request.url.toString()
+
+            if (url.contains("net51.cc") || url.contains("net52.cc") ||
+                url.contains("nm-cdn6.top") || url.endsWith(".m3u8") || url.endsWith(".ts")) {
+
+                val newRequest = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("Referer", "https://net51.cc/")
+                    .header("Origin", "https://net51.cc")
+                    .header("Accept", "*/*")
+                    .build()
+
+                return chain.proceed(newRequest)
+            }
+
+            return chain.proceed(request)
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
