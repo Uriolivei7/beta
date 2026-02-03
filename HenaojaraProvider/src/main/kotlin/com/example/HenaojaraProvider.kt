@@ -65,19 +65,18 @@ class HenaojaraProvider : MainAPI() {
 
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
 
-        // Regex flexible para 3 o 4 valores (asegura que no se salte episodios y capture posters)
         val episodes = Regex("""\[\s*"(\d+)"\s*,\s*"(\d+)"\s*,\s*"(.*?)"(?:\s*,\s*"(.*?)")?\s*]""").findAll(scriptData).map { match ->
             val num = match.groupValues[1]
+            val id = match.groupValues[2] 
             val code = match.groupValues[3]
             val epThumb = match.groupValues.getOrNull(4)
 
             val finalPoster = if (!epThumb.isNullOrBlank() && epThumb != "null") fixUrlNull(epThumb) else mainPoster
 
-            // Generamos la URL. Añadimos un anclaje (#) con el slug para forzar a Cloudstream a ver URLs únicas
             val epUrl = if (code.isNotEmpty()) {
-                "$mainUrl/ver/$slug-$num-$code#$slug"
+                "$mainUrl/ver/$slug-$num-$code?id=$id"
             } else {
-                "$mainUrl/ver/$slug-$num#$slug"
+                "$mainUrl/ver/$slug-$num?id=$id"
             }
 
             newEpisode(epUrl) {
