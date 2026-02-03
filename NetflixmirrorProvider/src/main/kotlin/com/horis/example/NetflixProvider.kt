@@ -78,56 +78,90 @@ class NetflixProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.i(TAG, "Iniciando búsqueda: $query")
+
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        Log.d(TAG, "Cookie para búsqueda: $cookie_value")
+
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "hd" to "on",
             "ott" to "nf"
         )
-        val url = "$mainUrl/search.php?s=$query&t=${APIHolder.unixTime}"
-        val data = app.get(
-            url,
-            referer = "$mainUrl/tv/home",
-            cookies = cookies
-        ).parsed<SearchData>()
 
-        return data.searchResult.map {
-            newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
-                posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        val url = "$mainUrl/search.php?s=$query&t=${APIHolder.unixTime}"
+
+        return try {
+            val res = app.get(
+                url,
+                referer = "$mainUrl/tv/home",
+                cookies = cookies,
+                timeout = 15
+            )
+
+            Log.d(TAG, "Respuesta búsqueda recibida. Parseando...")
+            val data = res.parsed<SearchData>()
+
+            data.searchResult.map {
+                newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
+                    posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
+                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en search: ${e.message}")
+            emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val id = parseJson<Id>(url).id
+        Log.i(TAG, "Iniciando carga de detalles (load) para URL: $url")
+
+        val id = try {
+            parseJson<Id>(url).id
+        } catch (e: Exception) {
+            Log.e(TAG, "ERROR: No se pudo parsear el ID de la URL. ${e.message}")
+            return null
+        }
+
+        cookie_value = if(cookie_value.isEmpty()) {
+            Log.w(TAG, "Cookie vacía en load, ejecutando bypass...")
+            bypass(mainUrl)
+        } else cookie_value
+
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "nf",
             "hd" to "on"
         )
-        val data = app.get(
+
+        Log.d(TAG, "Solicitando post.php para ID: $id")
+        val res = app.get(
             "$mainUrl/post.php?id=$id&t=${APIHolder.unixTime}",
-            headers,
+            headers = headers + ("User-Agent" to "Mozilla/5.0"),
             referer = "$mainUrl/tv/home",
             cookies = cookies
-        ).parsed<PostData>()
+        )
+
+        val data = try {
+            res.parsed<PostData>()
+        } catch (e: Exception) {
+            Log.e(TAG, "ERROR: Falló el parseo de PostData para ID $id. ${e.message}")
+            Log.d(TAG, "Cuerpo recibido: ${res.text.take(200)}")
+            return null
+        }
 
         val episodes = arrayListOf<Episode>()
+        val title = data.title ?: "Sin Título"
+        Log.i(TAG, "Procesando contenido: $title")
 
-        val title = data.title
-        val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
-        val cast = castList.map {
-            ActorData(
-                Actor(it),
-            )
-        }
-        val genre = data.genre?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-        val rating = data.match?.replace("IMDb ", "")
+        val cast = data.cast?.split(",")?.mapNotNull {
+            it.trim().takeIf { name -> name.isNotEmpty() }?.let { name -> ActorData(Actor(name)) }
+        } ?: emptyList()
+
+        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
+
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
                 this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
@@ -135,41 +169,51 @@ class NetflixProvider : MainAPI() {
             }
         }
 
-        if (data.episodes.first() == null) {
-            episodes.add(newEpisode(LoadData(title, id)) {
-                name = data.title
-            })
-        } else {
-            data.episodes?.filterNotNull()?.forEach { it ->
-                episodes.add(newEpisode(LoadData(title ?: "", it.id ?: "")) {
-                    this.name = it.t
-                    this.episode = it.ep?.replace("E", "")?.toIntOrNull()
-                    this.season = it.s?.replace("S", "")?.toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
-                    this.runTime = it.time?.replace("m", "")?.toIntOrNull()
+        try {
+            if (data.episodes.isNullOrEmpty() || data.episodes.first() == null) {
+                Log.d(TAG, "Detectado como Película (Movie)")
+                episodes.add(newEpisode(LoadData(title, id)) {
+                    name = data.title
                 })
-            }
+            } else {
+                Log.d(TAG, "Detectado como Serie. Procesando temporada 1...")
+                data.episodes.filterNotNull().forEach { it ->
+                    episodes.add(newEpisode(LoadData(title, it.id ?: "")) {
+                        this.name = it.t
+                        this.episode = it.ep?.replace("E", "")?.toIntOrNull()
+                        this.season = it.s?.replace("S", "")?.toIntOrNull()
+                        this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
+                        this.runTime = it.time?.replace("m", "")?.toIntOrNull()
+                    })
+                }
 
-            if (data.nextPageShow == 1) {
-                episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
-            }
+                if (data.nextPageShow == 1 && data.nextPageSeason != null) {
+                    Log.d(TAG, "Cargando páginas adicionales de episodios...")
+                    episodes.addAll(getEpisodes(title, id, data.nextPageSeason, 2))
+                }
 
-            data.season?.dropLast(1)?.amap {
-                episodes.addAll(getEpisodes(title, url, it.id, 1))
+                data.season?.dropLast(1)?.amap {
+                    episodes.addAll(getEpisodes(title, id, it.id, 1))
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error procesando lista de episodios: ${e.message}")
         }
 
-        val type = if (data.episodes.first() == null) TvType.Movie else TvType.TvSeries
+        Log.i(TAG, "Carga finalizada. Total episodios: ${episodes.size}")
+
+        val type = if (episodes.size <= 1 && (data.episodes.isNullOrEmpty() || data.episodes.first() == null))
+            TvType.Movie else TvType.TvSeries
 
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
-            backgroundPosterUrl ="https://imgcdn.kim/poster/h/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            plot = data.desc
-            year = data.year.toIntOrNull()
-            tags = genre
-            actors = cast
-            this.score =  Score.from10(rating)
+            this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
+            this.backgroundPosterUrl ="https://imgcdn.kim/poster/h/$id.jpg"
+            this.posterHeaders = mapOf("Referer" to "$mainUrl/home")
+            this.plot = data.desc
+            this.year = data.year?.toIntOrNull()
+            this.tags = genre
+            this.actors = cast
+            this.score = Score.from10(data.match?.replace("IMDb ", ""))
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
