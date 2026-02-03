@@ -1,5 +1,5 @@
 package com.horis.example.entities
 
-data class Suggest(
-    val id: String
+data class Suggest (
+  var id : String
 )

@@ -1,9 +1,10 @@
 package com.horis.example.entities
 
 data class Episode(
+    val complate: String,
+    val ep: String,
     val id: String,
-    val t: String?,
-    val s: String?,
-    val ep: String?,
-    val time: String?
+    val s: String,
+    val t: String,
+    val time: String
 )
