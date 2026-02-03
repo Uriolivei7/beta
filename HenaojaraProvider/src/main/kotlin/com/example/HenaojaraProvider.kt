@@ -49,27 +49,46 @@ class HenaojaraProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
+        // LOG: Inicio de carga de URL
+        println("HenaoJaraLog: Cargando URL -> $url")
+
         var doc = app.get(url).document
         if (url.contains("/ver/")) {
             doc.selectFirst("li.ls a")?.attr("href")?.let {
-                doc = app.get(fixUrl(it)).document
+                val animeUrl = fixUrl(it)
+                println("HenaoJaraLog: Redirigiendo de episodio a página principal -> $animeUrl")
+                doc = app.get(animeUrl).document
             }
         }
 
         val title = doc.selectFirst("div.info-b h1")?.text() ?: return null
+
+        val mainPoster = fixUrlNull(
+            doc.selectFirst("div.info-a img")?.attr("data-src")
+                ?: doc.selectFirst("div.info-a img")?.attr("src")
+        )
+        println("HenaoJaraLog: Póster detectado -> $mainPoster")
+
         val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last()
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
+
+        if (scriptData.isEmpty()) {
+            println("HenaoJaraLog: ERROR - No se encontró el script de episodios (var eps)")
+        }
 
         val episodes = Regex("""\["(\d+)","(\d+)","(.*?)"]""").findAll(scriptData).map { match ->
             val (num, _, code) = match.destructured
             newEpisode(if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num") {
                 this.name = "Episodio $num"
                 this.episode = num.toIntOrNull()
+                this.posterUrl = mainPoster
             }
         }.toList().sortedByDescending { it.episode }
 
+        println("HenaoJaraLog: Total episodios encontrados -> ${episodes.size}")
+
         return newTvSeriesLoadResponse(title, doc.location(), TvType.Anime, episodes) {
-            this.posterUrl = fixUrlNull(doc.selectFirst("div.info-a img")?.attr("data-src") ?: doc.selectFirst("div.info-a img")?.attr("src"))
+            this.posterUrl = mainPoster
             this.plot = doc.selectFirst("div.tx p")?.text()
             this.tags = doc.select("ul.gn li a").map { it.text() }
         }

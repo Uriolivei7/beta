@@ -50,15 +50,25 @@ class LatanimeProvider : MainAPI() {
             .trim()
     }
 
+    private fun getTitleWithLanguage(rawTitle: String): String {
+        val clean = cleanTitle(rawTitle)
+        return when {
+            rawTitle.contains("Latino", true) -> "$clean (Latino)"
+            rawTitle.contains("Castellano", true) -> "$clean (Castellano)"
+            else -> clean
+        }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
         try {
             val mainDoc = app.get(mainUrl).document
             val carouselItems = mainDoc.select("div.carousel-item a[href*=/anime/], div.carousel-item a[href*=/pelicula/]").mapNotNull { element ->
                 val itemUrl = element.attr("href")
-                val title = element.selectFirst("span.span-slider")?.text()?.trim() ?: ""
-                if (itemUrl.isNotBlank() && title.isNotBlank()) {
-                    newAnimeSearchResponse(cleanTitle(title), fixUrl(itemUrl)) {
+                val rawTitle = element.selectFirst("span.span-slider")?.text()?.trim() ?: ""
+
+                if (itemUrl.isNotBlank() && rawTitle.isNotBlank()) {
+                    newAnimeSearchResponse(getTitleWithLanguage(rawTitle), fixUrl(itemUrl)) {
                         val posterElement = element.selectFirst("img.preview-image, img.d-block")
                         this.posterUrl = fixUrl(posterElement?.attr("data-src")?.ifBlank { posterElement.attr("src") } ?: "")
                     }
@@ -105,7 +115,7 @@ class LatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("LatanimeProvider", "Cargando: $url")
+        Log.d("LatanimeProvider", "HILO: Iniciando carga de -> $url")
         val document = app.get(url).document
         val rawTitle = document.selectFirst("div.col-lg-9 h2")?.text()?.trim() ?: ""
         val foundYear = Regex("""\((\d{4})\)""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
@@ -114,18 +124,24 @@ class LatanimeProvider : MainAPI() {
             .filter { !it.contains(Regex("(?i)Latino|Castellano|Subtitulado|Japonés|Japones|Audio")) }
             .toMutableList()
 
-        if (rawTitle.contains("Latino", true)) tags.add(0, "Latino")
-        else if (rawTitle.contains("Castellano", true)) tags.add(0, "Castellano")
-        else if (rawTitle.contains("Japonés", true) || rawTitle.contains("Japones", true)) {
-            tags.add(0, "Subtitulado")
-            tags.add(1, "Japonés")
-        } else tags.add(0, "Subtitulado")
+        when {
+            rawTitle.contains("Latino", true) -> {
+                tags.add(0, "Latino")
+                Log.d("LatanimeProvider", "LOG: Detectado Latino")
+            }
+            rawTitle.contains("Castellano", true) -> {
+                tags.add(0, "Castellano")
+                Log.d("LatanimeProvider", "LOG: Detectado Castellano")
+            }
+            else -> {
+                tags.add(0, "Subtitulado")
+                Log.d("LatanimeProvider", "LOG: Sin idioma específico, marcando como Subtitulado")
+            }
+        }
 
         val episodes = document.select("div[style*='max-height: 400px'] a[href*=episodio]").mapNotNull { element ->
             val epUrl = element.attr("href")
-
             val epNum = Regex("""episodio-(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
-
             val imgElement = element.selectFirst("img")
             val epPoster = fixUrl(imgElement?.attr("data-src")?.ifBlank { imgElement.attr("src") } ?: "")
 
@@ -138,9 +154,9 @@ class LatanimeProvider : MainAPI() {
             } else null
         }.reversed()
 
-        Log.d("LatanimeProvider", "Episodios cargados: ${episodes.size}")
+        Log.d("LatanimeProvider", "LOG: Lista de episodios generada: ${episodes.size} items")
 
-        return newTvSeriesLoadResponse(cleanTitle(rawTitle), url, TvType.Anime, episodes) {
+        return newTvSeriesLoadResponse(getTitleWithLanguage(rawTitle), url, TvType.Anime, episodes) {
             this.posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content")
             this.plot = document.selectFirst("p.my-2.opacity-75")?.text()?.trim()
             this.tags = tags
