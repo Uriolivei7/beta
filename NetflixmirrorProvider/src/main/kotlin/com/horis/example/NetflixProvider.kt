@@ -307,7 +307,7 @@ class NetflixProvider : MainAPI() {
             item.sources.forEach { source ->
                 val rawFile = source.file ?: ""
                 if (rawFile.isBlank()) {
-                    Log.w(TAG, "Source omitida: La URL está vacía para el label: ${source.label}")
+                    Log.w(TAG, "Source omitida: URL vacía")
                     return@forEach
                 }
 
@@ -317,7 +317,7 @@ class NetflixProvider : MainAPI() {
                     "$newUrl${rawFile.replace("/tv/", "/")}"
                 }
 
-                Log.d(TAG, "Analizando Source: ${source.label} | URL final: $finalUrl")
+                Log.d(TAG, "🔄 Procesando: ${source.label} -> $finalUrl")
 
                 try {
                     val m3u8Response = app.get(
@@ -327,45 +327,36 @@ class NetflixProvider : MainAPI() {
                             "Referer" to "$newUrl/",
                             "Origin" to newUrl
                         ),
-                        timeout = 10
+                        timeout = 15
                     )
 
-                    Log.d(TAG, "📄 M3U8 STATUS: ${m3u8Response.code}")
-
-                    Log.d(TAG, "📄 M3U8 CONTENT COMPLETO:")
-                    Log.d(TAG, m3u8Response.text)
-                    Log.d(TAG, "📄 FIN DEL M3U8")
-
                     if (!m3u8Response.text.startsWith("#EXTM3U")) {
-                        Log.e(TAG, "❌ NO ES UN M3U8 VÁLIDO!")
+                        Log.e(TAG, "❌ No es un M3U8 válido")
                         return@forEach
                     }
 
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ ERROR AL VERIFICAR M3U8: ${e.message}")
-                    return@forEach
-                }
+                    Log.d(TAG, "✅ M3U8 descargado correctamente")
 
-                try {
-                    val link = newExtractorLink(
+                    val links = M3u8Helper.generateM3u8(
                         source = this.name,
-                        name = "${this.name} ${source.label ?: "HLS"}",
-                        url = finalUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$newUrl/"
-                        this.quality = getQualityFromName(source.label ?: "")
-                        this.headers = mapOf(
+                        streamUrl = finalUrl,
+                        referer = "$newUrl/",
+                        headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "$newUrl/"
+                            "Referer" to "$newUrl/",
+                            "Origin" to newUrl
                         )
+                    )
+
+                    links.forEach { link ->
+                        callback.invoke(link)
+                        linksFound++
+                        Log.i(TAG, "✅ Link agregado [#$linksFound]: ${link.name} (${link.quality}p) -> ${link.url}")
                     }
 
-                    callback.invoke(link)
-                    linksFound++
-                    Log.i(TAG, "LINK AGREGADO EXITOSAMENTE [#$linksFound]: ${link.name} -> ${link.url}")
                 } catch (e: Exception) {
-                    Log.e(TAG, "FALLO AL CREAR LINK para ${source.label}: ${e.message}")
+                    Log.e(TAG, "❌ Error procesando ${source.label}: ${e.message}")
+                    e.printStackTrace()
                 }
             }
 
