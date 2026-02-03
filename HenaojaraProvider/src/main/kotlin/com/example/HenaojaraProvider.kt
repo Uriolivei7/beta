@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -49,43 +50,42 @@ class HenaojaraProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        // LOG: Inicio de carga de URL
-        println("HenaoJaraLog: Cargando URL -> $url")
+        Log.d("HenaoJara", "Iniciando load para: $url")
 
         var doc = app.get(url).document
         if (url.contains("/ver/")) {
             doc.selectFirst("li.ls a")?.attr("href")?.let {
                 val animeUrl = fixUrl(it)
-                println("HenaoJaraLog: Redirigiendo de episodio a página principal -> $animeUrl")
+                Log.i("HenaoJara", "Redirigiendo de episodio a serie: $animeUrl")
                 doc = app.get(animeUrl).document
             }
         }
 
         val title = doc.selectFirst("div.info-b h1")?.text() ?: return null
+        val mainPoster = fixUrlNull(doc.selectFirst("div.info-a img")?.attr("data-src") ?: doc.selectFirst("div.info-a img")?.attr("src"))
 
-        val mainPoster = fixUrlNull(
-            doc.selectFirst("div.info-a img")?.attr("data-src")
-                ?: doc.selectFirst("div.info-a img")?.attr("src")
-        )
-        println("HenaoJaraLog: Póster detectado -> $mainPoster")
+        // Obtenemos el slug único del anime para que los episodios no se confundan con otros animes
+        val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last().replace("-anime", "")
+        Log.d("HenaoJara", "Slug detectado para este anime: $slug")
 
-        val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last()
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
 
-        if (scriptData.isEmpty()) {
-            println("HenaoJaraLog: ERROR - No se encontró el script de episodios (var eps)")
-        }
+        val episodes = Regex("""\["(\d+)","(\d+)","(.*?)","(.*?)"\]""").findAll(scriptData).map { match ->
+            val (num, id, code, epThumb) = match.destructured
 
-        val episodes = Regex("""\["(\d+)","(\d+)","(.*?)"]""").findAll(scriptData).map { match ->
-            val (num, _, code) = match.destructured
-            newEpisode(if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num") {
+            val finalPoster = if (epThumb.isNotBlank() && epThumb != "null") fixUrlNull(epThumb) else mainPoster
+
+            // Creamos una URL absoluta y única. Agregamos el ID al final para forzar unicidad
+            val epUrl = if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num"
+
+            newEpisode(epUrl) {
                 this.name = "Episodio $num"
                 this.episode = num.toIntOrNull()
-                this.posterUrl = mainPoster
+                this.posterUrl = finalPoster
             }
         }.toList().sortedByDescending { it.episode }
 
-        println("HenaoJaraLog: Total episodios encontrados -> ${episodes.size}")
+        Log.i("HenaoJara", "Cargados ${episodes.size} episodios para $title")
 
         return newTvSeriesLoadResponse(title, doc.location(), TvType.Anime, episodes) {
             this.posterUrl = mainPoster
@@ -100,8 +100,15 @@ class HenaojaraProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d("HenaoJara", "Extrayendo links de: $data")
+
         val document = app.get(data).document
-        val mainEncrypt = document.selectFirst(".opt")?.attr("data-encrypt") ?: return false
+        val mainEncrypt = document.selectFirst(".opt")?.attr("data-encrypt")
+
+        if (mainEncrypt == null) {
+            Log.e("HenaoJara", "No se encontró el token de encriptación en $data")
+            return false
+        }
 
         val response = app.post(
             "$mainUrl/hj",
@@ -109,16 +116,22 @@ class HenaojaraProvider : MainAPI() {
             headers = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
         ).text
 
-        org.jsoup.Jsoup.parse(response).select("li[encrypt]").forEach { element ->
+        val options = org.jsoup.Jsoup.parse(response).select("li[encrypt]")
+        Log.i("HenaoJara", "Servidores encontrados: ${options.size}")
+
+        options.forEach { element ->
             try {
-                val decodedUrl = element.attr("encrypt").chunked(2)
+                val encryptedValue = element.attr("encrypt")
+                val decodedUrl = encryptedValue.chunked(2)
                     .map { it.toInt(16).toChar() }
                     .joinToString("")
 
                 if (decodedUrl.startsWith("http")) {
+                    Log.d("HenaoJara", "Cargando extractor para: $decodedUrl")
                     loadExtractor(decodedUrl, data, subtitleCallback, callback)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.e("HenaoJara", "Error decodificando servidor: ${e.message}")
             }
         }
         return true
