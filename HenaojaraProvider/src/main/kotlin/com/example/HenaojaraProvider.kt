@@ -50,50 +50,45 @@ class HenaojaraProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("HenaoJara", "Iniciando carga de URL: $url")
+        Log.d("HenaoJara", "Iniciando carga: $url")
 
         var doc = app.get(url).document
         if (url.contains("/ver/")) {
             doc.selectFirst("li.ls a")?.attr("href")?.let {
                 val mainPageUrl = fixUrl(it)
-                Log.i("HenaoJara", "Redirigiendo de episodio a serie: $mainPageUrl")
+                Log.i("HenaoJara", "Redirigiendo a serie: $mainPageUrl")
                 doc = app.get(mainPageUrl).document
             }
         }
 
         val title = doc.selectFirst("div.info-b h1")?.text() ?: return null
-
-        val mainPoster = fixUrlNull(
-            doc.selectFirst("div.info-a img")?.attr("data-src")
-                ?: doc.selectFirst("div.info-a img")?.attr("src")
-        )
+        val mainPoster = fixUrlNull(doc.selectFirst("div.info-a img")?.attr("data-src") ?: doc.selectFirst("div.info-a img")?.attr("src"))
 
         val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last()
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
 
-        if (scriptData.isEmpty()) Log.e("HenaoJara", "No se encontró el script de episodios 'var eps'")
-
         val episodes = Regex("""\[\s*"(\d+)"\s*,\s*"(\d+)"\s*,\s*"(.*?)"(?:\s*,\s*"(.*?)")?\s*]""").findAll(scriptData).map { match ->
             val num = match.groupValues[1]
+            val id = match.groupValues[2]
             val code = match.groupValues[3]
             val epThumb = match.groupValues.getOrNull(4)
 
-            val finalPoster = if (!epThumb.isNullOrBlank() && epThumb != "null") {
-                fixUrlNull(epThumb)
+            val finalPoster = if (!epThumb.isNullOrBlank() && epThumb != "null") fixUrlNull(epThumb) else mainPoster
+
+            val epUrl = if (code.isNotEmpty()) {
+                "$mainUrl/ver/$slug-$num-$code?id=$id"
             } else {
-                mainPoster
+                "$mainUrl/ver/$slug-$num?id=$id"
             }
 
-            Log.v("HenaoJara", "Procesado Ep $num - Poster: ${if (!epThumb.isNullOrBlank()) "Individual" else "Serie"}")
-
-            newEpisode(if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num") {
+            newEpisode(epUrl) {
                 this.name = "Episodio $num"
                 this.episode = num.toIntOrNull()
                 this.posterUrl = finalPoster
             }
         }.toList().sortedByDescending { it.episode }
 
-        Log.i("HenaoJara", "Total episodios cargados: ${episodes.size}")
+        Log.i("HenaoJara", "Cargados: ${episodes.size} episodios para $title")
 
         return newTvSeriesLoadResponse(title, doc.location(), TvType.Anime, episodes) {
             this.posterUrl = mainPoster
@@ -108,38 +103,35 @@ class HenaojaraProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("HenaoJara", "Extrayendo links de: $data")
+        val cleanUrl = data.split("?")[0]
+        Log.d("HenaoJara", "Extrayendo links (Unique): $data")
 
         val document = app.get(data).document
-        val mainEncrypt = document.selectFirst(".opt")?.attr("data-encrypt")
-
-        if (mainEncrypt == null) {
-            Log.e("HenaoJara", "No se encontró el token de encriptación en $data")
-            return false
-        }
+        val mainEncrypt = document.selectFirst(".opt")?.attr("data-encrypt") ?: return false
 
         val response = app.post(
             "$mainUrl/hj",
             data = mapOf("acc" to "opt", "i" to mainEncrypt),
-            headers = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
+            headers = mapOf(
+                "Referer" to data,
+                "X-Requested-With" to "XMLHttpRequest",
+                "Cache-Control" to "no-cache",
+                "Pragma" to "no-cache"
+            )
         ).text
 
-        val options = org.jsoup.Jsoup.parse(response).select("li[encrypt]")
-        Log.i("HenaoJara", "Servidores encontrados: ${options.size}")
-
-        options.forEach { element ->
+        org.jsoup.Jsoup.parse(response).select("li[encrypt]").forEach { element ->
             try {
-                val encryptedValue = element.attr("encrypt")
-                val decodedUrl = encryptedValue.chunked(2)
+                val decodedUrl = element.attr("encrypt").chunked(2)
                     .map { it.toInt(16).toChar() }
                     .joinToString("")
 
                 if (decodedUrl.startsWith("http")) {
-                    Log.d("HenaoJara", "Cargando extractor para: $decodedUrl")
+                    Log.d("HenaoJara", "Cargando servidor: $decodedUrl")
                     loadExtractor(decodedUrl, data, subtitleCallback, callback)
                 }
             } catch (e: Exception) {
-                Log.e("HenaoJara", "Error decodificando servidor: ${e.message}")
+                Log.e("HenaoJara", "Error en extractor: ${e.message}")
             }
         }
         return true
