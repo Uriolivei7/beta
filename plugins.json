@@ -434,17 +434,19 @@
     "fileSize": 20000
   },
   {
-    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/UltracineProvider.cs3",
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/CinemacityProvider.cs3",
     "status": 1,
     "version": 1,
     "apiVersion": 1,
-    "name": "UltraCine",
-    "internalName": "UltracineProvider",
+    "name": "CinemaCity",
+    "internalName": "CinemacityProvider",
     "authors": ["Ranita"],
-    "description": "Plugin para portugues",
-    "tvTypes": ["Cartoon"],
-    "iconUrl": "https://ultracine.org/wp-content/uploads/2024/07/cropped-favicon-300x300.png",
-    "language": "pt-br",
+    "description": "Plugin para series y peliculas en varios idiomas",
+    "tvTypes": ["Cartoon",
+    "TvSeries",
+    "Movie"],
+    "iconUrl": "https://img.icons8.com/?size=192&id=fnzD4E0A2n97&format=png",
+    "language": "en",
     "fileSize": 20000
   }
 ]
