@@ -291,6 +291,33 @@ class NetflixProvider : MainAPI() {
                 Log.d(TAG, "Analizando Source: ${source.label} | URL final: $finalUrl")
 
                 try {
+                    val m3u8Response = app.get(
+                        finalUrl,
+                        headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to "$newUrl/",
+                            "Origin" to newUrl
+                        ),
+                        timeout = 10
+                    )
+
+                    Log.d(TAG, "📄 M3U8 STATUS: ${m3u8Response.code}")
+                    Log.d(TAG, "📄 M3U8 HEADERS: ${m3u8Response.headers}")
+                    Log.d(TAG, "📄 M3U8 CONTENT (primeros 300 chars):")
+                    Log.d(TAG, m3u8Response.text.take(300))
+
+                    if (!m3u8Response.text.startsWith("#EXTM3U")) {
+                        Log.e(TAG, "❌ NO ES UN M3U8 VÁLIDO! Contenido completo:")
+                        Log.e(TAG, m3u8Response.text)
+                        return@forEach
+                    }
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ ERROR AL VERIFICAR M3U8: ${e.message}")
+                    return@forEach
+                }
+
+                try {
                     val link = newExtractorLink(
                         source = this.name,
                         name = "${this.name} ${source.label ?: "HLS"}",
@@ -300,10 +327,8 @@ class NetflixProvider : MainAPI() {
                         this.referer = "$newUrl/"
                         this.quality = getQualityFromName(source.label ?: "")
                         this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Accept" to "*/*",
-                            "Origin" to newUrl,
-                            "Sec-Fetch-Mode" to "cors"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to "$newUrl/"
                         )
                     }
 
