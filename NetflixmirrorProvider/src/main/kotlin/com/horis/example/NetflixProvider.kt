@@ -29,7 +29,7 @@ class NetflixProvider : MainAPI() {
     override var lang = "en"
 
     override var mainUrl = "https://net20.cc"
-    private var newUrl = "https://net51.cc"
+    private var newUrl = "https://net52.cc"
     override var name = "Netflix"
 
     override val hasMainPage = true
@@ -219,20 +219,25 @@ class NetflixProvider : MainAPI() {
         val (title, id) = try {
             parseJson<LoadData>(data)
         } catch (e: Exception) {
-            Log.e(TAG, "Error parseando LoadData: ${e.message}")
+            Log.e(TAG, "Error crítico: Falló el parseo de LoadData: ${e.message}")
             return false
         }
 
-        Log.i(TAG, "Iniciando loadLinks para: $title (ID: $id)")
+        Log.i(TAG, "== INICIO LOADLINKS == Película/Serie: $title (ID: $id)")
+
+        val currentCookie = cookie_value.ifEmpty {
+            Log.w(TAG, "Cookie vacía, intentando obtener una nueva...")
+            bypass(mainUrl)
+        }
 
         val cookies = mapOf(
-            "t_hash_t" to cookie_value,
+            "t_hash_t" to currentCookie,
             "ott" to "nf",
             "hd" to "on"
         )
 
         val playlistUrl = "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.d(TAG, "Solicitando playlist a: $playlistUrl")
+        Log.d(TAG, "Solicitando Playlist a: $playlistUrl")
 
         val res = app.get(
             playlistUrl,
@@ -241,25 +246,30 @@ class NetflixProvider : MainAPI() {
             cookies = cookies
         )
 
-        Log.d(TAG, "Respuesta de playlist (primeros 100 caracteres): ${res.text.take(100)}")
+        if (res.text.contains("<html>")) {
+            Log.e(TAG, "ERROR: El servidor devolvió HTML en lugar de JSON. Probablemente la cookie expiró.")
+        }
 
         val playlist = try {
             res.parsed<PlayList>()
         } catch (e: Exception) {
             Log.e(TAG, "Error al parsear el JSON de la playlist: ${e.message}")
+            Log.d(TAG, "Cuerpo de la respuesta fallida: ${res.text.take(500)}")
             return false
         }
 
         playlist.forEach { item ->
             item.sources.forEach { source ->
                 val rawFile = source.file ?: ""
+
                 val finalUrl = if (rawFile.startsWith("http")) {
                     rawFile
                 } else {
                     "$newUrl${rawFile.replace("/tv/", "/")}"
                 }
 
-                Log.d(TAG, "Procesando source: ${source.label} | URL Base: $finalUrl")
+                Log.d(TAG, "Configurando ExtractorLink para calidad: ${source.label}")
+                Log.d(TAG, "URL de video final: $finalUrl")
 
                 try {
                     val link = newExtractorLink(
@@ -268,26 +278,28 @@ class NetflixProvider : MainAPI() {
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = "$newUrl/"
+                        this.referer = "https://net20.cc/"
                         this.quality = getQualityFromName(source.label ?: "")
                         this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                             "Accept" to "*/*",
-                            "Cookie" to "hd=on"
+                            "Accept-Language" to "es-ES,es;q=0.9",
+                            "Cookie" to "t_hash_t=$currentCookie; hd=on; ott=nf",
+                            "Origin" to "https://net20.cc",
+                            "Sec-Fetch-Mode" to "cors"
                         )
                     }
 
                     callback.invoke(link)
-                    Log.i(TAG, "Enlace enviado exitosamente: ${link.name}")
+                    Log.i(TAG, "¡ÉXITO! Enlace '${link.name}' enviado al reproductor.")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error crítico al crear el link para ${source.label}: ${e.message}")
-                    Log.e(TAG, "Trace: ", e)
+                    Log.e(TAG, "Error al construir el objeto ExtractorLink: ${e.message}")
                 }
             }
 
             item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 val subUrl = httpsify(track.file.toString())
-                Log.d(TAG, "Subtítulo encontrado: ${track.label} -> $subUrl")
+                Log.d(TAG, "Subtítulo detectado [${track.label}]: $subUrl")
                 subtitleCallback.invoke(
                     newSubtitleFile(
                         track.label.toString(),
