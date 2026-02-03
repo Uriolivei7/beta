@@ -1,5 +1,6 @@
 package com.horis.example
 
+import android.util.Log
 import com.horis.example.entities.EpisodesData
 import com.horis.example.entities.PlayList
 import com.horis.example.entities.PostData
@@ -204,6 +205,8 @@ class NetflixProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d("LoadLinks", "Iniciando carga de enlaces para data: $data")
+
         val (title, id) = parseJson<LoadData>(data)
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -211,50 +214,65 @@ class NetflixProvider : MainAPI() {
             "hd" to "on"
         )
 
-        val token = getVideoToken(mainUrl, newUrl, id, cookies)
-        val playlist = app.get(
-            "$newUrl/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}&h=$token",
-            headers,
-            referer = "$newUrl/",
-            cookies = cookies
-        ).parsed<PlayList>()
+        return try {
+            val token = getVideoToken(mainUrl, newUrl, id, cookies)
+            Log.d("LoadLinks", "Token obtenido: $token")
 
-        playlist.forEach { item ->
-            item.sources.forEach {
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        it.label,
-                        newUrl + it.file,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$newUrl/"
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Android) ExoPlayer",
-                            "Accept" to "*/*",
-                            "Accept-Encoding" to "identity",
-                            "Connection" to "keep-alive",
-                            "Cookie" to "hd=on"
-                        )
-                    }
-                )
-            }
+            val response = app.get(
+                "$newUrl/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}&h=$token",
+                headers,
+                referer = "$newUrl/",
+                cookies = cookies
+            )
 
-            item.tracks?.filter { it.kind == "captions" }?.map { track ->
-                subtitleCallback.invoke(
-                    newSubtitleFile(
-                        track.label.toString(),
-                        httpsify(track.file.toString().replace("\\", "")),
-                    ) {
-                        this.headers = mapOf(
-                            "Referer" to "$newUrl/"
-                        )
-                    }
-                )
+            val playlist = response.parsed<PlayList>()
+
+            playlist.forEach { item ->
+                item.sources.forEach { source ->
+                    val finalName = "$name ${source.label}".trim()
+
+                    Log.d("LoadLinks", "Generando enlace: $finalName URL: ${newUrl + source.file}")
+
+                    callback.invoke(
+                        newExtractorLink(
+                            source = finalName,
+                            name = finalName,
+                            url = newUrl + source.file,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "$newUrl/"
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Android) ExoPlayer",
+                                "Accept" to "*/*",
+                                "Accept-Encoding" to "identity",
+                                "Connection" to "keep-alive",
+                                "Cookie" to "hd=on"
+                            )
+                        }
+                    )
+                }
+
+                item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
+                    val subUrl = httpsify(track.file.toString().replace("\\", ""))
+                    Log.d("LoadLinks", "Subtítulo encontrado: ${track.label} URL: $subUrl")
+
+                    subtitleCallback.invoke(
+                        newSubtitleFile(
+                            track.label.toString(),
+                            subUrl
+                        ) {
+                            this.headers = mapOf(
+                                "Referer" to "$newUrl/"
+                            )
+                        }
+                    )
+                }
             }
+            true
+        } catch (e: Exception) {
+            Log.e("LoadLinks", "Error fatal cargando enlaces: ${e.message}", e)
+            false
         }
-
-        return true
     }
 
     data class Id(
