@@ -55,30 +55,29 @@ class HenaojaraProvider : MainAPI() {
         var doc = app.get(url).document
         if (url.contains("/ver/")) {
             doc.selectFirst("li.ls a")?.attr("href")?.let {
-                val mainPageUrl = fixUrl(it)
-                Log.i("HenaoJara", "Redirigiendo a serie: $mainPageUrl")
-                doc = app.get(mainPageUrl).document
+                doc = app.get(fixUrl(it)).document
             }
         }
 
         val title = doc.selectFirst("div.info-b h1")?.text() ?: return null
         val mainPoster = fixUrlNull(doc.selectFirst("div.info-a img")?.attr("data-src") ?: doc.selectFirst("div.info-a img")?.attr("src"))
-
         val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last()
+
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
 
+        // Regex flexible para 3 o 4 valores (asegura que no se salte episodios y capture posters)
         val episodes = Regex("""\[\s*"(\d+)"\s*,\s*"(\d+)"\s*,\s*"(.*?)"(?:\s*,\s*"(.*?)")?\s*]""").findAll(scriptData).map { match ->
             val num = match.groupValues[1]
-            val id = match.groupValues[2]
             val code = match.groupValues[3]
             val epThumb = match.groupValues.getOrNull(4)
 
             val finalPoster = if (!epThumb.isNullOrBlank() && epThumb != "null") fixUrlNull(epThumb) else mainPoster
 
+            // Generamos la URL. Añadimos un anclaje (#) con el slug para forzar a Cloudstream a ver URLs únicas
             val epUrl = if (code.isNotEmpty()) {
-                "$mainUrl/ver/$slug-$num-$code?id=$id"
+                "$mainUrl/ver/$slug-$num-$code#$slug"
             } else {
-                "$mainUrl/ver/$slug-$num?id=$id"
+                "$mainUrl/ver/$slug-$num#$slug"
             }
 
             newEpisode(epUrl) {
@@ -88,9 +87,9 @@ class HenaojaraProvider : MainAPI() {
             }
         }.toList().sortedByDescending { it.episode }
 
-        Log.i("HenaoJara", "Cargados: ${episodes.size} episodios para $title")
+        Log.i("HenaoJara", "Total episodios: ${episodes.size} para $title")
 
-        return newTvSeriesLoadResponse(title, doc.location(), TvType.Anime, episodes) {
+        return newTvSeriesLoadResponse(title, url, TvType.Anime, episodes) {
             this.posterUrl = mainPoster
             this.plot = doc.selectFirst("div.tx p")?.text()
             this.tags = doc.select("ul.gn li a").map { it.text() }
@@ -103,21 +102,16 @@ class HenaojaraProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val cleanUrl = data.split("?")[0]
-        Log.d("HenaoJara", "Extrayendo links (Unique): $data")
+        val cleanUrl = data.substringBefore("#")
+        Log.d("HenaoJara", "Solicitando links: $cleanUrl")
 
-        val document = app.get(data).document
+        val document = app.get(cleanUrl).document
         val mainEncrypt = document.selectFirst(".opt")?.attr("data-encrypt") ?: return false
 
         val response = app.post(
             "$mainUrl/hj",
             data = mapOf("acc" to "opt", "i" to mainEncrypt),
-            headers = mapOf(
-                "Referer" to data,
-                "X-Requested-With" to "XMLHttpRequest",
-                "Cache-Control" to "no-cache",
-                "Pragma" to "no-cache"
-            )
+            headers = mapOf("Referer" to cleanUrl, "X-Requested-With" to "XMLHttpRequest")
         ).text
 
         org.jsoup.Jsoup.parse(response).select("li[encrypt]").forEach { element ->
@@ -127,11 +121,28 @@ class HenaojaraProvider : MainAPI() {
                     .joinToString("")
 
                 if (decodedUrl.startsWith("http")) {
-                    Log.d("HenaoJara", "Cargando servidor: $decodedUrl")
-                    loadExtractor(decodedUrl, data, subtitleCallback, callback)
+                    loadExtractor(decodedUrl, cleanUrl, subtitleCallback) { link ->
+                        kotlinx.coroutines.runBlocking {
+                            val newLink = newExtractorLink(
+                                source = link.source,
+                                name = link.name,
+                                url = link.url,
+                                type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.extractorData = link.extractorData
+                                this.headers = link.headers + mapOf(
+                                    "X-Embed-Origin" to "ww1.henaojara.net",
+                                    "X-Embed-Referer" to "https://ww1.henaojara.net/"
+                                )
+                            }
+                            callback.invoke(newLink)
+                        }
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("HenaoJara", "Error en extractor: ${e.message}")
+                Log.e("HenaoJara", "Error: ${e.message}")
             }
         }
         return true
