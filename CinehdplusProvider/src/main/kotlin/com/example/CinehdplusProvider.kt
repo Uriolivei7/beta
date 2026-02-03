@@ -85,7 +85,7 @@ class CinehdplusProvider : MainAPI() {
                     this.episode = idx + 1
                     this.posterUrl = epImg
                 }
-            }
+            }.asIterable() 
         }
 
         return when (tvType) {
