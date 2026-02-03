@@ -331,13 +331,13 @@ class NetflixProvider : MainAPI() {
                     )
 
                     Log.d(TAG, "📄 M3U8 STATUS: ${m3u8Response.code}")
-                    Log.d(TAG, "📄 M3U8 HEADERS: ${m3u8Response.headers}")
-                    Log.d(TAG, "📄 M3U8 CONTENT (primeros 300 chars):")
-                    Log.d(TAG, m3u8Response.text.take(300))
+
+                    Log.d(TAG, "📄 M3U8 CONTENT COMPLETO:")
+                    Log.d(TAG, m3u8Response.text)
+                    Log.d(TAG, "📄 FIN DEL M3U8")
 
                     if (!m3u8Response.text.startsWith("#EXTM3U")) {
-                        Log.e(TAG, "❌ NO ES UN M3U8 VÁLIDO! Contenido completo:")
-                        Log.e(TAG, m3u8Response.text)
+                        Log.e(TAG, "❌ NO ES UN M3U8 VÁLIDO!")
                         return@forEach
                     }
 
