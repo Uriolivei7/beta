@@ -250,7 +250,7 @@ class NetflixProvider : MainAPI() {
         val (title, id) = try {
             parseJson<LoadData>(data)
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR CRÍTICO: Fallo al parsear LoadData. Data recibida: $data | Error: ${e.message}")
+            Log.e(TAG, "ERROR: Fallo al parsear LoadData: ${e.message}")
             return false
         }
 
@@ -266,50 +266,37 @@ class NetflixProvider : MainAPI() {
         Log.d(TAG, "URL de Playlist generada: $playlistUrl")
 
         val res = try {
-            app.get(
-                playlistUrl,
-                headers = headers,
-                referer = "$newUrl/home",
-                cookies = cookies,
-                timeout = 15
-            )
+            app.get(playlistUrl, headers = headers, referer = "$newUrl/home", cookies = cookies, timeout = 15)
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR DE RED: No se pudo conectar a la playlist. URL: $playlistUrl | Error: ${e.message}")
+            Log.e(TAG, "ERROR DE RED: ${e.message}")
             return false
         }
 
         Log.i(TAG, "Respuesta recibida: Código HTTP ${res.code} | URL Final: ${res.url}")
 
-        if (res.code != 200) {
-            Log.e(TAG, "SERVIDOR RECHAZÓ PETICIÓN: Código ${res.code}. Contenido: ${res.text.take(200)}")
-            return false
-        }
-
-        if (res.text.isEmpty()) {
-            Log.e(TAG, "ERROR: La respuesta de la playlist está vacía.")
+        if (res.code != 200 || res.text.isEmpty()) {
+            Log.e(TAG, "ERROR: Respuesta inválida")
             return false
         }
 
         val playlist = try {
             res.parsed<PlayList>()
         } catch (e: Exception) {
-            Log.e(TAG, "ERROR DE PARSEO: El JSON de la playlist es inválido o cambió de formato.")
-            Log.e(TAG, "Contenido crudo del error: ${res.text}")
+            Log.e(TAG, "ERROR DE PARSEO: ${e.message}")
             return false
         }
 
         Log.d(TAG, "Playlist parseada. Encontrados ${playlist.size} items.")
 
         var linksFound = 0
+        val extractor = NetflixExtractor()
+
         playlist.forEachIndexed { index, item ->
             Log.d(TAG, "Procesando Item #$index con ${item.sources.size} sources.")
 
             item.sources.forEach { source ->
-                val rawFile = source.file ?: "" //Yeji
-                if (rawFile.isBlank()) {
-                    Log.w(TAG, "Source omitida: URL vacía")
-                    return@forEach
-                }
+                val rawFile = source.file ?: ""
+                if (rawFile.isBlank()) return@forEach
 
                 val finalUrl = if (rawFile.startsWith("http")) {
                     rawFile
@@ -324,8 +311,7 @@ class NetflixProvider : MainAPI() {
                         finalUrl,
                         headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "$newUrl/",
-                            "Origin" to newUrl
+                            "Referer" to "$newUrl/"
                         ),
                         timeout = 15
                     )
@@ -337,36 +323,44 @@ class NetflixProvider : MainAPI() {
 
                     Log.d(TAG, "✅ M3U8 descargado correctamente")
 
-                    val links = M3u8Helper.generateM3u8(
-                        source = this.name,
-                        streamUrl = finalUrl,
-                        referer = "$newUrl/",
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "$newUrl/",
-                            "Origin" to newUrl
-                        )
-                    )
+                    val lines = m3u8Response.text.lines()
+                    var i = 0
+                    while (i < lines.size) {
+                        val line = lines[i].trim()
 
-                    links.forEach { link ->
-                        callback.invoke(link)
-                        linksFound++
-                        Log.i(TAG, "✅ Link agregado [#$linksFound]: ${link.name} (${link.quality}p) -> ${link.url}")
+                        if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                            val resolution = Regex("RESOLUTION=(\\d+)x(\\d+)").find(line)?.groupValues?.get(2)?.toIntOrNull()
+
+                            if (i + 1 < lines.size) {
+                                val streamUrl = lines[i + 1].trim()
+
+                                if (streamUrl.startsWith("http")) {
+                                    extractor.getUrl(
+                                        url = streamUrl,
+                                        referer = "$newUrl/",
+                                        subtitleCallback = subtitleCallback,
+                                        callback = callback
+                                    )
+
+                                    linksFound++
+                                    Log.i(TAG, "✅ Stream agregado [#$linksFound]: ${resolution}p -> $streamUrl")
+                                }
+                            }
+                        }
+                        i++
                     }
 
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error procesando ${source.label}: ${e.message}")
-                    e.printStackTrace()
+                    Log.e(TAG, "❌ Error: ${e.message}")
                 }
             }
 
+            // Procesar subtítulos
             item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 val subUrl = httpsify(track.file.toString())
-                Log.d(TAG, "SUBTÍTULO DETECTADO: [${track.label}] -> $subUrl")
+                Log.d(TAG, "SUBTÍTULO: [${track.label}] -> $subUrl")
                 subtitleCallback.invoke(
-                    newSubtitleFile(track.label.toString(), subUrl) {
-                        this.headers = mapOf("Referer" to "$newUrl/")
-                    }
+                    SubtitleFile(track.label.toString(), subUrl)
                 )
             }
         }
@@ -382,4 +376,57 @@ class NetflixProvider : MainAPI() {
     data class LoadData(
         val title: String, val id: String
     )
+}
+
+class NetflixExtractor : ExtractorApi() {
+    override val name = "Netflix"
+    override val mainUrl = "https://net51.cc"
+    override val requiresReferer = true
+    private val TAG = "NetflixProvider"
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        Log.i(TAG, "Iniciando Extracción en NetflixExtractor")
+        Log.d(TAG, "URL Recibida: $url")
+        Log.d(TAG, "Referer Recibido: $referer")
+
+        try {
+            if (url.isBlank()) {
+                Log.e(TAG, "ERROR: La URL proporcionada al extractor está vacía.")
+                return
+            }
+
+            val link = newExtractorLink(
+                source = name,
+                name = name,
+                url = url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = referer ?: "https://net51.cc/"
+                this.quality = Qualities.Unknown.value
+
+                this.headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer" to (referer ?: "https://net51.cc/"),
+                    "Origin" to "https://net51.cc",
+                    "Accept" to "*/*",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "cross-site"
+                )
+            }
+
+            Log.i(TAG, "ExtractorLink creado exitosamente: ${link.name}")
+            Log.d(TAG, "Headers configurados: ${link.headers}")
+
+            callback.invoke(link)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "ERROR CRÍTICO en getUrl de NetflixExtractor: ${e.message}")
+            Log.e(TAG, "Trace: ", e)
+        }
+    }
 }
