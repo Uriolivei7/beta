@@ -50,42 +50,50 @@ class HenaojaraProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("HenaoJara", "Iniciando load para: $url")
+        Log.d("HenaoJara", "Iniciando carga de URL: $url")
 
         var doc = app.get(url).document
         if (url.contains("/ver/")) {
             doc.selectFirst("li.ls a")?.attr("href")?.let {
-                val animeUrl = fixUrl(it)
-                Log.i("HenaoJara", "Redirigiendo de episodio a serie: $animeUrl")
-                doc = app.get(animeUrl).document
+                val mainPageUrl = fixUrl(it)
+                Log.i("HenaoJara", "Redirigiendo de episodio a serie: $mainPageUrl")
+                doc = app.get(mainPageUrl).document
             }
         }
 
         val title = doc.selectFirst("div.info-b h1")?.text() ?: return null
-        val mainPoster = fixUrlNull(doc.selectFirst("div.info-a img")?.attr("data-src") ?: doc.selectFirst("div.info-a img")?.attr("src"))
 
-        // Obtenemos el slug único del anime para que los episodios no se confundan con otros animes
-        val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last().replace("-anime", "")
-        Log.d("HenaoJara", "Slug detectado para este anime: $slug")
+        val mainPoster = fixUrlNull(
+            doc.selectFirst("div.info-a img")?.attr("data-src")
+                ?: doc.selectFirst("div.info-a img")?.attr("src")
+        )
 
+        val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last()
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
 
-        val episodes = Regex("""\["(\d+)","(\d+)","(.*?)","(.*?)"\]""").findAll(scriptData).map { match ->
-            val (num, id, code, epThumb) = match.destructured
+        if (scriptData.isEmpty()) Log.e("HenaoJara", "No se encontró el script de episodios 'var eps'")
 
-            val finalPoster = if (epThumb.isNotBlank() && epThumb != "null") fixUrlNull(epThumb) else mainPoster
+        val episodes = Regex("""\[\s*"(\d+)"\s*,\s*"(\d+)"\s*,\s*"(.*?)"(?:\s*,\s*"(.*?)")?\s*]""").findAll(scriptData).map { match ->
+            val num = match.groupValues[1]
+            val code = match.groupValues[3]
+            val epThumb = match.groupValues.getOrNull(4)
 
-            // Creamos una URL absoluta y única. Agregamos el ID al final para forzar unicidad
-            val epUrl = if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num"
+            val finalPoster = if (!epThumb.isNullOrBlank() && epThumb != "null") {
+                fixUrlNull(epThumb)
+            } else {
+                mainPoster
+            }
 
-            newEpisode(epUrl) {
+            Log.v("HenaoJara", "Procesado Ep $num - Poster: ${if (!epThumb.isNullOrBlank()) "Individual" else "Serie"}")
+
+            newEpisode(if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num") {
                 this.name = "Episodio $num"
                 this.episode = num.toIntOrNull()
                 this.posterUrl = finalPoster
             }
         }.toList().sortedByDescending { it.episode }
 
-        Log.i("HenaoJara", "Cargados ${episodes.size} episodios para $title")
+        Log.i("HenaoJara", "Total episodios cargados: ${episodes.size}")
 
         return newTvSeriesLoadResponse(title, doc.location(), TvType.Anime, episodes) {
             this.posterUrl = mainPoster
