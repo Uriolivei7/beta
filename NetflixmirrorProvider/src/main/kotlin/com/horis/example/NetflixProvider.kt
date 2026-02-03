@@ -9,11 +9,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.httpsify
-import com.lagradost.cloudstream3.utils.getQualityFromName
-import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Element
@@ -39,6 +34,54 @@ class NetflixProvider : MainAPI() {
     private val headers = mapOf(
         "X-Requested-With" to "XMLHttpRequest"
     )
+
+    companion object {
+        private var interceptorInstalled = false
+    }
+
+    init {
+        if (!interceptorInstalled) {
+            try {
+                val currentClient = app.baseClient
+                val newClient = currentClient.newBuilder()
+                    .addInterceptor(NetflixInterceptor())
+                    .build()
+
+                app.baseClient = newClient
+                interceptorInstalled = true
+                Log.i(TAG, "✅ Interceptor HTTP instalado correctamente")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error instalando interceptor: ${e.message}")
+            }
+        }
+    }
+
+    private class NetflixInterceptor : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val url = request.url.toString()
+
+            if (url.contains("net51.cc") ||
+                url.contains("net52.cc") ||
+                url.contains("freecdn4.top") ||
+                url.contains("nm-cdn6.top") ||
+                url.endsWith(".m3u8") ||
+                url.endsWith(".ts")) {
+
+                val newRequest = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("Referer", "https://net51.cc/")
+                    .header("Origin", "https://net51.cc")
+                    .header("Accept", "*/*")
+                    .build()
+
+                Log.d("NetflixInterceptor", "🔧 Headers agregados a: ${url.substringAfterLast("/").take(50)}")
+                return chain.proceed(newRequest)
+            }
+
+            return chain.proceed(request)
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
@@ -210,35 +253,6 @@ class NetflixProvider : MainAPI() {
         return episodes
     }
 
-    init {
-        val client = app.baseClient.newBuilder()
-            .addInterceptor(NetflixInterceptor())
-            .build()
-        app.baseClient = client
-    }
-
-    private class NetflixInterceptor : Interceptor {
-        override fun intercept(chain: Interceptor.Chain): Response {
-            val request = chain.request()
-            val url = request.url.toString()
-
-            if (url.contains("net51.cc") || url.contains("net52.cc") ||
-                url.contains("nm-cdn6.top") || url.endsWith(".m3u8") || url.endsWith(".ts")) {
-
-                val newRequest = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .header("Referer", "https://net51.cc/")
-                    .header("Origin", "https://net51.cc")
-                    .header("Accept", "*/*")
-                    .build()
-
-                return chain.proceed(newRequest)
-            }
-
-            return chain.proceed(request)
-        }
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -263,7 +277,7 @@ class NetflixProvider : MainAPI() {
         )
 
         val playlistUrl = "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.d(TAG, "URL de Playlist generada: $playlistUrl")
+        Log.d(TAG, "URL de Playlist: $playlistUrl")
 
         val res = try {
             app.get(playlistUrl, headers = headers, referer = "$newUrl/home", cookies = cookies, timeout = 15)
@@ -272,7 +286,7 @@ class NetflixProvider : MainAPI() {
             return false
         }
 
-        Log.i(TAG, "Respuesta recibida: Código HTTP ${res.code} | URL Final: ${res.url}")
+        Log.i(TAG, "Respuesta: HTTP ${res.code}")
 
         if (res.code != 200 || res.text.isEmpty()) {
             Log.e(TAG, "ERROR: Respuesta inválida")
@@ -286,14 +300,12 @@ class NetflixProvider : MainAPI() {
             return false
         }
 
-        Log.d(TAG, "Playlist parseada. Encontrados ${playlist.size} items.")
+        Log.d(TAG, "Playlist: ${playlist.size} items")
 
         var linksFound = 0
-        val extractor = NetflixExtractor()
+        val processedUrls = mutableSetOf<String>()
 
         playlist.forEachIndexed { index, item ->
-            Log.d(TAG, "Procesando Item #$index con ${item.sources.size} sources.")
-
             item.sources.forEach { source ->
                 val rawFile = source.file ?: ""
                 if (rawFile.isBlank()) return@forEach
@@ -303,8 +315,6 @@ class NetflixProvider : MainAPI() {
                 } else {
                     "$newUrl${rawFile.replace("/tv/", "/")}"
                 }
-
-                Log.d(TAG, "🔄 Procesando: ${source.label} -> $finalUrl")
 
                 try {
                     val m3u8Response = app.get(
@@ -317,11 +327,9 @@ class NetflixProvider : MainAPI() {
                     )
 
                     if (!m3u8Response.text.startsWith("#EXTM3U")) {
-                        Log.e(TAG, "❌ No es un M3U8 válido")
+                        Log.w(TAG, "⚠️ No es M3U8 válido: ${source.label}")
                         return@forEach
                     }
-
-                    Log.d(TAG, "✅ M3U8 descargado correctamente")
 
                     val lines = m3u8Response.text.lines()
                     var i = 0
@@ -329,21 +337,41 @@ class NetflixProvider : MainAPI() {
                         val line = lines[i].trim()
 
                         if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                            val resolution = Regex("RESOLUTION=(\\d+)x(\\d+)").find(line)?.groupValues?.get(2)?.toIntOrNull()
+                            val resolution = Regex("RESOLUTION=(\\d+)x(\\d+)")
+                                .find(line)?.groupValues?.get(2)?.toIntOrNull()
 
                             if (i + 1 < lines.size) {
                                 val streamUrl = lines[i + 1].trim()
 
-                                if (streamUrl.startsWith("http")) {
-                                    extractor.getUrl(
-                                        url = streamUrl,
-                                        referer = "$newUrl/",
-                                        subtitleCallback = subtitleCallback,
-                                        callback = callback
-                                    )
+                                if (streamUrl.startsWith("http") && !processedUrls.contains(streamUrl)) {
+                                    processedUrls.add(streamUrl)
 
+                                    val quality = when {
+                                        resolution != null && resolution >= 1080 -> Qualities.P1080.value
+                                        resolution != null && resolution >= 720 -> Qualities.P720.value
+                                        resolution != null && resolution >= 480 -> Qualities.P480.value
+                                        else -> Qualities.Unknown.value
+                                    }
+
+                                    val link = newExtractorLink(
+                                        source = this.name,
+                                        name = "${this.name} ${resolution}p",
+                                        url = streamUrl,
+                                        type = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.referer = "$newUrl/"
+                                        this.quality = quality
+                                        this.headers = mapOf(
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                            "Referer" to "$newUrl/",
+                                            "Origin" to "https://net51.cc",
+                                            "Accept" to "*/*"
+                                        )
+                                    }
+
+                                    callback.invoke(link)
                                     linksFound++
-                                    Log.i(TAG, "✅ Stream agregado [#$linksFound]: ${resolution}p -> $streamUrl")
+                                    Log.i(TAG, "✅ Stream [#$linksFound]: ${resolution}p")
                                 }
                             }
                         }
@@ -351,82 +379,22 @@ class NetflixProvider : MainAPI() {
                     }
 
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error: ${e.message}")
+                    Log.e(TAG, "❌ Error procesando ${source.label}: ${e.message}")
                 }
             }
 
-            // Procesar subtítulos
             item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 val subUrl = httpsify(track.file.toString())
-                Log.d(TAG, "SUBTÍTULO: [${track.label}] -> $subUrl")
                 subtitleCallback.invoke(
-                    SubtitleFile(track.label.toString(), subUrl)
+                    newSubtitleFile(track.label.toString(), subUrl)
                 )
             }
         }
 
-        Log.i(TAG, "Proceso finalizado. Total de links enviados al reproductor: $linksFound")
+        Log.i(TAG, "✅ Total links: $linksFound")
         return linksFound > 0
     }
 
-    data class Id(
-        val id: String
-    )
-
-    data class LoadData(
-        val title: String, val id: String
-    )
-}
-
-class NetflixExtractor : ExtractorApi() {
-    override val name = "Netflix"
-    override val mainUrl = "https://net51.cc"
-    override val requiresReferer = true
-    private val TAG = "NetflixProvider"
-
-    override suspend fun getUrl(
-        url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        Log.i(TAG, "Iniciando Extracción en NetflixExtractor")
-        Log.d(TAG, "URL Recibida: $url")
-        Log.d(TAG, "Referer Recibido: $referer")
-
-        try {
-            if (url.isBlank()) {
-                Log.e(TAG, "ERROR: La URL proporcionada al extractor está vacía.")
-                return
-            }
-
-            val link = newExtractorLink(
-                source = name,
-                name = name,
-                url = url,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = referer ?: "https://net51.cc/"
-                this.quality = Qualities.Unknown.value
-
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer" to (referer ?: "https://net51.cc/"),
-                    "Origin" to "https://net51.cc",
-                    "Accept" to "*/*",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site"
-                )
-            }
-
-            Log.i(TAG, "ExtractorLink creado exitosamente: ${link.name}")
-            Log.d(TAG, "Headers configurados: ${link.headers}")
-
-            callback.invoke(link)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "ERROR CRÍTICO en getUrl de NetflixExtractor: ${e.message}")
-            Log.e(TAG, "Trace: ", e)
-        }
-    }
+    data class Id(val id: String)
+    data class LoadData(val title: String, val id: String)
 }
