@@ -322,20 +322,23 @@ class NetflixProvider : MainAPI() {
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = "https://net20.cc/"
+                        this.referer = "https://net52.cc/"
                         this.quality = getQualityFromName(source.label ?: "")
+
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                             "Accept" to "*/*",
                             "Accept-Language" to "es-ES,es;q=0.9",
                             "Cookie" to "t_hash_t=$currentCookie; hd=on; ott=nf",
-                            "Origin" to "https://net20.cc",
-                            "Sec-Fetch-Mode" to "cors"
+                            "Origin" to "https://net52.cc",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "same-site",
+                            "X-Requested-With" to "com.android.chrome" 
                         )
                     }
 
                     callback.invoke(link)
-                    Log.i(TAG, "¡ÉXITO! Enlace '${link.name}' enviado al reproductor.")
+                    Log.i(TAG, "¡ÉXITO! Enlace enviado con headers de bypass.")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error al construir el objeto ExtractorLink: ${e.message}")
                 }
