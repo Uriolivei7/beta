@@ -216,14 +216,16 @@ class NetflixProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d(TAG, "Cargando links con data: $data")
+
         val (title, id) = try {
             parseJson<LoadData>(data)
         } catch (e: Exception) {
-            Log.e(TAG, "Error parseando LoadData: ${e.message}")
+            Log.e(TAG, "ERROR CRÍTICO: Fallo al parsear LoadData. Data recibida: $data | Error: ${e.message}")
             return false
         }
 
-        Log.i(TAG, "Iniciando loadLinks para: $title (ID: $id)")
+        Log.i(TAG, "Iniciando extracción para: $title (ID: $id)")
 
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -232,34 +234,61 @@ class NetflixProvider : MainAPI() {
         )
 
         val playlistUrl = "$newUrl/tv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-        Log.d(TAG, "Solicitando playlist a: $playlistUrl")
+        Log.d(TAG, "URL de Playlist generada: $playlistUrl")
 
-        val res = app.get(
-            playlistUrl,
-            headers = headers,
-            referer = "$newUrl/home",
-            cookies = cookies
-        )
+        val res = try {
+            app.get(
+                playlistUrl,
+                headers = headers,
+                referer = "$newUrl/home",
+                cookies = cookies,
+                timeout = 15
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "ERROR DE RED: No se pudo conectar a la playlist. URL: $playlistUrl | Error: ${e.message}")
+            return false
+        }
 
-        Log.d(TAG, "Respuesta de playlist (primeros 100 caracteres): ${res.text.take(100)}")
+        Log.i(TAG, "Respuesta recibida: Código HTTP ${res.code} | URL Final: ${res.url}")
+
+        if (res.code != 200) {
+            Log.e(TAG, "SERVIDOR RECHAZÓ PETICIÓN: Código ${res.code}. Contenido: ${res.text.take(200)}")
+            return false
+        }
+
+        if (res.text.isEmpty()) {
+            Log.e(TAG, "ERROR: La respuesta de la playlist está vacía.")
+            return false
+        }
 
         val playlist = try {
             res.parsed<PlayList>()
         } catch (e: Exception) {
-            Log.e(TAG, "Error al parsear el JSON de la playlist: ${e.message}")
+            Log.e(TAG, "ERROR DE PARSEO: El JSON de la playlist es inválido o cambió de formato.")
+            Log.e(TAG, "Contenido crudo del error: ${res.text}")
             return false
         }
 
-        playlist.forEach { item ->
+        Log.d(TAG, "Playlist parseada. Encontrados ${playlist.size} items.")
+
+        var linksFound = 0
+        playlist.forEachIndexed { index, item ->
+            Log.d(TAG, "Procesando Item #$index con ${item.sources.size} sources.")
+
             item.sources.forEach { source ->
                 val rawFile = source.file ?: ""
+                if (rawFile.isBlank()) {
+                    Log.w(TAG, "Source omitida: La URL está vacía para el label: ${source.label}")
+                    return@forEach
+                }
+
                 val finalUrl = if (rawFile.startsWith("http")) {
                     rawFile
                 } else {
                     "$newUrl${rawFile.replace("/tv/", "/")}"
                 }
 
-                Log.d(TAG, "Procesando source: ${source.label} | URL Base: $finalUrl")
+                Log.d(TAG, "Analizando Source: ${source.label} | URL final: $finalUrl")
 
                 try {
                     val link = newExtractorLink(
@@ -271,35 +300,34 @@ class NetflixProvider : MainAPI() {
                         this.referer = "$newUrl/"
                         this.quality = getQualityFromName(source.label ?: "")
                         this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                             "Accept" to "*/*",
-                            "Cookie" to "hd=on"
+                            "Origin" to newUrl,
+                            "Sec-Fetch-Mode" to "cors"
                         )
                     }
 
                     callback.invoke(link)
-                    Log.i(TAG, "Enlace enviado exitosamente: ${link.name}")
+                    linksFound++
+                    Log.i(TAG, "LINK AGREGADO EXITOSAMENTE [#$linksFound]: ${link.name} -> ${link.url}")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error crítico al crear el link para ${source.label}: ${e.message}")
-                    Log.e(TAG, "Trace: ", e)
+                    Log.e(TAG, "FALLO AL CREAR LINK para ${source.label}: ${e.message}")
                 }
             }
 
             item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
                 val subUrl = httpsify(track.file.toString())
-                Log.d(TAG, "Subtítulo encontrado: ${track.label} -> $subUrl")
+                Log.d(TAG, "SUBTÍTULO DETECTADO: [${track.label}] -> $subUrl")
                 subtitleCallback.invoke(
-                    newSubtitleFile(
-                        track.label.toString(),
-                        subUrl
-                    ) {
+                    newSubtitleFile(track.label.toString(), subUrl) {
                         this.headers = mapOf("Referer" to "$newUrl/")
                     }
                 )
             }
         }
 
-        return true
+        Log.i(TAG, "Proceso finalizado. Total de links enviados al reproductor: $linksFound")
+        return linksFound > 0
     }
 
     data class Id(
