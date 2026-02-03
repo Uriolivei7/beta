@@ -197,7 +197,7 @@ class PrimeVideoProvider : MainAPI() {
             year = data.year.toIntOrNull()
             tags = genre
             actors = cast
-            //this.rating = (rating?.toDoubleOrNull()?.times(10.0))?.toInt()
+            this.score =  Score.from10(rating)
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
@@ -252,66 +252,44 @@ class PrimeVideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        Log.i(TAG, "Starting loadLinks for data: $data")
         val (title, id) = parseJson<LoadData>(data)
-
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "pv",
             "hd" to "on"
         )
-        val playlistUrl = "$newUrl/tv/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}"
-
-        val res = app.get(
-            playlistUrl,
+        val playlist = app.get(
+            "$newUrl/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
             headers,
             referer = "$newUrl/home",
             cookies = cookies
-        )
-
-        val playlist = res.parsed<PlayList>()
-
-        var linkCount = 0
-        var subtitleCount = 0
+        ).parsed<PlayList>()
 
         playlist.forEach { item ->
             item.sources.forEach {
-                val qualityLabel = it.label ?: "HLS"
-                val linkName = "${this.name} $qualityLabel"
-
                 callback.invoke(
                     newExtractorLink(
-                        this.name,
-                        linkName,
-                        """$newUrl${it.file?.replace("/tv/", "/") ?: ""}""",
+                        name,
+                        it.label,
+                        """$newUrl${it.file.replace("/tv/", "/")}""",
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$newUrl/"
-                        this.quality = getQualityFromName(it.file?.substringAfter("q=", "")?.substringBefore("&") ?: "")
+                        this.quality = getQualityFromName(it.file.substringAfter("q=", ""))
                     }
                 )
-                linkCount++
-                Log.i(TAG, "Link Generado: $linkName")
             }
 
-            item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
-                val trackLabel = track.label.toString()
-                val filename = trackLabel.replace(" ", "") + ".srt"
-                val manualSubtitleUrl = "https://pv.subscdn.top/subs/$id/$filename"
-
+            item.tracks?.filter { it.kind == "captions" }?.map { track ->
                 subtitleCallback.invoke(
                     newSubtitleFile(
-                        trackLabel,
-                        manualSubtitleUrl,
+                        track.label.toString(),
+                        httpsify(track.file.toString())
                     )
                 )
-                subtitleCount++
-                Log.i(TAG, "Sub Encontrado: $trackLabel")
             }
         }
 
-        Log.i(TAG, "Finished loadLinks. Total links: $linkCount")
         return true
     }
 
