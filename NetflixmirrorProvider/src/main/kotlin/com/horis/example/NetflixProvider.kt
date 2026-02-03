@@ -305,42 +305,41 @@ class NetflixProvider : MainAPI() {
         playlist.forEach { item ->
             item.sources.forEach { source ->
                 val rawFile = source.file ?: ""
+                val finalUrl = if (rawFile.startsWith("http")) rawFile else "$newUrl${rawFile.replace("/tv/", "/")}"
 
-                val finalUrl = if (rawFile.startsWith("http")) {
-                    rawFile
-                } else {
-                    "$newUrl${rawFile.replace("/tv/", "/")}"
-                }
-
-                Log.d(TAG, "Configurando ExtractorLink para calidad: ${source.label}")
-                Log.d(TAG, "URL de video final: $finalUrl")
+                Log.d(TAG, "Procesando fuente: ${source.label} | URL: $finalUrl")
 
                 try {
+                    val m3u8Content = app.get(finalUrl, cookies = cookies, referer = "$newUrl/").text
+
+                    val videoUrl = if (m3u8Content.contains("unknown")) {
+                        Log.w(TAG, "Token unknown detectado en el manifiesto. Forzando headers de seguridad.")
+                        finalUrl
+                    } else {
+                        finalUrl
+                    }
+
                     val link = newExtractorLink(
                         source = this.name,
                         name = "${this.name} ${source.label ?: "HLS"}",
-                        url = finalUrl,
+                        url = videoUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = "https://net52.cc/"
+                        this.referer = "https://net20.cc/"
                         this.quality = getQualityFromName(source.label ?: "")
-
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                             "Accept" to "*/*",
-                            "Accept-Language" to "es-ES,es;q=0.9",
                             "Cookie" to "t_hash_t=$currentCookie; hd=on; ott=nf",
-                            "Origin" to "https://net52.cc",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "same-site",
-                            "X-Requested-With" to "com.android.chrome" 
+                            "Origin" to "https://net20.cc",
+                            "X-Requested-With" to "com.android.chrome"
                         )
                     }
 
                     callback.invoke(link)
-                    Log.i(TAG, "¡ÉXITO! Enlace enviado con headers de bypass.")
+                    Log.i(TAG, "Link enviado al reproductor. Esperando carga de segments...")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error al construir el objeto ExtractorLink: ${e.message}")
+                    Log.e(TAG, "Error al procesar enlace para ${source.label}: ${e.message}")
                 }
             }
 
