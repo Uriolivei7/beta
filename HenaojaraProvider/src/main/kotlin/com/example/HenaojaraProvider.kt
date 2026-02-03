@@ -1,6 +1,5 @@
 package com.example
 
-import android.util.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -50,13 +49,14 @@ class HenaojaraProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("HenaoJara", "Cargando URL -> $url")
+        // LOG: Inicio de carga de URL
+        println("HenaoJaraLog: Cargando URL -> $url")
 
         var doc = app.get(url).document
         if (url.contains("/ver/")) {
             doc.selectFirst("li.ls a")?.attr("href")?.let {
                 val animeUrl = fixUrl(it)
-                Log.d("HenaoJara", "Redirigiendo a página principal -> $animeUrl")
+                println("HenaoJaraLog: Redirigiendo de episodio a página principal -> $animeUrl")
                 doc = app.get(animeUrl).document
             }
         }
@@ -67,34 +67,25 @@ class HenaojaraProvider : MainAPI() {
             doc.selectFirst("div.info-a img")?.attr("data-src")
                 ?: doc.selectFirst("div.info-a img")?.attr("src")
         )
-        Log.d("HenaoJara", "Póster de serie detectado -> $mainPoster")
+        println("HenaoJaraLog: Póster detectado -> $mainPoster")
 
         val slug = doc.selectFirst("div.th")?.attr("data-sl") ?: doc.location().split("/").last()
         val scriptData = doc.select("script").map { it.data() }.firstOrNull { it.contains("var eps =") } ?: ""
 
         if (scriptData.isEmpty()) {
-            Log.e("HenaoJara", "ERROR: No se encontró el script de episodios (var eps)")
+            println("HenaoJaraLog: ERROR - No se encontró el script de episodios (var eps)")
         }
 
-        val episodes = Regex("""\["(\d+)","(\d+)","(.*?)","(.*?)"\]""").findAll(scriptData).map { match ->
-            val (num, _, code, epThumb) = match.destructured
-
-            val finalPoster = if (epThumb.isNotBlank() && epThumb != "null") {
-                fixUrlNull(epThumb)
-            } else {
-                mainPoster
-            }
-
-            Log.v("HenaoJara", "Episodio $num -> Poster: ${if (epThumb.isNotBlank()) "PROPIO" else "SERIE"}")
-
+        val episodes = Regex("""\["(\d+)","(\d+)","(.*?)"]""").findAll(scriptData).map { match ->
+            val (num, _, code) = match.destructured
             newEpisode(if (code.isNotEmpty()) "$mainUrl/ver/$slug-$num-$code" else "$mainUrl/ver/$slug-$num") {
                 this.name = "Episodio $num"
                 this.episode = num.toIntOrNull()
-                this.posterUrl = finalPoster
+                this.posterUrl = mainPoster
             }
         }.toList().sortedByDescending { it.episode }
 
-        Log.i("HenaoJara", "Total episodios cargados: ${episodes.size}")
+        println("HenaoJaraLog: Total episodios encontrados -> ${episodes.size}")
 
         return newTvSeriesLoadResponse(title, doc.location(), TvType.Anime, episodes) {
             this.posterUrl = mainPoster
