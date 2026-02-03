@@ -305,7 +305,7 @@ class NetflixProvider : MainAPI() {
             Log.d(TAG, "Procesando Item #$index con ${item.sources.size} sources.")
 
             item.sources.forEach { source ->
-                val rawFile = source.file ?: ""
+                val rawFile = source.file ?: "" //Yeji
                 if (rawFile.isBlank()) {
                     Log.w(TAG, "Source omitida: URL vacía")
                     return@forEach
