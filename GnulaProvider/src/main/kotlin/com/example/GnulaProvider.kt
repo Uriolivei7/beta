@@ -142,15 +142,28 @@ class GnulaProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         Log.d(TAG, "load: Iniciando carga -> $url")
 
+        val nextJsHeaders = mapOf(
+            "accept" to "*/*",
+            "x-nextjs-data" to "1",
+            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "referer" to mainUrl
+        )
+
         val slugRaw = url.trimEnd('/').substringAfterLast("/")
 
-        val response = app.get(url)
+        Log.d(TAG, "load: Intentando petición inicial a $url")
+        val response = app.get(url, headers = nextJsHeaders)
+
+        if (response.code != 200) {
+            Log.e(TAG, "load: Error de red al cargar inicial: Código ${response.code}")
+        }
+
         var resText = response.text
         var pProps = getNextData(resText)
         var actualUrl = url
 
         if (pProps?.post == null && pProps?.data == null) {
-            Log.d(TAG, "load: Datos no encontrados, refinando búsqueda por tipo...")
+            Log.w(TAG, "load: Datos no encontrados en URL original, probando alternativas...")
 
             val isSeriesUrl = url.contains("/series/")
             val trials = if (isSeriesUrl) {
@@ -162,25 +175,40 @@ class GnulaProvider : MainAPI() {
             for (trial in trials) {
                 if (trial == url) continue
                 Log.d(TAG, "load: Probando alternativa -> $trial")
-                val nextRes = app.get(trial)
-                val nextProps = getNextData(nextRes.text)
+                try {
+                    val nextRes = app.get(trial, headers = nextJsHeaders)
+                    val nextProps = getNextData(nextRes.text)
 
-                if (nextProps?.post != null || nextProps?.data != null) {
-                    pProps = nextProps
-                    resText = nextRes.text
-                    actualUrl = trial
-                    break
+                    if (nextProps?.post != null || nextProps?.data != null) {
+                        Log.d(TAG, "load: Éxito en alternativa -> $trial")
+                        pProps = nextProps
+                        resText = nextRes.text
+                        actualUrl = trial
+                        break
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "load: Error cargando alternativa $trial: ${e.message}")
                 }
             }
         }
 
-        val finalProps = pProps ?: throw ErrorLoadingException("No se encontró información")
-        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Contenido vacío")
+        val finalProps = pProps ?: run {
+            Log.e(TAG, "load: Fallo total - pProps es null")
+            throw ErrorLoadingException("No se encontró información (NextJS Data null)")
+        }
+
+        val post = finalProps.post ?: finalProps.data ?: run {
+            Log.e(TAG, "load: Fallo total - post y data están vacíos en finalProps")
+            throw ErrorLoadingException("Contenido vacío en el JSON")
+        }
 
         val title = post.titles.name ?: "Sin título"
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
 
+        Log.d(TAG, "load: Parseando contenido para: $title ($year)")
+
         return if (!post.seasons.isNullOrEmpty()) {
+            Log.d(TAG, "load: Detectada como Serie con ${post.seasons.size} temporadas")
             val episodes = post.seasons.flatMap { season: Season ->
                 season.episodes.map { ep: SeasonEpisode ->
                     val epSlug = ep.slug.name ?: slugRaw
@@ -195,6 +223,7 @@ class GnulaProvider : MainAPI() {
                     }
                 }
             }
+
             newTvSeriesLoadResponse(title, actualUrl, TvType.TvSeries, episodes.reversed()) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
@@ -202,6 +231,7 @@ class GnulaProvider : MainAPI() {
                 this.tags = post.genres?.mapNotNull { it.name }
             }
         } else {
+            Log.d(TAG, "load: Detectada como Película")
             newMovieLoadResponse(title, actualUrl, TvType.Movie, actualUrl) {
                 this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
                 this.plot = post.overview
