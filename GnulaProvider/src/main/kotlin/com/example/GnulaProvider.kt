@@ -150,93 +150,66 @@ class GnulaProvider : MainAPI() {
         )
 
         val slugRaw = url.trimEnd('/').substringAfterLast("/")
-
-        Log.d(TAG, "load: Intentando petición inicial a $url")
-        val response = app.get(url, headers = nextJsHeaders)
-
-        if (response.code != 200) {
-            Log.e(TAG, "load: Error de red al cargar inicial: Código ${response.code}")
-        }
-
-        var resText = response.text
-        var pProps = getNextData(resText)
+        var response = app.get(url, headers = nextJsHeaders)
+        var pProps = getNextData(response.text)
         var actualUrl = url
 
         if (pProps?.post == null && pProps?.data == null) {
-            Log.w(TAG, "load: Datos no encontrados en URL original, probando alternativas...")
-
-            val isSeriesUrl = url.contains("/series/")
-            val trials = if (isSeriesUrl) {
-                listOf("$mainUrl/series/$slugRaw", "$mainUrl/movies/$slugRaw", "$mainUrl/$slugRaw")
-            } else {
-                listOf("$mainUrl/movies/$slugRaw", "$mainUrl/series/$slugRaw", "$mainUrl/$slugRaw")
-            }
-
+            val trials = listOf("$mainUrl/series/$slugRaw", "$mainUrl/movies/$slugRaw")
             for (trial in trials) {
                 if (trial == url) continue
-                Log.d(TAG, "load: Probando alternativa -> $trial")
-                try {
-                    val nextRes = app.get(trial, headers = nextJsHeaders)
-                    val nextProps = getNextData(nextRes.text)
-
-                    if (nextProps?.post != null || nextProps?.data != null) {
-                        Log.d(TAG, "load: Éxito en alternativa -> $trial")
-                        pProps = nextProps
-                        resText = nextRes.text
-                        actualUrl = trial
-                        break
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "load: Error cargando alternativa $trial: ${e.message}")
+                val nextRes = app.get(trial, headers = nextJsHeaders)
+                val nextProps = getNextData(nextRes.text)
+                if (nextProps?.post != null || nextProps?.data != null) {
+                    pProps = nextProps
+                    actualUrl = trial
+                    break
                 }
             }
         }
 
-        val finalProps = pProps ?: run {
-            Log.e(TAG, "load: Fallo total - pProps es null")
-            throw ErrorLoadingException("No se encontró información (NextJS Data null)")
-        }
-
-        val post = finalProps.post ?: finalProps.data ?: run {
-            Log.e(TAG, "load: Fallo total - post y data están vacíos en finalProps")
-            throw ErrorLoadingException("Contenido vacío en el JSON")
-        }
+        val finalProps = pProps ?: throw ErrorLoadingException("No se encontró información")
+        val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("Contenido vacío")
 
         val title = post.titles.name ?: "Sin título"
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
 
-        Log.d(TAG, "load: Parseando contenido para: $title ($year)")
+        val mainPoster = post.images?.poster?.let {
+            if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w500$it"
+        }?.replace("/original/", "/w500/")
 
         return if (!post.seasons.isNullOrEmpty()) {
-            Log.d(TAG, "load: Detectada como Serie con ${post.seasons.size} temporadas")
-            val episodes = post.seasons.flatMap { season: Season ->
-                season.episodes.map { ep: SeasonEpisode ->
-                    val epSlug = ep.slug.name ?: slugRaw
-                    val sNum = ep.slug.season ?: season.number?.toString() ?: "1"
-                    val eNum = ep.slug.episode ?: ep.number?.toString() ?: "1"
+            val episodes = post.seasons.flatMap { season ->
+                season.episodes.map { ep ->
+                    val sNum = ep.slug?.season ?: season.number ?: "1"
+                    val eNum = ep.slug?.episode ?: ep.number ?: "1"
+                    val epSlug = ep.slug?.name ?: slugRaw
 
-                    newEpisode("$mainUrl/series/${epSlug}/seasons/${sNum}/episodes/${eNum}") {
-                        this.name = ep.title
-                        this.season = season.number?.toInt()
-                        this.episode = ep.number?.toInt()
-                        this.posterUrl = ep.images.poster?.replace("/original/", "/w300/")
+                    Log.d(TAG, "Parsing Ep: S$sNum E$eNum - Title: ${ep.title} - PosterPath: ${ep.images?.poster}")
+
+                    newEpisode("$mainUrl/series/$epSlug/seasons/$sNum/episodes/$eNum") {
+                        this.name = ep.title ?: "Episodio $eNum"
+                        this.season = sNum.toString().toIntOrNull()
+                        this.episode = eNum.toString().toIntOrNull()
+
+                        this.posterUrl = ep.images?.poster?.let {
+                            if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w300$it"
+                        }?.replace("/original/", "/w300/")
                     }
                 }
             }
 
             newTvSeriesLoadResponse(title, actualUrl, TvType.TvSeries, episodes.reversed()) {
-                this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
+                this.posterUrl = mainPoster
                 this.plot = post.overview
                 this.year = year
                 this.tags = post.genres?.mapNotNull { it.name }
             }
         } else {
-            Log.d(TAG, "load: Detectada como Película")
             newMovieLoadResponse(title, actualUrl, TvType.Movie, actualUrl) {
-                this.posterUrl = post.images.poster?.replace("/original/", "/w500/")
+                this.posterUrl = mainPoster
                 this.plot = post.overview
                 this.year = year
-                this.duration = post.runtime
                 this.tags = post.genres?.mapNotNull { it.name }
             }
         }
