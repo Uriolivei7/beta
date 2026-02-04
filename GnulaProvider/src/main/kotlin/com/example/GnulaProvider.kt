@@ -105,6 +105,10 @@ class GnulaProvider : MainAPI() {
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
         val mainPoster = fixImageUrl(post.images.poster, "w500")
 
+        val averageScore = post.rate?.average?.toFloat()
+
+        val duration = post.runtime
+
         val recommendations = mutableListOf<SearchResponse>()
         try {
             val sideMovies = finalProps.context?.contexSidebarTopWeekMovies?.data ?: emptyList()
@@ -129,6 +133,7 @@ class GnulaProvider : MainAPI() {
                     val eNum = ep.slug.episode ?: ep.number?.toString() ?: "1"
                     val epSlug = ep.slug.name ?: slugRaw
 
+
                     val cleanName = ep.title?.replace(title, "")?.replace(Regex("""\d+x\d+"""), "")?.trim()
                         ?.removePrefix("-")?.trim()
                         .let { if (it.isNullOrBlank()) "Episodio $eNum" else it }
@@ -147,7 +152,9 @@ class GnulaProvider : MainAPI() {
                 this.plot = post.overview
                 this.year = year
                 this.tags = post.genres?.mapNotNull { it.name }
+                this.score = Score.from10(averageScore)
                 this.recommendations = recommendations
+                this.duration = duration
             }
         } else {
             newMovieLoadResponse(title, actualUrl, TvType.Movie, actualUrl) {
@@ -156,6 +163,8 @@ class GnulaProvider : MainAPI() {
                 this.year = year
                 this.tags = post.genres?.mapNotNull { it.name }
                 this.recommendations = recommendations
+                this.score = Score.from10(averageScore)
+                this.duration = duration
             }
         }
     }
@@ -274,8 +283,15 @@ class GnulaProvider : MainAPI() {
         val seasons: List<Season> = emptyList(),
         val players: Players? = null,
         val releaseDate: String? = null,
+        val genres: List<Genre>? = null,
         val runtime: Int? = null,
-        val genres: List<Genre>? = null
+        val rate: Rate? = null
+    )
+
+    @Serializable
+    data class Rate(
+        val average: Double? = null,
+        val votes: Int? = null
     )
 
     @Serializable data class Genre(val name: String? = null)
