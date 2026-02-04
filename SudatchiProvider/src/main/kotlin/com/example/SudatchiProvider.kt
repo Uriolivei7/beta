@@ -11,7 +11,7 @@ import java.net.URLEncoder
 
 class SudatchiProvider : MainAPI() {
     override var mainUrl = "https://sudatchi.com/es"
-    private val apiUrl = "https://sudatchi.com/api"
+    private val apiUrl = "https://sudatchi.com/es/api"
     override var name = "Sudatchi"
     override val hasMainPage = true
     override var lang = "en"
@@ -81,7 +81,6 @@ class SudatchiProvider : MainAPI() {
                 this.plot = data.description
                 this.tags = data.genres
 
-                // Mapeo de estado
                 val statusEnum = when (data.status?.uppercase()) {
                     "RELEASING" -> ShowStatus.Ongoing
                     "FINISHED" -> ShowStatus.Completed
