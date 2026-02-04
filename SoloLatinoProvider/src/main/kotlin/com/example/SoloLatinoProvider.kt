@@ -221,7 +221,6 @@ class SoloLatinoProvider : MainAPI() {
                 cleanUrl = "https://" + cleanUrl.removePrefix("//")
                 Log.d("SoloLatino", "load - URL limpiada con HTTPS: $cleanUrl")
             }
-            Log.d("SoloLatino", "load - URL no necesitaba limpieza JSON Regex, usando original/ajustada: $cleanUrl")
         }
 
         if (cleanUrl.isBlank()) {
@@ -241,53 +240,40 @@ class SoloLatinoProvider : MainAPI() {
         val description = doc.selectFirst("div.wp-content")?.text() ?: ""
         val tags = doc.select("div.sgeneros a").map { it.text() }
 
-        val dateText = doc.selectFirst("div.data span.date")?.text()
+        val ratingText = doc.selectFirst("div.nota span")?.ownText()?.trim()
+        val averageScore = ratingText?.toDoubleOrNull()
 
+        if (averageScore == null) {
+            Log.w("SoloLatino", "load - FAIL: No se pudo extraer el Score de '$ratingText'")
+        } else {
+            Log.d("SoloLatino", "load - Score extraído: $averageScore")
+        }
+
+        val runtimeText = doc.selectFirst("span.runtime")?.text()
+        val duration = runtimeText?.replace(Regex("(?i) min\\.?"), "")?.trim()?.toIntOrNull()
+
+        if (duration == null) {
+            Log.w("SoloLatino", "load - FAIL: No se pudo extraer duración de '$runtimeText'")
+        } else {
+            Log.d("SoloLatino", "load - Duración extraída: $duration min")
+        }
+
+        val dateText = doc.selectFirst("div.data span.date")?.text()
         val year = dateText?.let {
             Regex("""\d{4}""").find(it)?.value?.toIntOrNull()
         }
 
-        if (year != null) {
-            Log.d("SoloLatino", "load - Año de lanzamiento extraído: $year")
-        } else {
-            Log.d("SoloLatino", "load - Aviso: No se pudo extraer el año de lanzamiento.")
-        }
-
         val posterElement = doc.selectFirst("div.poster img")
-        var poster = ""
-
-        if (posterElement != null) {
-            poster = posterElement.attr("data-src")
-            if (poster.isBlank()) {
-                poster = posterElement.attr("data-litespeed-src")
-            }
-            if (poster.isBlank()) {
-                poster = posterElement.attr("src")
-            }
-
-            if (poster.isNotBlank() && !poster.contains("data:image")) {
-                Log.d("SoloLatino", "load - Póster principal extraído: $poster")
-            } else {
-                Log.e("SoloLatino", "load - ERROR: El póster principal sigue vacío o es el GIF temporal.")
-                poster = ""
-            }
-        } else {
-            Log.e("SoloLatino", "load - ERROR: No se encontró el elemento <img> dentro de 'div.poster'.")
-        }
+        val poster = posterElement?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: posterElement?.attr("src")?.takeIf { !it.contains("data:image") }
+            ?: ""
 
         val backgroundPosterStyle = doc.selectFirst("div.wallpaper")?.attr("style")
         var backgroundPoster = poster
-
-        if (backgroundPosterStyle != null) {
-            val urlMatch = Regex("""url\(([^)]+)\)""").find(backgroundPosterStyle)
-            if (urlMatch != null) {
-                backgroundPoster = urlMatch.groupValues[1].removeSuffix(";")
-                Log.d("SoloLatino", "load - Fondo extraído del style: $backgroundPoster")
-            } else {
-                Log.d("SoloLatino", "load - Aviso: Se encontró el div.wallpaper, pero no se pudo extraer la URL del estilo.")
+        backgroundPosterStyle?.let {
+            Regex("""url\(([^)]+)\)""").find(it)?.let { match ->
+                backgroundPoster = match.groupValues[1].removeSuffix(";")
             }
-        } else {
-            Log.d("SoloLatino", "load - Aviso: No se encontró el elemento 'div.wallpaper'. Usando el póster como fondo.")
         }
 
         val episodes = if (tvType == TvType.TvSeries) {
@@ -297,35 +283,18 @@ class SoloLatinoProvider : MainAPI() {
                 seasonElement.select("ul.episodios li").mapNotNull { element ->
                     val epurl = fixUrl(element.selectFirst("a")?.attr("href") ?: "")
                     val epTitle = element.selectFirst("div.episodiotitle div.epst")?.text() ?: ""
-
                     val numerandoText = element.selectFirst("div.episodiotitle div.numerando")?.text()
                     val seasonNumber = numerandoText?.split("-")?.getOrNull(0)?.trim()?.toIntOrNull()
                     val episodeNumber = numerandoText?.split("-")?.getOrNull(1)?.trim()?.toIntOrNull()
 
-                    val dateText = element.selectFirst("div.episodiotitle span.date")?.text()
+                    val epDuration = element.selectFirst("span.date")?.previousElementSibling()?.text()?.toIntOrNull()
 
-                    val imgElement = element.selectFirst("div.imagen img")
-                    val epPoster = imgElement?.attr("data-src")
-                        ?: imgElement?.attr("data-litespeed-src")
-                        ?: imgElement?.attr("src")
-                        ?: ""
-
-                    if (epurl.isNotBlank() && epTitle.isNotBlank()) {
+                    if (epurl.isNotBlank()) {
                         newEpisode(epurl) {
                             this.name = epTitle
                             this.season = seasonNumber
                             this.episode = episodeNumber
-                            this.posterUrl = epPoster
-
-                            dateText?.let { dateStr ->
-                                try {
-                                    val dateObj = dateFormatter.parse(dateStr)
-                                    addDate(dateObj)
-
-                                } catch (e: Exception) {
-                                    Log.e("SoloLatino", "Error al parsear fecha del episodio '$dateStr': ${e.message}")
-                                }
-                            }
+                            this.runTime = epDuration
                         }
                     } else null
                 }
@@ -334,57 +303,37 @@ class SoloLatinoProvider : MainAPI() {
 
         val recommendations = doc.select("div#single_relacionados article").mapNotNull {
             val recLink = it.selectFirst("a")?.attr("href")
-            val recImgElement = it.selectFirst("a img.lazyload") ?: it.selectFirst("a img")
-
-            val recImg = recImgElement?.attr("data-srcset")?.split(",")?.lastOrNull()?.trim()?.split(" ")?.firstOrNull()
-                ?: recImgElement?.attr("src")
-                ?: ""
-
-            val recTitle = recImgElement?.attr("alt")
-
+            val recTitle = it.selectFirst("a img")?.attr("alt")
             if (recTitle != null && recLink != null) {
-                newAnimeSearchResponse(
-                    recTitle,
-                    fixUrl(recLink)
-                ) {
-                    this.posterUrl = recImg
+                newAnimeSearchResponse(recTitle, fixUrl(recLink)) {
                     this.type = if (recLink.contains("/peliculas/")) TvType.Movie else TvType.TvSeries
                 }
-            } else {
-                null
-            }
+            } else null
         }
 
         return when (tvType) {
             TvType.TvSeries -> {
-                newTvSeriesLoadResponse(
-                    name = title,
-                    url = cleanUrl,
-                    type = tvType,
-                    episodes = episodes,
-                ) {
+                newTvSeriesLoadResponse(title, cleanUrl, tvType, episodes) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backgroundPoster
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
                     this.year = year
+                    this.duration = duration
+                    this.score = averageScore?.let { Score.from10(it) }
                 }
             }
-
             TvType.Movie -> {
-                newMovieLoadResponse(
-                    name = title,
-                    url = cleanUrl,
-                    type = tvType,
-                    dataUrl = cleanUrl
-                ) {
+                newMovieLoadResponse(title, cleanUrl, tvType, cleanUrl) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backgroundPoster
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
                     this.year = year
+                    this.duration = duration
+                    this.score = averageScore?.let { Score.from10(it) }
                 }
             }
             else -> null

@@ -116,7 +116,7 @@ class GnulaProvider : MainAPI() {
 
             (sideMovies + sideSeries).forEach { item ->
                 val recSlug = item.slug.name ?: return@forEach
-                val recUrl = "$mainUrl/movies/$recSlug" // El provider redirigirá si es serie
+                val recUrl = "$mainUrl/movies/$recSlug"
                 recommendations.add(newMovieSearchResponse(item.titles.name ?: "", recUrl, TvType.Movie) {
                     this.posterUrl = item.images.backdrop ?: item.images.poster
                 })
