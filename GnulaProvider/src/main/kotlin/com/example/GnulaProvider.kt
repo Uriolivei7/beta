@@ -105,6 +105,23 @@ class GnulaProvider : MainAPI() {
         val year = post.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
         val mainPoster = fixImageUrl(post.images.poster, "w500")
 
+        val recommendations = mutableListOf<SearchResponse>()
+        try {
+            val sideMovies = finalProps.context?.contexSidebarTopWeekMovies?.data ?: emptyList()
+            val sideSeries = finalProps.context?.contexSidebarTopWeekSeries?.data ?: emptyList()
+
+            (sideMovies + sideSeries).forEach { item ->
+                val recSlug = item.slug.name ?: return@forEach
+                val recUrl = "$mainUrl/movies/$recSlug" // El provider redirigirá si es serie
+                recommendations.add(newMovieSearchResponse(item.titles.name ?: "", recUrl, TvType.Movie) {
+                    this.posterUrl = item.images.backdrop ?: item.images.poster
+                })
+            }
+            Log.d(TAG, "Recomendados cargados: ${recommendations.size}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al cargar recomendados: ${e.message}")
+        }
+
         return if (!post.seasons.isNullOrEmpty()) {
             val episodes = post.seasons.flatMap { season ->
                 season.episodes.map { ep ->
@@ -120,7 +137,7 @@ class GnulaProvider : MainAPI() {
                         this.name = cleanName
                         this.season = sNum.toIntOrNull()
                         this.episode = eNum.toIntOrNull()
-                        this.posterUrl = fixImageUrl(ep.images.poster) ?: mainPoster
+                        this.posterUrl = ep.image ?: fixImageUrl(ep.images.poster) ?: mainPoster
                     }
                 }
             }
@@ -130,14 +147,15 @@ class GnulaProvider : MainAPI() {
                 this.plot = post.overview
                 this.year = year
                 this.tags = post.genres?.mapNotNull { it.name }
+                this.recommendations = recommendations
             }
         } else {
-            newMovieSearchResponse(title, actualUrl, TvType.Movie) // Fallback simple para mapeo
             newMovieLoadResponse(title, actualUrl, TvType.Movie, actualUrl) {
                 this.posterUrl = mainPoster
                 this.plot = post.overview
                 this.year = year
                 this.tags = post.genres?.mapNotNull { it.name }
+                this.recommendations = recommendations
             }
         }
     }
@@ -238,14 +256,6 @@ class GnulaProvider : MainAPI() {
     @Serializable
     data class Props(val pageProps: PageProps? = null)
 
-    @Serializable
-    data class PageProps(
-        val results: Results? = null,
-        val post: SeasonPost? = null,
-        val episode: EpisodeData? = null,
-        val data: SeasonPost? = null
-    )
-
     @Serializable data class Results(val data: List<Daum> = emptyList())
 
     @Serializable data class Daum(
@@ -280,15 +290,6 @@ class GnulaProvider : MainAPI() {
     @Serializable data class Url(val slug: String? = null)
     @Serializable data class Season(val number: Long? = null, val episodes: List<SeasonEpisode> = emptyList())
 
-    @Serializable
-    data class SeasonEpisode(
-        val title: String? = null,
-        val number: Long? = null,
-        val slug: Slug2 = Slug2(),
-        val images: Images = Images(),
-        val overview: String? = null
-    )
-
     @Serializable data class Slug2(val name: String? = null, val season: String? = null, val episode: String? = null)
     @Serializable data class EpisodeData(val players: Players? = null)
 
@@ -303,5 +304,33 @@ class GnulaProvider : MainAPI() {
         val result: String = "",
         val url: String? = null,
         val link: String? = null
+    )
+
+    @Serializable
+    data class PageProps(
+        val results: Results? = null,
+        val post: SeasonPost? = null,
+        val episode: EpisodeData? = null,
+        val data: SeasonPost? = null,
+        val context: ContextData? = null
+    )
+
+    @Serializable
+    data class ContextData(
+        val contexSidebarTopWeekMovies: SidebarData? = null,
+        val contexSidebarTopWeekSeries: SidebarData? = null
+    )
+
+    @Serializable
+    data class SidebarData(val data: List<Daum> = emptyList())
+
+    @Serializable
+    data class SeasonEpisode(
+        val title: String? = null,
+        val number: Long? = null,
+        val slug: Slug2 = Slug2(),
+        val images: Images = Images(),
+        val image: String? = null,
+        val overview: String? = null
     )
 }
