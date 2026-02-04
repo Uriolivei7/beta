@@ -303,12 +303,26 @@ class SoloLatinoProvider : MainAPI() {
 
         val recommendations = doc.select("div#single_relacionados article").mapNotNull {
             val recLink = it.selectFirst("a")?.attr("href")
-            val recTitle = it.selectFirst("a img")?.attr("alt")
+            val recImgElement = it.selectFirst("a img")
+
+            val recImg = recImgElement?.attr("data-src").takeIf { !it.isNullOrBlank() }
+                ?: recImgElement?.attr("src").takeIf { !it.isNullOrBlank() && !it.contains("data:image") }
+                ?: ""
+
+            val recTitle = recImgElement?.attr("alt") ?: it.selectFirst(".entry-title")?.text()
+
             if (recTitle != null && recLink != null) {
-                newAnimeSearchResponse(recTitle, fixUrl(recLink)) {
+                newAnimeSearchResponse(
+                    recTitle,
+                    fixUrl(recLink)
+                ) {
+                    this.posterUrl = recImg
                     this.type = if (recLink.contains("/peliculas/")) TvType.Movie else TvType.TvSeries
                 }
-            } else null
+            } else {
+                Log.w("SoloLatino", "load - Recomendación fallida: Título=$recTitle o Link=$recLink es nulo")
+                null
+            }
         }
 
         return when (tvType) {
