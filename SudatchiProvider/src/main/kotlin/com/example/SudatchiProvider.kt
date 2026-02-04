@@ -10,8 +10,8 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import java.net.URLEncoder
 
 class SudatchiProvider : MainAPI() {
-    override var mainUrl = "https://sudatchi.com/es"
-    private val apiUrl = "https://sudatchi.com/es/api"
+    override var mainUrl = "https://sudatchi.com"
+    private val apiUrl = "https://sudatchi.com/api"
     override var name = "Sudatchi"
     override val hasMainPage = true
     override var lang = "en"
