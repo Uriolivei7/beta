@@ -13,8 +13,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
 class TvporinternetProvider : MainAPI() {
-    override var mainUrl = "http://www.tvenvivo2.com"
-    override var name = "TVenVivo"
+    override var mainUrl = "https://www.tvporinternet2.com"
+    override var name = "TvporInternet"
 
     override val supportedTypes = setOf(
         TvType.Live
