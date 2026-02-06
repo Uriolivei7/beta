@@ -224,9 +224,11 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
+        val mainResponse = app.get(data)
+        val cookies = mainResponse.cookies
         var linksFound = false
 
+        val doc = mainResponse.document
         val servers = doc.select(".bg-tabs ul li")
         Log.d("PlusHD", "Log: Servidores detectados: ${servers.size}")
 
@@ -235,50 +237,56 @@ class PlushdProvider : MainAPI() {
             if (dataServer.isBlank()) return@forEachIndexed
 
             try {
-                val decoded = base64Decode(dataServer)
-                Log.d("PlusHD", "Log: [$index] Datos decodificados: $decoded")
+                val playerUrl = "$mainUrl/player/$dataServer"
+                Log.d("PlusHD", "Log: [$index] Solicitando API de video: $playerUrl")
 
-                val videoUrl = if (decoded.startsWith("http")) {
-                    decoded
-                } else {
-                    // 2. Si no es link, consultamos el player pero con Headers de PERSISTENCIA
-                    val playerUrl = "$mainUrl/player/$dataServer"
-                    val res = app.get(playerUrl, referer = data, headers = mapOf(
-                        "Accept" to "*/*",
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
-                    ))
+                val playerRes = app.get(playerUrl,
+                    cookies = cookies,
+                    referer = data,
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                        "X-Requested-With" to "XMLHttpRequest"
+                    )
+                ).text
 
-                    // Buscamos el link dentro del script de redirección de la web
-                    val body = res.text
-                    Regex("""window\.location\.href\s*=\s*["']([^"']+)["']""").find(body)?.groupValues?.get(1)
-                        ?: Regex("""iframe src=["']([^"']+)["']""").find(body)?.groupValues?.get(1)
-                        ?: fetchUrls(body).firstOrNull { !it.contains("tioplus") }
-                }
+                val foundLink = Regex("""window\.location\.href\s*=\s*["']([^"']+)["']""").find(playerRes)?.groupValues?.get(1)
+                    ?: Regex("""(?:iframe|src)=["']([^"']+)["']""").find(playerRes)?.groupValues?.get(1)
+                    ?: fetchUrls(playerRes).firstOrNull {
+                        it.contains("wish") || it.contains("filemoon") || it.contains("vidhide") || it.contains("stream")
+                    }
 
-                if (!videoUrl.isNullOrBlank()) {
-                    val finalUrl = fixPelisplusHostsLinks(videoUrl.replace("\\/", "/"))
-                    Log.i("PlusHD", "Log: [$index] Intentando extraer de: $finalUrl")
+                if (!foundLink.isNullOrBlank()) {
+                    var finalUrl = foundLink.replace("\\/", "/")
+                    if (finalUrl.startsWith("//")) finalUrl = "https:$finalUrl"
 
-                    // 3. Carga del extractor
-                    if (loadExtractor(finalUrl, data, subtitleCallback, callback)) {
+                    finalUrl = fixPelisplusHostsLinks(finalUrl)
+
+                    Log.i("PlusHD", "Log: [$index] ¡URL Encontrada!: $finalUrl")
+
+                    if (loadExtractor(finalUrl, playerUrl, subtitleCallback, callback)) {
                         linksFound = true
                     }
                 } else {
-                    Log.w("PlusHD", "Log: [$index] No se pudo obtener URL del video.")
+                    Log.w("PlusHD", "Log: [$index] El servidor devolvió contenido protegido. Intentando bypass...")
+
+                    fetchUrls(playerRes).forEach { raw ->
+                        if (!raw.contains("tioplus.app")) {
+                            loadExtractor(fixPelisplusHostsLinks(raw), playerUrl, subtitleCallback, callback)
+                        }
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e("PlusHD", "Log: Error en servidor [$index]: ${e.message}")
             }
         }
+
         return linksFound
     }
 
-    // Función auxiliar para extraer URLs de cualquier texto (como en Aniyomi)
     private fun fetchUrls(text: String): List<String> {
-        val regex = Regex("""https?://[\w\d\-\.]+\.\w{2,}(?:/[\w\d\-\._\?\,\&\%\+\=\[\]\~\/]*)*""")
-        return regex.findAll(text).map { it.value }.toList()
+        val regex = Regex("""https?://[^\s"'<>]+""")
+        return regex.findAll(text).map { it.value.replace("\\/", "/") }.toList()
     }
 
     private fun base64Decode(string: String): String {
