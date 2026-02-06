@@ -235,56 +235,37 @@ class PlushdProvider : MainAPI() {
             if (dataServer.isBlank()) return@forEachIndexed
 
             try {
-                val playerUrl = "$mainUrl/player/$dataServer"
-                Log.d("PlusHD", "Log: [$index] Consultando player: $playerUrl")
+                val decoded = base64Decode(dataServer)
+                Log.d("PlusHD", "Log: [$index] Datos decodificados: $decoded")
 
-                val playerRes = app.get(playerUrl, headers = mapOf(
-                    "Referer" to data,
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language" to "es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; v:122.0) Gecko/20100101 Firefox/122.0"
-                ))
+                val videoUrl = if (decoded.startsWith("http")) {
+                    decoded
+                } else {
+                    // 2. Si no es link, consultamos el player pero con Headers de PERSISTENCIA
+                    val playerUrl = "$mainUrl/player/$dataServer"
+                    val res = app.get(playerUrl, referer = data, headers = mapOf(
+                        "Accept" to "*/*",
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+                    ))
 
-                val htmlContent = playerRes.text
-
-                if (htmlContent.length < 10) {
-                    Log.w("PlusHD", "Log: [$index] Respuesta vacía o corrupta")
-                    return@forEachIndexed
+                    // Buscamos el link dentro del script de redirección de la web
+                    val body = res.text
+                    Regex("""window\.location\.href\s*=\s*["']([^"']+)["']""").find(body)?.groupValues?.get(1)
+                        ?: Regex("""iframe src=["']([^"']+)["']""").find(body)?.groupValues?.get(1)
+                        ?: fetchUrls(body).firstOrNull { !it.contains("tioplus") }
                 }
 
-                val candidates = mutableListOf<String>()
+                if (!videoUrl.isNullOrBlank()) {
+                    val finalUrl = fixPelisplusHostsLinks(videoUrl.replace("\\/", "/"))
+                    Log.i("PlusHD", "Log: [$index] Intentando extraer de: $finalUrl")
 
-                val cleanServerRegex = Regex("""https?://[\w\d\-\.]+\.(?:com|net|org|to|link|sx|io|me|sh|pro|biz)/[\w\d\-\._\?\,\&\%\+\=\[\]\~\/]+""")
-
-                cleanServerRegex.findAll(htmlContent).forEach { m ->
-                    val link = m.value.replace("\\/", "/")
-                    if (!link.contains("tioplus.app") &&
-                        (link.contains("embed") || link.contains("/e/") || link.contains("/v/") || link.contains("video"))
-                    ) {
-                        candidates.add(link)
-                    }
-                }
-
-                Regex("""window\.location\.href\s*=\s*["']([^"']+)["']""").find(htmlContent)?.groupValues?.get(1)?.let {
-                    candidates.add(it)
-                }
-
-                val finalCandidates = candidates.distinct().filter { it.isNotBlank() && it.length > 10 }
-                Log.d("PlusHD", "Log: [$index] Candidatos limpios: ${finalCandidates.size}")
-
-                finalCandidates.forEach { candidate ->
-                    var urlToLoad = if (candidate.startsWith("//")) "https:$candidate" else candidate
-                    urlToLoad = fixPelisplusHostsLinks(urlToLoad)
-
-                    val cleanedUrl = urlToLoad.substringBefore("?url=").substringBefore("&url=")
-
-                    Log.i("PlusHD", "Log: [$index] Intentando extraer de: $cleanedUrl")
-
-                    val success = loadExtractor(cleanedUrl, playerUrl, subtitleCallback, callback)
-                    if (success) {
+                    // 3. Carga del extractor
+                    if (loadExtractor(finalUrl, data, subtitleCallback, callback)) {
                         linksFound = true
-                        Log.i("PlusHD", "Log: [$index] ¡EXITO!")
                     }
+                } else {
+                    Log.w("PlusHD", "Log: [$index] No se pudo obtener URL del video.")
                 }
 
             } catch (e: Exception) {
@@ -294,16 +275,17 @@ class PlushdProvider : MainAPI() {
         return linksFound
     }
 
+    // Función auxiliar para extraer URLs de cualquier texto (como en Aniyomi)
+    private fun fetchUrls(text: String): List<String> {
+        val regex = Regex("""https?://[\w\d\-\.]+\.\w{2,}(?:/[\w\d\-\._\?\,\&\%\+\=\[\]\~\/]*)*""")
+        return regex.findAll(text).map { it.value }.toList()
+    }
+
     private fun base64Decode(string: String): String {
         return try {
-            val cleanString = string.trim()
-                .replace("\n", "")
-                .replace("\r", "")
-                .replace(" ", "")
-            val data = Base64.decode(cleanString, Base64.DEFAULT)
+            val data = Base64.decode(string, Base64.DEFAULT)
             String(data, Charsets.UTF_8)
         } catch (e: Exception) {
-            Log.e("PlusHD", "Log: Error decodificando Base64 ($string): ${e.message}")
             ""
         }
     }
