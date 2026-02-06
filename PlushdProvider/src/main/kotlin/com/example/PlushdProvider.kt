@@ -218,16 +218,6 @@ class PlushdProvider : MainAPI() {
             .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
-    private fun base64Decode(string: String): String {
-        return try {
-            val cleanString = string.trim().replace("\n", "").replace("\r", "")
-            Base64.decode(cleanString, Base64.DEFAULT).toString(Charsets.UTF_8)
-        } catch (e: Exception) {
-            Log.e("PlusHD", "Log: Error decodificando Base64: ${e.message}")
-            ""
-        }
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -238,67 +228,81 @@ class PlushdProvider : MainAPI() {
         var linksFound = false
 
         val servers = doc.select(".bg-tabs ul li")
-        Log.d("PlusHD", "Log: Servidores encontrados: ${servers.size}")
+        Log.d("PlusHD", "Log: Iniciando búsqueda en ${servers.size} servidores")
 
-        servers.forEach { it ->
+        servers.forEachIndexed { index, it ->
             val dataServer = it.attr("data-server")
-            if (dataServer.isBlank()) return@forEach
+            if (dataServer.isBlank()) {
+                Log.w("PlusHD", "Log: Servidor [$index] vacío, saltando...")
+                return@forEachIndexed
+            }
 
             try {
                 val decode = base64Decode(dataServer)
+                Log.d("PlusHD", "Log: Servidor [$index] decodificado: $decode")
 
-                val url = if (!decode.startsWith("http")) {
+                var videoUrl = if (!decode.startsWith("http")) {
                     "$mainUrl/player/$dataServer"
                 } else {
                     decode
                 }
 
-                val videoUrl = if (url.contains("/player/")) {
-                    Log.d("PlusHD", "Log: Intentando extraer de player -> $url")
+                if (videoUrl.contains("/player/") || videoUrl.contains("tioplus.app")) {
+                    Log.d("PlusHD", "Log: Extrayendo contenido de player interno: $videoUrl")
 
-                    val res = app.get(url, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                        "Referer" to data,
-                        "Accept-Language" to "es-MX,es;q=0.9"
-                    ))
+                    val playerRes = app.get(videoUrl, referer = data).text
 
-                    val playerDoc = res.text
-
-                    val foundLink = Regex("""https?://[^\s"'<>]+""").findAll(playerDoc)
+                    val regex = Regex("""(?:https?:)?//[^\s"'<>]+""")
+                    val foundLink = regex.findAll(playerRes)
                         .map { m -> m.value.replace("\\/", "/") }
+                        .map { l -> if (l.startsWith("//")) "https:$l" else l }
                         .firstOrNull { link ->
                             val l = link.lowercase()
-                            l.contains("wish") || l.contains("vidhide") || l.contains("filemoon") ||
-                                    l.contains("stream") || l.contains("embed") || l.contains("player")
-                        } ?: ""
+                            l.contains("wish") || l.contains("filemoon") ||
+                                    l.contains("vidhide") || l.contains("stream") ||
+                                    l.contains("dood") || l.contains("uproar") ||
+                                    l.contains("embed") || l.contains("player")
+                        }
 
-                    if (foundLink.isBlank() && playerDoc.contains("eval(function")) {
-                        Log.d("PlusHD", "Log: Detectado código ofuscado (Packer), buscando IDs...")
-                        Regex("""['"]https?['"]\s*\+\s*['"]://[^'"]+""").find(playerDoc)?.value
-                            ?.replace("\"", "")?.replace("'", "")?.replace(" ", "")?.replace("+", "") ?: ""
-                    } else {
-                        foundLink
+                    if (foundLink != null) {
+                        videoUrl = foundLink
+                        Log.i("PlusHD", "Log: Enlace encontrado dentro del player: $videoUrl")
                     }
-                } else {
-                    url
                 }
 
                 if (videoUrl.isNotBlank() && videoUrl.startsWith("http")) {
-                    val fixedUrl = videoUrl.substringBefore("&url=").substringBefore("?url=")
-                        .replace(Regex("""(\?|&)(id|m)=.*"""), "")
 
-                    Log.i("PlusHD", "Log: ¡EXITO! Enviando a extractor: $fixedUrl")
+                    val fixedUrl = fixPelisplusHostsLinks(videoUrl)
+                        .substringBefore("?url=")
+                        .substringBefore("&url=")
 
-                    loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
-                    linksFound = true
-                } else {
-                    Log.w("PlusHD", "Log: No se encontró link válido en: $url")
+                    Log.i("PlusHD", "Log: Enviando a extractor: $fixedUrl")
+
+                    val success = loadExtractor(fixedUrl, data, subtitleCallback, callback)
+                    if (success) linksFound = true
                 }
+
             } catch (e: Exception) {
-                Log.e("PlusHD", "Log: Error procesando servidor: ${e.message}")
+                Log.e("PlusHD", "Log: Error crítico en servidor [$index]: ${e.message}")
             }
         }
+
+        if (!linksFound) Log.e("PlusHD", "Log: Finalizado - No se pudo extraer ningún link válido")
         return linksFound
+    }
+
+    private fun base64Decode(string: String): String {
+        return try {
+            val cleanString = string.trim()
+                .replace("\n", "")
+                .replace("\r", "")
+                .replace(" ", "")
+            val data = Base64.decode(cleanString, Base64.DEFAULT)
+            String(data, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e("PlusHD", "Log: Error decodificando Base64 ($string): ${e.message}")
+            ""
+        }
     }
 
 }
