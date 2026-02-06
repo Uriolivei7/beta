@@ -237,31 +237,31 @@ class PlushdProvider : MainAPI() {
 
             try {
                 val decodedUrl = base64Decode(dataServer.trim().replace("\n", ""))
+
                 val videoUrl = if (!decodedUrl.startsWith("http")) {
                     val playerUrl = "$mainUrl/player/${dataServer.trim()}"
-                    val playerDoc = app.get(playerUrl).text.replace("\\/", "/")
+                    Log.d("PlusHD", "Log: Solicitando Player -> $playerUrl")
 
-                    val allLinks = Regex("""https?://[^\s"']+""").findAll(playerDoc).map { it.value }.toList()
+                    val response = app.get(playerUrl, allowRedirects = false)
 
-                    Log.d("PlusHD", "Log: Links encontrados en $playerUrl -> $allLinks")
+                    var link = response.headers["location"]
 
-                    allLinks.firstOrNull { link ->
-                        val l = link.lowercase()
-                        !l.contains("google") && !l.contains("css") && !l.contains(".js") &&
-                                !l.contains("schema.org") && !l.contains("w3.org") && !l.contains("favicon")
-                    } ?: ""
+                    if (link.isNullOrBlank()) {
+                        val body = response.text
+                        link = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""").find(body)?.groupValues?.get(1)
+                            ?: Regex("""location\.assign\(['"]([^'"]+)['"]\)""").find(body)?.groupValues?.get(1)
+                                    ?: Regex("""meta\s+http-equiv="refresh"\s+content=".*url=([^"]+)"""").find(body)?.groupValues?.get(1)
+                    }
+
+                    link?.replace("\\/", "/") ?: ""
                 } else {
                     decodedUrl
                 }
 
                 if (videoUrl.isNotBlank()) {
-                    val fixedUrl = videoUrl
-                        .replace("https://sblanh.com", "https://lvturbo.com")
-                        .replace("https://sblona.com", "https://watchsb.com")
-                        .replace(Regex("""(\?|&)(id|link|url|m)=https?://.*"""), "")
-                        .trim()
+                    val fixedUrl = videoUrl.replace(Regex("""(\?|&)(id|link|url|m)=https?://.*"""), "").trim()
 
-                    Log.i("PlusHD", "Log: Extractor iniciado para: $fixedUrl")
+                    Log.i("PlusHD", "Log: URL de video detectada tras redirección: $fixedUrl")
 
                     loadExtractor(
                         url = fixedUrl,
@@ -271,10 +271,10 @@ class PlushdProvider : MainAPI() {
                     )
                     linksFound = true
                 } else {
-                    Log.w("PlusHD", "Log: No se encontró URL válida en el player para $dataServer")
+                    Log.w("PlusHD", "Log: No se pudo encontrar ninguna redirección en el player para $dataServer")
                 }
             } catch (e: Exception) {
-                Log.e("PlusHD", "Log: Error procesando servidor: ${e.message}")
+                Log.e("PlusHD", "Log: Error crítico en servidor: ${e.message}")
             }
         }
         return linksFound
