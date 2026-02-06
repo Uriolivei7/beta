@@ -237,19 +237,18 @@ class PlushdProvider : MainAPI() {
 
             try {
                 val decodedUrl = base64Decode(dataServer.trim().replace("\n", ""))
-
                 val videoUrl = if (!decodedUrl.startsWith("http")) {
                     val playerUrl = "$mainUrl/player/${dataServer.trim()}"
-                    val playerDoc = app.get(playerUrl).text
+                    val playerDoc = app.get(playerUrl).text.replace("\\/", "/") 
 
                     val allLinks = Regex("""https?://[^\s"']+""").findAll(playerDoc).map { it.value }.toList()
 
+                    Log.d("PlusHD", "Log: Links encontrados en $playerUrl -> $allLinks")
+
                     allLinks.firstOrNull { link ->
-                        !link.contains("fonts.googleapis.com") &&
-                                !link.contains(".css") &&
-                                !link.contains(".js") &&
-                                !link.contains(".png") &&
-                                !link.contains(".jpg")
+                        val l = link.lowercase()
+                        !l.contains("google") && !l.contains("css") && !l.contains(".js") &&
+                                !l.contains("schema.org") && !l.contains("w3.org") && !l.contains("favicon")
                     } ?: ""
                 } else {
                     decodedUrl
