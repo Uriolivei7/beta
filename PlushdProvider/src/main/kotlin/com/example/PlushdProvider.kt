@@ -242,29 +242,43 @@ class PlushdProvider : MainAPI() {
                     "Referer" to data,
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
                     "X-Requested-With" to "XMLHttpRequest"
-                ))
+                )).text
 
-                val htmlContent = playerRes.text
+                val redirectMatch = Regex("""window\.location\.href\s*=\s*["']([^"']+)["']""").find(playerRes)
 
-                val iframeRegex = Regex("""(?:https?:)?//(?:www\.)?[\w\d\-\.]+\.\w{2,}(?:/[\w\d\-\._\?\,\&\%\+\=\[\]\~\/]*)*""")
+                val serverRegex = Regex("""https?://[\w\d\-\.]+\.(?:to|com|sx|io|link|me|net|biz|pro)/[\w\d\-\._\?\,\&\%\+\=\[\]\~\/]+""")
 
-                val potentialLinks = iframeRegex.findAll(htmlContent)
-                    .map { m -> m.value.replace("\\/", "/") }
-                    .map { l -> if (l.startsWith("//")) "https:$l" else l }
-                    .filter { link ->
-                        !link.contains("tioplus.app") &&
-                                !link.contains("google") &&
-                                !link.contains("schema.org") &&
-                                (link.contains("embed") || link.contains("player") || link.contains("v=") || link.contains(".m3u8"))
-                    }.toList()
+                val candidates = mutableListOf<String>()
 
-                Log.d("PlusHD", "Log: [$index] Links potenciales encontrados: ${potentialLinks.size}")
+                redirectMatch?.groupValues?.get(1)?.let { candidates.add(it) }
 
-                potentialLinks.forEach { link ->
-                    val fixedUrl = fixPelisplusHostsLinks(link)
-                    Log.i("PlusHD", "Log: [$index] Intentando extraer de: $fixedUrl")
+                serverRegex.findAll(playerRes).forEach { m ->
+                    val link = m.value.replace("\\/", "/")
+                    if (!link.contains("tioplus.app") &&
+                        (link.contains("embed") || link.contains("player") || link.contains("/e/") || link.contains(".m3u8"))
+                    ) {
+                        candidates.add(link)
+                    }
+                }
 
-                    val success = loadExtractor(fixedUrl, playerUrl, subtitleCallback, callback)
+                val finalCandidates = candidates.distinct()
+                Log.d("PlusHD", "Log: [$index] Candidatos encontrados: ${finalCandidates.size}")
+
+                if (finalCandidates.isEmpty()) {
+                    val snippet = if (playerRes.length > 150) playerRes.take(150) else playerRes
+                    Log.w("PlusHD", "Log: [$index] No se hallaron links. Snippet: $snippet")
+                }
+
+                finalCandidates.forEach { candidate ->
+                    var urlToLoad = if (candidate.startsWith("//")) "https:$candidate" else candidate
+
+                    urlToLoad = fixPelisplusHostsLinks(urlToLoad)
+
+                    val cleanedUrl = urlToLoad.substringBefore("?url=").substringBefore("&url=")
+
+                    Log.i("PlusHD", "Log: [$index] Intentando extraer de: $cleanedUrl")
+
+                    val success = loadExtractor(cleanedUrl, playerUrl, subtitleCallback, callback)
                     if (success) {
                         linksFound = true
                         Log.i("PlusHD", "Log: [$index] ¡ÉXITO! Enlace extraído.")
@@ -276,6 +290,7 @@ class PlushdProvider : MainAPI() {
             }
         }
 
+        if (!linksFound) Log.e("PlusHD", "Log: No se encontró ningún link funcional en ningún servidor.")
         return linksFound
     }
 
