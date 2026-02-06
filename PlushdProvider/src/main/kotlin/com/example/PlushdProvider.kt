@@ -228,66 +228,54 @@ class PlushdProvider : MainAPI() {
         var linksFound = false
 
         val servers = doc.select(".bg-tabs ul li")
-        Log.d("PlusHD", "Log: Iniciando búsqueda en ${servers.size} servidores")
+        Log.d("PlusHD", "Log: Servidores detectados: ${servers.size}")
 
         servers.forEachIndexed { index, it ->
             val dataServer = it.attr("data-server")
-            if (dataServer.isBlank()) {
-                Log.w("PlusHD", "Log: Servidor [$index] vacío, saltando...")
-                return@forEachIndexed
-            }
+            if (dataServer.isBlank()) return@forEachIndexed
 
             try {
-                val decode = base64Decode(dataServer)
-                Log.d("PlusHD", "Log: Servidor [$index] decodificado: $decode")
+                val playerUrl = "$mainUrl/player/$dataServer"
+                Log.d("PlusHD", "Log: [$index] Consultando player: $playerUrl")
 
-                var videoUrl = if (!decode.startsWith("http")) {
-                    "$mainUrl/player/$dataServer"
-                } else {
-                    decode
-                }
+                val playerRes = app.get(playerUrl, headers = mapOf(
+                    "Referer" to data,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                    "X-Requested-With" to "XMLHttpRequest"
+                ))
 
-                if (videoUrl.contains("/player/") || videoUrl.contains("tioplus.app")) {
-                    Log.d("PlusHD", "Log: Extrayendo contenido de player interno: $videoUrl")
+                val htmlContent = playerRes.text
 
-                    val playerRes = app.get(videoUrl, referer = data).text
+                val iframeRegex = Regex("""(?:https?:)?//(?:www\.)?[\w\d\-\.]+\.\w{2,}(?:/[\w\d\-\._\?\,\&\%\+\=\[\]\~\/]*)*""")
 
-                    val regex = Regex("""(?:https?:)?//[^\s"'<>]+""")
-                    val foundLink = regex.findAll(playerRes)
-                        .map { m -> m.value.replace("\\/", "/") }
-                        .map { l -> if (l.startsWith("//")) "https:$l" else l }
-                        .firstOrNull { link ->
-                            val l = link.lowercase()
-                            l.contains("wish") || l.contains("filemoon") ||
-                                    l.contains("vidhide") || l.contains("stream") ||
-                                    l.contains("dood") || l.contains("uproar") ||
-                                    l.contains("embed") || l.contains("player")
-                        }
+                val potentialLinks = iframeRegex.findAll(htmlContent)
+                    .map { m -> m.value.replace("\\/", "/") }
+                    .map { l -> if (l.startsWith("//")) "https:$l" else l }
+                    .filter { link ->
+                        !link.contains("tioplus.app") &&
+                                !link.contains("google") &&
+                                !link.contains("schema.org") &&
+                                (link.contains("embed") || link.contains("player") || link.contains("v=") || link.contains(".m3u8"))
+                    }.toList()
 
-                    if (foundLink != null) {
-                        videoUrl = foundLink
-                        Log.i("PlusHD", "Log: Enlace encontrado dentro del player: $videoUrl")
+                Log.d("PlusHD", "Log: [$index] Links potenciales encontrados: ${potentialLinks.size}")
+
+                potentialLinks.forEach { link ->
+                    val fixedUrl = fixPelisplusHostsLinks(link)
+                    Log.i("PlusHD", "Log: [$index] Intentando extraer de: $fixedUrl")
+
+                    val success = loadExtractor(fixedUrl, playerUrl, subtitleCallback, callback)
+                    if (success) {
+                        linksFound = true
+                        Log.i("PlusHD", "Log: [$index] ¡ÉXITO! Enlace extraído.")
                     }
                 }
 
-                if (videoUrl.isNotBlank() && videoUrl.startsWith("http")) {
-
-                    val fixedUrl = fixPelisplusHostsLinks(videoUrl)
-                        .substringBefore("?url=")
-                        .substringBefore("&url=")
-
-                    Log.i("PlusHD", "Log: Enviando a extractor: $fixedUrl")
-
-                    val success = loadExtractor(fixedUrl, data, subtitleCallback, callback)
-                    if (success) linksFound = true
-                }
-
             } catch (e: Exception) {
-                Log.e("PlusHD", "Log: Error crítico en servidor [$index]: ${e.message}")
+                Log.e("PlusHD", "Log: Error en servidor [$index]: ${e.message}")
             }
         }
 
-        if (!linksFound) Log.e("PlusHD", "Log: Finalizado - No se pudo extraer ningún link válido")
         return linksFound
     }
 
