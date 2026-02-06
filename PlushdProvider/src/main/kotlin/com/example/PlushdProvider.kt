@@ -254,24 +254,31 @@ class PlushdProvider : MainAPI() {
                 }
 
                 val videoUrl = if (url.contains("/player/")) {
-                    Log.d("PlusHD", "Log: Entrando al player -> $url")
+                    Log.d("PlusHD", "Log: Intentando extraer de player -> $url")
 
                     val res = app.get(url, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8",
-                        "Accept-Language" to "es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3",
-                        "Referer" to "$mainUrl/"
+                        "Referer" to data,
+                        "Accept-Language" to "es-MX,es;q=0.9"
                     ))
 
                     val playerDoc = res.text
 
-                    Regex("""https?://[^\s"'<>]+""").findAll(playerDoc)
+                    val foundLink = Regex("""https?://[^\s"'<>]+""").findAll(playerDoc)
                         .map { m -> m.value.replace("\\/", "/") }
                         .firstOrNull { link ->
                             val l = link.lowercase()
                             l.contains("wish") || l.contains("vidhide") || l.contains("filemoon") ||
-                                    l.contains("uproar") || l.contains("stream") || l.contains("embed")
+                                    l.contains("stream") || l.contains("embed") || l.contains("player")
                         } ?: ""
+
+                    if (foundLink.isBlank() && playerDoc.contains("eval(function")) {
+                        Log.d("PlusHD", "Log: Detectado código ofuscado (Packer), buscando IDs...")
+                        Regex("""['"]https?['"]\s*\+\s*['"]://[^'"]+""").find(playerDoc)?.value
+                            ?.replace("\"", "")?.replace("'", "")?.replace(" ", "")?.replace("+", "") ?: ""
+                    } else {
+                        foundLink
+                    }
                 } else {
                     url
                 }
