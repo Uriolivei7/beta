@@ -224,66 +224,65 @@ class PlushdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val doc = app.get(data).document
         var linksFound = false
-        val linkRegex = Regex("window\\.location\\.href\\s*=\\s*'([^']*)'")
 
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data
-        )
+        val servers = doc.select(".bg-tabs ul li, div ul.subselect li, .servidores-p li")
 
-        val doc = app.get(data, headers = headers).document
+        Log.d("PlusHD", "Log: Se encontraron ${servers.size} servidores potenciales.")
 
-        val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
-            subtitleCallback.invoke(file)
-        }
+        servers.forEach { serverLi ->
+            val dataServer = serverLi.attr("data-server")
+            if (dataServer.isBlank()) {
+                Log.w("PlusHD", "Log: Salto de servidor - data-server está vacío.")
+                return@forEach
+            }
 
-        doc.select("div ul.subselect li").toList().forEach { serverLi ->
             try {
-                val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@forEach
+                val decodedUrl = base64Decode(dataServer.trim().replace("\n", ""))
 
-                val encodedOne = serverData.toByteArray()
-                val encodedTwo = base64Encode(encodedOne)
-                val playerUrl = "$mainUrl/player/$encodedTwo"
+                val videoUrl = if (!decodedUrl.startsWith("http")) {
+                    val playerUrl = "$mainUrl/player/${dataServer.trim()}"
+                    Log.d("PlusHD", "Log: Resolviendo vía player: $playerUrl")
 
-                val text = app.get(playerUrl, headers = headers).text
-
-                if (text.contains("bloqueo temporal")) {
-                    Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
-                    return@forEach
+                    val playerDoc = app.get(playerUrl).text
+                    Regex("""https?://[^\s"']+""").find(playerDoc)?.value ?: ""
+                } else {
+                    decodedUrl
                 }
 
-                val link = linkRegex.find(text)?.destructured?.component1()
+                if (videoUrl.isNotBlank()) {
+                    val fixedUrl = videoUrl
+                        .replace("https://sblanh.com", "https://lvturbo.com")
+                        .replace("https://sblona.com", "https://watchsb.com")
+                        .replace(Regex("""(\?|&)(id|link|url)=https?://.*"""), "") // Limpia trackers
+                        .trim()
 
-                if (!link.isNullOrBlank()) {
-                    val fixedLink = fixPelisplusHostsLinks(link)
-
-                    val extractorReferer = try {
-                        val urlObject = URL(fixedLink)
-                        urlObject.protocol + "://" + urlObject.host + "/"
-                    } catch (e: Exception) {
-                        Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}. Usando playerUrl como fallback.")
-                        playerUrl
-                    }
+                    Log.i("PlusHD", "Log: Extractor iniciado para: $fixedUrl")
 
                     loadExtractor(
-                        url = fixedLink,
-                        referer = extractorReferer,
-                        subtitleCallback = loggingSubtitleCallback,
+                        url = fixedUrl,
+                        referer = data,
+                        subtitleCallback = subtitleCallback,
                         callback = callback
                     )
                     linksFound = true
+                } else {
+                    Log.w("PlusHD", "Log: No se pudo extraer URL de video para el servidor con data-server: $dataServer")
                 }
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
+                Log.e("PlusHD", "Log: Error procesando servidor. URL Decodificada: ${dataServer.take(20)}... | Error: ${e.message}")
             }
-
-            delay(1500L)
         }
-
         return linksFound
+    }
+
+    private fun base64Decode(string: String): String {
+        return try {
+            Base64.decode(string, android.util.Base64.DEFAULT).toString(Charsets.UTF_8)
+        } catch (e: Exception) {
+            ""
+        }
     }
 
 }
