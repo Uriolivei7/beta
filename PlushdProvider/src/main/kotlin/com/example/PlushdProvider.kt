@@ -218,6 +218,16 @@ class PlushdProvider : MainAPI() {
             .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
+    private fun base64Decode(string: String): String {
+        return try {
+            val cleanString = string.trim().replace("\n", "").replace("\r", "")
+            Base64.decode(cleanString, Base64.DEFAULT).toString(Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e("PlusHD", "Log: Error decodificando Base64: ${e.message}")
+            ""
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -227,63 +237,61 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data).document
         var linksFound = false
 
-        val servers = doc.select(".bg-tabs ul li, div ul.subselect li, .servidores-p li")
+        val servers = doc.select(".bg-tabs ul li")
+        Log.d("PlusHD", "Log: Servidores encontrados: ${servers.size}")
 
-        Log.d("PlusHD", "Log: Se encontraron ${servers.size} servidores potenciales.")
-
-        servers.forEach { serverLi ->
-            val dataServer = serverLi.attr("data-server")
+        servers.forEach { it ->
+            val dataServer = it.attr("data-server")
             if (dataServer.isBlank()) return@forEach
 
             try {
-                val decodedUrl = base64Decode(dataServer.trim().replace("\n", ""))
+                val decode = base64Decode(dataServer)
 
-                val videoUrl = if (!decodedUrl.startsWith("http")) {
-                    val playerUrl = "$mainUrl/player/${dataServer.trim()}"
-                    Log.d("PlusHD", "Log: Solicitando Player -> $playerUrl")
-
-                    val response = app.get(playerUrl, allowRedirects = false, headers = mapOf(
-                        "Accept-Encoding" to "identity",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    ))
-
-                    var link = response.headers["location"]
-
-                    if (link.isNullOrBlank()) {
-                        val body = response.text.filter { it.code in 32..126 }
-
-                        link = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""").find(body)?.groupValues?.get(1)
-                            ?: Regex("""location\.assign\(['"]([^'"]+)['"]\)""").find(body)?.groupValues?.get(1)
-                    }
-
-                    link?.replace("\\/", "/") ?: ""
+                val url = if (!decode.startsWith("http")) {
+                    "$mainUrl/player/$dataServer"
                 } else {
-                    decodedUrl
+                    decode
                 }
 
-                if (videoUrl.isNotBlank() && videoUrl.contains("http")) {
-                    val fixedUrl = videoUrl.replace(Regex("""(\?|&)(id|link|url|m)=https?://.*"""), "").trim()
+                val videoUrl = if (url.contains("/player/")) {
+                    Log.d("PlusHD", "Log: Entrando al player -> $url")
 
-                    Log.i("PlusHD", "Log: ¡Link limpio encontrado!: $fixedUrl")
+                    val res = app.get(url, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8",
+                        "Accept-Language" to "es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3",
+                        "Referer" to "$mainUrl/"
+                    ))
+
+                    val playerDoc = res.text
+
+                    Regex("""https?://[^\s"'<>]+""").findAll(playerDoc)
+                        .map { m -> m.value.replace("\\/", "/") }
+                        .firstOrNull { link ->
+                            val l = link.lowercase()
+                            l.contains("wish") || l.contains("vidhide") || l.contains("filemoon") ||
+                                    l.contains("uproar") || l.contains("stream") || l.contains("embed")
+                        } ?: ""
+                } else {
+                    url
+                }
+
+                if (videoUrl.isNotBlank() && videoUrl.startsWith("http")) {
+                    val fixedUrl = videoUrl.substringBefore("&url=").substringBefore("?url=")
+                        .replace(Regex("""(\?|&)(id|m)=.*"""), "")
+
+                    Log.i("PlusHD", "Log: ¡EXITO! Enviando a extractor: $fixedUrl")
 
                     loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
                     linksFound = true
                 } else {
-                    Log.w("PlusHD", "Log: El link extraído no es válido o está vacío: $videoUrl")
+                    Log.w("PlusHD", "Log: No se encontró link válido en: $url")
                 }
             } catch (e: Exception) {
-                Log.e("PlusHD", "Log: Error: ${e.message}")
+                Log.e("PlusHD", "Log: Error procesando servidor: ${e.message}")
             }
         }
         return linksFound
-    }
-
-    private fun base64Decode(string: String): String {
-        return try {
-            Base64.decode(string, Base64.DEFAULT).toString(Charsets.UTF_8)
-        } catch (e: Exception) {
-            ""
-        }
     }
 
 }
