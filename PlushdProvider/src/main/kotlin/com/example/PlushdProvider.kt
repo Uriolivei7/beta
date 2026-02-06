@@ -242,15 +242,18 @@ class PlushdProvider : MainAPI() {
                     val playerUrl = "$mainUrl/player/${dataServer.trim()}"
                     Log.d("PlusHD", "Log: Solicitando Player -> $playerUrl")
 
-                    val response = app.get(playerUrl, allowRedirects = false)
+                    val response = app.get(playerUrl, allowRedirects = false, headers = mapOf(
+                        "Accept-Encoding" to "identity",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ))
 
                     var link = response.headers["location"]
 
                     if (link.isNullOrBlank()) {
-                        val body = response.text
+                        val body = response.text.filter { it.code in 32..126 }
+
                         link = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""").find(body)?.groupValues?.get(1)
                             ?: Regex("""location\.assign\(['"]([^'"]+)['"]\)""").find(body)?.groupValues?.get(1)
-                                    ?: Regex("""meta\s+http-equiv="refresh"\s+content=".*url=([^"]+)"""").find(body)?.groupValues?.get(1)
                     }
 
                     link?.replace("\\/", "/") ?: ""
@@ -258,23 +261,18 @@ class PlushdProvider : MainAPI() {
                     decodedUrl
                 }
 
-                if (videoUrl.isNotBlank()) {
+                if (videoUrl.isNotBlank() && videoUrl.contains("http")) {
                     val fixedUrl = videoUrl.replace(Regex("""(\?|&)(id|link|url|m)=https?://.*"""), "").trim()
 
-                    Log.i("PlusHD", "Log: URL de video detectada tras redirección: $fixedUrl")
+                    Log.i("PlusHD", "Log: ¡Link limpio encontrado!: $fixedUrl")
 
-                    loadExtractor(
-                        url = fixedUrl,
-                        referer = "$mainUrl/",
-                        subtitleCallback = subtitleCallback,
-                        callback = callback
-                    )
+                    loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
                     linksFound = true
                 } else {
-                    Log.w("PlusHD", "Log: No se pudo encontrar ninguna redirección en el player para $dataServer")
+                    Log.w("PlusHD", "Log: El link extraído no es válido o está vacío: $videoUrl")
                 }
             } catch (e: Exception) {
-                Log.e("PlusHD", "Log: Error crítico en servidor: ${e.message}")
+                Log.e("PlusHD", "Log: Error: ${e.message}")
             }
         }
         return linksFound
