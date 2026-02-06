@@ -233,20 +233,24 @@ class PlushdProvider : MainAPI() {
 
         servers.forEach { serverLi ->
             val dataServer = serverLi.attr("data-server")
-            if (dataServer.isBlank()) {
-                Log.w("PlusHD", "Log: Salto de servidor - data-server está vacío.")
-                return@forEach
-            }
+            if (dataServer.isBlank()) return@forEach
 
             try {
                 val decodedUrl = base64Decode(dataServer.trim().replace("\n", ""))
 
                 val videoUrl = if (!decodedUrl.startsWith("http")) {
                     val playerUrl = "$mainUrl/player/${dataServer.trim()}"
-                    Log.d("PlusHD", "Log: Resolviendo vía player: $playerUrl")
-
                     val playerDoc = app.get(playerUrl).text
-                    Regex("""https?://[^\s"']+""").find(playerDoc)?.value ?: ""
+
+                    val allLinks = Regex("""https?://[^\s"']+""").findAll(playerDoc).map { it.value }.toList()
+
+                    allLinks.firstOrNull { link ->
+                        !link.contains("fonts.googleapis.com") &&
+                                !link.contains(".css") &&
+                                !link.contains(".js") &&
+                                !link.contains(".png") &&
+                                !link.contains(".jpg")
+                    } ?: ""
                 } else {
                     decodedUrl
                 }
@@ -255,23 +259,23 @@ class PlushdProvider : MainAPI() {
                     val fixedUrl = videoUrl
                         .replace("https://sblanh.com", "https://lvturbo.com")
                         .replace("https://sblona.com", "https://watchsb.com")
-                        .replace(Regex("""(\?|&)(id|link|url)=https?://.*"""), "") // Limpia trackers
+                        .replace(Regex("""(\?|&)(id|link|url|m)=https?://.*"""), "")
                         .trim()
 
                     Log.i("PlusHD", "Log: Extractor iniciado para: $fixedUrl")
 
                     loadExtractor(
                         url = fixedUrl,
-                        referer = data,
+                        referer = "$mainUrl/",
                         subtitleCallback = subtitleCallback,
                         callback = callback
                     )
                     linksFound = true
                 } else {
-                    Log.w("PlusHD", "Log: No se pudo extraer URL de video para el servidor con data-server: $dataServer")
+                    Log.w("PlusHD", "Log: No se encontró URL válida en el player para $dataServer")
                 }
             } catch (e: Exception) {
-                Log.e("PlusHD", "Log: Error procesando servidor. URL Decodificada: ${dataServer.take(20)}... | Error: ${e.message}")
+                Log.e("PlusHD", "Log: Error procesando servidor: ${e.message}")
             }
         }
         return linksFound
@@ -279,7 +283,7 @@ class PlushdProvider : MainAPI() {
 
     private fun base64Decode(string: String): String {
         return try {
-            Base64.decode(string, android.util.Base64.DEFAULT).toString(Charsets.UTF_8)
+            Base64.decode(string, Base64.DEFAULT).toString(Charsets.UTF_8)
         } catch (e: Exception) {
             ""
         }
