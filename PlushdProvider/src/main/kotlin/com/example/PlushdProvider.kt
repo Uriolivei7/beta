@@ -239,7 +239,7 @@ class PlushdProvider : MainAPI() {
                 val decodedUrl = base64Decode(dataServer.trim().replace("\n", ""))
                 val videoUrl = if (!decodedUrl.startsWith("http")) {
                     val playerUrl = "$mainUrl/player/${dataServer.trim()}"
-                    val playerDoc = app.get(playerUrl).text.replace("\\/", "/") 
+                    val playerDoc = app.get(playerUrl).text.replace("\\/", "/")
 
                     val allLinks = Regex("""https?://[^\s"']+""").findAll(playerDoc).map { it.value }.toList()
 
