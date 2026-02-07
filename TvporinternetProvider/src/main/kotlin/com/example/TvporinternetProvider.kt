@@ -217,113 +217,91 @@ class TvporinternetProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val targetUrl = fixUrl(data)
-        Log.d("TvporInternet", "Logs: Cargando página principal -> $targetUrl")
+        Log.d("TvporInternet", "Logs: Iniciando carga -> $targetUrl")
 
         try {
             val mainHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                "Referer" to "https://www.tvporinternet2.com/"
+                "Referer" to "https://www.tvporinternet2.com/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             )
 
             val mainPageResponse = app.get(targetUrl, headers = mainHeaders)
+            val cookies = mainPageResponse.cookies.toMutableMap()
             val doc = Jsoup.parse(mainPageResponse.text)
 
-            val sources = mutableListOf<String>()
-            doc.select("iframe[name=player]").firstOrNull()?.attr("src")?.let { sources.add(fixUrl(it)) }
-            doc.select("a[href*=/live]").forEach { sources.add(fixUrl(it.attr("href"))) }
+            val optionLinks = doc.select("a[href*=/live], iframe[name=player]")
+                .mapNotNull { if(it.tagName() == "iframe") it.attr("src") else it.attr("href") }
+                .filter { it.contains(".php") }
+                .distinct()
 
-            val cleanSources = sources.distinct().filter { it.contains(".php") }
-            Log.d("TvporInternet", "Logs: Fuentes encontradas para analizar: ${cleanSources.size}")
+            Log.d("TvporInternet", "Logs: Fuentes encontradas: ${optionLinks.size}")
 
             var success = false
 
-            for ((index, sUrl) in cleanSources.withIndex()) {
+            for ((index, rawPlayerUrl) in optionLinks.withIndex()) {
+                val playerUrl = fixUrl(rawPlayerUrl)
                 try {
-                    Log.d("TvporInternet", "Logs: Analizando Opción ${index + 1} -> $sUrl")
+                    Log.d("TvporInternet", "Logs: Procesando Opción ${index + 1} -> $playerUrl")
 
-                    val pResponse = app.get(sUrl, headers = mainHeaders.plus("Referer" to targetUrl))
-                    val pHtml = pResponse.text
+                    val playerResponse = app.get(playerUrl, headers = mainHeaders.plus("Referer" to targetUrl), cookies = cookies)
+                    val playerHtml = playerResponse.text
 
-                    val m3u8Regex = Regex("""(https?[\s\S]*?\.m3u8(?:\?[\s\S]*?)?(?=["']))""")
-                    val foundM3u8 = m3u8Regex.find(pHtml)?.value?.replace("\\/", "/")
+                    val m3u8Url = extractM3u8FromHtml(playerHtml)
 
-                    if (!foundM3u8.isNullOrEmpty()) {
-                        val finalStreamUrl = fixUrl(foundM3u8)
-                        Log.d("TvporInternet", "Logs: ¡M3U8 Encontrado!: $finalStreamUrl")
+                    if (!m3u8Url.isNullOrEmpty()) {
+                        Log.d("TvporInternet", "Logs: ¡M3U8 Detectado!: $m3u8Url")
+
+                        val m3u8UrlFinal = if (m3u8Url.contains("?")) "$m3u8Url&buffer=1" else "$m3u8Url?buffer=1"
 
                         val streamingHeaders = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                            "Accept" to "*/*",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                             "Origin" to "https://regionales.saohgdasregions.fun",
-                            "Referer" to "https://regionales.saohgdasregions.fun/",
-                            "Sec-Fetch-Dest" to "empty",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "same-site",
-                            "Sec-GPC" to "1"
+                            "Accept" to "*/*",
+                            "Referer" to "https://regionales.saohgdasregions.fun/"
                         )
 
                         callback(
                             newExtractorLink(
                                 source = this.name,
-                                name = "${this.name} Opción ${index + 1}",
-                                url = finalStreamUrl,
+                                name = "${this.name} - HD (Opción ${index + 1})",
+                                url = m3u8UrlFinal,
                                 type = ExtractorLinkType.M3U8
                             ) {
                                 this.headers = streamingHeaders
+                                this.referer = "https://regionales.saohgdasregions.fun/"
                             }
                         )
                         success = true
                     } else {
-                        Log.w("TvporInternet", "Logs: No se detectó URL de video en el HTML de la opción ${index + 1}")
+                        Log.w("TvporInternet", "Logs: No se halló m3u8 en el HTML de la opción ${index + 1}")
                     }
                 } catch (e: Exception) {
-                    Log.e("TvporInternet", "Logs: Error en opción $index -> ${e.message}")
+                    Log.e("TvporInternet", "Logs: Error en opción $index: ${e.message}")
                 }
             }
-
             return success
-
         } catch (e: Exception) {
-            Log.e("TvporInternet", "Logs: Error crítico -> ${e.message}")
+            Log.e("TvporInternet", "Logs: Error crítico: ${e.message}")
             return false
         }
     }
 
     private fun extractM3u8FromHtml(html: String): String? {
-        val doc = Jsoup.parse(html)
-
         val patterns = listOf(
-            """(https?://[^"'\s]+\.m3u8[^"'\s]*)""",
-            """["'](https?:(?:\\\/\\\/|\/\/)[^"']+\.m3u8[^"']*)["']""",
+            """["'](https?[:\/\/\\]+[^"']+\.m3u8[^"']*)["']""",
             """source\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
-            """file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
-            """src\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
-            """url\s*:\s*["']([^"']+\.m3u8[^"']*)["']"""
+            """file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']"""
         )
-
-        val source = doc.selectFirst("video > source, source[src]")
-        if (source != null && source.attr("src").contains(".m3u8")) {
-            return source.attr("src")
-        }
 
         for (pattern in patterns) {
             val match = Regex(pattern, RegexOption.IGNORE_CASE).find(html)
             if (match != null) {
-                return match.groupValues.getOrNull(1)?.replace("\\/", "/") ?: match.value.replace("\\/", "/")
-            }
-        }
-
-        val dataSource = doc.selectFirst("[data-src], [data-url], [data-source], [data-hls]")
-        if (dataSource != null) {
-            val url = dataSource.attr("data-src").ifBlank { null }
-                ?: dataSource.attr("data-url").ifBlank { null }
-                ?: dataSource.attr("data-source").ifBlank { null }
-                ?: dataSource.attr("data-hls").ifBlank { null }
-
-            if (!url.isNullOrEmpty() && url.contains(".m3u8")) {
-                return url
+                val found = match.groupValues[1].replace("\\/", "/")
+                return found
             }
         }
         return null
     }
+
 }
