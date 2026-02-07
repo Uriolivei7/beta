@@ -217,7 +217,7 @@ class TvporinternetProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val targetUrl = fixUrl(data)
-        Log.d("TvporInternet", "Iniciando carga de página: $targetUrl")
+        Log.d("TvporInternet", "Logs: Cargando página principal -> $targetUrl")
 
         try {
             val mainHeaders = mapOf(
@@ -228,33 +228,28 @@ class TvporinternetProvider : MainAPI() {
             val mainPageResponse = app.get(targetUrl, headers = mainHeaders)
             val doc = Jsoup.parse(mainPageResponse.text)
 
-            val playerUrls = mutableListOf<String>()
+            val sources = mutableListOf<String>()
+            doc.select("iframe[name=player]").firstOrNull()?.attr("src")?.let { sources.add(fixUrl(it)) }
+            doc.select("a[href*=/live]").forEach { sources.add(fixUrl(it.attr("href"))) }
 
-            doc.selectFirst("iframe[name=player]")?.attr("src")?.let { playerUrls.add(fixUrl(it)) }
-
-            doc.select("a[href*=/live]").forEach { element ->
-                val href = element.attr("href")
-                if (href.contains(Regex("/live\\d*/"))) {
-                    playerUrls.add(fixUrl(href))
-                }
-            }
-
-            val cleanUrls = playerUrls.distinct()
-            Log.d("TvporInternet", "Fuentes detectadas: ${cleanUrls.size}")
+            val cleanSources = sources.distinct().filter { it.contains(".php") }
+            Log.d("TvporInternet", "Logs: Fuentes encontradas para analizar: ${cleanSources.size}")
 
             var success = false
 
-            for ((index, playerUrl) in cleanUrls.withIndex()) {
+            for ((index, sUrl) in cleanSources.withIndex()) {
                 try {
-                    Log.d("TvporInternet", "Logs: Procesando Opción ${index + 1} -> $playerUrl")
+                    Log.d("TvporInternet", "Logs: Analizando Opción ${index + 1} -> $sUrl")
 
-                    val playerResponse = app.get(playerUrl, headers = mainHeaders.plus("Referer" to targetUrl))
-                    val playerHtml = playerResponse.text
+                    val pResponse = app.get(sUrl, headers = mainHeaders.plus("Referer" to targetUrl))
+                    val pHtml = pResponse.text
 
-                    val m3u8Url = extractM3u8FromHtml(playerHtml)?.let { fixUrl(it) }
+                    val m3u8Regex = Regex("""(https?[\s\S]*?\.m3u8(?:\?[\s\S]*?)?(?=["']))""")
+                    val foundM3u8 = m3u8Regex.find(pHtml)?.value?.replace("\\/", "/")
 
-                    if (!m3u8Url.isNullOrEmpty()) {
-                        Log.d("TvporInternet", "Logs: M3U8 Encontrado: $m3u8Url")
+                    if (!foundM3u8.isNullOrEmpty()) {
+                        val finalStreamUrl = fixUrl(foundM3u8)
+                        Log.d("TvporInternet", "Logs: ¡M3U8 Encontrado!: $finalStreamUrl")
 
                         val streamingHeaders = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -267,32 +262,29 @@ class TvporinternetProvider : MainAPI() {
                             "Sec-GPC" to "1"
                         )
 
-                        val nameSuffix = if (playerUrl.contains("live4") || playerUrl.contains("live5") || playerUrl.contains("live6")) "FHD" else "HD"
-
                         callback(
                             newExtractorLink(
                                 source = this.name,
-                                name = "${this.name} - Opción ${index + 1} ($nameSuffix)",
-                                url = m3u8Url,
+                                name = "${this.name} Opción ${index + 1}",
+                                url = finalStreamUrl,
                                 type = ExtractorLinkType.M3U8
                             ) {
                                 this.headers = streamingHeaders
-                                this.referer = "https://regionales.saohgdasregions.fun/"
                             }
                         )
                         success = true
                     } else {
-                        Log.w("TvporInternet", "Logs: No se halló m3u8 en la opción ${index + 1}")
+                        Log.w("TvporInternet", "Logs: No se detectó URL de video en el HTML de la opción ${index + 1}")
                     }
                 } catch (e: Exception) {
-                    Log.e("TvporInternet", "Error en bucle (opción $index): ${e.message}")
+                    Log.e("TvporInternet", "Logs: Error en opción $index -> ${e.message}")
                 }
             }
 
             return success
 
         } catch (e: Exception) {
-            Log.e("TvporInternet", "Error crítico en loadLinks: ${e.message}")
+            Log.e("TvporInternet", "Logs: Error crítico -> ${e.message}")
             return false
         }
     }
