@@ -217,86 +217,75 @@ class TvporinternetProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val targetUrl = fixUrl(data)
+        Log.d("TvporInternet", "Iniciando carga de página: $targetUrl")
 
         try {
             val mainHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
-                "Referer" to targetUrl,
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "Referer" to "https://www.tvporinternet2.com/"
             )
 
-            val mainPageResponse = app.get(targetUrl, headers = mainHeaders, timeout = 20L)
-            val cookies = mainPageResponse.cookies.toMutableMap()
+            val mainPageResponse = app.get(targetUrl, headers = mainHeaders)
             val doc = Jsoup.parse(mainPageResponse.text)
 
-            val playerIframeSrc = doc.selectFirst("iframe[name=player]")?.attr("src")
-
-            val optionLinks = doc.select("a[href*=/live], a[href*=/live/], a[href*=/live2/], a[href*=/live3/], a[href*=/live4/], a[href*=/live5/], a[href*=/live6/]")
-                .mapNotNull { it.attr("href") }
-                .filter { !it.contains("favicon") && !it.contains("chat") && it != "#" }
-                .distinct()
-
             val playerUrls = mutableListOf<String>()
-            playerIframeSrc?.let { playerUrls.add(fixUrl(it)) }
-            playerUrls.addAll(optionLinks.map { fixUrl(it) })
 
-            if (playerUrls.isEmpty()) return false
+            doc.selectFirst("iframe[name=player]")?.attr("src")?.let { playerUrls.add(fixUrl(it)) }
 
-            val isWSA = context?.resources?.configuration?.screenLayout?.and(Configuration.SCREENLAYOUT_SIZE_MASK) == Configuration.SCREENLAYOUT_SIZE_LARGE
-            val forceSD = isWSA
+            doc.select("a[href*=/live]").forEach { element ->
+                val href = element.attr("href")
+                if (href.contains(Regex("/live\\d*/"))) {
+                    playerUrls.add(fixUrl(href))
+                }
+            }
+
+            val cleanUrls = playerUrls.distinct()
+            Log.d("TvporInternet", "Fuentes detectadas: ${cleanUrls.size}")
 
             var success = false
 
-            for ((index, rawPlayerUrl) in playerUrls.withIndex()) {
-                val playerUrl = fixUrl(rawPlayerUrl)
-
-                if (forceSD && playerUrl.contains("FHD", ignoreCase = true)) continue
-
+            for ((index, playerUrl) in cleanUrls.withIndex()) {
                 try {
-                    val currentReferer = playerUrl
+                    Log.d("TvporInternet", "Logs: Procesando Opción ${index + 1} -> $playerUrl")
 
-                    val playerResponse = app.get(playerUrl, headers = mainHeaders + mapOf("Referer" to targetUrl), cookies = cookies, timeout = 20L)
-                    cookies.putAll(playerResponse.cookies)
+                    val playerResponse = app.get(playerUrl, headers = mainHeaders.plus("Referer" to targetUrl))
                     val playerHtml = playerResponse.text
 
-                    val embedUrl = Regex("""(https?://[^"']*saohgdasregions\.fun[^"']*)""").find(playerHtml)?.groupValues?.get(1)
-                        ?: Regex("""src=["']([^"']*stream[^"']*)["']""").find(playerHtml)?.groupValues?.get(1)
+                    val m3u8Url = extractM3u8FromHtml(playerHtml)?.let { fixUrl(it) }
 
-                    val embedHtml = if (embedUrl != null) {
-                        app.get(fixUrl(embedUrl), headers = mainHeaders + mapOf("Referer" to currentReferer), cookies = cookies, timeout = 20L).text
-                    } else playerHtml
-
-                    val m3u8Url = extractM3u8FromHtml(embedHtml)?.let { fixUrl(it) }
-
-                    if (!m3u8Url.isNullOrEmpty() && m3u8Url.startsWith("http")) {
-                        val m3u8UrlFinal = if (m3u8Url.contains("?")) "$m3u8Url&buffer=1" else "$m3u8Url?buffer=1"
-
-                        val qualityName = if (forceSD) "SD" else if (playerUrl.contains("FHD")) "FHD" else "HD"
-                        val qualityValue = if (qualityName == "FHD") 1080 else if (qualityName == "SD") 480 else 720
+                    if (!m3u8Url.isNullOrEmpty()) {
+                        Log.d("TvporInternet", "Logs: M3U8 Encontrado: $m3u8Url")
 
                         val streamingHeaders = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://live.saohgdasregions.fun",
-                            "Accept" to "*/*"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                            "Accept" to "*/*",
+                            "Origin" to "https://regionales.saohgdasregions.fun",
+                            "Referer" to "https://regionales.saohgdasregions.fun/",
+                            "Sec-Fetch-Dest" to "empty",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "same-site",
+                            "Sec-GPC" to "1"
                         )
+
+                        val nameSuffix = if (playerUrl.contains("live4") || playerUrl.contains("live5") || playerUrl.contains("live6")) "FHD" else "HD"
 
                         callback(
                             newExtractorLink(
                                 source = this.name,
-                                name = "${this.name} - $qualityName (Opción ${index + 1})",
-                                url = m3u8UrlFinal,
+                                name = "${this.name} - Opción ${index + 1} ($nameSuffix)",
+                                url = m3u8Url,
                                 type = ExtractorLinkType.M3U8
                             ) {
-                                this.referer = "https://live.saohgdasregions.fun/"
-                                this.quality = qualityValue
                                 this.headers = streamingHeaders
+                                this.referer = "https://regionales.saohgdasregions.fun/"
                             }
                         )
                         success = true
+                    } else {
+                        Log.w("TvporInternet", "Logs: No se halló m3u8 en la opción ${index + 1}")
                     }
-
                 } catch (e: Exception) {
-                    Log.e("TvporInternet", "Error procesando opción $playerUrl: ${e.message}")
+                    Log.e("TvporInternet", "Error en bucle (opción $index): ${e.message}")
                 }
             }
 
