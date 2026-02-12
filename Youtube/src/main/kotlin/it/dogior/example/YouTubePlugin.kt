@@ -12,6 +12,7 @@ import org.schabi.newpipe.extractor.localization.Localization
 
 @CloudstreamPlugin
 class YouTubePlugin : Plugin() {
+    val downloader: NewPipeDownloader = NewPipeDownloader.getInstance()
     private val sharedPref = activity?.getSharedPreferences("Youtube", Context.MODE_PRIVATE)
 
     override fun load(context: Context) {

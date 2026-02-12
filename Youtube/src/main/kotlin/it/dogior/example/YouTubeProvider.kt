@@ -50,16 +50,20 @@ class YoutubeProvider(
 
     init {
         val downloader = NewPipeDownloader.getInstance()
-        // 1. Pasamos el User Agent de TV para evitar el bloqueo regional
+
+        // 1. Obtenemos la cookie guardada en los ajustes
+        val savedCookie = sharedPrefs?.getString("youtube_cookie", null)
+
+        // 2. La pasamos al downloader
+        downloader.cookies = savedCookie
+
+        // 3. Mantenemos el User Agent de TV que ya pusiste
         downloader.customUserAgent = "com.google.android.youtube.tv/4.10.001 (Android 11; Television; Sony; BRAVIA 4K VH2; America/New_York; en_US)"
 
-        // 2. Pasamos las cookies de las preferencias
-        downloader.cookies = sharedPrefs?.getString("youtube_cookie", null)
-
-        // 3. Registramos el downloader en NewPipe
         NewPipe.init(downloader)
 
-        Log.d(TAG, "Logs: Downloader iniciado con UA: ${downloader.customUserAgent} y Cookies: ${downloader.cookies != null}")
+        // VERIFICACIÓN: Este log debe decir "Cookies: true" en la próxima ejecución
+        Log.d(TAG, "Logs: Downloader iniciado con UA: ${downloader.customUserAgent} y Cookies: ${savedCookie != null}")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {

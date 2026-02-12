@@ -26,6 +26,15 @@
 
     </RelativeLayout>
 
+    <Button
+        android:id="@+id/btn_youtube_login"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Iniciar Sesión en YouTube"
+        android:backgroundTint="#FF0000"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="16dp"/>
+
     <!-- First row with label and text input -->
     <View
         android:id="@+id/divider1"
