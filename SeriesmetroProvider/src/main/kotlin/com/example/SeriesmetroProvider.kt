@@ -110,6 +110,9 @@ class SeriesmetroProvider : MainAPI() {
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
+        val duration = doc.selectFirst(".duration")?.text()?.trim()
+        val durationInt = duration?.replace(" min", "")?.trim()?.toIntOrNull()
+
         // Póster principal de la serie
         val posterElement = doc.selectFirst(".post-thumbnail figure img")
         val rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
@@ -150,6 +153,7 @@ class SeriesmetroProvider : MainAPI() {
                 this.plot = description
                 this.tags = genres
                 this.year = year
+                this.duration = durationInt
                 this.recommendations = recommendations
             }
         } else {
