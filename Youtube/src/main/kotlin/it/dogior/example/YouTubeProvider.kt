@@ -50,6 +50,9 @@ class YoutubeProvider(
 
     init {
         try {
+            // Forzamos la limpieza de cualquier versión de cliente antigua en caché
+            org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.resetClientVersion()
+
             val downloader = NewPipe.getDownloader()
             val fields = downloader.javaClass.declaredFields
 
@@ -57,18 +60,9 @@ class YoutubeProvider(
             uaField?.isAccessible = true
             uaField?.set(downloader, ANDROID_USER_AGENT)
 
-            youtubeCookie?.let { cookie ->
-                val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" }
-                if (cookieField != null) {
-                    cookieField.isAccessible = true
-                    cookieField.set(downloader, cookie)
-                    Log.d(TAG, "Cookie aplicada exitosamente.")
-                } else {
-                    Log.w(TAG, "No se encontró campo de cookie, usando modo alternativo.")
-                }
-            }
+            Log.d(TAG, "Logs: Inicialización forzada con User Agent: $ANDROID_USER_AGENT")
         } catch (e: Exception) {
-            Log.e(TAG, "Error en inicialización: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en init: ${e.message}")
         }
     }
 
