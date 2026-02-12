@@ -38,8 +38,10 @@ class YoutubeProvider(
     companion object {
         const val MAIN_URL = "https://www.youtube.com"
         const val TAG = "Youtube"
-        // User Agent actualizado a una versión más reciente para evitar el bloqueo de "Reload"
-        const val ANDROID_USER_AGENT = "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+        //const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+
+        // Cambia esto en el companion object
+        const val ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
     }
 
     private var youtubeCookie: String?
@@ -49,21 +51,27 @@ class YoutubeProvider(
         }
 
     init {
-        val downloader = NewPipeDownloader.getInstance()
+        try {
+            val downloader = NewPipe.getDownloader()
+            val fields = downloader.javaClass.declaredFields
 
-        // 1. Obtenemos la cookie guardada en los ajustes
-        val savedCookie = sharedPrefs?.getString("youtube_cookie", null)
+            val uaField = fields.find { it.name == "userAgent" }
+            uaField?.isAccessible = true
+            uaField?.set(downloader, ANDROID_USER_AGENT)
 
-        // 2. La pasamos al downloader
-        downloader.cookies = savedCookie
-
-        // 3. Mantenemos el User Agent de TV que ya pusiste
-        downloader.customUserAgent = "com.google.android.youtube.tv/4.10.001 (Android 11; Television; Sony; BRAVIA 4K VH2; America/New_York; en_US)"
-
-        NewPipe.init(downloader)
-
-        // VERIFICACIÓN: Este log debe decir "Cookies: true" en la próxima ejecución
-        Log.d(TAG, "Logs: Downloader iniciado con UA: ${downloader.customUserAgent} y Cookies: ${savedCookie != null}")
+            youtubeCookie?.let { cookie ->
+                val cookieField = fields.find { it.name == "cookie" || it.name == "cookies" }
+                if (cookieField != null) {
+                    cookieField.isAccessible = true
+                    cookieField.set(downloader, cookie)
+                    Log.d(TAG, "Cookie aplicada exitosamente.")
+                } else {
+                    Log.w(TAG, "No se encontró campo de cookie, usando modo alternativo.")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en inicialización: ${e.message}")
+        }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -133,7 +141,6 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        Log.d(TAG, "Logs: Iniciando extracción de enlaces para: $data")
         return try {
             val service = ServiceList.YouTube
             val linkHandler = service.streamLHFactory.fromUrl(data)
@@ -142,31 +149,15 @@ class YoutubeProvider(
             try {
                 extractor.fetchPage()
             } catch (e: Exception) {
-                if (e.message?.contains("reloaded", ignoreCase = true) == true) {
-                    Log.w(TAG, "Logs: YouTube detectó bot. Limpiando cliente y reintentando en 2s...")
-
-                    // Limpiamos la versión del cliente para que NewPipe intente obtener una nueva
-                    org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.resetClientVersion()
-
-                    kotlinx.coroutines.delay(2500) // Un poco más de tiempo es mejor
+                if (e.message?.contains("reloaded") == true) {
+                    kotlinx.coroutines.delay(1000)
                     extractor.fetchPage()
-                } else {
-                    throw e
-                }
+                } else throw e
             }
 
-            // Log de estado de reproducción
-            try {
-                // Algunos extractores permiten revisar si el video está bloqueado
-                Log.d(TAG, "Logs: Estado de reproducción verificado para ID: ${extractor.id}")
-            } catch (e: Exception) {
-                Log.w(TAG, "Logs: No se pudo verificar estado de reproducción: ${e.message}")
-            }
+            val refererUrl = extractor.url
 
-            val streamsFound = extractor.videoStreams?.filterNotNull() ?: emptyList()
-            Log.d(TAG, "Logs: Se encontraron ${streamsFound.size} streams de video.")
-
-            streamsFound.forEach { stream ->
+            extractor.videoStreams?.filterNotNull()?.forEach { stream ->
                 val streamUrl = stream.content ?: stream.url ?: return@forEach
                 val resolutionName = stream.resolution ?: "Unknown"
 
@@ -175,12 +166,11 @@ class YoutubeProvider(
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "YouTube - $resolutionName",
+                        name = "Video - $resolutionName",
                         url = streamUrl,
                         type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
-                        // Importante: Referer exacto para evitar bloqueos 403
-                        this.referer = "https://www.youtube.com/watch?v=${extractor.id}"
+                        this.referer = "https://www.youtube.com/"
                     }
                 )
             }
@@ -191,11 +181,9 @@ class YoutubeProvider(
                 )
             }
 
-            streamsFound.isNotEmpty()
+            true
         } catch (e: Exception) {
-            // Log detallado para Samsung A06 y fallos de red
-            Log.e(TAG, "Logs: Fallo total en loadLinks (Samsung A06). Causa: ${e.localizedMessage}")
-            e.printStackTrace()
+            Log.e(TAG, "Fallo en loadLinks (Samsung A06): ${e.message}")
             false
         }
     }

@@ -110,6 +110,7 @@ class SeriesmetroProvider : MainAPI() {
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
 
+        // Póster principal de la serie
         val posterElement = doc.selectFirst(".post-thumbnail figure img")
         val rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
             ?: posterElement?.attr("src").takeIf { !it.isNullOrBlank() && !it.contains("data:image") }
@@ -178,7 +179,11 @@ class SeriesmetroProvider : MainAPI() {
                         if (epNumber == null) Log.e(TAG, "Logs: No se pudo parsear el número de episodio de: $epText")
 
                         val epImg = ep.selectFirst("img")
-                        val epThumb = fixImg(epImg?.attr("data-lazy-src") ?: epImg?.attr("src"))
+                        val epThumb = fixImg(
+                            epImg?.attr("data-lazy-src")
+                                ?: epImg?.attr("src")
+                                ?: epImg?.attr("data-src")
+                        )
 
                         synchronized(episodes) {
                             episodes.add(newEpisode(epHref) {

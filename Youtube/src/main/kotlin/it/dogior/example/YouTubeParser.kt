@@ -204,48 +204,32 @@ class YouTubeParser(override var name: String) : MainAPI() {
     }
 
     suspend fun videoToLoadResponse(videoUrl: String): LoadResponse {
-        val CURRENT_TAG = "YT_LOAD" // Cambiado para mayor claridad en logs
+        val CURRENT_TAG = "YT_REC"
 
         val videoInfo = try {
-            Log.d(CURRENT_TAG, "Logs: Intentando obtener info de video: $videoUrl")
             StreamInfo.getInfo(videoUrl)
         } catch (e: Exception) {
-            val errorMsg = e.message ?: "Error desconocido"
-            Log.e(CURRENT_TAG, "Logs: Error al cargar video: $errorMsg")
-
-            // Si el error pide recargar, esperamos y reintentamos una vez
-            // Modificación sugerida para el bloque de reintento en YouTubeParser.kt
-            if (errorMsg.contains("reloaded", ignoreCase = true)) {
-                Log.w(CURRENT_TAG, "Logs: Bloqueo detectado. Cambiando estrategia y esperando 2s...")
-                // Aquí podrías intentar cambiar el User Agent globalmente si tienes acceso
-                kotlinx.coroutines.delay(2500)
-                try {
-                    StreamInfo.getInfo(videoUrl)
-                } catch (e2: Exception) {
-                    Log.e(CURRENT_TAG, "Logs: YouTube sigue bloqueando tras reintento. Es necesario actualizar cookies o la librería NewPipe.")
-                    throw e2
-                }
-            }else {
-                throw e
-            }
+            if (e.message?.contains("reloaded") == true) {
+                kotlinx.coroutines.delay(2000)
+                StreamInfo.getInfo(videoUrl)
+            } else throw e
         }
 
         val views = "Views: ${videoInfo.viewCount}"
         val likes = "Likes: ${videoInfo.likeCount}"
         val length = videoInfo.duration / 60
 
-        // Logs para depurar recomendaciones
         val rawRecommendations = try {
-            val related = videoInfo.relatedStreams
-            Log.d(CURRENT_TAG, "Logs: Recomendaciones encontradas: ${related?.size ?: 0}")
-            related
+            videoInfo.relatedStreams
         } catch (e: Exception) {
-            Log.e(CURRENT_TAG, "Logs: Error obteniendo recomendaciones: ${e.message}")
             emptyList()
         }
 
+        Log.e(CURRENT_TAG, "RECOMENDACIONES RAW encontradas: ${rawRecommendations.size}")
+
         val recommendations = rawRecommendations.mapNotNull { item ->
             val video = item as? StreamInfoItem ?: return@mapNotNull null
+
             if (video.name.isNullOrBlank() || video.url.isNullOrBlank()) return@mapNotNull null
 
             this.newMovieSearchResponse(
@@ -256,8 +240,6 @@ class YouTubeParser(override var name: String) : MainAPI() {
                 this.posterUrl = video.thumbnails.lastOrNull()?.url
             } as SearchResponse
         }
-
-        Log.d(CURRENT_TAG, "Logs: Cargando respuesta final para: ${videoInfo.name}")
 
         return this.newMovieLoadResponse(
             name = videoInfo.name,

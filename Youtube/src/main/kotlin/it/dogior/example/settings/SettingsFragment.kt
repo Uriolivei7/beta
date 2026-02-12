@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
@@ -17,7 +16,6 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.res.ResourcesCompat
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.example.BuildConfig
-import it.dogior.example.NewPipeDownloader
 import it.dogior.example.YouTubePlugin
 
 /**
@@ -75,8 +73,6 @@ class SettingsFragment(
     @SuppressLint("UseSwitchCompatOrMaterialCode")
     @RequiresApi(Build.VERSION_CODES.M)
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        updateLoginButtonStatus(view)
-
         val headerTw = view.findView<TextView>("header_tw")
         headerTw.text = getString("header_tw")
 
@@ -89,61 +85,6 @@ class SettingsFragment(
                 this?.apply()
             }
         }
-
-        try {
-            val loginButton = view.findView<View>("login_button")
-            loginButton.setOnClickListener {
-                val context = context ?: return@setOnClickListener
-                val webView = android.webkit.WebView(context)
-                val cookieManager = android.webkit.CookieManager.getInstance()
-
-                // IMPORTANTE: Limpiar cookies viejas para forzar login limpio
-                cookieManager.removeAllCookies(null)
-
-                val dialog = android.app.AlertDialog.Builder(context)
-                    .setTitle("Login YouTube")
-                    .setView(webView)
-                    .setCancelable(false) // Para que no lo cierren sin querer
-                    .setPositiveButton("He terminado") { d, _ ->
-                        val currentCookies = cookieManager.getCookie("https://www.youtube.com")
-
-                        sharedPref?.edit()?.putString("youtube_cookie", currentCookies)?.apply()
-                        plugin.downloader.cookies = currentCookies
-
-                        Log.d("YT_SETTINGS", "Logs: Sesión guardada. ¿Hay datos?: ${!currentCookies.isNullOrEmpty()}")
-                        d.dismiss()
-                    }
-                    .setNegativeButton("Cancelar") { d, _ -> d.dismiss() }
-                    .create()
-
-                webView.settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true // Necesario para YouTube moderno
-                    userAgentString = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
-                }
-
-                webView.webViewClient = object : android.webkit.WebViewClient() {
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        val cookies = cookieManager.getCookie(url)
-                        // Vamos guardando en tiempo real por si el diálogo se cierra inesperadamente
-                        if (url?.contains("youtube.com") == true && !cookies.isNullOrEmpty()) {
-                            sharedPref?.edit()?.putString("youtube_cookie", cookies)?.apply()
-                            plugin.downloader.cookies = cookies
-                            Log.d("YT_SETTINGS", "Logs: Cookie actualizada en navegación: $url")
-                        }
-                    }
-                }
-
-                webView.loadUrl("https://accounts.google.com/ServiceLogin?service=youtube")
-                dialog.show()
-            }
-        } catch (e: Exception) {
-            Log.e("YT_SETTINGS", "Logs: Fallo crítico al abrir WebView: ${e.message}")
-        }
-
-        // Cargar cookie guardada al abrir ajustes
-        val savedCookie = sharedPref?.getString("youtube_cookie", null)
-        plugin.downloader.cookies = savedCookie
 
         val localizationTW = view.findView<TextView>("localization_tw")
         val homepageTW = view.findView<TextView>("homepage_tw")
@@ -182,32 +123,5 @@ class SettingsFragment(
             }
         })
 
-    }
-
-    private fun updateLoginButtonStatus(view: View) {
-        // Ejecutamos la red en un hilo separado
-        Thread {
-            val status = plugin.downloader.checkYoutubeSession()
-            Log.d("YT_SETTINGS", "Logs: Estado de sesión verificado: $status")
-
-            // Volvemos al hilo principal para tocar la interfaz (colores/texto)
-            activity?.runOnUiThread {
-                val loginButton = view.findView<TextView>("login_button") ?: return@runOnUiThread
-                when (status) {
-                    NewPipeDownloader.SessionStatus.Active -> {
-                        loginButton.text = "✅ Sesión Activa"
-                        loginButton.setBackgroundColor(android.graphics.Color.parseColor("#2E7D32"))
-                    }
-                    NewPipeDownloader.SessionStatus.Expired -> {
-                        loginButton.text = "⚠️ Sesión Caducada"
-                        loginButton.setBackgroundColor(android.graphics.Color.parseColor("#F57C00"))
-                    }
-                    else -> {
-                        loginButton.text = "🔑 Iniciar Sesión"
-                        loginButton.setBackgroundColor(android.graphics.Color.parseColor("#FF0000"))
-                    }
-                }
-            }
-        }.start()
     }
 }
