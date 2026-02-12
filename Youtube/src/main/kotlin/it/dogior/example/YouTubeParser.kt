@@ -214,16 +214,18 @@ class YouTubeParser(override var name: String) : MainAPI() {
             Log.e(CURRENT_TAG, "Logs: Error al cargar video: $errorMsg")
 
             // Si el error pide recargar, esperamos y reintentamos una vez
+            // Modificación sugerida para el bloque de reintento en YouTubeParser.kt
             if (errorMsg.contains("reloaded", ignoreCase = true)) {
-                Log.w(CURRENT_TAG, "Logs: YouTube detectó bot (reloaded). Esperando 2s para reintentar...")
-                kotlinx.coroutines.delay(2000)
+                Log.w(CURRENT_TAG, "Logs: Bloqueo detectado. Cambiando estrategia y esperando 2s...")
+                // Aquí podrías intentar cambiar el User Agent globalmente si tienes acceso
+                kotlinx.coroutines.delay(2500)
                 try {
                     StreamInfo.getInfo(videoUrl)
                 } catch (e2: Exception) {
-                    Log.e(CURRENT_TAG, "Logs: Fallo tras reintento: ${e2.message}")
+                    Log.e(CURRENT_TAG, "Logs: YouTube sigue bloqueando tras reintento. Es necesario actualizar cookies o la librería NewPipe.")
                     throw e2
                 }
-            } else {
+            }else {
                 throw e
             }
         }

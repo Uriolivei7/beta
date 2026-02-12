@@ -39,7 +39,7 @@ class YoutubeProvider(
         const val MAIN_URL = "https://www.youtube.com"
         const val TAG = "Youtube"
         // User Agent actualizado a una versión más reciente para evitar el bloqueo de "Reload"
-        const val ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
+        const val ANDROID_USER_AGENT = "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
     }
 
     private var youtubeCookie: String?
