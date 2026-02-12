@@ -172,7 +172,7 @@ class SeriesmetroProvider : MainAPI() {
 
                     episodeElements.reversed().forEach { ep ->
                         val epHref = ep.select("a").attr("abs:href")
-                        val epText = ep.select(".num-epi").text() 
+                        val epText = ep.select(".num-epi").text()
                         val epNumber = epText.substringAfter("x").trim().toIntOrNull()
 
                         if (epNumber == null) Log.e(TAG, "Logs: No se pudo parsear el número de episodio de: $epText")

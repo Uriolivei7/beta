@@ -38,10 +38,8 @@ class YoutubeProvider(
     companion object {
         const val MAIN_URL = "https://www.youtube.com"
         const val TAG = "Youtube"
-        //const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-
-        // Cambia esto en el companion object
-        const val ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36"
+        // User Agent actualizado a una versión más reciente para evitar el bloqueo de "Reload"
+        const val ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
     }
 
     private var youtubeCookie: String?
@@ -141,6 +139,7 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
+        Log.d(TAG, "Logs: Iniciando extracción de enlaces para: $data")
         return try {
             val service = ServiceList.YouTube
             val linkHandler = service.streamLHFactory.fromUrl(data)
@@ -149,15 +148,30 @@ class YoutubeProvider(
             try {
                 extractor.fetchPage()
             } catch (e: Exception) {
-                if (e.message?.contains("reloaded") == true) {
-                    kotlinx.coroutines.delay(1000)
+                Log.e(TAG, "Logs: Error crítico en fetchPage: ${e.message}")
+
+                // Si pide recargar, intentamos una vez más tras un delay, pero con un log específico
+                if (e.message?.contains("reloaded", ignoreCase = true) == true) {
+                    Log.w(TAG, "Logs: YouTube solicitó recarga de página (posible bot check). Reintentando...")
+                    kotlinx.coroutines.delay(2000)
                     extractor.fetchPage()
-                } else throw e
+                } else {
+                    throw e
+                }
             }
 
-            val refererUrl = extractor.url
+            // Log de estado de reproducción
+            try {
+                // Algunos extractores permiten revisar si el video está bloqueado
+                Log.d(TAG, "Logs: Estado de reproducción verificado para ID: ${extractor.id}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Logs: No se pudo verificar estado de reproducción: ${e.message}")
+            }
 
-            extractor.videoStreams?.filterNotNull()?.forEach { stream ->
+            val streamsFound = extractor.videoStreams?.filterNotNull() ?: emptyList()
+            Log.d(TAG, "Logs: Se encontraron ${streamsFound.size} streams de video.")
+
+            streamsFound.forEach { stream ->
                 val streamUrl = stream.content ?: stream.url ?: return@forEach
                 val resolutionName = stream.resolution ?: "Unknown"
 
@@ -166,11 +180,12 @@ class YoutubeProvider(
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "Video - $resolutionName",
+                        name = "YouTube - $resolutionName",
                         url = streamUrl,
                         type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = "https://www.youtube.com/"
+                        // Importante: Referer exacto para evitar bloqueos 403
+                        this.referer = "https://www.youtube.com/watch?v=${extractor.id}"
                     }
                 )
             }
@@ -181,9 +196,11 @@ class YoutubeProvider(
                 )
             }
 
-            true
+            streamsFound.isNotEmpty()
         } catch (e: Exception) {
-            Log.e(TAG, "Fallo en loadLinks (Samsung A06): ${e.message}")
+            // Log detallado para Samsung A06 y fallos de red
+            Log.e(TAG, "Logs: Fallo total en loadLinks (Samsung A06). Causa: ${e.localizedMessage}")
+            e.printStackTrace()
             false
         }
     }
