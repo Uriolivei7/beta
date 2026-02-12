@@ -3,6 +3,7 @@ package it.dogior.example
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import com.lagradost.cloudstream3.CommonActivity.activity
 import it.dogior.example.settings.SettingsFragment
@@ -12,27 +13,37 @@ import org.schabi.newpipe.extractor.localization.Localization
 
 @CloudstreamPlugin
 class YouTubePlugin : Plugin() {
-    val downloader: NewPipeDownloader = NewPipeDownloader.getInstance()
-    private val sharedPref = activity?.getSharedPreferences("Youtube", Context.MODE_PRIVATE)
+    // Referencia al downloader singleton
+    val downloader: NewPipeDownloader = NewPipeDownloader.init(null)
+
+    // Usamos un getter para sharedPref para asegurar que no falle si el activity es null al inicio
+    private val sharedPref get() = activity?.getSharedPreferences("Youtube", Context.MODE_PRIVATE)
 
     override fun load(context: Context) {
-        var language = sharedPref?.getString("language", "mx")
-        var country = sharedPref?.getString("country", "MX")
+        val sp = sharedPref
+        var language = sp?.getString("language", "mx") ?: "mx"
+        var country = sp?.getString("country", "MX") ?: "MX"
 
-        if (language.isNullOrEmpty()) {language = "mx"}
-        if (country.isNullOrEmpty()) {country = "MX"}
+        // --- CORRECCIÓN CRÍTICA: Sincronizar Cookies ---
+        val savedCookie = sp?.getString("youtube_cookie", null)
+        downloader.cookies = savedCookie
 
-        NewPipe.init(NewPipeDownloader.getInstance())
+        Log.d("Youtube", "Logs: Cargando plugin. Cookie detectada: ${!(savedCookie.isNullOrEmpty())}")
+
+        NewPipe.init(downloader)
         NewPipe.setupLocalization(Localization(language), ContentCountry(country))
 
-        registerMainAPI(YoutubeProvider(language, sharedPref))
-
+        registerMainAPI(YoutubeProvider(language, sp))
         registerExtractorAPI(YouTubeExtractor())
 
-        openSettings = {ctx ->
-            val activity = ctx as AppCompatActivity
-            val frag = SettingsFragment(this, sharedPref)
-            frag.show(activity.supportFragmentManager, "Frag")
+        openSettings = { ctx ->
+            val activity = ctx as? AppCompatActivity
+            if (activity != null) {
+                val frag = SettingsFragment(this, sp)
+                frag.show(activity.supportFragmentManager, "Frag")
+            } else {
+                Log.e("Youtube", "Logs: No se pudo abrir ajustes, context no es AppCompatActivity")
             }
         }
+    }
 }

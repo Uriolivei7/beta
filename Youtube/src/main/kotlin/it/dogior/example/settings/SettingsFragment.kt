@@ -17,6 +17,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.res.ResourcesCompat
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.example.BuildConfig
+import it.dogior.example.NewPipeDownloader
 import it.dogior.example.YouTubePlugin
 
 /**
@@ -74,6 +75,8 @@ class SettingsFragment(
     @SuppressLint("UseSwitchCompatOrMaterialCode")
     @RequiresApi(Build.VERSION_CODES.M)
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        updateLoginButtonStatus(view)
+
         val headerTw = view.findView<TextView>("header_tw")
         headerTw.text = getString("header_tw")
 
@@ -179,5 +182,32 @@ class SettingsFragment(
             }
         })
 
+    }
+
+    private fun updateLoginButtonStatus(view: View) {
+        // Ejecutamos la red en un hilo separado
+        Thread {
+            val status = plugin.downloader.checkYoutubeSession()
+            Log.d("YT_SETTINGS", "Logs: Estado de sesión verificado: $status")
+
+            // Volvemos al hilo principal para tocar la interfaz (colores/texto)
+            activity?.runOnUiThread {
+                val loginButton = view.findView<TextView>("login_button") ?: return@runOnUiThread
+                when (status) {
+                    NewPipeDownloader.SessionStatus.Active -> {
+                        loginButton.text = "✅ Sesión Activa"
+                        loginButton.setBackgroundColor(android.graphics.Color.parseColor("#2E7D32"))
+                    }
+                    NewPipeDownloader.SessionStatus.Expired -> {
+                        loginButton.text = "⚠️ Sesión Caducada"
+                        loginButton.setBackgroundColor(android.graphics.Color.parseColor("#F57C00"))
+                    }
+                    else -> {
+                        loginButton.text = "🔑 Iniciar Sesión"
+                        loginButton.setBackgroundColor(android.graphics.Color.parseColor("#FF0000"))
+                    }
+                }
+            }
+        }.start()
     }
 }

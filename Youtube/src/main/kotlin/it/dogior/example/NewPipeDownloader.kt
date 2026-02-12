@@ -21,46 +21,30 @@ class NewPipeDownloader(builder: OkHttpClient.Builder): Downloader() {
         val url = request.url()
         val httpMethod = request.httpMethod()
 
-        val requestBody = request.dataToSend()?.toRequestBody(null, 0, request.dataToSend()!!.size)
-
         val requestBuilder = okhttp3.Request.Builder()
-            .method(httpMethod, requestBody)
+            .method(httpMethod, request.dataToSend()?.toRequestBody(null, 0, request.dataToSend()!!.size))
             .url(url)
-            .addHeader("User-Agent", customUserAgent)
-            // Headers adicionales para evitar el "Reloaded"
-            .addHeader("x-youtube-client-name", "1")
-            .addHeader("x-youtube-client-version", "2.20260206.08.00")
+            // CAMBIO 1: Usar un User Agent de Navegador Real (Chrome Desktop es más seguro)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+            .addHeader("Accept-Language", "es-ES,es;q=0.9")
 
-        // LOGS: Verificación de sesión
-        if (!cookies.isNullOrEmpty()) {
-            requestBuilder.addHeader("Cookie", cookies!!)
-            Log.d(TAG, "Logs: Enviando petición con COOKIES activas a: $url")
-        } else {
-            Log.w(TAG, "Logs: Enviando petición SIN COOKIES. Riesgo de error 'Reloaded'.")
+        // CAMBIO 2: Asegurar que la cookie se añada correctamente
+        val currentCookies = cookies ?: ""
+        if (currentCookies.isNotEmpty()) {
+            requestBuilder.removeHeader("Cookie") // Evitar duplicados
+            requestBuilder.addHeader("Cookie", currentCookies)
+            Log.d("NP_Downloader", "Logs: Usando cookie en petición: ${currentCookies.take(30)}...")
         }
 
-        val response = try {
-            client.newCall(requestBuilder.build()).execute()
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error de red ejecutando petición: ${e.message}")
-            throw e
+        val response = client.newCall(requestBuilder.build()).execute()
+
+        // Si sigue saliendo "Reloaded", imprimimos log de advertencia
+        val bodyString = response.body?.string() ?: ""
+        if (bodyString.contains("reloaded") || bodyString.contains("player-error")) {
+            Log.e("NP_Downloader", "Logs: YouTube detectó bot incluso con cookies. URL: $url")
         }
 
-        Log.d(TAG, "Logs: Código de respuesta: ${response.code} para URL: $url")
-
-        if (response.code == 429) {
-            Log.e(TAG, "Logs: YouTube ha bloqueado la IP (429 - ReCaptcha).")
-            response.close()
-            throw ReCaptchaException("reCaptcha Challenge requested", url)
-        }
-
-        val responseBodyToReturn = response.body?.string() ?: ""
-        val latestUrl = response.request.url.toString()
-
-        return Response(
-            response.code, response.message, response.headers.toMultimap(),
-            responseBodyToReturn, latestUrl
-        )
+        return Response(response.code, response.message, response.headers.toMultimap(), bodyString, response.request.url.toString())
     }
 
     companion object {
@@ -74,4 +58,32 @@ class NewPipeDownloader(builder: OkHttpClient.Builder): Downloader() {
 
         fun getInstance(): NewPipeDownloader = instance ?: init(null)
     }
+
+    // En NewPipeDownloader.kt
+    fun checkYoutubeSession(): SessionStatus {
+        if (cookies.isNullOrEmpty()) return SessionStatus.NoCookie
+
+        return try {
+            // Hacemos una petición pequeña a la página de configuración de cuenta
+            val request = okhttp3.Request.Builder()
+                .url("https://www.youtube.com/config")
+                .addHeader("Cookie", cookies!!)
+                .addHeader("User-Agent", customUserAgent)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                // Si YouTube nos devuelve info de sesión en los headers o la página carga bien
+                if (response.isSuccessful && cookies!!.contains("LOGIN_INFO")) {
+                    SessionStatus.Active
+                } else {
+                    SessionStatus.Expired
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("NP_Downloader", "Logs: Error validando sesión: ${e.message}")
+            SessionStatus.Error
+        }
+    }
+
+    enum class SessionStatus { Active, Expired, NoCookie, Error }
 }
