@@ -49,21 +49,17 @@ class YoutubeProvider(
         }
 
     init {
-        try {
-            // Forzamos la limpieza de cualquier versión de cliente antigua en caché
-            org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.resetClientVersion()
+        val downloader = NewPipeDownloader.getInstance()
+        // 1. Pasamos el User Agent de TV para evitar el bloqueo regional
+        downloader.customUserAgent = "com.google.android.youtube.tv/4.10.001 (Android 11; Television; Sony; BRAVIA 4K VH2; America/New_York; en_US)"
 
-            val downloader = NewPipe.getDownloader()
-            val fields = downloader.javaClass.declaredFields
+        // 2. Pasamos las cookies de las preferencias
+        downloader.cookies = sharedPrefs?.getString("youtube_cookie", null)
 
-            val uaField = fields.find { it.name == "userAgent" }
-            uaField?.isAccessible = true
-            uaField?.set(downloader, ANDROID_USER_AGENT)
+        // 3. Registramos el downloader en NewPipe
+        NewPipe.init(downloader)
 
-            Log.d(TAG, "Logs: Inicialización forzada con User Agent: $ANDROID_USER_AGENT")
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en init: ${e.message}")
-        }
+        Log.d(TAG, "Logs: Downloader iniciado con UA: ${downloader.customUserAgent} y Cookies: ${downloader.cookies != null}")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -142,12 +138,13 @@ class YoutubeProvider(
             try {
                 extractor.fetchPage()
             } catch (e: Exception) {
-                Log.e(TAG, "Logs: Error crítico en fetchPage: ${e.message}")
-
-                // Si pide recargar, intentamos una vez más tras un delay, pero con un log específico
                 if (e.message?.contains("reloaded", ignoreCase = true) == true) {
-                    Log.w(TAG, "Logs: YouTube solicitó recarga de página (posible bot check). Reintentando...")
-                    kotlinx.coroutines.delay(2000)
+                    Log.w(TAG, "Logs: YouTube detectó bot. Limpiando cliente y reintentando en 2s...")
+
+                    // Limpiamos la versión del cliente para que NewPipe intente obtener una nueva
+                    org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.resetClientVersion()
+
+                    kotlinx.coroutines.delay(2500) // Un poco más de tiempo es mejor
                     extractor.fetchPage()
                 } else {
                     throw e
