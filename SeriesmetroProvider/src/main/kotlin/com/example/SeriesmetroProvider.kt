@@ -105,7 +105,7 @@ class SeriesmetroProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Cargando metadatos de: $url")
+        Log.d(TAG, "Logs: Cargando metadatos de: $url")
         val doc = app.get(url, headers = headers).document
 
         val title = doc.selectFirst(".entry-header .entry-title, h1.entry-title")?.text() ?: ""
@@ -156,6 +156,8 @@ class SeriesmetroProvider : MainAPI() {
             val seasonElements = doc.select(".sel-temp a")
             val datapost = doc.selectFirst("li.sel-temp a")?.attr("data-post") ?: ""
 
+            if (seasonElements.isEmpty()) Log.w(TAG, "Logs: No se encontraron temporadas en $url")
+
             seasonElements.amap { season ->
                 try {
                     val seasonNum = season.attr("data-season")
@@ -165,23 +167,31 @@ class SeriesmetroProvider : MainAPI() {
                         headers = headers.plus("Referer" to url)
                     ).document
 
-                    response.select(".post").reversed().forEach { ep ->
+                    val episodeElements = response.select(".post")
+                    Log.d(TAG, "Logs: Temporada $seasonNum - Episodios encontrados: ${episodeElements.size}")
+
+                    episodeElements.reversed().forEach { ep ->
                         val epHref = ep.select("a").attr("abs:href")
-                        val epText = ep.select(".num-epi").text()
+                        val epText = ep.select(".num-epi").text() 
                         val epNumber = epText.substringAfter("x").trim().toIntOrNull()
+
+                        if (epNumber == null) Log.e(TAG, "Logs: No se pudo parsear el número de episodio de: $epText")
+
                         val epImg = ep.selectFirst("img")
                         val epThumb = fixImg(epImg?.attr("data-lazy-src") ?: epImg?.attr("src"))
 
                         synchronized(episodes) {
                             episodes.add(newEpisode(epHref) {
-                                this.name = "T$seasonNum - E$epNumber"
+                                this.name = if (epNumber != null) "Episodio $epNumber" else "Episodio"
                                 this.season = seasonNum.toIntOrNull()
                                 this.episode = epNumber
                                 this.posterUrl = epThumb
                             })
                         }
                     }
-                } catch (e: Exception) { Log.e(TAG, "Logs: Error en episodios: ${e.message}") }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Logs: Error cargando temporada: ${e.message}")
+                }
             }
 
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.sortedWith(compareBy({ it.season }, { it.episode }))) {
