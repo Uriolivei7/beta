@@ -172,27 +172,31 @@ class SeriesmetroProvider : MainAPI() {
                     Log.d(TAG, "Logs: Temporada $seasonNum - Episodios encontrados: ${episodeElements.size}")
 
                     episodeElements.reversed().forEach { ep ->
-                        val epHref = ep.select("a").attr("abs:href")
+                        val epHref = ep.select("a.lnk-blk").attr("abs:href").ifBlank { ep.select("a").attr("abs:href") }
                         val epText = ep.select(".num-epi").text()
                         val epNumber = epText.substringAfter("x").trim().toIntOrNull()
 
-                        if (epNumber == null) Log.e(TAG, "Logs: No se pudo parsear el número de episodio de: $epText")
+                        // --- CAMBIO SEGURO: SOLO PARA LOS POSTERS ---
+                        val imgTag = ep.selectFirst(".post-thumbnail img")
+                        var epThumb = imgTag?.attr("src") ?: imgTag?.attr("data-lazy-src")
 
-                        val epImg = ep.selectFirst("img")
-                        val epThumb = fixImg(
-                            epImg?.attr("data-lazy-src")
-                                ?: epImg?.attr("src")
-                                ?: epImg?.attr("data-src")
-                        )
+                        // Forzar HTTPS si la URL viene con // (muy común en SeriesMetro)
+                        if (epThumb?.startsWith("//") == true) {
+                            epThumb = "https:$epThumb"
+                        }
+                        val finalThumb = fixImg(epThumb)
+                        // --------------------------------------------
 
                         synchronized(episodes) {
                             episodes.add(newEpisode(epHref) {
                                 this.name = if (epNumber != null) "Episodio $epNumber" else "Episodio"
                                 this.season = seasonNum.toIntOrNull()
                                 this.episode = epNumber
-                                this.posterUrl = epThumb
+                                this.posterUrl = finalThumb // <--- Esto es lo que agregamos
                             })
                         }
+                        // Log para confirmar que no se rompe nada
+                        Log.d(TAG, "Logs: Episodio $epNumber procesado correctamente. Poster: $finalThumb")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Logs: Error cargando temporada: ${e.message}")
