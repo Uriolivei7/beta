@@ -76,44 +76,40 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
+    // ... (Tu código anterior de search y getMainPage se ve bien)
+
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
         Log.d(TAG, "Logs: Iniciando load dinámico para: $slug")
 
         return try {
             val mainPageHtml = app.get(url).text
+            // Buscamos los hashes de 40 caracteres en el HTML
             val detectedActions = Regex("""\"([a-f0-9]{40})\"""").findAll(mainPageHtml).map { it.groupValues[1] }.toList()
 
+            // Next.js suele poner el ID de Info primero y el de Episodios segundo
             val infoActionId = if (detectedActions.size >= 1) detectedActions[0] else "4079a5a3a1c98fdc637ee2ab5c0983b38c95ef4f0d"
             val epActionId = if (detectedActions.size >= 2) detectedActions[1] else "40f9328520c8b05c7b7870e35b1f2e3102d2b92ff7"
-
-            Log.d(TAG, "Logs: Actions Detectadas -> Info: $infoActionId, EPs: $epActionId")
 
             val infoResponse = app.post(
                 url,
                 headers = mapOf(
                     "next-action" to infoActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "accept" to "text/x-component",
-                    "referer" to url
+                    "accept" to "text/x-component"
                 ),
                 requestBody = "[\"$slug\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
             val internalId = Regex("""\"_id\":\"([a-zA-Z0-9]+)\"""").find(infoResponse)?.groupValues?.get(1)
-
-            if (internalId == null) {
-                Log.e(TAG, "Logs: Error - No se encontró internalId. Preview: ${infoResponse.take(200)}")
-                return null
-            }
+                ?: return null
 
             val epResponse = app.post(
                 url,
                 headers = mapOf(
                     "next-action" to epActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "accept" to "text/x-component",
-                    "referer" to url
+                    "accept" to "text/x-component"
                 ),
                 requestBody = "[\"$internalId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
@@ -126,51 +122,45 @@ class AnimeParadiseProvider : MainAPI() {
                 val epUid = match.groupValues[1]
                 val epNum = match.groupValues[2].toIntOrNull() ?: 0
                 val epTitle = Regex("""\"title\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1) ?: "Episodio $epNum"
-                val epThumb = Regex("""\"image\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1)?.replace("\\/", "/")
 
                 episodes.add(newEpisode("/watch/$epUid?origin=$internalId") {
                     this.name = epTitle
                     this.episode = epNum
-                    this.posterUrl = epThumb
                 })
             }
 
-            // --- RECOMENDACIONES (VERSIÓN FINAL FLEXIBLE) ---
+            // --- RECOMENDACIONES (VERSIÓN MEJORADA PARA RSC STREAM) ---
             val recommendations = mutableListOf<SearchResponse>()
-// Buscamos cualquier par de título y link, ignorando lo que haya en medio
-            val recoRegex = Regex("""\"title\":\"([^\"]+)\"[^}]*?\"link\":\"([^\"]+)\"""")
+            // Buscamos cualquier link y título, el [^]*? permite saltar los prefijos "1:" de Next.js
+            val recoRegex = Regex("""\"title\":\"([^\"]+)\"[^]*?\"link\":\"([^\"]+)\"""")
 
             recoRegex.findAll(infoResponse).forEach { match ->
                 val recTitle = match.groupValues[1]
                 val recLink = match.groupValues[2]
 
-                // Intentamos buscar un póster solo para ese bloque
-                val block = match.value
-                val poster = Regex("""\"large\":\"([^\"]+)\"""").find(block)?.groupValues?.get(1)?.replace("\\/", "/")
+                // Buscamos el poster en el bloque cercano
+                val posterMatch = Regex("""\"large\":\"([^\"]+)\"""").find(infoResponse, match.range.first)
+                val posterUrl = posterMatch?.groupValues?.get(1)?.replace("\\/", "/")
 
                 if (recLink != slug && recLink.length > 2 && !recLink.contains("\\")) {
                     recommendations.add(newAnimeSearchResponse(recTitle, recLink, TvType.Anime) {
-                        this.posterUrl = poster
+                        this.posterUrl = posterUrl
                     })
                 }
             }
-            Log.d(TAG, "Logs: Recomendaciones extraídas: ${recommendations.size}")
 
-            // Metadatos finales
             val title = Regex("""\"title\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1) ?: "Sin título"
             val plot = Regex("""\"synopsys\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\n", "\n")
             val poster = Regex("""\"large\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\/", "/")
 
-            Log.d(TAG, "Logs: Carga finalizada. ${episodes.size} EPs, ${recommendations.size} Recos.")
-
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.plot = plot
-                this.recommendations = recommendations
+                this.recommendations = recommendations.distinctBy { it.url }
                 addEpisodes(DubStatus.Subbed, episodes.sortedBy { it.episode })
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
+            Log.e(TAG, "Logs: Error en load: ${e.message}")
             null
         }
     }
@@ -189,16 +179,10 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val watchPageHtml = app.get(watchUrl).text
-            val detectedActions = Regex("""[a-f0-9]{40}""").findAll(watchPageHtml).map { it.value }.toList()
+            val detectedActions = Regex("""\"([a-f0-9]{40})\"""").findAll(watchPageHtml).map { it.groupValues[1] }.toList()
 
-            // Usamos el ID dinámico si existe, sino el estático
-            val linkActionId = if (detectedActions.isNotEmpty()) {
-                detectedActions.last()
-            } else {
-                "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24" // Fallback
-            }
-
-            Log.d(TAG, "Logs: Probando con Action ID: $linkActionId")
+            // Intentamos agarrar el ID de acción del player (suele ser el último)
+            val linkActionId = if (detectedActions.isNotEmpty()) detectedActions.last() else "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
 
             val response = app.post(
                 watchUrl,
@@ -206,17 +190,17 @@ class AnimeParadiseProvider : MainAPI() {
                     "accept" to "text/x-component",
                     "next-action" to linkActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "referer" to watchUrl
+                    "referer" to watchUrl,
+                    "x-nextjs-postponed" to "1" // <--- Crucial para que suelte los datos del stream
                 ),
                 requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // Si el servidor nos rechaza el ID, probamos con el ID que vimos en tu CURL
             if (response.contains("Server action not found")) {
-                val curlId = "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
-                Log.d(TAG, "Logs: Reintentando con ID de emergencia: $curlId")
+                // Fallback con el ID que funcionó en el CURL
+                val fallbackId = "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
                 val retry = app.post(watchUrl,
-                    headers = mapOf("next-action" to curlId, "accept" to "text/x-component"),
+                    headers = mapOf("next-action" to fallbackId, "accept" to "text/x-component"),
                     requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
                 ).text
                 return parseVideoResponse(retry, callback, subtitleCallback)
@@ -224,7 +208,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             parseVideoResponse(response, callback, subtitleCallback)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
         }
     }
@@ -234,18 +218,17 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
         subtitleCallback: (SubtitleFile) -> Unit
     ): Boolean {
-        // 1. Buscar el Video (m3u8)
+        // Buscamos el m3u8 con un Regex que ignore escapes de JSON
         val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
-        val videoMatch = videoRegex.find(response)
+        val match = videoRegex.find(response)
 
-        if (videoMatch != null) {
-            val rawUrl = videoMatch.value
-                .replace("\\/", "/")
+        if (match != null) {
+            val cleanUrl = match.value.replace("\\/", "/")
                 .replace("\\u0026", "&")
                 .replace("u0026", "&")
 
-            val proxyUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
-            else "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
+            val proxyUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
+            else "https://stream.animeparadise.moe/m3u8?url=$cleanUrl"
 
             callback.invoke(
                 newExtractorLink(name, name, proxyUrl, type = ExtractorLinkType.M3U8) {
@@ -254,28 +237,16 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             )
 
-            // --- 2. LOGICA PARA SUBTITULOS ---
-            // Buscamos el patrón JSON de subtítulos: {"src":"...","label":"..."}
+            // Subtítulos
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)"""")
-            subRegex.findAll(response).forEach { match ->
-                val src = match.groupValues[1].replace("\\/", "/")
-                val label = match.groupValues[2]
-
-                // Construimos la URL completa del subtítulo
-                val subUrl = if (src.startsWith("http")) src
-                else "https://api.animeparadise.moe/stream/file/$src"
-
-                Log.d(TAG, "Logs: Subtítulo encontrado: $label -> $subUrl")
-
-                subtitleCallback.invoke(
-                    newSubtitleFile(label, subUrl)
-                )
+            subRegex.findAll(response).forEach { sMatch ->
+                val src = sMatch.groupValues[1].replace("\\/", "/")
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(sMatch.groupValues[2], subUrl))
             }
-
             return true
         }
-
-        Log.e(TAG, "Logs: No se encontró m3u8 en la respuesta.")
+        Log.e(TAG, "Logs: No se encontró video en el RSC. Preview: ${response.take(100)}")
         return false
     }
 
