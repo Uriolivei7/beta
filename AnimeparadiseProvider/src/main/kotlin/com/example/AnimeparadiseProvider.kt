@@ -82,7 +82,7 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val mainPageHtml = app.get(url).text
-            val detectedActions = Regex("""[a-f0-9]{40}""").findAll(mainPageHtml).map { it.value }.toList()
+            val detectedActions = Regex("""\"([a-f0-9]{40})\"""").findAll(mainPageHtml).map { it.groupValues[1] }.toList()
 
             val infoActionId = if (detectedActions.size >= 1) detectedActions[0] else "4079a5a3a1c98fdc637ee2ab5c0983b38c95ef4f0d"
             val epActionId = if (detectedActions.size >= 2) detectedActions[1] else "40f9328520c8b05c7b7870e35b1f2e3102d2b92ff7"
@@ -94,7 +94,8 @@ class AnimeParadiseProvider : MainAPI() {
                 headers = mapOf(
                     "next-action" to infoActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "accept" to "text/x-component"
+                    "accept" to "text/x-component",
+                    "referer" to url
                 ),
                 requestBody = "[\"$slug\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
@@ -102,7 +103,7 @@ class AnimeParadiseProvider : MainAPI() {
             val internalId = Regex("""\"_id\":\"([a-zA-Z0-9]+)\"""").find(infoResponse)?.groupValues?.get(1)
 
             if (internalId == null) {
-                Log.e(TAG, "Logs: Error - No se encontró internalId")
+                Log.e(TAG, "Logs: Error - No se encontró internalId. Preview: ${infoResponse.take(200)}")
                 return null
             }
 
@@ -111,7 +112,8 @@ class AnimeParadiseProvider : MainAPI() {
                 headers = mapOf(
                     "next-action" to epActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "accept" to "text/x-component"
+                    "accept" to "text/x-component",
+                    "referer" to url
                 ),
                 requestBody = "[\"$internalId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
@@ -123,7 +125,6 @@ class AnimeParadiseProvider : MainAPI() {
                 val blockText = match.value
                 val epUid = match.groupValues[1]
                 val epNum = match.groupValues[2].toIntOrNull() ?: 0
-
                 val epTitle = Regex("""\"title\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1) ?: "Episodio $epNum"
                 val epThumb = Regex("""\"image\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1)?.replace("\\/", "/")
 
@@ -134,27 +135,26 @@ class AnimeParadiseProvider : MainAPI() {
                 })
             }
 
-            // --- SECCIÓN DE RECOMENDACIONES ---
-            // Buscamos objetos que tengan title, link y posterImage dentro de infoResponse
-            val recoRegex = Regex("""\{[^{]*?\"title\":\"([^\"]+)\"[^{]*?\"link\":\"([^\"]+)\"[^{]*?\"posterImage\":\{[^{]*?\"large\":\"([^\"]+)\"""")
-            val recommendations = recoRegex.findAll(infoResponse).map { match ->
-                val recTitle = match.groupValues[1]
+            // --- RECOMENDACIONES (MEJORADO) ---
+            val recommendations = mutableListOf<SearchResponse>()
+            // Intentamos capturar título, link y poster si vienen juntos
+            val recoRegex = Regex("""\{[^{]*?\"title\":\"([^\"]+)\"[^{]*?\"link\":\"([^\"]+)\"[^{]*?\"large\":\"([^\"]+)\"""")
+            recoRegex.findAll(infoResponse).forEach { match ->
                 val recLink = match.groupValues[2]
-                val recPoster = match.groupValues[3].replace("\\/", "/")
-
-                newAnimeSearchResponse(recTitle, recLink, TvType.Anime) {
-                    this.posterUrl = recPoster
+                if (recLink != slug) {
+                    recommendations.add(newAnimeSearchResponse(match.groupValues[1], recLink, TvType.Anime) {
+                        this.posterUrl = match.groupValues[3].replace("\\/", "/")
+                    })
                 }
-            }.toList()
+            }
 
-            Log.d(TAG, "Logs: Carga finalizada. ${episodes.size} EPs, ${recommendations.size} Recos.")
-
-            // --- METADATOS Y RESPUESTA ÚNICA ---
+            // Metadatos finales
             val title = Regex("""\"title\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1) ?: "Sin título"
             val plot = Regex("""\"synopsys\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\n", "\n")
             val poster = Regex("""\"large\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\/", "/")
 
-            // Retornamos una sola respuesta con todo integrado
+            Log.d(TAG, "Logs: Carga finalizada. ${episodes.size} EPs, ${recommendations.size} Recos.")
+
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -177,62 +177,50 @@ class AnimeParadiseProvider : MainAPI() {
         val currentOriginId = data.substringAfter("origin=").substringBefore("&")
         val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpUID: $currentEpId")
 
         return try {
-            // 1. Detectamos el ID de acción dinámicamente desde la página de video
             val watchPageHtml = app.get(watchUrl).text
-            val detectedActions = Regex("""[a-f0-9]{40}""").findAll(watchPageHtml).map { it.value }.toList()
+            val detectedActions = Regex("""\"([a-f0-9]{40})\"""").findAll(watchPageHtml).map { it.groupValues[1] }.toList()
 
-            // El ID de los links suele ser el último en la página de reproducción
             val linkActionId = if (detectedActions.isNotEmpty()) detectedActions.last()
             else "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24"
-
-            Log.d(TAG, "Logs: Usando Action ID para Video: $linkActionId")
 
             val response = app.post(
                 watchUrl,
                 headers = mapOf(
-                    "accept" to "*/*",
+                    "accept" to "text/x-component",
                     "next-action" to linkActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "referer" to watchUrl
+                    "referer" to watchUrl,
+                    "origin" to mainUrl
                 ),
                 requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // 2. Regex mejorado para capturar URLs con o sin escapes (\/)
             val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
             val videoMatch = videoRegex.find(response)
 
             if (videoMatch != null) {
-                val rawUrl = videoMatch.value
-                    .replace("\\/", "/")
-                    .replace("\\u0026", "&")
-
-                Log.d(TAG, "Logs: Video encontrado: $rawUrl")
-
+                val rawUrl = videoMatch.value.replace("\\/", "/").replace("\\u0026", "&").replace("u0026", "&")
                 val proxyUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
 
                 callback.invoke(
-                    newExtractorLink(name, name, proxyUrl).apply {
+                    newExtractorLink(name, name, proxyUrl, type = ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
-                        this.type = ExtractorLinkType.M3U8
-                        this.headers = mapOf("referer" to "$mainUrl/", "origin" to mainUrl)
+                        this.referer = "$mainUrl/"
                     }
                 )
             } else {
-                Log.e(TAG, "Logs: No se encontró el m3u8. Respuesta: ${response.take(300)}")
+                Log.e(TAG, "Logs: No se encontró m3u8. Preview: ${response.take(150)}")
             }
 
-            // 3. Subtítulos
             Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                 subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
             }
-
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
