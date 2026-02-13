@@ -106,7 +106,12 @@ class AnimeParadiseProvider : MainAPI() {
 
             // Extraemos el ID interno del "chorizo" de texto de Next.js
             val internalId = Regex("""\"_id\":\"([a-zA-Z0-9]+)\"""").find(infoResponse)?.groupValues?.get(1)
-                ?: throw Exception("No se pudo extraer el ID interno (internalId)")
+
+            // Añade este check después de extraer el internalId
+            if (internalId == null) {
+                Log.e(TAG, "Logs: No se pudo encontrar el internalId. Abortando episodios.")
+                // Podrías intentar un parseo alternativo aquí si fuera necesario
+            }
 
             Log.d(TAG, "Logs: ID Interno encontrado: $internalId")
 
@@ -121,22 +126,30 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = "[\"$internalId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // 4. Parseo manual de episodios (Más seguro que Jackson para el formato RSC de Next.js)
             val episodes = mutableListOf<Episode>()
-            val epRegex = Regex("""\{"_id\":\"([^\"]+)\",\"title\":\"([^\"]+)\",\"link\":\"([^\"]+)\",\"number\":(\d+)[^}]*?\"image\":\"([^\"]+)\"""")
+
+            // Cambiamos (\d+) por \"?(\d+)\"? para que acepte "1" o 1
+            val epRegex = Regex("""\{[^{]*?"link":"([^"]+)"[^{]*?"number":"?(\d+)"?[^{]*?\}""")
 
             epRegex.findAll(epResponse).forEach { match ->
-                val epUid = match.groupValues[1]
-                val epTitle = match.groupValues[2]
-                val epLink = match.groupValues[3]
-                val epNum = match.groupValues[4].toIntOrNull() ?: 0
-                val epThumb = match.groupValues[5].replace("\\/", "/")
+                val epLink = match.groupValues[1]
+                val epNum = match.groupValues[2].toIntOrNull() ?: 0
+
+                // Usamos el texto capturado en el bloque para buscar título e imagen
+                val blockText = match.value
+
+                val epTitle = Regex("""\"title\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1) ?: "Episodio $epNum"
+                val epThumb = Regex("""\"image\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1)?.replace("\\/", "/")
 
                 episodes.add(newEpisode("/watch/$epLink?origin=$internalId") {
                     this.name = epTitle
                     this.episode = epNum
                     this.posterUrl = epThumb
                 })
+            }
+
+            if (episodes.isEmpty()) {
+                Log.d(TAG, "Logs: epResponse preview (primero 500 carac): ${epResponse.take(500)}")
             }
 
             // 5. Extraer metadatos para la respuesta final
