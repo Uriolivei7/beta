@@ -81,19 +81,17 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: Iniciando load dinámico para: $slug")
 
         return try {
-            // 1. Cargamos la página HTML para obtener los IDs de las acciones (next-action)
+            // 1. Obtener la página para extraer los IDs de Next.js (next-action)
             val mainPageHtml = app.get(url).text
-
-            // Buscamos todos los hashes de 40 caracteres en el HTML
             val detectedActions = Regex("""[a-f0-9]{40}""").findAll(mainPageHtml).map { it.value }.toList()
 
-            // El primer ID suele ser el de información, el segundo el de episodios
+            // Fallbacks por si el Regex de detección falla
             val infoActionId = if (detectedActions.size >= 1) detectedActions[0] else "4079a5a3a1c98fdc637ee2ab5c0983b38c95ef4f0d"
             val epActionId = if (detectedActions.size >= 2) detectedActions[1] else "40f9328520c8b05c7b7870e35b1f2e3102d2b92ff7"
 
             Log.d(TAG, "Logs: Actions Detectadas -> Info: $infoActionId, EPs: $epActionId")
 
-            // 2. PASO 1: Obtener el ID interno del anime (necesario para pedir episodios)
+            // 2. PASO 1: Obtener ID interno (internalId)
             val infoResponse = app.post(
                 url,
                 headers = mapOf(
@@ -104,18 +102,16 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = "[\"$slug\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // Extraemos el ID interno del "chorizo" de texto de Next.js
             val internalId = Regex("""\"_id\":\"([a-zA-Z0-9]+)\"""").find(infoResponse)?.groupValues?.get(1)
 
-            // Añade este check después de extraer el internalId
             if (internalId == null) {
-                Log.e(TAG, "Logs: No se pudo encontrar el internalId. Abortando episodios.")
-                // Podrías intentar un parseo alternativo aquí si fuera necesario
+                Log.e(TAG, "Logs: Error - No se encontró internalId en infoResponse")
+                Log.d(TAG, "Logs: Preview infoResponse: ${infoResponse.take(300)}")
+                return null
             }
+            Log.d(TAG, "Logs: internalId detectado correctamente: $internalId")
 
-            Log.d(TAG, "Logs: ID Interno encontrado: $internalId")
-
-            // 3. PASO 2: Obtener la lista de episodios
+            // 3. PASO 2: Obtener los episodios
             val epResponse = app.post(
                 url,
                 headers = mapOf(
@@ -128,36 +124,40 @@ class AnimeParadiseProvider : MainAPI() {
 
             val episodes = mutableListOf<Episode>()
 
-            // Cambiamos (\d+) por \"?(\d+)\"? para que acepte "1" o 1
-            val epRegex = Regex("""\{[^{]*?"link":"([^"]+)"[^{]*?"number":"?(\d+)"?[^{]*?\}""")
+            // ACTUALIZACIÓN: Usamos "uid" (confirmado en logs) y manejamos comillas en "number"
+            // Buscamos bloques que tengan uid y number
+            val epRegex = Regex("""\{[^{]*?\"uid\":\"([^\"]+)\"[^{]*?\"number\":\"?(\d+)\"?[^{]*?\}""")
 
             epRegex.findAll(epResponse).forEach { match ->
-                val epLink = match.groupValues[1]
+                val blockText = match.value
+                val epUid = match.groupValues[1]
                 val epNum = match.groupValues[2].toIntOrNull() ?: 0
 
-                // Usamos el texto capturado en el bloque para buscar título e imagen
-                val blockText = match.value
-
+                // Extraemos título e imagen del bloque individual
                 val epTitle = Regex("""\"title\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1) ?: "Episodio $epNum"
                 val epThumb = Regex("""\"image\":\"([^\"]+)\"""").find(blockText)?.groupValues?.get(1)?.replace("\\/", "/")
 
-                episodes.add(newEpisode("/watch/$epLink?origin=$internalId") {
+                episodes.add(newEpisode("/watch/$epUid?origin=$internalId") {
                     this.name = epTitle
                     this.episode = epNum
                     this.posterUrl = epThumb
                 })
             }
 
+            // Logs de seguridad si la lista está vacía
             if (episodes.isEmpty()) {
-                Log.d(TAG, "Logs: epResponse preview (primero 500 carac): ${epResponse.take(500)}")
+                Log.w(TAG, "Logs: No se encontraron episodios. Analizando epResponse...")
+                Log.d(TAG, "Logs: epResponse preview: ${epResponse.take(500)}")
+            } else {
+                Log.d(TAG, "Logs: Carga exitosa. ${episodes.size} episodios encontrados para $slug")
             }
 
-            // 5. Extraer metadatos para la respuesta final
+            // 4. Metadatos del Anime
             val title = Regex("""\"title\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1) ?: "Sin título"
-            val plot = Regex("""\"synopsys\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\n", "\n")
+            val plot = Regex("""\"synopsys\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)
+                ?.replace("\\n", "\n")
+                ?.replace("\\r", "")
             val poster = Regex("""\"large\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\/", "/")
-
-            Log.d(TAG, "Logs: Carga exitosa. ${episodes.size} episodios encontrados.")
 
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
@@ -166,14 +166,9 @@ class AnimeParadiseProvider : MainAPI() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
-            Log.e(TAG, "Logs: Stacktrace: ${e.stackTraceToString()}")
+            Log.e(TAG, "Logs: Stacktrace completo: ${e.stackTraceToString()}")
             null
         }
-    }
-
-    private fun extractNextJsJson(response: String): String? {
-        val match = Regex("""\{"data":.*\}""").find(response)
-        return match?.value
     }
 
     override suspend fun loadLinks(
