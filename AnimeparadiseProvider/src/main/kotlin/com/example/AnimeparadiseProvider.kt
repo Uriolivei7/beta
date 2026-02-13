@@ -78,51 +78,82 @@ class AnimeParadiseProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
-        Log.d(TAG, "Logs: Iniciando load para: $slug")
+        Log.d(TAG, "Logs: Iniciando load dinámico para: $slug")
 
         return try {
-            val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
-            val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
-            val internalId = animeData.data?.id ?: throw Exception("ID no encontrado")
+            // 1. Cargamos la página HTML para obtener los IDs de las acciones (next-action)
+            val mainPageHtml = app.get(url).text
 
-            val mediaType = "text/plain;charset=UTF-8".toMediaTypeOrNull()
-            val body = "[\"$internalId\"]".toRequestBody(mediaType)
+            // Buscamos todos los hashes de 40 caracteres en el HTML
+            val detectedActions = Regex("""[a-f0-9]{40}""").findAll(mainPageHtml).map { it.value }.toList()
 
-            val epResponse = app.post(
-                "$mainUrl/anime/$slug",
+            // El primer ID suele ser el de información, el segundo el de episodios
+            val infoActionId = if (detectedActions.size >= 1) detectedActions[0] else "4079a5a3a1c98fdc637ee2ab5c0983b38c95ef4f0d"
+            val epActionId = if (detectedActions.size >= 2) detectedActions[1] else "40f9328520c8b05c7b7870e35b1f2e3102d2b92ff7"
+
+            Log.d(TAG, "Logs: Actions Detectadas -> Info: $infoActionId, EPs: $epActionId")
+
+            // 2. PASO 1: Obtener el ID interno del anime (necesario para pedir episodios)
+            val infoResponse = app.post(
+                url,
                 headers = mapOf(
-                    "next-action" to "40e3235ae729909b92989a3d85630db447fc03dbfb",
+                    "next-action" to infoActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "referer" to "$mainUrl/anime/$slug"
+                    "accept" to "text/x-component"
                 ),
-                requestBody = body
+                requestBody = "[\"$slug\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            val cleanJson = extractNextJsJson(epResponse) ?: throw Exception("Formato de respuesta Next.js inválido")
+            // Extraemos el ID interno del "chorizo" de texto de Next.js
+            val internalId = Regex("""\"_id\":\"([a-zA-Z0-9]+)\"""").find(infoResponse)?.groupValues?.get(1)
+                ?: throw Exception("No se pudo extraer el ID interno (internalId)")
 
-            val epData: EpisodeListResponse = mapper.readValue(cleanJson)
+            Log.d(TAG, "Logs: ID Interno encontrado: $internalId")
 
-            val episodes = (epData.data ?: emptyList()).map { ep ->
-                val num = ep.number?.toIntOrNull() ?: 0
-                newEpisode("/watch/${ep.uid}?origin=$internalId") {
-                    this.name = ep.title ?: "Episodio $num"
-                    this.episode = num
-                    this.posterUrl = ep.image
-                }
-            }.sortedBy { it.episode }
+            // 3. PASO 2: Obtener la lista de episodios
+            val epResponse = app.post(
+                url,
+                headers = mapOf(
+                    "next-action" to epActionId,
+                    "content-type" to "text/plain;charset=UTF-8",
+                    "accept" to "text/x-component"
+                ),
+                requestBody = "[\"$internalId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            ).text
 
-            Log.d(TAG, "Logs: ${episodes.size} episodios cargados correctamente")
+            // 4. Parseo manual de episodios (Más seguro que Jackson para el formato RSC de Next.js)
+            val episodes = mutableListOf<Episode>()
+            val epRegex = Regex("""\{"_id\":\"([^\"]+)\",\"title\":\"([^\"]+)\",\"link\":\"([^\"]+)\",\"number\":(\d+)[^}]*?\"image\":\"([^\"]+)\"""")
 
-            newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
-                this.plot = animeData.data?.synopsys
-                this.tags = animeData.data?.genres
-                this.posterUrl = animeData.data?.posterImage?.large
-                this.year = animeData.data?.animeSeason?.year
-                this.showStatus = if (animeData.data?.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
-                addEpisodes(DubStatus.Subbed, episodes)
+            epRegex.findAll(epResponse).forEach { match ->
+                val epUid = match.groupValues[1]
+                val epTitle = match.groupValues[2]
+                val epLink = match.groupValues[3]
+                val epNum = match.groupValues[4].toIntOrNull() ?: 0
+                val epThumb = match.groupValues[5].replace("\\/", "/")
+
+                episodes.add(newEpisode("/watch/$epLink?origin=$internalId") {
+                    this.name = epTitle
+                    this.episode = epNum
+                    this.posterUrl = epThumb
+                })
+            }
+
+            // 5. Extraer metadatos para la respuesta final
+            val title = Regex("""\"title\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1) ?: "Sin título"
+            val plot = Regex("""\"synopsys\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\n", "\n")
+            val poster = Regex("""\"large\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1)?.replace("\\/", "/")
+
+            Log.d(TAG, "Logs: Carga exitosa. ${episodes.size} episodios encontrados.")
+
+            newAnimeLoadResponse(title, url, TvType.Anime) {
+                this.posterUrl = poster
+                this.plot = plot
+                addEpisodes(DubStatus.Subbed, episodes.sortedBy { it.episode })
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load detallado: ${e.stackTraceToString()}")
+            Log.e(TAG, "Logs: Error crítico en load: ${e.message}")
+            Log.e(TAG, "Logs: Stacktrace: ${e.stackTraceToString()}")
             null
         }
     }
