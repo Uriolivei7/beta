@@ -135,25 +135,26 @@ class AnimeParadiseProvider : MainAPI() {
                 })
             }
 
-            // --- RECOMENDACIONES (VERSIÓN ULTRA-AGRESIVA) ---
+            // --- RECOMENDACIONES (FORMATO JSON DE NEXT.JS) ---
             val recommendations = mutableListOf<SearchResponse>()
-            // Buscamos cualquier bloque que tenga un link y un título
-            val recoRegex = Regex("""\"title\":\"([^\"]+)\"[^}]*?\"link\":\"([^\"]+)\"""")
+
+            val recoRegex = Regex("""\"title\":\"([^\"]+)\",\"link\":\"([^\"]+)\"[^}]*?\"posterImage\":\{"large\":\"([^\"]+)\"""")
 
             recoRegex.findAll(infoResponse).forEach { match ->
                 val recTitle = match.groupValues[1]
                 val recLink = match.groupValues[2]
+                val recPoster = match.groupValues[3].replace("\\/", "/")
 
-                // Solo agregamos si parece un slug de anime válido
-                if (recLink != slug && recLink.length > 3 && !recLink.contains("http") && !recLink.contains("\\")) {
-                    recommendations.add(newAnimeSearchResponse(recTitle, recLink, TvType.Anime))
+                // Filtramos para no añadir el mismo anime que estamos viendo
+                // y verificamos que el link no sea una URL completa
+                if (recLink != slug && !recLink.contains("http")) {
+                    recommendations.add(newAnimeSearchResponse(recTitle, recLink, TvType.Anime) {
+                        this.posterUrl = recPoster
+                    })
                 }
             }
 
-            // Log para debuggear la respuesta si sigue fallando
-            if (recommendations.isEmpty()) {
-                Log.d(TAG, "Logs: Recos vacías. Analizando infoResponse: ${infoResponse.take(500)}")
-            }
+            Log.d(TAG, "Logs: Recomendaciones extraídas: ${recommendations.size}")
 
             // Metadatos finales
             val title = Regex("""\"title\":\"([^\"]+)\"""").find(infoResponse)?.groupValues?.get(1) ?: "Sin título"
@@ -197,16 +198,16 @@ class AnimeParadiseProvider : MainAPI() {
             val linkActionId = if (detectedActions.size >= 3) detectedActions[2] else detectedActions.lastOrNull() ?: "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24"
 
             Log.d(TAG, "Logs: Probando Action ID: $linkActionId")
-
+            
             val response = app.post(
                 watchUrl,
                 headers = mapOf(
-                    "accept" to "text/x-component",
+                    "accept" to "text/x-component", // Igual que tu CURL
                     "next-action" to linkActionId,
                     "content-type" to "text/plain;charset=UTF-8",
                     "referer" to watchUrl,
                     "origin" to mainUrl,
-                    "x-nextjs-data" to "1"
+                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
                 requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
