@@ -131,42 +131,87 @@ class AnimeParadiseProvider : MainAPI() {
         val currentOriginId = data.substringAfter("origin=").substringBefore("&")
         val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
+        Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
+        Log.d(TAG, "Logs: EpUID: $currentEpId | Origin: $currentOriginId")
+
         return try {
             val watchPageHtml = app.get(watchUrl).text
             val detectedActions = Regex("""\"([a-f0-9]{40})\"""").findAll(watchPageHtml).map { it.groupValues[1] }.toList()
+
+            Log.d(TAG, "Logs: Acciones detectadas en HTML: ${detectedActions.size}")
+
+            // Intentamos con la última acción detectada, que suele ser el Player
             val linkActionId = detectedActions.lastOrNull() ?: "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
+            Log.d(TAG, "Logs: Usando ActionID para enlaces: $linkActionId")
 
             val response = app.post(watchUrl,
                 headers = mapOf(
                     "accept" to "text/x-component",
                     "next-action" to linkActionId,
+                    "content-type" to "text/plain;charset=UTF-8",
+                    "referer" to watchUrl,
                     "x-nextjs-postponed" to "1"
                 ),
-                requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain".toMediaTypeOrNull())
+                requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
+            // Log del inicio de la respuesta para ver si es un error o datos reales
+            Log.d(TAG, "Logs: Respuesta del servidor (primeros 200 caps): ${response.take(200)}")
+
+            if (response.contains("Server action not found") || response.length < 50) {
+                Log.e(TAG, "Logs: La acción falló. Intentando fallback con ID conocido...")
+                val fallbackId = "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
+                val retry = app.post(watchUrl,
+                    headers = mapOf("next-action" to fallbackId, "accept" to "text/x-component"),
+                    requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain".toMediaTypeOrNull())
+                ).text
+                return parseVideoResponse(retry, callback, subtitleCallback)
+            }
+
             parseVideoResponse(response, callback, subtitleCallback)
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
+            false
+        }
     }
 
-    private suspend fun parseVideoResponse(response: String, callback: (ExtractorLink) -> Unit, subtitleCallback: (SubtitleFile) -> Unit): Boolean {
-        val videoMatch = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""").find(response) ?: return false
-        val cleanUrl = videoMatch.value.replace("\\/", "/").replace("\\u0026", "&").replace("u0026", "&")
+    private suspend fun parseVideoResponse(
+        response: String,
+        callback: (ExtractorLink) -> Unit,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ): Boolean {
+        // Log para ver si el m3u8 está presente en el texto
+        val hasM3u8 = response.contains("master.m3u8")
+        Log.d(TAG, "Logs: ¿Contiene master.m3u8?: $hasM3u8")
 
-        val proxyUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
-        else "https://stream.animeparadise.moe/m3u8?url=$cleanUrl"
+        val videoMatch = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""").find(response)
 
-        callback.invoke(newExtractorLink(name, name, proxyUrl, type = ExtractorLinkType.M3U8) {
-            this.quality = Qualities.P1080.value
-            this.referer = "$mainUrl/"
-        })
+        if (videoMatch != null) {
+            val cleanUrl = videoMatch.value.replace("\\/", "/").replace("\\u0026", "&").replace("u0026", "&")
+            Log.d(TAG, "Logs: URL de video encontrada: $cleanUrl")
 
-        Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
-            val src = match.groupValues[1].replace("\\/", "/")
-            val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-            subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
+            val proxyUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
+            else "https://stream.animeparadise.moe/m3u8?url=$cleanUrl"
+
+            callback.invoke(newExtractorLink(name, name, proxyUrl, type = ExtractorLinkType.M3U8) {
+                this.quality = Qualities.P1080.value
+                this.referer = "$mainUrl/"
+            })
+
+            // Logs para subtítulos
+            var subCount = 0
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
+                val src = match.groupValues[1].replace("\\/", "/")
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
+                subCount++
+            }
+            Log.d(TAG, "Logs: Subtítulos añadidos: $subCount")
+            return true
         }
-        return true
+
+        Log.e(TAG, "Logs: No se pudo extraer el enlace master.m3u8 del cuerpo de respuesta.")
+        return false
     }
 }
 
