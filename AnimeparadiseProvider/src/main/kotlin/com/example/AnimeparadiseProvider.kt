@@ -92,15 +92,14 @@ class AnimeParadiseProvider : MainAPI() {
                 "$mainUrl/anime/$slug",
                 headers = mapOf(
                     "next-action" to "40e3235ae729909b92989a3d85630db447fc03dbfb",
-                    "content-type" to "text/plain;charset=UTF-8"
+                    "content-type" to "text/plain;charset=UTF-8",
+                    "referer" to "$mainUrl/anime/$slug"
                 ),
                 requestBody = body
             ).text
 
-            val jsonStartIndex = epResponse.indexOf("{\"data\":")
-            if (jsonStartIndex == -1) throw Exception("Formato de respuesta Next.js inválido")
+            val cleanJson = extractNextJsJson(epResponse) ?: throw Exception("Formato de respuesta Next.js inválido")
 
-            val cleanJson = epResponse.substring(jsonStartIndex).substringBeforeLast("\n")
             val epData: EpisodeListResponse = mapper.readValue(cleanJson)
 
             val episodes = (epData.data ?: emptyList()).map { ep ->
@@ -114,18 +113,23 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: ${episodes.size} episodios cargados correctamente")
 
-            newAnimeLoadResponse(animeData.data.title ?: "Sin título", url, TvType.Anime) {
-                this.plot = animeData.data.synopsys
-                this.tags = animeData.data.genres
-                this.posterUrl = animeData.data.posterImage?.large
-                this.year = animeData.data.animeSeason?.year
-                this.showStatus = if (animeData.data.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
+            newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
+                this.plot = animeData.data?.synopsys
+                this.tags = animeData.data?.genres
+                this.posterUrl = animeData.data?.posterImage?.large
+                this.year = animeData.data?.animeSeason?.year
+                this.showStatus = if (animeData.data?.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
+            Log.e(TAG, "Logs: Error en load detallado: ${e.stackTraceToString()}")
             null
         }
+    }
+
+    private fun extractNextJsJson(response: String): String? {
+        val match = Regex("""\{"data":.*\}""").find(response)
+        return match?.value
     }
 
     override suspend fun loadLinks(

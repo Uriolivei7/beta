@@ -112,8 +112,6 @@ class SeriesmetroProvider : MainAPI() {
 
         val duration = doc.selectFirst(".duration")?.text()?.trim()
         val durationInt = duration?.replace(" min", "")?.trim()?.toIntOrNull()
-
-        // Póster principal de la serie
         val posterElement = doc.selectFirst(".post-thumbnail figure img")
         val rawPoster = posterElement?.attr("data-lazy-src").takeIf { !it.isNullOrBlank() }
             ?: posterElement?.attr("src").takeIf { !it.isNullOrBlank() && !it.contains("data:image") }
@@ -180,26 +178,22 @@ class SeriesmetroProvider : MainAPI() {
                         val epText = ep.select(".num-epi").text()
                         val epNumber = epText.substringAfter("x").trim().toIntOrNull()
 
-                        // --- CAMBIO SEGURO: SOLO PARA LOS POSTERS ---
                         val imgTag = ep.selectFirst(".post-thumbnail img")
                         var epThumb = imgTag?.attr("src") ?: imgTag?.attr("data-lazy-src")
 
-                        // Forzar HTTPS si la URL viene con // (muy común en SeriesMetro)
                         if (epThumb?.startsWith("//") == true) {
                             epThumb = "https:$epThumb"
                         }
                         val finalThumb = fixImg(epThumb)
-                        // --------------------------------------------
 
                         synchronized(episodes) {
                             episodes.add(newEpisode(epHref) {
                                 this.name = if (epNumber != null) "Episodio $epNumber" else "Episodio"
                                 this.season = seasonNum.toIntOrNull()
                                 this.episode = epNumber
-                                this.posterUrl = finalThumb // <--- Esto es lo que agregamos
+                                this.posterUrl = finalThumb
                             })
                         }
-                        // Log para confirmar que no se rompe nada
                         Log.d(TAG, "Logs: Episodio $epNumber procesado correctamente. Poster: $finalThumb")
                     }
                 } catch (e: Exception) {
