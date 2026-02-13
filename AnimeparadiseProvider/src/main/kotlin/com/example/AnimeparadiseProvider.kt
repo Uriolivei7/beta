@@ -135,25 +135,25 @@ class AnimeParadiseProvider : MainAPI() {
                 })
             }
 
-            // --- RECOMENDACIONES (FORMATO JSON DE NEXT.JS) ---
+            // --- RECOMENDACIONES (VERSIÓN FINAL FLEXIBLE) ---
             val recommendations = mutableListOf<SearchResponse>()
-
-            val recoRegex = Regex("""\"title\":\"([^\"]+)\",\"link\":\"([^\"]+)\"[^}]*?\"posterImage\":\{"large\":\"([^\"]+)\"""")
+// Buscamos cualquier par de título y link, ignorando lo que haya en medio
+            val recoRegex = Regex("""\"title\":\"([^\"]+)\"[^}]*?\"link\":\"([^\"]+)\"""")
 
             recoRegex.findAll(infoResponse).forEach { match ->
                 val recTitle = match.groupValues[1]
                 val recLink = match.groupValues[2]
-                val recPoster = match.groupValues[3].replace("\\/", "/")
 
-                // Filtramos para no añadir el mismo anime que estamos viendo
-                // y verificamos que el link no sea una URL completa
-                if (recLink != slug && !recLink.contains("http")) {
+                // Intentamos buscar un póster solo para ese bloque
+                val block = match.value
+                val poster = Regex("""\"large\":\"([^\"]+)\"""").find(block)?.groupValues?.get(1)?.replace("\\/", "/")
+
+                if (recLink != slug && recLink.length > 2 && !recLink.contains("\\")) {
                     recommendations.add(newAnimeSearchResponse(recTitle, recLink, TvType.Anime) {
-                        this.posterUrl = recPoster
+                        this.posterUrl = poster
                     })
                 }
             }
-
             Log.d(TAG, "Logs: Recomendaciones extraídas: ${recommendations.size}")
 
             // Metadatos finales
@@ -189,44 +189,42 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val watchPageHtml = app.get(watchUrl).text
-
-            // Buscamos todos los hashes de 40 caracteres
             val detectedActions = Regex("""[a-f0-9]{40}""").findAll(watchPageHtml).map { it.value }.toList()
 
-            // El ID de video en Next.js suele ser uno de los últimos, pero vamos a probar
-            // con una lista de prioridad o el último detectado si no hay más.
-            val linkActionId = if (detectedActions.size >= 3) detectedActions[2] else detectedActions.lastOrNull() ?: "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24"
+            // Usamos el ID dinámico si existe, sino el estático
+            val linkActionId = if (detectedActions.isNotEmpty()) {
+                detectedActions.last()
+            } else {
+                "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24" // Fallback
+            }
 
-            Log.d(TAG, "Logs: Probando Action ID: $linkActionId")
-            
+            Log.d(TAG, "Logs: Probando con Action ID: $linkActionId")
+
             val response = app.post(
                 watchUrl,
                 headers = mapOf(
-                    "accept" to "text/x-component", // Igual que tu CURL
+                    "accept" to "text/x-component",
                     "next-action" to linkActionId,
                     "content-type" to "text/plain;charset=UTF-8",
-                    "referer" to watchUrl,
-                    "origin" to mainUrl,
-                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "referer" to watchUrl
                 ),
                 requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // Si la respuesta dice "Server action not found", el ID era incorrecto.
+            // Si el servidor nos rechaza el ID, probamos con el ID que vimos en tu CURL
             if (response.contains("Server action not found")) {
-                Log.e(TAG, "Logs: ID $linkActionId incorrecto. Intentando con el último de la lista...")
-                // Re-intento con el último si el anterior falló
-                val fallbackId = detectedActions.last()
-                val retryResponse = app.post(watchUrl,
-                    headers = mapOf("next-action" to fallbackId, "accept" to "text/x-component"),
+                val curlId = "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
+                Log.d(TAG, "Logs: Reintentando con ID de emergencia: $curlId")
+                val retry = app.post(watchUrl,
+                    headers = mapOf("next-action" to curlId, "accept" to "text/x-component"),
                     requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
                 ).text
-                return parseVideoResponse(response, callback, subtitleCallback)
+                return parseVideoResponse(retry, callback, subtitleCallback)
             }
 
             parseVideoResponse(response, callback, subtitleCallback)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
             false
         }
     }
