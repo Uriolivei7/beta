@@ -88,13 +88,14 @@ class AnimeParadiseProvider : MainAPI() {
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
+            // DENTRO DE load
             val episodes = epData.data.map { ep ->
                 val num = ep.number?.toIntOrNull() ?: 0
-                // IMPORTANTE: Usamos un formato de string simple para la data del episodio
-                newEpisode("${animeData.data.title}|${ep.number}") {
+                // USAMOS EL ID INTERNO O SLUG, NO EL TÍTULO CON ESPACIOS
+                // Formato: slug_del_anime|numero_episodio
+                newEpisode("$slug|${ep.number}") {
                     this.name = ep.title ?: "Episode ${ep.number}"
                     this.episode = num
-                    this.posterUrl = ep.image
                 }
             }.sortedBy { it.episode }
 
@@ -120,62 +121,60 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val currentEpId = data.substringAfter("/watch/").substringBefore("?")
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId")
+        // Limpiamos los datos: "kimetsu-no-yaiba|1"
+        val parts = data.split("|")
+        val animeId = parts[0].substringAfterLast("/")
+        val epNumber = parts[1]
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === Anime: $animeId, Ep: $epNumber")
 
         return try {
-            val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-            val actionHeaders = mapOf(
-                "accept" to "*/*",
-                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
-                "content-type" to "text/plain;charset=UTF-8",
-                "origin" to mainUrl,
-                "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
+            // 1. Obtener los videos desde el storage de la API
+            val videoApiUrl = "$apiUrl/storage/$animeId/$epNumber"
+            val response = app.get(videoApiUrl, headers = apiHeaders).text
 
-            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
-            val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())).text
+            Log.d(TAG, "Logs: Respuesta API Video obtenida")
 
-            // Regex mejorada para capturar el link m3u8
-            val videoRegex = Regex("""https://[a-zA-Z0-9.-]+\.[a-z]{2,}/_v7/[^"\\\s]+master\.m3u8""")
-            val videoMatch = videoRegex.find(response)
+            val videoData: VideoList = mapper.readValue(response)
 
-            if (videoMatch != null) {
-                val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
-                Log.d(TAG, "Logs: Video encontrado: $rawUrl")
-
-                // Invocamos la función con los parámetros obligatorios y el bloque initializer
-                val link = newExtractorLink(
-                    source = this.name,
-                    name = "AnimeParadise",
-                    url = rawUrl,
-                    type = ExtractorLinkType.M3U8 // Aquí pasas el tipo directamente
-                ) {
-                    // Dentro de este bloque (el initializer) configuras el resto
-                    this.quality = Qualities.P1080.value
-                    this.referer = "$mainUrl/"
-                    this.headers = mapOf(
-                        "Origin" to "https://www.animeparadise.moe",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    )
+            // 2. Extraer Enlaces de Video
+            videoData.directUrl?.forEach { video ->
+                val videoUrl = when {
+                    video.src.startsWith("//") -> "https:${video.src}"
+                    video.src.startsWith("/") -> apiUrl + video.src
+                    else -> video.src
                 }
 
+                // Usamos newExtractorLink con el initializer
+                val link = newExtractorLink(
+                    source = this.name,
+                    name = "AnimeParadise - ${video.label}",
+                    url = videoUrl,
+                    type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                ) {
+                    // Aquí resolvemos el error de 'getQuality' extrayendo el número
+                    this.quality = Regex("""(\d+)""").find(video.label)?.value?.toIntOrNull() ?: Qualities.Unknown.value
+                    this.referer = "$mainUrl/"
+                }
                 callback.invoke(link)
             }
 
-            // Procesar subtítulos
+            // 3. Restaurar Lógica de Subtítulos (Desde la página de reproducción)
+            // A veces los subs no están en la API de video, sino en la página del episodio
+            val watchUrl = "$mainUrl/watch/$animeId/$epNumber" // Ajusta según la URL real de la web
+            val watchResponse = app.get(watchUrl).text
+
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(response).forEach { match ->
+            subRegex.findAll(watchResponse).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                Log.d(TAG, "Logs: Subtítulo encontrado: ${match.groupValues[2]}")
                 subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
             false
         }
     }
@@ -231,12 +230,12 @@ data class VideoDirectList(
     val directUrl: List<VideoSource>? = null
 )
 
-data class VideoSource(
-    val src: String,
-    val label: String
-)
-
 data class VideoList(
     val directUrl: List<VideoSource>? = null,
     val message: String? = null
+)
+
+data class VideoSource(
+    val src: String,
+    val label: String
 )
