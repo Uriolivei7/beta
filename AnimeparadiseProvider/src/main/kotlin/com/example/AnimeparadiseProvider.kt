@@ -79,8 +79,13 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
-                // Guardamos el ID tal cual viene de la API
+                // Priorizamos el _id de Jackson
                 val epUuid = ep.id ?: ""
+
+                if(epUuid.isBlank()) {
+                    Log.e(TAG, "Logs: ALERTA - Episode ID nulo para episodio ${ep.number}")
+                }
+
                 newEpisode("$epUuid|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
@@ -88,7 +93,7 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }.sortedBy { it.episode }
 
-            Log.d(TAG, "Logs: Load exitoso: ${episodes.size} episodios encontrados")
+            Log.d(TAG, "Logs: Load exitoso: ${episodes.size} episodios procesados")
 
             newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
                 this.posterUrl = animeData.data?.posterImage?.large
@@ -204,7 +209,7 @@ data class ImageInfo(val original: String? = null, val large: String? = null)
 data class AnimeDetailResponse(val data: AnimeObject? = null)
 data class EpisodeListResponse(val data: List<Episode>)
 data class Episode(
-    val id: String? = null,
+    @JsonProperty("_id") val id: String? = null, // <--- EL GUION BAJO ERA LA CLAVE
     val number: String? = null,
     val title: String? = null,
     val image: String? = null
