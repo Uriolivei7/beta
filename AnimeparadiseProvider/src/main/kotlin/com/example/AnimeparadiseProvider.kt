@@ -99,63 +99,85 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === EXTRACCIÓN DESDE NEXT.JS DATA ===")
+        Log.d(TAG, "Logs: === INICIANDO CARGA OPTIMIZADA (Timeout Extendido) ===")
 
         return try {
-            // 1. Cargamos la página tal cual me la pasaste
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
-            val response = app.get(watchUrl).text
 
-            // 2. Limpieza profunda: En Next.js las URLs vienen con muchas barras extra: \\\/
-            val cleanData = response
-                .replace("\\\\", "")
-                .replace("\\u002F", "/")
-                .replace("\\/", "/")
+            // Headers limpios para la petición POST
+            val actionHeaders = mapOf(
+                "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b",
+                "content-type" to "text/plain;charset=UTF-8",
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+            )
 
-            // 3. Buscar Subtítulos (VTT)
-            val subRegex = Regex("""https?://[^\s"\\,]+?\.vtt""")
-            subRegex.findAll(cleanData).map { it.value }.distinct().forEach { subUrl ->
-                if (!subUrl.contains("thumbnails")) {
-                    val label = if (subUrl.contains("eng")) "English" else "Spanish"
-                    subtitleCallback.invoke(SubtitleFile(label, subUrl))
+            // Petición con timeout de 45s para evitar el "Read timed out"
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain".toMediaTypeOrNull()),
+                timeout = 45
+            ).text
+
+            // 1. PROCESAR SUBTÍTULOS (Filtrado estricto para evitar el "amontonamiento")
+            val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
+            subRegex.findAll(response)
+                .map { it.value.replace("\\/", "/") }
+                .distinct()
+                .forEach { subUrl ->
+                    // Solo agregar si NO es una miniatura (thumbnail)
+                    if (!subUrl.contains("thumbnails", ignoreCase = true)) {
+                        val label = if (subUrl.contains("eng", ignoreCase = true)) "English" else "Spanish"
+                        Log.d(TAG, "Logs: Subtítulo detectado: $label -> $subUrl")
+                        subtitleCallback.invoke(SubtitleFile(label, subUrl))
+                    }
                 }
-            }
 
-            // 4. Buscar Enlaces de Video (M3U8)
-            // Buscamos cualquier m3u8 que esté en los scripts de la página
-            val videoRegex = Regex("""https?://[^\s"\\,]+?\.m3u8[^\s"\\,]*""")
-            val links = videoRegex.findAll(cleanData).map { it.value }.distinct().toList()
+            // 2. PROCESAR ENLACES DE VIDEO
+            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            val links = videoRegex.findAll(response)
+                .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
+                .distinct()
+                .toList()
 
             if (links.isEmpty()) {
-                Log.e(TAG, "Logs: No se encontraron links en el HTML de Next.js. Longitud: ${response.length}")
-                // Intentamos una última búsqueda por si están en el formato de "Paradise"
+                Log.e(TAG, "Logs: No se encontraron enlaces master.m3u8")
                 return false
             }
 
+            // Tomamos máximo 2 para que la carga sea ligera
             links.take(2).forEachIndexed { index, rawUrl ->
-                // Si el link no es directo, lo pasamos por el proxy de la web
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
+
+                val serverName = when {
+                    rawUrl.contains("windflash") -> "Paradise Wind (Rápido)"
+                    rawUrl.contains("lightning") -> "Paradise Light"
+                    else -> "Paradise Mirror ${index + 1}"
+                }
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "Paradise Player ${index + 1}",
+                        name = serverName,
                         url = finalUrl,
-                        type = ExtractorLinkType.M3U8
+                        type = ExtractorLinkType.M3U8 // Aquí pasamos el tipo correcto
                     ) {
                         this.quality = Qualities.Unknown.value
                         this.referer = "$mainUrl/"
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                        )
                     }
                 )
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en extracción NextJS: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
-
 }
 
 // Clases de datos (Sin cambios para mantener estabilidad)
