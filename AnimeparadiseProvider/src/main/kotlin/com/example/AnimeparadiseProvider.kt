@@ -104,19 +104,20 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val epUuid = parts.getOrNull(0) ?: ""
+        // LIMPIEZA TOTAL: Nos aseguramos de que solo quede el código final (ej: 664118...)
+        val rawEpId = parts.getOrNull(0) ?: ""
+        val epUuid = if (rawEpId.contains("/")) rawEpId.substringAfterLast("/") else rawEpId
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === LOADLINKS (NEXT-ACTION BYPASS) ===")
-        Log.d(TAG, "Logs: EpUUID: $epUuid | Origin: $originId")
+        Log.d(TAG, "Logs: === LOADLINKS (ID LIMPIADO) ===")
+        Log.d(TAG, "Logs: EpUUID Final: $epUuid | Origin: $originId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
-            // Headers extraídos de tu cURL de Brave para simular la petición de video
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
-                "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b", // La llave que encontraste
+                "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b",
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to mainUrl,
                 "referer" to watchUrl,
@@ -124,7 +125,7 @@ class AnimeParadiseProvider : MainAPI() {
                 "sec-gpc" to "1"
             )
 
-            // El cuerpo exacto que pide el servidor
+            // El cuerpo ahora irá limpio: ["664118...","a49n..."]
             val requestBodyString = "[\"$epUuid\",\"$originId\"]"
 
             val response = app.post(
@@ -133,7 +134,11 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // Buscador de links m3u8 (incluye windflash y master)
+            // Si la respuesta es muy corta, algo salió mal
+            if (response.length < 100) {
+                Log.e(TAG, "Logs: Respuesta demasiado corta: $response")
+            }
+
             val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
 
             var foundLinks = false
@@ -141,14 +146,14 @@ class AnimeParadiseProvider : MainAPI() {
                 foundLinks = true
                 val rawUrl = match.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
 
-                // Aplicamos el proxy de stream de AnimeParadise
+                // Proxy forzado de stream
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
-                Log.d(TAG, "Logs: Link encontrado: $finalUrl")
+                Log.d(TAG, "Logs: ¡Link capturado!: $finalUrl")
 
                 callback.invoke(
-                    newExtractorLink(this.name, "Paradise HQ", finalUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(this.name, "Paradise Cloud", finalUrl, ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
                         this.headers = mapOf(
                             "Referer" to "$mainUrl/",
@@ -158,7 +163,9 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            if (!foundLinks) Log.e(TAG, "Logs: No se hallaron links en la respuesta del servidor.")
+            if (!foundLinks) {
+                Log.e(TAG, "Logs: No se hallaron links. Respuesta del server: ${response.take(200)}")
+            }
 
             true
         } catch (e: Exception) {
