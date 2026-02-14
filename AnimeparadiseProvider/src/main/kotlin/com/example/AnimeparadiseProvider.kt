@@ -7,6 +7,8 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -22,6 +24,7 @@ class AnimeParadiseProvider : MainAPI() {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
+    // Headers optimizados para evitar bloqueos
     private val apiHeaders = mapOf(
         "Accept" to "application/json, text/plain, */*",
         "Origin" to mainUrl,
@@ -66,29 +69,26 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: Iniciando load para slug: $slug")
 
         return try {
-            // 1. Obtenemos info del anime para sacar su ID interno
             val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
             val internalAnimeId = animeData.data?.id ?: throw Exception("ID de anime no encontrado")
 
-            // 2. Pedimos la lista de episodios usando el ID interno
             val epResponse = app.get("$apiUrl/anime/$internalAnimeId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
-                // IMPORTANTE: Aquí mandamos el ID real de la API (ej: 664118...)
-                // y el origen necesario para la ruta final.
-                val realApiId = ep.id ?: ""
-                newEpisode("$realApiId|$internalAnimeId") {
+                // Guardamos el UUID (70823867...) y el Origin (a49n4Au...)
+                val epUuid = ep.id ?: ""
+                newEpisode("$epUuid|$internalAnimeId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
                 }
             }.sortedBy { it.episode }
 
-            Log.d(TAG, "Logs: Load exitoso. Episodios vinculados con IDs de API.")
-
             newAnimeLoadResponse(animeData.data?.title ?: "Anime", url, TvType.Anime) {
                 this.posterUrl = animeData.data?.posterImage?.large
+                this.plot = animeData.data?.synopsis
+                this.tags = animeData.data?.genres
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
@@ -104,37 +104,61 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val realId = parts.getOrNull(0) ?: ""
+        val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === LOADLINKS CON ID DE API REAL ===")
-
-        // Ahora la URL se construye con el ID que la API reconoce
-        val playerUrl = "$apiUrl/anime/episode/$realId/player?origin=$originId"
-        Log.d(TAG, "Logs: Consultando: $playerUrl")
+        Log.d(TAG, "Logs: === LOADLINKS (NEXT-ACTION BYPASS) ===")
+        Log.d(TAG, "Logs: EpUUID: $epUuid | Origin: $originId")
 
         return try {
-            val response = app.get(playerUrl, headers = apiHeaders).text
+            val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
-            // Buscamos los m3u8 de windflash
+            // Headers extraídos de tu cURL de Brave para simular la petición de video
+            val actionHeaders = mapOf(
+                "accept" to "text/x-component",
+                "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b", // La llave que encontraste
+                "content-type" to "text/plain;charset=UTF-8",
+                "origin" to mainUrl,
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+                "sec-gpc" to "1"
+            )
+
+            // El cuerpo exacto que pide el servidor
+            val requestBodyString = "[\"$epUuid\",\"$originId\"]"
+
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            ).text
+
+            // Buscador de links m3u8 (incluye windflash y master)
             val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
 
-            var found = false
+            var foundLinks = false
             videoRegex.findAll(response).forEach { match ->
-                found = true
-                val rawUrl = match.value.replace("\\/", "/")
+                foundLinks = true
+                val rawUrl = match.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
 
-                // Aplicamos el proxy de stream
+                // Aplicamos el proxy de stream de AnimeParadise
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
+                Log.d(TAG, "Logs: Link encontrado: $finalUrl")
+
                 callback.invoke(
-                    newExtractorLink(this.name, "Paradise Cloud", finalUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(this.name, "Paradise HQ", finalUrl, ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
-                        this.headers = apiHeaders
+                        this.headers = mapOf(
+                            "Referer" to "$mainUrl/",
+                            "User-Agent" to actionHeaders["user-agent"]!!
+                        )
                     }
                 )
             }
+
+            if (!foundLinks) Log.e(TAG, "Logs: No se hallaron links en la respuesta del servidor.")
 
             true
         } catch (e: Exception) {
