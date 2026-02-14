@@ -88,25 +88,20 @@ class AnimeParadiseProvider : MainAPI() {
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
-            // DENTRO DE load
             val episodes = epData.data.map { ep ->
-                val num = ep.number?.toIntOrNull() ?: 0
-                // USAMOS EL ID INTERNO O SLUG, NO EL TÍTULO CON ESPACIOS
-                // Formato: slug_del_anime|numero_episodio
-                newEpisode("$slug|${ep.number}") {
+                newEpisode("${animeData.data?.id}|${ep.number}") {
                     this.name = ep.title ?: "Episode ${ep.number}"
-                    this.episode = num
+                    this.episode = ep.number?.toIntOrNull() ?: 0
+                    this.posterUrl = ep.image // Aquí recuperamos el poster del episodio
                 }
             }.sortedBy { it.episode }
 
-            // USAR ESTE CONSTRUCTOR QUE ES MÁS COMPATIBLE
             newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
                 this.posterUrl = animeData.data?.posterImage?.large
                 this.plot = animeData.data?.synopsys
                 this.tags = animeData.data?.genres
                 this.year = animeData.data?.animeSeason?.year
                 this.showStatus = if (animeData.data?.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
-
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
@@ -121,60 +116,69 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Limpiamos los datos: "kimetsu-no-yaiba|1"
         val parts = data.split("|")
-        val animeId = parts[0].substringAfterLast("/")
+        val internalId = parts[0]
         val epNumber = parts[1]
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === Anime: $animeId, Ep: $epNumber")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $internalId, Ep: $epNumber")
 
         return try {
-            // 1. Obtener los videos desde el storage de la API
-            val videoApiUrl = "$apiUrl/storage/$animeId/$epNumber"
+            // 1. Consultar la API de storage para obtener el link original
+            val videoApiUrl = "$apiUrl/storage/$internalId/$epNumber"
             val response = app.get(videoApiUrl, headers = apiHeaders).text
-
-            Log.d(TAG, "Logs: Respuesta API Video obtenida")
-
             val videoData: VideoList = mapper.readValue(response)
 
-            // 2. Extraer Enlaces de Video
             videoData.directUrl?.forEach { video ->
-                val videoUrl = when {
+                // Si el link ya es del proxy o es externo, lo preparamos
+                val rawUrl = when {
                     video.src.startsWith("//") -> "https:${video.src}"
-                    video.src.startsWith("/") -> apiUrl + video.src
+                    video.src.startsWith("/") -> "$apiUrl${video.src}"
                     else -> video.src
                 }
 
-                // Usamos newExtractorLink con el initializer
-                val link = newExtractorLink(
-                    source = this.name,
-                    name = "AnimeParadise - ${video.label}",
-                    url = videoUrl,
-                    type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    // Aquí resolvemos el error de 'getQuality' extrayendo el número
-                    this.quality = Regex("""(\d+)""").find(video.label)?.value?.toIntOrNull() ?: Qualities.Unknown.value
-                    this.referer = "$mainUrl/"
+                // Aplicamos el proxy que vimos en tus curls
+                val finalProxyUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
+                    rawUrl
+                } else {
+                    "https://stream.animeparadise.moe/m3u8?url=${rawUrl}"
                 }
-                callback.invoke(link)
+
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "AnimeParadise (${video.label})",
+                        url = finalProxyUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.quality = Regex("""(\d+)""").find(video.label)?.value?.toIntOrNull() ?: Qualities.Unknown.value
+                        // Headers exactos de tus curls para que el proxy no rebote la conexión
+                        this.headers = mapOf(
+                            "Referer" to "$mainUrl/",
+                            "Origin" to "https://www.animeparadise.moe",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Accept" to "*/*"
+                        )
+                    }
+                )
             }
 
-            // 3. Restaurar Lógica de Subtítulos (Desde la página de reproducción)
-            // A veces los subs no están en la API de video, sino en la página del episodio
-            val watchUrl = "$mainUrl/watch/$animeId/$epNumber" // Ajusta según la URL real de la web
-            val watchResponse = app.get(watchUrl).text
-
+            // 2. Extraer subtítulos del HTML (basado en lógica de Tachiyomi)
+            val watchUrl = "$mainUrl/watch/$internalId/$epNumber"
+            val watchHtml = app.get(watchUrl).text
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(watchResponse).forEach { match ->
+
+            subRegex.findAll(watchHtml).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
+                val label = match.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                Log.d(TAG, "Logs: Subtítulo encontrado: ${match.groupValues[2]}")
-                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
+
+                Log.d(TAG, "Logs: Subtítulo añadido: $label")
+                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
         }
     }
