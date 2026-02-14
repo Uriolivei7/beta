@@ -30,7 +30,6 @@ class AnimeParadiseProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: Iniciando getMainPage")
         return try {
             val url = "$apiUrl/?sort=%7B%22rate%22:-1%7D"
             val response = app.get(url, headers = apiHeaders).text
@@ -41,7 +40,6 @@ class AnimeParadiseProvider : MainAPI() {
                     this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
                 }
             }
-            Log.d(TAG, "Logs: getMainPage exitoso, encontrados ${animeList.size} animes")
             newHomePageResponse(listOf(HomePageList("Animes Populares", animeList)), true)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
@@ -50,7 +48,6 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: Buscando anime: $query")
         return try {
             val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
             val resData: AnimeListResponse = mapper.readValue(response)
@@ -61,15 +58,12 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
-        Log.d(TAG, "Logs: Iniciando load para: $slug")
-
         return try {
             val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
@@ -80,15 +74,14 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
+                // Guardamos el UUID del episodio y el SLUG del anime para loadLinks
                 val epUuid = ep.id ?: ""
-                newEpisode("$epUuid|$internalId") {
+                newEpisode("$epUuid|$slug") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.posterUrl = ep.image
                 }
             }.sortedBy { it.episode }
-
-            Log.d(TAG, "Logs: Load exitoso: ${episodes.size} episodios")
 
             newAnimeLoadResponse(data.title ?: "Sin título", url, TvType.Anime) {
                 this.posterUrl = data.posterImage?.large
@@ -111,25 +104,20 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: ""
-        val animeOriginId = parts.getOrNull(1) ?: ""
+        val episodeUuid = parts.getOrNull(0) ?: ""
+        val animeSlug = parts.getOrNull(1) ?: ""
 
-        // CORRECCIÓN CRÍTICA: Limpiamos el ID de cualquier rastro de URL
-        val episodeUuid = rawEpId.substringAfterLast("/")
-            .substringBefore("?")
-            .trim()
+        Log.d(TAG, "Logs: === INICIO LOADLINKS (FINAL FIX) ===")
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS (API FIX) ===")
-
-        // Ahora la URL será: https://api.animeparadise.moe/anime/episode/ID/stream
-        val streamApiUrl = "$apiUrl/anime/episode/$episodeUuid/stream?origin=$animeOriginId"
-        Log.d(TAG, "Logs: Llamando a API corregida: $streamApiUrl")
+        // Intentamos la ruta de la API que suele ser la estándar para streams
+        val streamApiUrl = "$apiUrl/stream/$episodeUuid"
+        Log.d(TAG, "Logs: Probando API Stream: $streamApiUrl")
 
         return try {
             val response = app.get(streamApiUrl, headers = apiHeaders).text
 
-            // Buscamos el m3u8. Usamos un regex que capture la URL codificada o normal
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*""")
+            // Buscamos cualquier m3u8 en la respuesta
+            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*""")
             val videoMatches = videoRegex.findAll(response).map {
                 it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
             }.distinct()
@@ -138,19 +126,19 @@ class AnimeParadiseProvider : MainAPI() {
             videoMatches.forEach { rawUrl ->
                 foundLinks = true
 
-                // Construimos la URL usando su propio proxy de streaming como vimos en tu curl
+                // Aplicamos el proxy de stream que confirmamos en el curl
                 val finalStreamUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
                     rawUrl
                 } else {
                     "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
                 }
 
-                Log.d(TAG, "Logs: Enlace generado: $finalStreamUrl")
+                Log.d(TAG, "Logs: Link m3u8: $finalStreamUrl")
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise Mirror",
+                        name = "AnimeParadise HQ",
                         url = finalStreamUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
@@ -161,14 +149,15 @@ class AnimeParadiseProvider : MainAPI() {
             }
 
             // Subtítulos
-            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)"""")
+            subRegex.findAll(response).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val label = match.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                 subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
-            if (!foundLinks) Log.e(TAG, "Logs: API no devolvió links. Resp: ${response.take(100)}")
+            if (!foundLinks) Log.e(TAG, "Logs: No se hallaron links en la respuesta API")
 
             true
         } catch (e: Exception) {
