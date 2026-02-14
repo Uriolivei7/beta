@@ -73,19 +73,14 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
-            val internalId = animeData.data?.id ?: throw Exception("ID no encontrado")
+            val data = animeData.data!!
+            val internalId = data.id ?: throw Exception("ID no encontrado")
 
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
-                // Priorizamos el _id de Jackson
                 val epUuid = ep.id ?: ""
-
-                if(epUuid.isBlank()) {
-                    Log.e(TAG, "Logs: ALERTA - Episode ID nulo para episodio ${ep.number}")
-                }
-
                 newEpisode("$epUuid|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
@@ -93,14 +88,14 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }.sortedBy { it.episode }
 
-            Log.d(TAG, "Logs: Load exitoso: ${episodes.size} episodios procesados")
+            Log.d(TAG, "Logs: Load exitoso: ${episodes.size} episodios")
 
-            newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
-                this.posterUrl = animeData.data?.posterImage?.large
-                this.plot = animeData.data?.synopsis
-                this.tags = animeData.data?.genres
-                this.year = animeData.data?.animeSeason?.year
-                this.showStatus = if (animeData.data?.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
+            newAnimeLoadResponse(data.title ?: "Sin título", url, TvType.Anime) {
+                this.posterUrl = data.posterImage?.large
+                this.plot = data.synopsis
+                this.tags = data.genres
+                this.year = data.animeSeason?.year
+                this.showStatus = if (data.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
@@ -116,30 +111,20 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: ""
+        val episodeUuid = parts.getOrNull(0) ?: ""
         val animeOriginId = parts.getOrNull(1) ?: ""
 
-        val episodeUuid = if (rawEpId.contains("/")) {
-            rawEpId.substringAfterLast("/").substringBefore("?")
-        } else {
-            rawEpId
-        }
+        Log.d(TAG, "Logs: === INICIO LOADLINKS (Modo API Directo) ===")
 
-        val watchUrl = "$mainUrl/watch/$episodeUuid?origin=$animeOriginId"
-
-        Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
-        Log.d(TAG, "Logs: URL Scraping: $watchUrl")
-
-        if (episodeUuid.isBlank()) {
-            Log.e(TAG, "Logs: Error - Episode UUID está vacío")
-            return false
-        }
+        // Atacamos la API de stream directamente, saltándonos la web con error
+        val streamApiUrl = "$apiUrl/anime/episode/$episodeUuid/stream?origin=$animeOriginId"
+        Log.d(TAG, "Logs: Llamando a API: $streamApiUrl")
 
         return try {
-            val response = app.get(watchUrl, headers = apiHeaders).text
+            val response = app.get(streamApiUrl, headers = apiHeaders).text
 
-            // MEJORA: Regex que detecta m3u8 incluso con barras escapadas \/ o \u002F
-            val videoRegex = Regex("""https?[:\\]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            // Buscamos el m3u8 en el JSON de la API
+            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
             val videoMatches = videoRegex.findAll(response).map {
                 it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
             }.distinct()
@@ -151,48 +136,38 @@ class AnimeParadiseProvider : MainAPI() {
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise Player",
+                        name = "AnimeParadise Direct",
                         url = "https://stream.animeparadise.moe/m3u8?url=$rawUrl",
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = Qualities.P1080.value
-                        this.headers = mapOf(
-                            "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "$mainUrl/",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        )
+                        this.headers = apiHeaders
                     }
                 )
             }
 
             // Subtítulos
-            Log.d(TAG, "Logs: Buscando subtítulos en el HTML...")
-            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"[^"]+"\}""").findAll(response).forEach { match ->
-                val src = match.groupValues[1].replace("\\u002F", "/").replace("\\/", "/")
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)"""")
+            subRegex.findAll(response).forEach { match ->
+                val src = match.groupValues[1].replace("\\/", "/")
                 val label = match.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                Log.d(TAG, "Logs: Subtítulo añadido: $label")
+                Log.d(TAG, "Logs: Subtítulo: $label")
                 subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
-            if (!foundLinks) {
-                Log.e(TAG, "Logs: No se encontraron enlaces de video en el HTML")
-                // Log de emergencia para ver si el HTML cargó algo útil o un error
-                Log.d(TAG, "Logs: Fragmento HTML: ${response.take(300)}")
-            }
+            if (!foundLinks) Log.e(TAG, "Logs: API no devolvió enlaces. Respuesta: ${response.take(150)}")
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en loadLinks API: ${e.message}")
             false
         }
     }
 }
 
 // --- DATA CLASSES ---
-
 data class AnimeListResponse(val data: List<AnimeObject>)
-
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
     val title: String? = null,
@@ -203,13 +178,12 @@ data class AnimeObject(
     val animeSeason: SeasonInfo? = null,
     val posterImage: ImageInfo? = null
 )
-
 data class SeasonInfo(val year: Int? = null)
 data class ImageInfo(val original: String? = null, val large: String? = null)
 data class AnimeDetailResponse(val data: AnimeObject? = null)
 data class EpisodeListResponse(val data: List<Episode>)
 data class Episode(
-    @JsonProperty("_id") val id: String? = null, // <--- EL GUION BAJO ERA LA CLAVE
+    @JsonProperty("_id") val id: String? = null,
     val number: String? = null,
     val title: String? = null,
     val image: String? = null
