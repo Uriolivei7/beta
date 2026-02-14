@@ -79,6 +79,7 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
+                // Guardamos el ID tal cual viene de la API
                 val epUuid = ep.id ?: ""
                 newEpisode("$epUuid|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
@@ -110,18 +111,33 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val episodeUuid = parts[0].substringAfterLast("/").substringBefore("?")
+        val rawEpId = parts.getOrNull(0) ?: ""
         val animeOriginId = parts.getOrNull(1) ?: ""
 
+        val episodeUuid = if (rawEpId.contains("/")) {
+            rawEpId.substringAfterLast("/").substringBefore("?")
+        } else {
+            rawEpId
+        }
+
         val watchUrl = "$mainUrl/watch/$episodeUuid?origin=$animeOriginId"
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === URL Scraping: $watchUrl")
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
+        Log.d(TAG, "Logs: URL Scraping: $watchUrl")
+
+        if (episodeUuid.isBlank()) {
+            Log.e(TAG, "Logs: Error - Episode UUID está vacío")
+            return false
+        }
 
         return try {
             val response = app.get(watchUrl, headers = apiHeaders).text
 
-            // Regex para buscar el master.m3u8 en el HTML
-            val videoRegex = Regex("""https?://[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8[^"\\\s]*""")
-            val videoMatches = videoRegex.findAll(response).map { it.value.replace("\\", "") }.distinct()
+            // MEJORA: Regex que detecta m3u8 incluso con barras escapadas \/ o \u002F
+            val videoRegex = Regex("""https?[:\\]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            val videoMatches = videoRegex.findAll(response).map {
+                it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
+            }.distinct()
 
             var foundLinks = false
             videoMatches.forEach { rawUrl ->
@@ -147,14 +163,18 @@ class AnimeParadiseProvider : MainAPI() {
             // Subtítulos
             Log.d(TAG, "Logs: Buscando subtítulos en el HTML...")
             Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"[^"]+"\}""").findAll(response).forEach { match ->
-                val src = match.groupValues[1].replace("\\/", "/")
+                val src = match.groupValues[1].replace("\\u002F", "/").replace("\\/", "/")
                 val label = match.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                 Log.d(TAG, "Logs: Subtítulo añadido: $label")
                 subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
-            if (!foundLinks) Log.e(TAG, "Logs: No se encontraron enlaces de video en el HTML")
+            if (!foundLinks) {
+                Log.e(TAG, "Logs: No se encontraron enlaces de video en el HTML")
+                // Log de emergencia para ver si el HTML cargó algo útil o un error
+                Log.d(TAG, "Logs: Fragmento HTML: ${response.take(300)}")
+            }
 
             true
         } catch (e: Exception) {
