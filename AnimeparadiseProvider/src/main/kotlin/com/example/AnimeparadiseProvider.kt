@@ -26,7 +26,7 @@ class AnimeParadiseProvider : MainAPI() {
         "Accept" to "application/json, text/plain, */*",
         "Origin" to mainUrl,
         "Referer" to "$mainUrl/",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -42,7 +42,6 @@ class AnimeParadiseProvider : MainAPI() {
             }
             newHomePageResponse(listOf(HomePageList("Animes Populares", animeList)), true)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
             null
         }
     }
@@ -75,7 +74,6 @@ class AnimeParadiseProvider : MainAPI() {
 
             val episodes = epData.data.map { ep ->
                 val epUuid = ep.id ?: ""
-                // Guardamos el ID y el origen del anime
                 newEpisode("$epUuid|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
@@ -92,7 +90,6 @@ class AnimeParadiseProvider : MainAPI() {
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
             null
         }
     }
@@ -104,75 +101,57 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val episodeUuid = parts.getOrNull(0)?.substringAfterLast("/")?.substringBefore("?") ?: ""
-        val animeOriginId = parts.getOrNull(1) ?: ""
+        val id = parts.getOrNull(0) ?: ""
+        val origin = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS (PLAYER API) ===")
+        Log.d(TAG, "Logs: === INICIO MODO MULTI-RUTA ===")
 
-        return try {
-            // Este es el endpoint que alimenta al reproductor que viste en el curl
-            val playerUrl = "$apiUrl/anime/episode/$episodeUuid/player?origin=$animeOriginId"
-            Log.d(TAG, "Logs: Consultando Player API: $playerUrl")
+        // Lista de rutas posibles a probar
+        val potentialEndpoints = listOf(
+            "$apiUrl/episode/$id/player?origin=$origin",
+            "$apiUrl/anime/episode/$id/stream?origin=$origin",
+            "$apiUrl/stream/$id?origin=$origin"
+        )
 
-            val response = app.get(playerUrl, headers = apiHeaders).text
+        val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
 
-            // Log para ver qué nos devuelve realmente la API de player
-            Log.d(TAG, "Logs: Respuesta Player: ${response.take(200)}")
+        for (url in potentialEndpoints) {
+            try {
+                Log.d(TAG, "Logs: Probando ruta: $url")
+                val response = app.get(url, headers = apiHeaders)
 
-            // Buscamos el link de windflash o cualquier m3u8 dentro del JSON
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*""")
-            val videoMatches = videoRegex.findAll(response).map {
-                it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
-            }.distinct()
+                if (response.code == 200) {
+                    val text = response.text
+                    val matches = videoRegex.findAll(text).map {
+                        it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
+                    }.distinct().toList()
 
-            var foundLinks = false
-            videoMatches.forEach { rawUrl ->
-                foundLinks = true
+                    if (matches.isNotEmpty()) {
+                        Log.d(TAG, "Logs: ¡Bingo! Links encontrados en: $url")
+                        matches.forEach { rawUrl ->
+                            val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
+                            else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
-                // Si el link no viene ya con el proxy de stream.animeparadise, se lo ponemos
-                val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
-                    rawUrl
-                } else {
-                    "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
-                }
-
-                Log.d(TAG, "Logs: ¡Enlace extraído!: $finalUrl")
-
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "AnimeParadise Mirror",
-                        url = finalUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.quality = Qualities.P1080.value
-                        // Usamos los headers exactos de tu curl
-                        this.headers = mapOf(
-                            "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-                        )
+                            callback.invoke(
+                                newExtractorLink(this.name, "AnimeParadise Mirror", finalUrl, ExtractorLinkType.M3U8) {
+                                    this.quality = Qualities.P1080.value
+                                    this.headers = apiHeaders
+                                }
+                            )
+                        }
+                        return true
                     }
-                )
+                } else {
+                    Log.d(TAG, "Logs: Ruta fallida (Código ${response.code})")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Logs: Error probando $url: ${e.message}")
             }
-
-            // Extraer subtítulos si existen en el player
-            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
-                val src = match.groupValues[1].replace("\\/", "/")
-                val label = match.groupValues[2]
-                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
-            }
-
-            if (!foundLinks) Log.e(TAG, "Logs: No se encontraron enlaces en la Player API")
-
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
-            false
         }
-    }
 
+        Log.e(TAG, "Logs: Ninguna ruta de API funcionó.")
+        return false
+    }
 }
 
 // --- DATA CLASSES ---
