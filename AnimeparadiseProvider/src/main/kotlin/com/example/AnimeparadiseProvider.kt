@@ -104,35 +104,23 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: ""
+        val episodeUuid = parts.getOrNull(0)?.substringAfterLast("/")?.substringBefore("?") ?: ""
         val animeOriginId = parts.getOrNull(1) ?: ""
 
-        // LIMPIEZA DE FUERZA BRUTA: Eliminamos cualquier rastro de URL del ID
-        val episodeUuid = rawEpId
-            .replace("https://www.animeparadise.moe", "")
-            .replace(mainUrl, "")
-            .replace("/watch/", "")
-            .replace("/", "")
-            .trim()
-
-        Log.d(TAG, "Logs: === INICIO LOADLINKS (CLEAN ID) ===")
-
-        // Construimos la URL de la WEB con los headers de tu CURL
-        val watchUrl = "$mainUrl/watch/$episodeUuid?origin=$animeOriginId"
-        Log.d(TAG, "Logs: URL Web Corregida: $watchUrl")
-
-        val browserHeaders = mapOf(
-            "authority" to "www.animeparadise.moe",
-            "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "referer" to "$mainUrl/",
-            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-        )
+        Log.d(TAG, "Logs: === INICIO LOADLINKS (PLAYER API) ===")
 
         return try {
-            val response = app.get(watchUrl, headers = browserHeaders).text
+            // Este es el endpoint que alimenta al reproductor que viste en el curl
+            val playerUrl = "$apiUrl/anime/episode/$episodeUuid/player?origin=$animeOriginId"
+            Log.d(TAG, "Logs: Consultando Player API: $playerUrl")
 
-            // Regex para capturar m3u8 (incluyendo el formato windflash de tu curl)
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            val response = app.get(playerUrl, headers = apiHeaders).text
+
+            // Log para ver qué nos devuelve realmente la API de player
+            Log.d(TAG, "Logs: Respuesta Player: ${response.take(200)}")
+
+            // Buscamos el link de windflash o cualquier m3u8 dentro del JSON
+            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*""")
             val videoMatches = videoRegex.findAll(response).map {
                 it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
             }.distinct()
@@ -141,38 +129,42 @@ class AnimeParadiseProvider : MainAPI() {
             videoMatches.forEach { rawUrl ->
                 foundLinks = true
 
-                val finalStreamUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
+                // Si el link no viene ya con el proxy de stream.animeparadise, se lo ponemos
+                val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
                     rawUrl
                 } else {
                     "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
                 }
 
-                Log.d(TAG, "Logs: Link encontrado: $finalStreamUrl")
+                Log.d(TAG, "Logs: ¡Enlace extraído!: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise Player",
-                        url = finalStreamUrl,
+                        name = "AnimeParadise Mirror",
+                        url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = Qualities.P1080.value
-                        this.headers = browserHeaders
+                        // Usamos los headers exactos de tu curl
+                        this.headers = mapOf(
+                            "Origin" to "https://www.animeparadise.moe",
+                            "Referer" to "https://www.animeparadise.moe/",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                        )
                     }
                 )
             }
 
-            if (!foundLinks) {
-                Log.e(TAG, "Logs: No se hallaron links en el HTML. Revisando respuesta...")
-                // Si el HTML falla, intentamos la API pero con el ID limpio
-                val apiFallback = "$apiUrl/anime/episode/$episodeUuid/stream?origin=$animeOriginId"
-                Log.d(TAG, "Logs: Fallback API: $apiFallback")
-                val apiRes = app.get(apiFallback, headers = apiHeaders).text
-                videoRegex.findAll(apiRes).forEach { match ->
-                    foundLinks = true
-                    callback.invoke(newExtractorLink(this.name, "API Mirror", match.value.replace("\\/", "/"), ExtractorLinkType.M3U8))
-                }
+            // Extraer subtítulos si existen en el player
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
+                val src = match.groupValues[1].replace("\\/", "/")
+                val label = match.groupValues[2]
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
+
+            if (!foundLinks) Log.e(TAG, "Logs: No se encontraron enlaces en la Player API")
 
             true
         } catch (e: Exception) {
@@ -180,6 +172,7 @@ class AnimeParadiseProvider : MainAPI() {
             false
         }
     }
+
 }
 
 // --- DATA CLASSES ---
