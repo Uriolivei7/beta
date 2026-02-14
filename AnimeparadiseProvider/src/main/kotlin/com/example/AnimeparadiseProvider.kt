@@ -76,13 +76,23 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
-                val epUuid = ep.id ?: ""
-                newEpisode("$epUuid|$internalId") {
+                // Si el ID viene como URL o nulo, intentamos capturar el UUID real
+                val rawId = ep.id ?: ""
+                val cleanEpId = if (rawId.contains("http")) {
+                    rawId.substringAfterLast("/").substringBefore("?")
+                } else {
+                    rawId
+                }
+
+                val num = ep.number?.toIntOrNull() ?: 0
+
+                newEpisode("$cleanEpId|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
-                    this.episode = ep.number?.toIntOrNull() ?: 0
+                    this.episode = num
                     this.posterUrl = ep.image
                 }
-            }.sortedBy { it.episode }
+            }.filter { it.data.split("|")[0].isNotBlank() } // Evita episodios sin ID
+                .sortedBy { it.episode }
 
             newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
                 this.posterUrl = animeData.data?.posterImage?.large
@@ -104,11 +114,19 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // TRITURADORA DE URLS: Nos quedamos solo con el UUID alfanumérico
         val parts = data.split("|")
-        val episodeUuid = parts[0]
+        val rawEpId = parts[0]
         val animeOriginId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpUUID: $episodeUuid, Origin: $animeOriginId")
+        val episodeUuid = rawEpId.substringAfterLast("/").substringBefore("?")
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpUUID Limpio: $episodeUuid, Origin: $animeOriginId")
+
+        if (episodeUuid.length < 5) {
+            Log.e(TAG, "Logs: ID de episodio inválido: $episodeUuid")
+            return false
+        }
 
         return try {
             val videoApiUrl = "$apiUrl/storage/$episodeUuid"
@@ -182,7 +200,8 @@ data class AnimeDetailResponse(val data: AnimeObject? = null)
 data class EpisodeListResponse(val data: List<Episode>)
 
 data class Episode(
-    val id: String? = null,
+    @JsonProperty("_id") val id: String? = null, // Prueba con _id (común en bases de datos)
+    @JsonProperty("uuid") val uuid: String? = null,
     val number: String? = null,
     val title: String? = null,
     val image: String? = null
