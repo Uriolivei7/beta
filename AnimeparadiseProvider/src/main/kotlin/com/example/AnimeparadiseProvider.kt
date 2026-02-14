@@ -15,7 +15,7 @@ class AnimeParadiseProvider : MainAPI() {
     private val apiUrl = "https://api.animeparadise.moe"
     override var name = "AnimeParadise"
     override val hasMainPage = true
-    override var lang = "en"
+    override var lang = "es" // Cambiado a es para mejor compatibilidad de subs
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val TAG = "AnimeParadise"
@@ -24,7 +24,6 @@ class AnimeParadiseProvider : MainAPI() {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    // Headers optimizados para evitar bloqueos
     private val apiHeaders = mapOf(
         "Accept" to "application/json, text/plain, */*",
         "Origin" to mainUrl,
@@ -77,11 +76,12 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
-                // Guardamos el UUID (70823867...) y el Origin (a49n4Au...)
                 val epUuid = ep.id ?: ""
                 newEpisode("$epUuid|$internalAnimeId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
+                    // AÑADIDO: Poster del episodio
+                    this.posterUrl = ep.image
                 }
             }.sortedBy { it.episode }
 
@@ -104,13 +104,11 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        // LIMPIEZA TOTAL: Nos aseguramos de que solo quede el código final (ej: 664118...)
         val rawEpId = parts.getOrNull(0) ?: ""
         val epUuid = if (rawEpId.contains("/")) rawEpId.substringAfterLast("/") else rawEpId
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === LOADLINKS (ID LIMPIADO) ===")
-        Log.d(TAG, "Logs: EpUUID Final: $epUuid | Origin: $originId")
+        Log.d(TAG, "Logs: === LOADLINKS (VERSION MEJORADA) ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
@@ -125,35 +123,42 @@ class AnimeParadiseProvider : MainAPI() {
                 "sec-gpc" to "1"
             )
 
-            // El cuerpo ahora irá limpio: ["664118...","a49n..."]
             val requestBodyString = "[\"$epUuid\",\"$originId\"]"
-
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
                 requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // Si la respuesta es muy corta, algo salió mal
-            if (response.length < 100) {
-                Log.e(TAG, "Logs: Respuesta demasiado corta: $response")
+            // 1. EXTRAER SUBTÍTULOS (si existen en el JSON de Next.js)
+            val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
+            subRegex.findAll(response).forEach {
+                val subUrl = it.value.replace("\\/", "/")
+                Log.d(TAG, "Logs: Subtítulo encontrado: $subUrl")
+                subtitleCallback.invoke(newSubtitleFile("Spanish", subUrl))
             }
 
+            // 2. EXTRAER VIDEOS (Limitado a los primeros 3 para no saturar)
             val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
 
-            var foundLinks = false
-            videoRegex.findAll(response).forEach { match ->
-                foundLinks = true
-                val rawUrl = match.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
+            val links = videoRegex.findAll(response)
+                .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
+                .distinct()
+                .take(3) // Solo tomamos los 3 mejores para que sea más limpio
+                .toList()
 
-                // Proxy forzado de stream
+            links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
-                Log.d(TAG, "Logs: ¡Link capturado!: $finalUrl")
+                val serverName = when {
+                    finalUrl.contains("windflash") -> "Paradise Wind"
+                    finalUrl.contains("lightning") -> "Paradise Light"
+                    else -> "Paradise Mirror ${index + 1}"
+                }
 
                 callback.invoke(
-                    newExtractorLink(this.name, "Paradise Cloud", finalUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(this.name, serverName, finalUrl, ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
                         this.headers = mapOf(
                             "Referer" to "$mainUrl/",
@@ -161,10 +166,6 @@ class AnimeParadiseProvider : MainAPI() {
                         )
                     }
                 )
-            }
-
-            if (!foundLinks) {
-                Log.e(TAG, "Logs: No se hallaron links. Respuesta del server: ${response.take(200)}")
             }
 
             true
@@ -175,7 +176,7 @@ class AnimeParadiseProvider : MainAPI() {
     }
 }
 
-// --- DATA CLASSES ---
+// --- DATA CLASSES (Iguales que antes) ---
 data class AnimeListResponse(val data: List<AnimeObject>)
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
@@ -195,5 +196,5 @@ data class Episode(
     @JsonProperty("_id") val id: String? = null,
     val number: String? = null,
     val title: String? = null,
-    val image: String? = null
+    val image: String? = null // Miniatura del episodio
 )
