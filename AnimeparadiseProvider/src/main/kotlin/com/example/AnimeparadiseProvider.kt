@@ -81,19 +81,16 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: Iniciando load para: $slug")
 
         return try {
-            // 1. Obtener detalles del anime
             val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
             val internalId = animeData.data?.id ?: throw Exception("ID no encontrado")
 
-            // 2. Obtener lista de episodios vía API (Más estable que Next Actions)
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
                 val num = ep.number?.toIntOrNull() ?: 0
-                // Guardamos el slug del anime y el numero para loadLinks
-                // Formato: slug|numero_episodio
+                // IMPORTANTE: Usamos un formato de string simple para la data del episodio
                 newEpisode("${animeData.data.title}|${ep.number}") {
                     this.name = ep.title ?: "Episode ${ep.number}"
                     this.episode = num
@@ -101,14 +98,14 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }.sortedBy { it.episode }
 
-            Log.d(TAG, "Logs: ${episodes.size} episodios cargados correctamente")
+            // USAR ESTE CONSTRUCTOR QUE ES MÁS COMPATIBLE
+            newAnimeLoadResponse(animeData.data?.title ?: "Sin título", url, TvType.Anime) {
+                this.posterUrl = animeData.data?.posterImage?.large
+                this.plot = animeData.data?.synopsys
+                this.tags = animeData.data?.genres
+                this.year = animeData.data?.animeSeason?.year
+                this.showStatus = if (animeData.data?.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
 
-            newAnimeLoadResponse(animeData.data.title ?: "Sin título", url, TvType.Anime) {
-                this.plot = animeData.data.synopsys
-                this.tags = animeData.data.genres
-                this.posterUrl = animeData.data.posterImage?.large
-                this.year = animeData.data.animeSeason?.year
-                this.showStatus = if (animeData.data.status == "finished") ShowStatus.Completed else ShowStatus.Ongoing
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
@@ -123,42 +120,57 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === Data: $data")
+        val currentEpId = data.substringAfter("/watch/").substringBefore("?")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $currentEpId")
 
         return try {
-            val parts = data.split("|")
-            val animeTitle = parts[0]
-            val epNumber = parts[1]
+            val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
+            val actionHeaders = mapOf(
+                "accept" to "*/*",
+                "next-action" to "6002b0ce935408ccf19f5fa745fc47f1d3a4e98b24",
+                "content-type" to "text/plain;charset=UTF-8",
+                "origin" to mainUrl,
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
 
-            // Construir la URL de la API de videos
-            val videoListUrl = "$apiUrl/storage/$animeTitle/$epNumber"
-            val response = app.get(videoListUrl, headers = apiHeaders).text
+            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
+            val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())).text
 
-            // Usaremos una clase simple para parsear esto
-            val videoData: VideoList = mapper.readValue(response)
+            // Regex mejorada para capturar el link m3u8
+            val videoRegex = Regex("""https://[a-zA-Z0-9.-]+\.[a-z]{2,}/_v7/[^"\\\s]+master\.m3u8""")
+            val videoMatch = videoRegex.find(response)
 
-            if (videoData.directUrl == null) {
-                Log.e(TAG, "Logs: No se encontraron videos: ${videoData.message}")
-                return false
-            }
+            if (videoMatch != null) {
+                val rawUrl = videoMatch.value.replace("\\", "").replace("u0026", "&")
+                Log.d(TAG, "Logs: Video encontrado: $rawUrl")
 
-            videoData.directUrl.forEach { video ->
-                val videoUrl = when {
-                    video.src.startsWith("//") -> "https:${video.src}"
-                    video.src.startsWith("/") -> apiUrl + video.src
-                    else -> video.src
+                // Invocamos la función con los parámetros obligatorios y el bloque initializer
+                val link = newExtractorLink(
+                    source = this.name,
+                    name = "AnimeParadise",
+                    url = rawUrl,
+                    type = ExtractorLinkType.M3U8 // Aquí pasas el tipo directamente
+                ) {
+                    // Dentro de este bloque (el initializer) configuras el resto
+                    this.quality = Qualities.P1080.value
+                    this.referer = "$mainUrl/"
+                    this.headers = mapOf(
+                        "Origin" to "https://www.animeparadise.moe",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
                 }
 
-                callback.invoke(
-                    ExtractorLink(
-                        name,
-                        "AnimeParadise - ${video.label}",
-                        videoUrl,
-                        referer = "$mainUrl/",
-                        quality = getQuality(video.label),
-                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    )
-                )
+                callback.invoke(link)
+            }
+
+            // Procesar subtítulos
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            subRegex.findAll(response).forEach { match ->
+                val src = match.groupValues[1].replace("\\/", "/")
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
             }
 
             true
@@ -166,10 +178,6 @@ class AnimeParadiseProvider : MainAPI() {
             Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
         }
-    }
-
-    private fun getQuality(label: String): Int {
-        return Regex("""(\d+)p""").find(label)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
     }
 
 }
