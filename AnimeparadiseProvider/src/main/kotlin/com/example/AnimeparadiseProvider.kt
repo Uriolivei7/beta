@@ -127,50 +127,55 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val currentEpId = data.substringAfter("/watch/").substringBefore("?")
+        val currentOriginId = data.substringAfter("origin=").substringBefore("&")
         val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-        Log.d(TAG, "Logs: === INICIO LOADLINKS WEB SCAN ===")
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS SCANNER ===")
 
         return try {
-            val response = app.get(watchUrl).text
+            val html = app.get(watchUrl).text
 
-            val videoMatch = Regex("""https?[:\\/]+[^"\\\s]+?master\.m3u8[^"\\\s]*""").find(response)
-            if (videoMatch != null) {
-                Log.d(TAG, "Logs: Enlace encontrado directamente en el HTML")
-                return parseVideoResponse(response, callback, subtitleCallback)
-            }
+            // 1. Extraer todos los posibles hashes de la página
+            val ids = Regex("""[a-f0-9]{40}""").findAll(html).map { it.value }.toMutableList()
 
-            // Next.js suele guardar el estado inicial de la página aquí
-            val nextData = Regex("""<script id="__NEXT_DATA__"[^>]*>(.*?)</script>""").find(response)?.groupValues?.get(1)
-            if (nextData != null) {
-                Log.d(TAG, "Logs: __NEXT_DATA__ encontrado, analizando...")
-                if (nextData.contains("master.m3u8")) {
-                    return parseVideoResponse(nextData, callback, subtitleCallback)
+            // 2. Si no hay hashes, buscamos en los archivos JS de Next.js que suelen tener el mapa
+            if (ids.isEmpty()) {
+                Log.d(TAG, "Logs: Buscando IDs en scripts JS...")
+                // Buscamos el script que contiene las acciones (suele llamarse index o page)
+                val scripts = Regex("""/_next/static/chunks/(app/watch/\[id\]/page|[^"]+)\.js""").findAll(html)
+                for (scriptMatch in scripts.take(5)) {
+                    val scriptUrl = "$mainUrl${scriptMatch.value}"
+                    val scriptContent = app.get(scriptUrl).text
+                    Regex("""[a-f0-9]{40}""").findAll(scriptContent).forEach { ids.add(it.value) }
                 }
             }
 
-            // Esto es muy común en las versiones nuevas de Next.js
-            val pushData = Regex("""self\.__next_f\.push\(\[1,"(.*?)"\]\)""").findAll(response)
-                .map { it.groupValues[1] }
-                .joinToString("")
+            // Añadimos el ID que funcionó anteriormente como último recurso
+            ids.add("60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e")
+            val cleanIds = ids.distinct().reversed()
 
-            if (pushData.contains("master.m3u8")) {
-                Log.d(TAG, "Logs: master.m3u8 encontrado en bloques push")
-                return parseVideoResponse(pushData.replace("\\\"", "\""), callback, subtitleCallback)
+            Log.d(TAG, "Logs: Probando ${cleanIds.size} posibles ActionIDs")
+
+            for (actionId in cleanIds) {
+                val response = app.post(watchUrl,
+                    headers = mapOf(
+                        "accept" to "text/x-component",
+                        "next-action" to actionId,
+                        "content-type" to "text/plain;charset=UTF-8",
+                        "x-nextjs-postponed" to "1"
+                    ),
+                    requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                ).text
+
+                if (response.contains("master.m3u8")) {
+                    Log.d(TAG, "Logs: ¡Encontrado con ID: $actionId!")
+                    return parseVideoResponse(response, callback, subtitleCallback)
+                }
             }
 
-            Log.d(TAG, "Logs: Falló extracción directa, intentando POST de rescate...")
-            val actionId = Regex("""[a-f0-9]{40}""").find(response)?.value ?: "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
-
-            val currentEpId = data.substringAfter("/watch/").substringBefore("?")
-            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
-
-            val postRes = app.post(watchUrl,
-                headers = mapOf("accept" to "text/x-component", "next-action" to actionId, "x-nextjs-postponed" to "1"),
-                requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain".toMediaTypeOrNull())
-            ).text
-
-            return parseVideoResponse(postRes, callback, subtitleCallback)
-
+            Log.e(TAG, "Logs: No se encontró el enlace de video tras probar todos los IDs.")
+            false
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
