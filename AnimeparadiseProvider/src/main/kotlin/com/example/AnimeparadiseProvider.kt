@@ -99,7 +99,7 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIANDO CARGA AGRESIVA (Recuperando enlaces) ===")
+        Log.d(TAG, "Logs: === REPARANDO CARGA (NUEVO FORMATO DETECTADO) ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
@@ -118,39 +118,39 @@ class AnimeParadiseProvider : MainAPI() {
                 timeout = 45
             ).text
 
-            // 1. SUBTÍTULOS: Simplificado al máximo para no fallar
-            val subRegex = Regex("""https?://[^\s"\\,]+?\.vtt""")
-            subRegex.findAll(response.replace("\\/", "/")).map { it.value }.distinct().forEach { subUrl ->
+            // 1. EXTRAER SUBTÍTULOS (Ahora más flexible para el nuevo formato)
+            // Buscamos las URLs que están escapadas dentro del JSON
+            val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
+            subRegex.findAll(response).map { it.value.replace("\\/", "/") }.distinct().forEach { subUrl ->
                 if (!subUrl.contains("thumbnails", ignoreCase = true)) {
                     val label = if (subUrl.contains("eng", ignoreCase = true)) "English" else "Spanish"
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                    subtitleCallback.invoke(SubtitleFile(label, subUrl))
                 }
             }
 
-            // 2. ENLACES: Regex mucho más flexible para m3u8
-            // Ahora busca cualquier cosa que termine en .m3u8 y tenga parámetros opcionales
-            val videoRegex = Regex("""https?://[^\s"\\\\]+?\.m3u8[^\s"\\\\]*""")
-            val rawLinks = videoRegex.findAll(response.replace("\\/", "/")).map { it.value }.distinct().toList()
+            // 2. EXTRAER ENLACES (Compatible con el formato 0:{"a"...)
+            // Quitamos las barras de escape para que la búsqueda sea normal
+            val cleanResponse = response.replace("\\/", "/")
+            val videoRegex = Regex("""https?://[^\s"\\,]+?\.m3u8[^\s"\\,]*""")
 
-            if (rawLinks.isEmpty()) {
-                Log.e(TAG, "Logs: ERROR: Sigo sin encontrar links. Respuesta del servidor: ${response.take(100)}...")
+            val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
+
+            if (links.isEmpty()) {
+                Log.e(TAG, "Logs: No se encontraron links m3u8. Longitud respuesta: ${response.length}")
                 return false
             }
 
-            rawLinks.take(3).forEachIndexed { index, rawUrl ->
-                // Limpiamos cualquier carácter residual
-                val cleanUrl = rawUrl.replace("\\u002F", "/").replace("\\", "")
-
-                val finalUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
-                else "https://stream.animeparadise.moe/m3u8?url=${cleanUrl.replace("/", "%2F").replace(":", "%3A")}"
+            links.take(2).forEachIndexed { index, rawUrl ->
+                // Si el link ya es de paradise, se deja. Si no, se pasa por su proxy/streamer.
+                val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
+                else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
                 val serverName = when {
-                    cleanUrl.contains("windflash") -> "Paradise Wind"
-                    cleanUrl.contains("lightning") -> "Paradise Light"
-                    else -> "Servidor ${index + 1}"
+                    rawUrl.contains("windflash") -> "Paradise Wind"
+                    else -> "Servidor Mirror ${index + 1}"
                 }
 
-                // Usando la firma exacta que me pasaste
+                // APLICANDO LA FIRMA EXACTA QUE ME PEDISTE RECORDAR
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
@@ -158,6 +158,7 @@ class AnimeParadiseProvider : MainAPI() {
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
+                        // El bloque initializer para evitar el error de "Argument mismatch"
                         this.quality = Qualities.Unknown.value
                         this.referer = "$mainUrl/"
                     }
