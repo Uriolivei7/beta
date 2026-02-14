@@ -131,33 +131,37 @@ class AnimeParadiseProvider : MainAPI() {
         val currentOriginId = data.substringAfter("origin=").substringBefore("&")
         val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS SCANNER ===")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS ULTRA-SCAN ===")
 
         return try {
             val html = app.get(watchUrl).text
+            val allIds = mutableSetOf<String>()
 
-            // 1. Extraer todos los posibles hashes de la página
-            val ids = Regex("""[a-f0-9]{40}""").findAll(html).map { it.value }.toMutableList()
+            // 1. Buscar en el HTML plano
+            Regex("""[a-f0-9]{40}""").findAll(html).forEach { allIds.add(it.value) }
 
-            // 2. Si no hay hashes, buscamos en los archivos JS de Next.js que suelen tener el mapa
-            if (ids.isEmpty()) {
-                Log.d(TAG, "Logs: Buscando IDs en scripts JS...")
-                // Buscamos el script que contiene las acciones (suele llamarse index o page)
-                val scripts = Regex("""/_next/static/chunks/(app/watch/\[id\]/page|[^"]+)\.js""").findAll(html)
-                for (scriptMatch in scripts.take(5)) {
-                    val scriptUrl = "$mainUrl${scriptMatch.value}"
-                    val scriptContent = app.get(scriptUrl).text
-                    Regex("""[a-f0-9]{40}""").findAll(scriptContent).forEach { ids.add(it.value) }
-                }
+            // 2. Buscar TODOS los scripts .js de Next.js
+            val scriptRegex = Regex("""src="(/_next/static/chunks/[^"]+\.js)"""")
+            val scripts = scriptRegex.findAll(html).map { it.groupValues[1] }.toList()
+
+            Log.d(TAG, "Logs: Encontrados ${scripts.size} scripts para analizar")
+
+            // Analizamos los scripts más importantes (los últimos suelen ser los de la página)
+            for (scriptPath in scripts.reversed().take(8)) {
+                val scriptUrl = "$mainUrl$scriptPath"
+                val content = app.get(scriptUrl).text
+
+                // Buscamos el patrón común de IDs en Next.js: "HASH" o id:"HASH"
+                Regex("""[a-f0-9]{40}""").findAll(content).forEach { allIds.add(it.value) }
             }
 
-            // Añadimos el ID que funcionó anteriormente como último recurso
-            ids.add("60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e")
-            val cleanIds = ids.distinct().reversed()
+            // Fallback histórico por seguridad
+            allIds.add("60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e")
 
-            Log.d(TAG, "Logs: Probando ${cleanIds.size} posibles ActionIDs")
+            Log.d(TAG, "Logs: Total de IDs únicos encontrados: ${allIds.size}")
 
-            for (actionId in cleanIds) {
+            for (actionId in allIds) {
+                Log.d(TAG, "Logs: Probando ActionID: $actionId")
                 val response = app.post(watchUrl,
                     headers = mapOf(
                         "accept" to "text/x-component",
@@ -169,15 +173,15 @@ class AnimeParadiseProvider : MainAPI() {
                 ).text
 
                 if (response.contains("master.m3u8")) {
-                    Log.d(TAG, "Logs: ¡Encontrado con ID: $actionId!")
+                    Log.d(TAG, "Logs: ¡BINGO! Video extraído con éxito")
                     return parseVideoResponse(response, callback, subtitleCallback)
                 }
             }
 
-            Log.e(TAG, "Logs: No se encontró el enlace de video tras probar todos los IDs.")
+            Log.e(TAG, "Logs: Ninguno de los ${allIds.size} IDs funcionó.")
             false
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en Ultra-Scan: ${e.message}")
             false
         }
     }
