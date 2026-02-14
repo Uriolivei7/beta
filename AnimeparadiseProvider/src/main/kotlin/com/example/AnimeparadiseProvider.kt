@@ -127,49 +127,50 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val currentEpId = data.substringAfter("/watch/").substringBefore("?")
-        val currentOriginId = data.substringAfter("origin=").substringBefore("&")
         val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-
-        Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS WEB SCAN ===")
 
         return try {
-            val watchPageHtml = app.get(watchUrl).text
+            val response = app.get(watchUrl).text
 
-            // Buscamos TODOS los hashes de 40 caracteres en cualquier parte del HTML
-            val detectedActions = Regex("""[a-f0-9]{40}""").findAll(watchPageHtml).map { it.value }.toList()
-            Log.d(TAG, "Logs: Hashes encontrados en HTML: ${detectedActions.size}")
-
-            // En la página de video, el ID del reproductor suele ser el ÚLTIMO o el PENÚLTIMO
-            // Intentamos con una lista de candidatos
-            val candidates = mutableListOf<String>()
-            if (detectedActions.isNotEmpty()) {
-                candidates.add(detectedActions.last())
-                if (detectedActions.size > 1) candidates.add(detectedActions[detectedActions.size - 2])
+            val videoMatch = Regex("""https?[:\\/]+[^"\\\s]+?master\.m3u8[^"\\\s]*""").find(response)
+            if (videoMatch != null) {
+                Log.d(TAG, "Logs: Enlace encontrado directamente en el HTML")
+                return parseVideoResponse(response, callback, subtitleCallback)
             }
-            candidates.add("60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e") // Fallback histórico
 
-            for (actionId in candidates.distinct()) {
-                Log.d(TAG, "Logs: Probando ActionID: $actionId")
-
-                val response = app.post(watchUrl,
-                    headers = mapOf(
-                        "accept" to "text/x-component",
-                        "next-action" to actionId,
-                        "content-type" to "text/plain;charset=UTF-8",
-                        "x-nextjs-postponed" to "1"
-                    ),
-                    requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-                ).text
-
-                if (response.contains("master.m3u8")) {
-                    Log.d(TAG, "Logs: ¡ÉXITO! Enlace encontrado con ActionID: $actionId")
-                    return parseVideoResponse(response, callback, subtitleCallback)
+            // Next.js suele guardar el estado inicial de la página aquí
+            val nextData = Regex("""<script id="__NEXT_DATA__"[^>]*>(.*?)</script>""").find(response)?.groupValues?.get(1)
+            if (nextData != null) {
+                Log.d(TAG, "Logs: __NEXT_DATA__ encontrado, analizando...")
+                if (nextData.contains("master.m3u8")) {
+                    return parseVideoResponse(nextData, callback, subtitleCallback)
                 }
             }
 
-            Log.e(TAG, "Logs: Ningún ActionID funcionó. Respuesta final: ${watchPageHtml.take(100)}")
-            false
+            // Esto es muy común en las versiones nuevas de Next.js
+            val pushData = Regex("""self\.__next_f\.push\(\[1,"(.*?)"\]\)""").findAll(response)
+                .map { it.groupValues[1] }
+                .joinToString("")
+
+            if (pushData.contains("master.m3u8")) {
+                Log.d(TAG, "Logs: master.m3u8 encontrado en bloques push")
+                return parseVideoResponse(pushData.replace("\\\"", "\""), callback, subtitleCallback)
+            }
+
+            Log.d(TAG, "Logs: Falló extracción directa, intentando POST de rescate...")
+            val actionId = Regex("""[a-f0-9]{40}""").find(response)?.value ?: "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
+
+            val currentEpId = data.substringAfter("/watch/").substringBefore("?")
+            val currentOriginId = data.substringAfter("origin=").substringBefore("&")
+
+            val postRes = app.post(watchUrl,
+                headers = mapOf("accept" to "text/x-component", "next-action" to actionId, "x-nextjs-postponed" to "1"),
+                requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain".toMediaTypeOrNull())
+            ).text
+
+            return parseVideoResponse(postRes, callback, subtitleCallback)
+
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
