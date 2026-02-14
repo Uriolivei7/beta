@@ -99,66 +99,65 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === REPARANDO CARGA (NUEVO FORMATO DETECTADO) ===")
+        Log.d(TAG, "Logs: === INTENTO RECUPERACIÓN (Respuesta corta detectada) ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
+            // Actualizamos los headers para parecer más un navegador real
             val actionHeaders = mapOf(
                 "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b",
                 "content-type" to "text/plain;charset=UTF-8",
+                "origin" to mainUrl,
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
             )
+
+            // El cuerpo del POST a veces requiere este formato exacto para Next.js
+            val bodyText = "[\"$epUuid\",\"$originId\"]"
 
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
-                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain".toMediaTypeOrNull()),
-                timeout = 45
+                requestBody = bodyText.toRequestBody("text/plain".toMediaTypeOrNull()),
+                timeout = 30
             ).text
 
-            // 1. EXTRAER SUBTÍTULOS (Ahora más flexible para el nuevo formato)
-            // Buscamos las URLs que están escapadas dentro del JSON
-            val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
-            subRegex.findAll(response).map { it.value.replace("\\/", "/") }.distinct().forEach { subUrl ->
+            Log.d(TAG, "Logs: Respuesta recibida (Longitud: ${response.length})")
+
+            // Si la respuesta sigue siendo corta, el problema es el 'next-action' que caducó
+            if (response.length < 100) {
+                Log.e(TAG, "Logs: Error - El servidor devolvió una respuesta vacía o token inválido")
+                return false
+            }
+
+            // Limpieza de caracteres de escape para encontrar los links
+            val cleanResponse = response.replace("\\/", "/").replace("\\u002F", "/")
+
+            // 1. SUBTÍTULOS
+            val subRegex = Regex("""https?://[^\s"\\,]+?\.vtt""")
+            subRegex.findAll(cleanResponse).map { it.value }.distinct().forEach { subUrl ->
                 if (!subUrl.contains("thumbnails", ignoreCase = true)) {
                     val label = if (subUrl.contains("eng", ignoreCase = true)) "English" else "Spanish"
                     subtitleCallback.invoke(SubtitleFile(label, subUrl))
                 }
             }
 
-            // 2. EXTRAER ENLACES (Compatible con el formato 0:{"a"...)
-            // Quitamos las barras de escape para que la búsqueda sea normal
-            val cleanResponse = response.replace("\\/", "/")
+            // 2. ENLACES DE VIDEO
             val videoRegex = Regex("""https?://[^\s"\\,]+?\.m3u8[^\s"\\,]*""")
-
             val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
 
-            if (links.isEmpty()) {
-                Log.e(TAG, "Logs: No se encontraron links m3u8. Longitud respuesta: ${response.length}")
-                return false
-            }
-
             links.take(2).forEachIndexed { index, rawUrl ->
-                // Si el link ya es de paradise, se deja. Si no, se pasa por su proxy/streamer.
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
-                val serverName = when {
-                    rawUrl.contains("windflash") -> "Paradise Wind"
-                    else -> "Servidor Mirror ${index + 1}"
-                }
-
-                // APLICANDO LA FIRMA EXACTA QUE ME PEDISTE RECORDAR
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = serverName,
+                        name = "Paradise Mirror ${index + 1}",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        // El bloque initializer para evitar el error de "Argument mismatch"
                         this.quality = Qualities.Unknown.value
                         this.referer = "$mainUrl/"
                     }
@@ -166,7 +165,7 @@ class AnimeParadiseProvider : MainAPI() {
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico: ${e.message}")
             false
         }
     }
