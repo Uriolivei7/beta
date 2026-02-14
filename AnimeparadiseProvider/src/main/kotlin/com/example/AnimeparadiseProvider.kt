@@ -99,10 +99,12 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === LOADLINKS (LIMPIEZA DE SUBS Y SERVIDORES) ===")
+        Log.d(TAG, "Logs: === INICIANDO CARGA OPTIMIZADA (Timeout Extendido) ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
+
+            // Headers limpios para la petición POST
             val actionHeaders = mapOf(
                 "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b",
                 "content-type" to "text/plain;charset=UTF-8",
@@ -110,49 +112,70 @@ class AnimeParadiseProvider : MainAPI() {
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
-            val response = app.post(watchUrl, headers = actionHeaders,
-                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain".toMediaTypeOrNull())).text
+            // Petición con timeout de 45s para evitar el "Read timed out"
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain".toMediaTypeOrNull()),
+                timeout = 45
+            ).text
 
-            // 1. FILTRAR SUBTÍTULOS (Solo Español e Inglés, ignorar miniaturas)
+            // 1. PROCESAR SUBTÍTULOS (Filtrado estricto para evitar el "amontonamiento")
             val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
-            subRegex.findAll(response).map { it.value.replace("\\/", "/") }.distinct().forEach { subUrl ->
-                if (!subUrl.contains("thumbnails")) { // Ignorar archivos de miniatura
-                    val label = if (subUrl.contains("eng")) "English" else "Spanish"
-                    Log.d(TAG, "Logs: Subtítulo válido: $subUrl")
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+            subRegex.findAll(response)
+                .map { it.value.replace("\\/", "/") }
+                .distinct()
+                .forEach { subUrl ->
+                    // Solo agregar si NO es una miniatura (thumbnail)
+                    if (!subUrl.contains("thumbnails", ignoreCase = true)) {
+                        val label = if (subUrl.contains("eng", ignoreCase = true)) "English" else "Spanish"
+                        Log.d(TAG, "Logs: Subtítulo detectado: $label -> $subUrl")
+                        subtitleCallback.invoke(SubtitleFile(label, subUrl))
+                    }
                 }
-            }
 
-            // 2. FILTRAR ENLACES (Solo 2 servidores distintos para no saturar)
+            // 2. PROCESAR ENLACES DE VIDEO
             val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
             val links = videoRegex.findAll(response)
                 .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
                 .distinct()
                 .toList()
 
-            links.forEachIndexed { index, rawUrl ->
-                // Solo tomamos un link por dominio para evitar repetidos pesados
-                if (index > 2) return@forEachIndexed
+            if (links.isEmpty()) {
+                Log.e(TAG, "Logs: No se encontraron enlaces master.m3u8")
+                return false
+            }
 
+            // Tomamos máximo 2 para que la carga sea ligera
+            links.take(2).forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
                 val serverName = when {
-                    rawUrl.contains("windflash") -> "Paradise Wind (Recomendado)"
+                    rawUrl.contains("windflash") -> "Paradise Wind (Rápido)"
                     rawUrl.contains("lightning") -> "Paradise Light"
                     else -> "Paradise Mirror ${index + 1}"
                 }
 
                 callback.invoke(
-                    newExtractorLink(this.name, serverName, finalUrl, ExtractorLinkType.M3U8) {
-                        this.quality = Qualities.Unknown.value // M3U8 seleccionará la mejor calidad según el internet
-                        this.headers = mapOf("Referer" to "$mainUrl/", "User-Agent" to actionHeaders["user-agent"]!!)
+                    newExtractorLink(
+                        source = this.name,
+                        name = serverName,
+                        url = finalUrl,
+                        type = ExtractorLinkType.M3U8 // Aquí pasamos el tipo correcto
+                    ) {
+                        this.quality = Qualities.Unknown.value
+                        this.referer = "$mainUrl/"
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                        )
                     }
                 )
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}"); false
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            false
         }
     }
 }
