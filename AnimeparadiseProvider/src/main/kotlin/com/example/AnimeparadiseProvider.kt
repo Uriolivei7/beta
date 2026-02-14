@@ -114,34 +114,51 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // TRITURADORA DE URLS: Nos quedamos solo con el UUID alfanumérico
         val parts = data.split("|")
-        val rawEpId = parts[0]
+        val episodeUuid = parts[0].substringAfterLast("/").substringBefore("?")
         val animeOriginId = parts.getOrNull(1) ?: ""
 
-        val episodeUuid = rawEpId.substringAfterLast("/").substringBefore("?")
-
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpUUID Limpio: $episodeUuid, Origin: $animeOriginId")
-
-        if (episodeUuid.length < 5) {
-            Log.e(TAG, "Logs: ID de episodio inválido: $episodeUuid")
-            return false
-        }
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === Intentando IDs: Ep=$episodeUuid, Origin=$animeOriginId")
 
         return try {
-            val videoApiUrl = "$apiUrl/storage/$episodeUuid"
-            val response = app.get(videoApiUrl, headers = apiHeaders).text
-            Log.d(TAG, "Logs: JSON Video: $response")
+            // Intentaremos 3 rutas diferentes hasta que una NO de 404
+            val pathsToTry = listOf(
+                "$apiUrl/storage/$animeOriginId/$episodeUuid", // Ruta estándar
+                "$apiUrl/storage/$episodeUuid",               // Ruta corta
+                "https://api.animeparadise.moe/stream/$episodeUuid" // Ruta de stream directo
+            )
 
+            var finalResponse = ""
+            for (path in pathsToTry) {
+                Log.d(TAG, "Logs: Probando ruta: $path")
+                val res = app.get(path, headers = apiHeaders)
+                if (res.code == 200 && !res.text.contains("Not Found")) {
+                    finalResponse = res.text
+                    Log.d(TAG, "Logs: ¡Ruta exitosa encontrada!")
+                    break
+                }
+            }
+
+            if (finalResponse.isBlank()) {
+                Log.e(TAG, "Logs: Todas las rutas de video fallaron (404)")
+                return false
+            }
+
+            Log.d(TAG, "Logs: JSON Video: $finalResponse")
+
+            // Extracción con Regex mejorado para capturar cualquier URL de video
             val linkRegex = Regex(""""src"\s*:\s*"([^"]+)"""")
             val labelRegex = Regex(""""label"\s*:\s*"([^"]+)"""")
 
-            val links = linkRegex.findAll(response).map { it.groupValues[1].replace("\\/", "/") }.toList()
-            val labels = labelRegex.findAll(response).map { it.groupValues[1] }.toList()
+            val links = linkRegex.findAll(finalResponse).map { it.groupValues[1].replace("\\/", "/") }.toList()
+            val labels = labelRegex.findAll(finalResponse).map { it.groupValues[1] }.toList()
 
             links.forEachIndexed { index, rawUrl ->
                 val label = labels.getOrNull(index) ?: "Mirror ${index + 1}"
-                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
+
+                // Si la URL ya es de windflash o similar, le ponemos el proxy
+                val finalUrl = if (rawUrl.contains("animeparadise")) rawUrl
+                else "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
 
                 callback.invoke(
                     newExtractorLink(
@@ -160,9 +177,9 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
+            // Subtítulos (Usando la URL de la web que confirmaste)
             val watchUrl = "$mainUrl/watch/$episodeUuid?origin=$animeOriginId"
             val watchHtml = app.get(watchUrl).text
-
             Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"[^"]+"\}""").findAll(watchHtml).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
@@ -171,10 +188,11 @@ class AnimeParadiseProvider : MainAPI() {
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
             false
         }
     }
+    
 }
 
 // --- DATA CLASSES CORREGIDAS ---
