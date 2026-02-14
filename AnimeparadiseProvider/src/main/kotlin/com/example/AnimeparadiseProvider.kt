@@ -132,45 +132,46 @@ class AnimeParadiseProvider : MainAPI() {
         val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
 
         Log.d(TAG, "Logs: === INICIO LOADLINKS ===")
-        Log.d(TAG, "Logs: EpUID: $currentEpId | Origin: $currentOriginId")
 
         return try {
             val watchPageHtml = app.get(watchUrl).text
-            val detectedActions = Regex("""\"([a-f0-9]{40})\"""").findAll(watchPageHtml).map { it.groupValues[1] }.toList()
 
-            Log.d(TAG, "Logs: Acciones detectadas en HTML: ${detectedActions.size}")
+            // Buscamos TODOS los hashes de 40 caracteres en cualquier parte del HTML
+            val detectedActions = Regex("""[a-f0-9]{40}""").findAll(watchPageHtml).map { it.value }.toList()
+            Log.d(TAG, "Logs: Hashes encontrados en HTML: ${detectedActions.size}")
 
-            // Intentamos con la última acción detectada, que suele ser el Player
-            val linkActionId = detectedActions.lastOrNull() ?: "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
-            Log.d(TAG, "Logs: Usando ActionID para enlaces: $linkActionId")
+            // En la página de video, el ID del reproductor suele ser el ÚLTIMO o el PENÚLTIMO
+            // Intentamos con una lista de candidatos
+            val candidates = mutableListOf<String>()
+            if (detectedActions.isNotEmpty()) {
+                candidates.add(detectedActions.last())
+                if (detectedActions.size > 1) candidates.add(detectedActions[detectedActions.size - 2])
+            }
+            candidates.add("60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e") // Fallback histórico
 
-            val response = app.post(watchUrl,
-                headers = mapOf(
-                    "accept" to "text/x-component",
-                    "next-action" to linkActionId,
-                    "content-type" to "text/plain;charset=UTF-8",
-                    "referer" to watchUrl,
-                    "x-nextjs-postponed" to "1"
-                ),
-                requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            ).text
+            for (actionId in candidates.distinct()) {
+                Log.d(TAG, "Logs: Probando ActionID: $actionId")
 
-            // Log del inicio de la respuesta para ver si es un error o datos reales
-            Log.d(TAG, "Logs: Respuesta del servidor (primeros 200 caps): ${response.take(200)}")
-
-            if (response.contains("Server action not found") || response.length < 50) {
-                Log.e(TAG, "Logs: La acción falló. Intentando fallback con ID conocido...")
-                val fallbackId = "60d3cd85d1347bb1ef9c0fd8ace89f28de2c8e0d7e"
-                val retry = app.post(watchUrl,
-                    headers = mapOf("next-action" to fallbackId, "accept" to "text/x-component"),
-                    requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain".toMediaTypeOrNull())
+                val response = app.post(watchUrl,
+                    headers = mapOf(
+                        "accept" to "text/x-component",
+                        "next-action" to actionId,
+                        "content-type" to "text/plain;charset=UTF-8",
+                        "x-nextjs-postponed" to "1"
+                    ),
+                    requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
                 ).text
-                return parseVideoResponse(retry, callback, subtitleCallback)
+
+                if (response.contains("master.m3u8")) {
+                    Log.d(TAG, "Logs: ¡ÉXITO! Enlace encontrado con ActionID: $actionId")
+                    return parseVideoResponse(response, callback, subtitleCallback)
+                }
             }
 
-            parseVideoResponse(response, callback, subtitleCallback)
+            Log.e(TAG, "Logs: Ningún ActionID funcionó. Respuesta final: ${watchPageHtml.take(100)}")
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
         }
     }
@@ -180,37 +181,36 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
         subtitleCallback: (SubtitleFile) -> Unit
     ): Boolean {
-        // Log para ver si el m3u8 está presente en el texto
-        val hasM3u8 = response.contains("master.m3u8")
-        Log.d(TAG, "Logs: ¿Contiene master.m3u8?: $hasM3u8")
+        val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+?master\.m3u8[^"\\\s]*""")
+        val match = videoRegex.find(response)
 
-        val videoMatch = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""").find(response)
+        if (match != null) {
+            val cleanUrl = match.value.replace("\\/", "/")
+                .replace("\\u0026", "&")
+                .replace("u0026", "&")
 
-        if (videoMatch != null) {
-            val cleanUrl = videoMatch.value.replace("\\/", "/").replace("\\u0026", "&").replace("u0026", "&")
-            Log.d(TAG, "Logs: URL de video encontrada: $cleanUrl")
+            Log.d(TAG, "Logs: URL de video limpia: $cleanUrl")
 
-            val proxyUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
-            else "https://stream.animeparadise.moe/m3u8?url=$cleanUrl"
+            // Usamos java.net.URLEncoder para codificar la URL del proxy
+            val encodedUrl = java.net.URLEncoder.encode(cleanUrl, "UTF-8")
+            val finalUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
+            else "https://stream.animeparadise.moe/m3u8?url=$encodedUrl"
 
-            callback.invoke(newExtractorLink(name, name, proxyUrl, type = ExtractorLinkType.M3U8) {
-                this.quality = Qualities.P1080.value
-                this.referer = "$mainUrl/"
-            })
+            callback.invoke(
+                newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
+                    this.quality = Qualities.P1080.value
+                    this.referer = "$mainUrl/"
+                }
+            )
 
-            // Logs para subtítulos
-            var subCount = 0
-            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
-                val src = match.groupValues[1].replace("\\/", "/")
+            // Parseo de subtítulos
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { sMatch ->
+                val src = sMatch.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
-                subCount++
+                subtitleCallback.invoke(newSubtitleFile(sMatch.groupValues[2], subUrl))
             }
-            Log.d(TAG, "Logs: Subtítulos añadidos: $subCount")
             return true
         }
-
-        Log.e(TAG, "Logs: No se pudo extraer el enlace master.m3u8 del cuerpo de respuesta.")
         return false
     }
 }
