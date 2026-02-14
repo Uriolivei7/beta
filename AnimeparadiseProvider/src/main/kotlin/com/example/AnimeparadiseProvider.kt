@@ -99,12 +99,11 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIANDO CARGA OPTIMIZADA (Timeout Extendido) ===")
+        Log.d(TAG, "Logs: === INICIANDO CARGA AGRESIVA (Recuperando enlaces) ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
-            // Headers limpios para la petición POST
             val actionHeaders = mapOf(
                 "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b",
                 "content-type" to "text/plain;charset=UTF-8",
@@ -112,7 +111,6 @@ class AnimeParadiseProvider : MainAPI() {
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
-            // Petición con timeout de 45s para evitar el "Read timed out"
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
@@ -120,55 +118,48 @@ class AnimeParadiseProvider : MainAPI() {
                 timeout = 45
             ).text
 
-            // 1. PROCESAR SUBTÍTULOS (Filtrado estricto para evitar el "amontonamiento")
-            val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
-            subRegex.findAll(response)
-                .map { it.value.replace("\\/", "/") }
-                .distinct()
-                .forEach { subUrl ->
-                    // Solo agregar si NO es una miniatura (thumbnail)
-                    if (!subUrl.contains("thumbnails", ignoreCase = true)) {
-                        val label = if (subUrl.contains("eng", ignoreCase = true)) "English" else "Spanish"
-                        Log.d(TAG, "Logs: Subtítulo detectado: $label -> $subUrl")
-                        subtitleCallback.invoke(SubtitleFile(label, subUrl))
-                    }
+            // 1. SUBTÍTULOS: Simplificado al máximo para no fallar
+            val subRegex = Regex("""https?://[^\s"\\,]+?\.vtt""")
+            subRegex.findAll(response.replace("\\/", "/")).map { it.value }.distinct().forEach { subUrl ->
+                if (!subUrl.contains("thumbnails", ignoreCase = true)) {
+                    val label = if (subUrl.contains("eng", ignoreCase = true)) "English" else "Spanish"
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
+            }
 
-            // 2. PROCESAR ENLACES DE VIDEO
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
-            val links = videoRegex.findAll(response)
-                .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
-                .distinct()
-                .toList()
+            // 2. ENLACES: Regex mucho más flexible para m3u8
+            // Ahora busca cualquier cosa que termine en .m3u8 y tenga parámetros opcionales
+            val videoRegex = Regex("""https?://[^\s"\\\\]+?\.m3u8[^\s"\\\\]*""")
+            val rawLinks = videoRegex.findAll(response.replace("\\/", "/")).map { it.value }.distinct().toList()
 
-            if (links.isEmpty()) {
-                Log.e(TAG, "Logs: No se encontraron enlaces master.m3u8")
+            if (rawLinks.isEmpty()) {
+                Log.e(TAG, "Logs: ERROR: Sigo sin encontrar links. Respuesta del servidor: ${response.take(100)}...")
                 return false
             }
 
-            // Tomamos máximo 2 para que la carga sea ligera
-            links.take(2).forEachIndexed { index, rawUrl ->
-                val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
-                else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
+            rawLinks.take(3).forEachIndexed { index, rawUrl ->
+                // Limpiamos cualquier carácter residual
+                val cleanUrl = rawUrl.replace("\\u002F", "/").replace("\\", "")
+
+                val finalUrl = if (cleanUrl.contains("stream.animeparadise.moe")) cleanUrl
+                else "https://stream.animeparadise.moe/m3u8?url=${cleanUrl.replace("/", "%2F").replace(":", "%3A")}"
 
                 val serverName = when {
-                    rawUrl.contains("windflash") -> "Paradise Wind (Rápido)"
-                    rawUrl.contains("lightning") -> "Paradise Light"
-                    else -> "Paradise Mirror ${index + 1}"
+                    cleanUrl.contains("windflash") -> "Paradise Wind"
+                    cleanUrl.contains("lightning") -> "Paradise Light"
+                    else -> "Servidor ${index + 1}"
                 }
 
+                // Usando la firma exacta que me pasaste
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = serverName,
                         url = finalUrl,
-                        type = ExtractorLinkType.M3U8 // Aquí pasamos el tipo correcto
+                        type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = Qualities.Unknown.value
                         this.referer = "$mainUrl/"
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-                        )
                     }
                 )
             }
@@ -178,6 +169,7 @@ class AnimeParadiseProvider : MainAPI() {
             false
         }
     }
+
 }
 
 // Clases de datos (Sin cambios para mantener estabilidad)
