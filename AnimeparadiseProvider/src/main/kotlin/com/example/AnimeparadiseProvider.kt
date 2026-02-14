@@ -118,81 +118,66 @@ class AnimeParadiseProvider : MainAPI() {
         val episodeUuid = parts[0].substringAfterLast("/").substringBefore("?")
         val animeOriginId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === Intentando IDs: Ep=$episodeUuid, Origin=$animeOriginId")
+        // Esta es la URL que me pasaste tú y que funciona en el navegador
+        val watchUrl = "$mainUrl/watch/$episodeUuid?origin=$animeOriginId"
+        Log.d(TAG, "Logs: === EXTRACCIÓN DIRECTA === URL: $watchUrl")
 
         return try {
-            // Intentaremos 3 rutas diferentes hasta que una NO de 404
-            val pathsToTry = listOf(
-                "$apiUrl/storage/$animeOriginId/$episodeUuid", // Ruta estándar
-                "$apiUrl/storage/$episodeUuid",               // Ruta corta
-                "https://api.animeparadise.moe/stream/$episodeUuid" // Ruta de stream directo
-            )
+            val response = app.get(watchUrl, headers = apiHeaders).text
 
-            var finalResponse = ""
-            for (path in pathsToTry) {
-                Log.d(TAG, "Logs: Probando ruta: $path")
-                val res = app.get(path, headers = apiHeaders)
-                if (res.code == 200 && !res.text.contains("Not Found")) {
-                    finalResponse = res.text
-                    Log.d(TAG, "Logs: ¡Ruta exitosa encontrada!")
-                    break
-                }
-            }
+            // 1. Buscamos los links de video dentro del HTML (están en un JSON oculto)
+            // Buscamos cualquier cosa que diga "https://...master.m3u8" o similares
+            val videoRegex = Regex("""https?://[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            val videoMatches = videoRegex.findAll(response).map { it.value.replace("\\", "") }.distinct()
 
-            if (finalResponse.isBlank()) {
-                Log.e(TAG, "Logs: Todas las rutas de video fallaron (404)")
-                return false
-            }
+            var foundAny = false
 
-            Log.d(TAG, "Logs: JSON Video: $finalResponse")
+            videoMatches.forEach { rawUrl ->
+                foundAny = true
+                Log.d(TAG, "Logs: Enlace encontrado en HTML: $rawUrl")
 
-            // Extracción con Regex mejorado para capturar cualquier URL de video
-            val linkRegex = Regex(""""src"\s*:\s*"([^"]+)"""")
-            val labelRegex = Regex(""""label"\s*:\s*"([^"]+)"""")
-
-            val links = linkRegex.findAll(finalResponse).map { it.groupValues[1].replace("\\/", "/") }.toList()
-            val labels = labelRegex.findAll(finalResponse).map { it.groupValues[1] }.toList()
-
-            links.forEachIndexed { index, rawUrl ->
-                val label = labels.getOrNull(index) ?: "Mirror ${index + 1}"
-
-                // Si la URL ya es de windflash o similar, le ponemos el proxy
-                val finalUrl = if (rawUrl.contains("animeparadise")) rawUrl
-                else "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
+                // Aplicamos el proxy de tus curls
+                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=$rawUrl"
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise $label",
+                        name = "AnimeParadise Player",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.quality = Regex("""(\d+)""").find(label)?.value?.toIntOrNull() ?: Qualities.Unknown.value
+                        this.quality = Qualities.P1080.value
                         this.headers = mapOf(
                             "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/",
+                            "Referer" to "$mainUrl/",
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     }
                 )
             }
 
-            // Subtítulos (Usando la URL de la web que confirmaste)
-            val watchUrl = "$mainUrl/watch/$episodeUuid?origin=$animeOriginId"
-            val watchHtml = app.get(watchUrl).text
-            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"[^"]+"\}""").findAll(watchHtml).forEach { match ->
+            // 2. Extraer Subtítulos (Regex que ya teníamos)
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"[^"]+"\}""")
+            subRegex.findAll(response).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                Log.d(TAG, "Logs: Subtítulo encontrado: ${match.groupValues[2]}")
                 subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
+            }
+
+            if (!foundAny) {
+                Log.e(TAG, "Logs: No se encontró ningún m3u8 en el HTML de la página")
+                // Si falla, como último recurso intentamos imprimir un trozo del HTML para ver qué hay
+                Log.d(TAG, "Logs: Muestra del HTML: ${response.take(500)}")
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
             false
         }
     }
-    
+
 }
 
 // --- DATA CLASSES CORREGIDAS ---
