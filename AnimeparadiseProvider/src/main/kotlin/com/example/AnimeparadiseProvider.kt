@@ -83,16 +83,20 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
+
+            // Obtenemos el ID limpio (solo el código alfanumérico)
             val internalId = animeData.data?.id ?: throw Exception("ID no encontrado")
 
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data.map { ep ->
-                newEpisode("${animeData.data?.id}|${ep.number}") {
+                val num = ep.number?.toIntOrNull() ?: 0
+                // GUARDAMOS SOLO EL ID LIMPIO
+                newEpisode("$internalId|${ep.number}") {
                     this.name = ep.title ?: "Episode ${ep.number}"
-                    this.episode = ep.number?.toIntOrNull() ?: 0
-                    this.posterUrl = ep.image // Aquí recuperamos el poster del episodio
+                    this.episode = num
+                    this.posterUrl = ep.image // Recupera el poster del episodio
                 }
             }.sortedBy { it.episode }
 
@@ -116,32 +120,28 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val parts = data.split("|")
+        // Limpiamos por si acaso el ID aún trae la URL
+        val rawData = data.substringAfter("animeparadise.moe/")
+        val parts = rawData.split("|")
         val internalId = parts[0]
         val epNumber = parts[1]
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID: $internalId, Ep: $epNumber")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === ID Limpio: $internalId, Ep: $epNumber")
 
         return try {
-            // 1. Consultar la API de storage para obtener el link original
             val videoApiUrl = "$apiUrl/storage/$internalId/$epNumber"
             val response = app.get(videoApiUrl, headers = apiHeaders).text
             val videoData: VideoList = mapper.readValue(response)
 
             videoData.directUrl?.forEach { video ->
-                // Si el link ya es del proxy o es externo, lo preparamos
                 val rawUrl = when {
                     video.src.startsWith("//") -> "https:${video.src}"
                     video.src.startsWith("/") -> "$apiUrl${video.src}"
                     else -> video.src
                 }
 
-                // Aplicamos el proxy que vimos en tus curls
-                val finalProxyUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
-                    rawUrl
-                } else {
-                    "https://stream.animeparadise.moe/m3u8?url=${rawUrl}"
-                }
+                // Usamos el proxy de tus curls
+                val finalProxyUrl = "https://stream.animeparadise.moe/m3u8?url=${rawUrl}"
 
                 callback.invoke(
                     newExtractorLink(
@@ -151,29 +151,22 @@ class AnimeParadiseProvider : MainAPI() {
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = Regex("""(\d+)""").find(video.label)?.value?.toIntOrNull() ?: Qualities.Unknown.value
-                        // Headers exactos de tus curls para que el proxy no rebote la conexión
                         this.headers = mapOf(
                             "Referer" to "$mainUrl/",
                             "Origin" to "https://www.animeparadise.moe",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Accept" to "*/*"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     }
                 )
             }
 
-            // 2. Extraer subtítulos del HTML (basado en lógica de Tachiyomi)
+            // Subtítulos
             val watchUrl = "$mainUrl/watch/$internalId/$epNumber"
             val watchHtml = app.get(watchUrl).text
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-
-            subRegex.findAll(watchHtml).forEach { match ->
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"[^"]+"\}""").findAll(watchHtml).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
-                val label = match.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-
-                Log.d(TAG, "Logs: Subtítulo añadido: $label")
-                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
             }
 
             true
