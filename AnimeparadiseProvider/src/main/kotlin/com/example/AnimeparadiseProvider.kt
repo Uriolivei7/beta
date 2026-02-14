@@ -111,20 +111,25 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val episodeUuid = parts.getOrNull(0) ?: ""
+        val rawEpId = parts.getOrNull(0) ?: ""
         val animeOriginId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS (Modo API Directo) ===")
+        // CORRECCIÓN CRÍTICA: Limpiamos el ID de cualquier rastro de URL
+        val episodeUuid = rawEpId.substringAfterLast("/")
+            .substringBefore("?")
+            .trim()
 
-        // Atacamos la API de stream directamente, saltándonos la web con error
+        Log.d(TAG, "Logs: === INICIO LOADLINKS (API FIX) ===")
+
+        // Ahora la URL será: https://api.animeparadise.moe/anime/episode/ID/stream
         val streamApiUrl = "$apiUrl/anime/episode/$episodeUuid/stream?origin=$animeOriginId"
-        Log.d(TAG, "Logs: Llamando a API: $streamApiUrl")
+        Log.d(TAG, "Logs: Llamando a API corregida: $streamApiUrl")
 
         return try {
             val response = app.get(streamApiUrl, headers = apiHeaders).text
 
-            // Buscamos el m3u8 en el JSON de la API
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            // Buscamos el m3u8. Usamos un regex que capture la URL codificada o normal
+            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*""")
             val videoMatches = videoRegex.findAll(response).map {
                 it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "")
             }.distinct()
@@ -132,12 +137,21 @@ class AnimeParadiseProvider : MainAPI() {
             var foundLinks = false
             videoMatches.forEach { rawUrl ->
                 foundLinks = true
-                Log.d(TAG, "Logs: Enlace m3u8 encontrado: $rawUrl")
+
+                // Construimos la URL usando su propio proxy de streaming como vimos en tu curl
+                val finalStreamUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
+                    rawUrl
+                } else {
+                    "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
+                }
+
+                Log.d(TAG, "Logs: Enlace generado: $finalStreamUrl")
+
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise Direct",
-                        url = "https://stream.animeparadise.moe/m3u8?url=$rawUrl",
+                        name = "AnimeParadise Mirror",
+                        url = finalStreamUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = Qualities.P1080.value
@@ -147,20 +161,18 @@ class AnimeParadiseProvider : MainAPI() {
             }
 
             // Subtítulos
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)"""")
-            subRegex.findAll(response).forEach { match ->
+            Regex("""\{"src":"([^"]+)","label":"([^"]+)"""").findAll(response).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val label = match.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                Log.d(TAG, "Logs: Subtítulo: $label")
                 subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
-            if (!foundLinks) Log.e(TAG, "Logs: API no devolvió enlaces. Respuesta: ${response.take(150)}")
+            if (!foundLinks) Log.e(TAG, "Logs: API no devolvió links. Resp: ${response.take(100)}")
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en loadLinks API: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
