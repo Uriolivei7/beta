@@ -15,7 +15,7 @@ class AnimeParadiseProvider : MainAPI() {
     private val apiUrl = "https://api.animeparadise.moe"
     override var name = "AnimeParadise"
     override val hasMainPage = true
-    override var lang = "es" // Cambiado a es para mejor compatibilidad de subs
+    override var lang = "en"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val TAG = "AnimeParadise"
@@ -80,7 +80,6 @@ class AnimeParadiseProvider : MainAPI() {
                 newEpisode("$epUuid|$internalAnimeId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
-                    // AÑADIDO: Poster del episodio
                     this.posterUrl = ep.image
                 }
             }.sortedBy { it.episode }
@@ -130,7 +129,6 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            // 1. EXTRAER SUBTÍTULOS (si existen en el JSON de Next.js)
             val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
             subRegex.findAll(response).forEach {
                 val subUrl = it.value.replace("\\/", "/")
@@ -138,13 +136,12 @@ class AnimeParadiseProvider : MainAPI() {
                 subtitleCallback.invoke(newSubtitleFile("Spanish", subUrl))
             }
 
-            // 2. EXTRAER VIDEOS (Limitado a los primeros 3 para no saturar)
             val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
 
             val links = videoRegex.findAll(response)
                 .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
                 .distinct()
-                .take(3) // Solo tomamos los 3 mejores para que sea más limpio
+                .take(3)
                 .toList()
 
             links.forEachIndexed { index, rawUrl ->
@@ -176,7 +173,6 @@ class AnimeParadiseProvider : MainAPI() {
     }
 }
 
-// --- DATA CLASSES (Iguales que antes) ---
 data class AnimeListResponse(val data: List<AnimeObject>)
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
@@ -196,5 +192,5 @@ data class Episode(
     @JsonProperty("_id") val id: String? = null,
     val number: String? = null,
     val title: String? = null,
-    val image: String? = null // Miniatura del episodio
+    val image: String? = null
 )

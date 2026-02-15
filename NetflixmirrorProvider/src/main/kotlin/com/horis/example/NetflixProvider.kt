@@ -32,22 +32,50 @@ class NetflixProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "user_token" to "233123f803cf02184bf6c67e149cdd50",
-            "ott" to "nf",
-            "hd" to "on"
-        )
-        val document = app.get(
-            "$mainUrl/home",
-            cookies = cookies,
-            referer = "$mainUrl/",
-        ).document
-        val items = document.select(".lolomoRow").map {
-            it.toHomePageList()
+        return try {
+            Log.d("NetflixProvider", "--- INICIO GET_MAIN_PAGE ---")
+            Log.d("NetflixProvider", "Intentando conectar a: $mainUrl")
+
+            // 1. Log para el Bypass (Probable punto de fallo)
+            if (cookie_value.isEmpty()) {
+                Log.d("NetflixProvider", "Iniciando bypass para obtener cookie...")
+                cookie_value = bypass(mainUrl)
+                Log.d("NetflixProvider", "Cookie obtenida con éxito: $cookie_value")
+            }
+
+            val cookies = mapOf(
+                "t_hash_t" to cookie_value,
+                "user_token" to "233123f803cf02184bf6c67e149cdd50",
+                "ott" to "nf",
+                "hd" to "on"
+            )
+
+            // 2. Log de la petición principal
+            Log.d("NetflixProvider", "Realizando GET a $mainUrl/home")
+            val response = app.get(
+                "$mainUrl/home",
+                cookies = cookies,
+                referer = "$mainUrl/",
+                timeout = 15 // Aumentamos el tiempo de espera
+            )
+
+            Log.d("NetflixProvider", "Respuesta recibida: Código ${response.code}")
+
+            val document = response.document
+            val items = document.select(".lolomoRow").map {
+                it.toHomePageList()
+            }
+
+            Log.d("NetflixProvider", "Carga finalizada con ${items.size} categorías")
+            newHomePageResponse(items, false)
+
+        } catch (e: Exception) {
+            // LOG OBLIGATORIO PARA VER EL FALLO
+            Log.e("NetflixProvider", "!!! ERROR CRÍTICO EN GET_MAIN_PAGE !!!")
+            Log.e("NetflixProvider", "Causa del error: ${e.message}")
+            Log.e("NetflixProvider", "Stacktrace:", e)
+            null
         }
-        return newHomePageResponse(items, false)
     }
 
     private fun Element.toHomePageList(): HomePageList {
