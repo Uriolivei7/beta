@@ -217,12 +217,14 @@ class NetflixProvider : MainAPI() {
         ).parsed<PlayList>()
 
         playlist.forEach { item ->
-            item.sources.forEach {
+            item.sources.forEach { source ->
+                val finalName = "$name ${source.label}".trim()
+                
                 callback.invoke(
                     newExtractorLink(
-                        name,
-                        it.label,
-                        newUrl + it.file,
+                        source = finalName,
+                        name = finalName,
+                        url = newUrl + source.file,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$newUrl/"
