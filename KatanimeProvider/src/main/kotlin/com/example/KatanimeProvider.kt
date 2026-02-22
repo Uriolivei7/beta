@@ -33,9 +33,7 @@ class KatanimeProvider : MainAPI() {
     data class EpisodeLoadData(val url: String)
 
     @Serializable
-    data class EpisodeList(
-        val ep: Ep? = null
-    )
+    data class EpisodeList(val ep: Ep? = null)
 
     @Serializable
     data class Ep(
@@ -96,6 +94,21 @@ class KatanimeProvider : MainAPI() {
         }
     }
 
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = "$mainUrl/buscar?q=$query"
+        val response = app.get(url)
+        val doc = Jsoup.parse(response.text)
+
+        return doc.select("div#article-div div._135yj").mapNotNull {
+            val title = cleanTitle(it.selectFirst("a._2uHIS")?.text()) ?: return@mapNotNull null
+            val href = it.selectFirst("a._1A2Dc")?.attr("href") ?: return@mapNotNull null
+            val poster = it.selectFirst("img")?.attr("src") ?: it.selectFirst("img")?.attr("data-src")
+
+            newAnimeSearchResponse(title, fixUrl(href)) {
+                this.posterUrl = fixUrl(poster ?: "")
+            }
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val html = app.get(mainUrl).text
@@ -147,14 +160,10 @@ class KatanimeProvider : MainAPI() {
                     val parsed = tryParseJson<EpisodeList>(apiRes)
                     val epData = parsed?.ep?.data
 
-                    if (epData.isNullOrEmpty()) {
-                        Log.e(TAG, "No se recibieron episodios en la página $pageToLoad")
-                        break
-                    }
+                    if (epData.isNullOrEmpty()) break
 
                     if (pageToLoad == 1) {
                         totalPages = parsed.ep?.lastPage ?: 1
-                        Log.d(TAG, "Serie detectada con $totalPages páginas de episodios")
                     }
 
                     epData.forEach { item ->
@@ -171,13 +180,11 @@ class KatanimeProvider : MainAPI() {
                     pageToLoad++
                 } while (pageToLoad <= totalPages)
             } catch (e: Exception) {
-                Log.e(TAG, "Fallo en el bucle de episodios: ${e.message}")
+                Log.e(TAG, "Error en episodios: ${e.message}")
             }
         }
 
-        val sortedEpisodes = allEpisodes.sortedBy { it.episode }
-
-        return newTvSeriesLoadResponse(title, url, TvType.Anime, sortedEpisodes) {
+        return newTvSeriesLoadResponse(title, url, TvType.Anime, allEpisodes.sortedBy { it.episode }) {
             this.posterUrl = mainPoster
             this.plot = description
             this.year = doc.selectFirst(".details-by")?.text()?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() }
@@ -194,32 +201,32 @@ class KatanimeProvider : MainAPI() {
         val episodeUrl = tryParseJson<EpisodeLoadData>(data)?.url ?: data
         val doc = app.get(episodeUrl).document
 
-        // Seleccionar los botones de servidores
         doc.select("ul.ul-drop li a[data-player]").amap { element ->
             val serverTitle = element.text()
             val dataPlayer = element.attr("data-player")
 
-            // 1. Obtener el reproductor interno
             val playerDoc = app.get("$mainUrl/reproductor?url=$dataPlayer").document
             val script = playerDoc.selectFirst("script:containsData(var e =)")?.data()
-
             val encryptedBase64 = script?.substringAfter("var e = '")?.substringBefore("';")
 
             if (!encryptedBase64.isNullOrBlank()) {
-                // 2. Desencriptar usando la lógica de Aniyomi
                 val jsonCrypto = tryParseJson<CryptoDto>(
                     String(AndroidBase64.decode(encryptedBase64, AndroidBase64.DEFAULT))
                 )
 
                 if (jsonCrypto?.ct != null && jsonCrypto.s != null) {
                     val decryptedUrl = decryptWithSalt(jsonCrypto.ct, jsonCrypto.s, DECRYPTION_PASSWORD)
-                    Log.d(TAG, "Link desencriptado ($serverTitle): $decryptedUrl")
-
-                    // 3. Cargar el extractor correspondiente
                     loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
                 }
             }
         }
         true
+    }
+
+    private fun fixUrl(url: String): String {
+        if (url.isEmpty()) return ""
+        if (url.startsWith("//")) return "https:$url"
+        if (url.startsWith("/")) return mainUrl + url
+        return url
     }
 }
