@@ -125,18 +125,24 @@ class KatanimeProvider : MainAPI() {
         val doc = Jsoup.parse(response.text)
         val homePageLists = mutableListOf<HomePageList>()
 
-        val recientesCaps = doc.select("div#article-div.chap div._135yj").mapNotNull {
+        val recientes = doc.select("div#article-div.recientes div._135yj").mapNotNull {
             val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
-            val capLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
-            val animeLink = if (capLink.contains("/capitulo/")) {
-                val slug = capLink.substringAfter("/capitulo/").substringBeforeLast("-")
-                "$mainUrl/anime/$slug"
-            } else capLink
+            val animeLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
             val imgElem = it.selectFirst("img")
             val img = imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: ""
             newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img) }
         }
-        if (recientesCaps.isNotEmpty()) homePageLists.add(HomePageList("Capítulos Recientes", recientesCaps))
+        if (recientes.isNotEmpty()) homePageLists.add(HomePageList("Animes Recientes", recientes))
+
+        val populares = doc.select("div#widget div._type3").mapNotNull {
+            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+            val animeLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
+            val imgElem = it.selectFirst("img")
+            val img = imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: ""
+            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img) }
+        }
+        if (populares.isNotEmpty()) homePageLists.add(HomePageList("Animes Populares", populares))
+
         return newHomePageResponse(homePageLists, false)
     }
 
@@ -155,16 +161,22 @@ class KatanimeProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val response = app.get(url)
         val doc = Jsoup.parse(response.text)
+
         val title = cleanTitle(doc.selectFirst("h1.comics-title")?.text()) ?: ""
         val imgElem = doc.selectFirst("div#animeinfo img")
         val mainPoster = fixUrl(imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: "")
 
-        val statusBadge = doc.select("span.badge, .anime-info-content span").text().lowercase()
+        val statusText = doc.selectFirst("span#estado")?.text()?.lowercase() ?: ""
         val status = when {
-            statusBadge.contains("en emision") || statusBadge.contains("estreno") -> ShowStatus.Ongoing
-            statusBadge.contains("finalizado") || statusBadge.contains("completado") -> ShowStatus.Completed
+            statusText.contains("en emision") || statusText.contains("emisión") -> ShowStatus.Ongoing
+            statusText.contains("finalizado") -> ShowStatus.Completed
             else -> null
         }
+
+        val detailsBy = doc.selectFirst("div.details-by")?.text() ?: ""
+        val year = Regex("(\\d{4})").find(detailsBy)?.groupValues?.get(1)?.toIntOrNull()
+
+        val genres = doc.select("div.anime-genres a").map { it.text() }
 
         val apiToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         val apiUrl = doc.selectFirst("div._pagination")?.attr("data-url")
@@ -191,8 +203,6 @@ class KatanimeProvider : MainAPI() {
                         this.episode = ep.numero?.toIntOrNull()
                         this.posterUrl = fixUrl(ep.thumb ?: mainPoster)
                         this.addDate(ep.created_at)
-
-                        Log.d("KATANIME", "Ep ${ep.numero} fecha: ${ep.created_at}")
                     })
                 }
                 totalProcessed += items.size
@@ -204,6 +214,8 @@ class KatanimeProvider : MainAPI() {
             this.posterUrl = mainPoster
             this.plot = doc.selectFirst("#sinopsis p")?.text()
             this.showStatus = status
+            this.year = year
+            this.tags = genres
 
             val finalEpisodes = episodesList.distinctBy { it.episode }.sortedBy { it.episode }
             addEpisodes(DubStatus.Subbed, finalEpisodes)
