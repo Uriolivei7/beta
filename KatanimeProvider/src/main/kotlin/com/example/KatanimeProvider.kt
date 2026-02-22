@@ -207,27 +207,37 @@ class KatanimeProvider : MainAPI() {
                             Log.d(TAG, "LOG-FINAL-OK ($serverName): $decryptedUrl")
 
                             if (serverName.contains("SendVid", ignoreCase = true)) {
+                                // Buscamos el extractor en la lista global de forma segura
                                 val extractor = extractorApis.find { it.name.contains("sendvid", ignoreCase = true) }
 
                                 if (extractor != null) {
-                                    extractor.getUrl(decryptedUrl, mainUrl)?.forEach { link: ExtractorLink ->
-                                        callback(link)
-                                    }
-                                    Log.d(TAG, "SENDVID: Procesado por extractor oficial")
-                                } else {
-                                    callback(
-                                        newExtractorLink(
-                                            source = this@KatanimeProvider.name,
-                                            name = serverName,
-                                            url = decryptedUrl,
-                                            type = ExtractorLinkType.VIDEO
-                                        ) {
-                                            this.referer = mainUrl
+                                    // Obtenemos los links de forma asíncrona
+                                    val links = extractor.getUrl(decryptedUrl, mainUrl)
+
+                                    if (links != null && links.isNotEmpty()) {
+                                        links.forEach { link ->
+                                            callback(link)
+                                            Log.d(TAG, "SENDVID: Link extraído correctamente -> ${link.url}")
                                         }
-                                    )
-                                    Log.d(TAG, "SENDVID: Extractor no encontrado, inyectado link crudo")
+                                    } else {
+                                        Log.w(TAG, "SENDVID: El extractor no devolvió nada. Intentando inyección manual...")
+                                        // Fallback manual si el extractor falla
+                                        callback(
+                                            newExtractorLink(
+                                                source = this@KatanimeProvider.name,
+                                                name = "$serverName (Directo)",
+                                                url = decryptedUrl,
+                                                type = ExtractorLinkType.VIDEO
+                                            ) {
+                                                this.referer = mainUrl
+                                            }
+                                        )
+                                    }
+                                } else {
+                                    Log.e(TAG, "SENDVID: No se encontró el extractor en la SDK.")
                                 }
                             } else {
+                                // ... resto de tu lógica (Mediafire, etc.) ...
                                 val finalUrl = when {
                                     decryptedUrl.contains("mediafire.com") -> decryptedUrl.replace("/file/", "/download/")
                                     decryptedUrl.contains("sfastwish.com") -> decryptedUrl.replace("/e/", "/v/")
