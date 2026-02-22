@@ -130,9 +130,11 @@ class KatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Cargando info de: $url")
+        Log.d(TAG, "Iniciando carga: $url")
+
         val response = app.get(url)
         val doc = Jsoup.parse(response.text)
+        val cookies = response.cookies
 
         val title = cleanTitle(doc.selectFirst("h1.comics-title")?.text()) ?: ""
         val mainPoster = fixUrl(doc.selectFirst("div#animeinfo img")?.attr("data-src") ?: "")
@@ -149,21 +151,35 @@ class KatanimeProvider : MainAPI() {
 
             try {
                 do {
-                    Log.d(TAG, "Petición API a: $apiUrl | Página: $pageToLoad")
+                    Log.d(TAG, "Solicitando API Pag $pageToLoad a $apiUrl con Token $apiToken")
 
                     val apiRes = app.post(
                         apiUrl,
                         data = mapOf("_token" to apiToken, "pagina" to pageToLoad.toString()),
-                        headers = mapOf("Referer" to url, "X-Requested-With" to "XMLHttpRequest")
-                    ).text
+                        cookies = cookies,
+                        headers = mapOf(
+                            "Referer" to url,
+                            "X-Requested-With" to "XMLHttpRequest",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        )
+                    )
 
-                    val parsed = tryParseJson<EpisodeList>(apiRes)
+                    if (!apiRes.isSuccessful) {
+                        Log.e(TAG, "Error en API: Código ${apiRes.code}. Cuerpo: ${apiRes.text}")
+                        break
+                    }
+
+                    val parsed = tryParseJson<EpisodeList>(apiRes.text)
                     val epData = parsed?.ep?.data
 
-                    if (epData.isNullOrEmpty()) break
+                    if (epData.isNullOrEmpty()) {
+                        Log.w(TAG, "La API devolvió datos vacíos en la página $pageToLoad")
+                        break
+                    }
 
                     if (pageToLoad == 1) {
                         totalPages = parsed.ep?.lastPage ?: 1
+                        Log.d(TAG, "Total de páginas detectadas: $totalPages")
                     }
 
                     epData.forEach { item ->
@@ -180,8 +196,15 @@ class KatanimeProvider : MainAPI() {
                     pageToLoad++
                 } while (pageToLoad <= totalPages)
             } catch (e: Exception) {
-                Log.e(TAG, "Error en episodios: ${e.message}")
+                Log.e(TAG, "Excepción cargando episodios: ${e.message}")
+                e.printStackTrace()
             }
+        } else {
+            Log.e(TAG, "No se encontró apiToken ($apiToken) o apiUrl ($apiUrl)")
+        }
+
+        if (allEpisodes.isEmpty()) {
+            Log.e(TAG, "CRÍTICO: No se pudo extraer ningún episodio de $url")
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.Anime, allEpisodes.sortedBy { it.episode }) {
