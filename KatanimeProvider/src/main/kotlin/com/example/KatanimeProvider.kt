@@ -36,8 +36,7 @@ class KatanimeProvider : MainAPI() {
     @Serializable
     data class Ep(
         @SerialName("last_page") val lastPage: Int? = null,
-        @SerialName("current_page") val currentPage: Int? = null,
-        @SerialName("total") val total: Int? = null,
+        val total: Int? = null,
         val data: List<DataEpisode> = emptyList()
     )
 
@@ -56,9 +55,20 @@ class KatanimeProvider : MainAPI() {
         return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
+    // Nueva función para limpiar y arreglar Base64 antes de decodificar
+    private fun safeBase64Decode(input: String): ByteArray {
+        val cleaned = input.replace(Regex("[^A-Za-z0-9+/=]"), "")
+        val padded = when (cleaned.length % 4) {
+            2 -> "$cleaned=="
+            3 -> "$cleaned="
+            else -> cleaned
+        }
+        return AndroidBase64.decode(padded, AndroidBase64.DEFAULT)
+    }
+
     private fun decryptWithSalt(cipherText: String, salt: String, password: String): String {
         return try {
-            val ctBytes = AndroidBase64.decode(cipherText, AndroidBase64.DEFAULT)
+            val ctBytes = safeBase64Decode(cipherText)
             val saltBytes = salt.decodeHex()
             val passBytes = password.toByteArray(Charsets.UTF_8)
 
@@ -85,7 +95,7 @@ class KatanimeProvider : MainAPI() {
             val decrypted = String(cipher.doFinal(ctBytes), Charsets.UTF_8)
             decrypted.replace("\"", "").trim()
         } catch (e: Exception) {
-            Log.e(TAG, "FALLO CRITICO DESCIFRADO: ${e.message}")
+            Log.e(TAG, "LOG-DECRYPT-ERROR: ${e.message}")
             ""
         }
     }
@@ -106,13 +116,10 @@ class KatanimeProvider : MainAPI() {
             newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img ?: "") }
         }
         if (recientesCaps.isNotEmpty()) homePageLists.add(HomePageList("Capítulos Recientes", recientesCaps))
-
         return newHomePageResponse(homePageLists, false)
     }
 
-    // --- SEARCH REINSERTADO ---
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "LOG-SEARCH: Buscando $query")
         val doc = app.get("$mainUrl/buscar?q=$query").document
         return doc.select("div._135yj").mapNotNull {
             val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
@@ -124,13 +131,10 @@ class KatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "LOG-LOAD: Iniciando en $url")
         val response = app.get(url)
         val doc = Jsoup.parse(response.text)
-
         val title = cleanTitle(doc.selectFirst("h1.comics-title")?.text()) ?: ""
-        val imgElem = doc.selectFirst("div#animeinfo img")
-        val mainPoster = fixUrl(imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: "")
+        val mainPoster = fixUrl(doc.selectFirst("div#animeinfo img")?.attr("data-src") ?: "")
 
         val apiToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         val apiUrl = doc.selectFirst("div._pagination")?.attr("data-url")
@@ -139,19 +143,20 @@ class KatanimeProvider : MainAPI() {
 
         if (apiToken != null && apiUrl != null) {
             var page = 1
-            var lastPage = 1
+            var totalProcessed = 0
+            var maxEpisodes = 0
+
             do {
-                Log.d(TAG, "LOG-API: Pidiendo página $page de $lastPage")
                 val apiRes = app.post(
                     apiUrl,
                     data = mapOf("_token" to apiToken, "pagina" to page.toString()),
                     headers = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to url),
                     cookies = response.cookies
                 )
-
                 val parsed = tryParseJson<EpisodeList>(apiRes.text)
                 val items = parsed?.ep?.data ?: emptyList()
-                Log.d(TAG, "LOG-API: Pag $page tiene ${items.size} eps. Total meta: ${parsed?.ep?.total}")
+
+                if (page == 1) maxEpisodes = parsed?.ep?.total ?: 0
 
                 items.forEach { ep ->
                     episodesList.add(newEpisode(EpisodeLoadData(fixUrl(ep.url ?: "")).toJson()) {
@@ -160,17 +165,16 @@ class KatanimeProvider : MainAPI() {
                         this.posterUrl = fixUrl(ep.thumb ?: mainPoster)
                     })
                 }
-                lastPage = parsed?.ep?.lastPage ?: 1
+
+                totalProcessed += items.size
                 page++
-            } while (page <= lastPage)
+                // Seguimos pidiendo páginas mientras no tengamos todos los episodios declarados por el "total"
+            } while (totalProcessed < maxEpisodes && items.isNotEmpty())
         }
 
-        Log.d(TAG, "LOG-LOAD: Final con ${episodesList.size} episodios")
         return newTvSeriesLoadResponse(title, url, TvType.Anime, episodesList.distinctBy { it.episode }.sortedBy { it.episode }) {
             this.posterUrl = mainPoster
             this.plot = doc.selectFirst("#sinopsis p")?.text()
-            this.year = doc.selectFirst(".details-by")?.text()?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() }
-            this.tags = doc.select(".anime-genres a").map { it.text() }
         }
     }
 
@@ -181,11 +185,8 @@ class KatanimeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
         val episodeUrl = tryParseJson<EpisodeLoadData>(data)?.url ?: data
-        Log.d(TAG, "LOG-LINKS: Entrando a $episodeUrl")
-
         val doc = app.get(episodeUrl).document
         val players = doc.select("ul.ul-drop li a[data-player]")
-        Log.d(TAG, "LOG-LINKS: ${players.size} servidores encontrados")
 
         players.amap { element ->
             val serverName = element.text()
@@ -195,20 +196,19 @@ class KatanimeProvider : MainAPI() {
                 val encrypted = playerPage.substringAfter("var e = '", "").substringBefore("';", "")
 
                 if (encrypted.isNotEmpty()) {
-                    val rawJson = String(AndroidBase64.decode(encrypted, AndroidBase64.DEFAULT))
+                    // Usamos la decodificación segura aquí
+                    val rawJson = String(safeBase64Decode(encrypted))
                     val crypto = tryParseJson<CryptoDto>(rawJson)
 
                     if (crypto?.ct != null && crypto.s != null) {
                         val decryptedUrl = decryptWithSalt(crypto.ct, crypto.s, DECRYPTION_PASSWORD)
-                        Log.d(TAG, "LOG-DECRYPT: $serverName -> $decryptedUrl")
-
                         if (decryptedUrl.startsWith("http")) {
                             loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "LOG-ERROR-LINK: $serverName -> ${e.message}")
+                Log.e(TAG, "LOG-LINK-FAIL: $serverName -> ${e.message}")
             }
         }
         true
