@@ -151,12 +151,12 @@ class PelisplusProvider : MainAPI() {
         val yearRegex = Regex("""(\d{4})""")
         val year = yearRegex.find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
 
-        val poster = fixUrl(doc.selectFirst("img.img-fluid")?.attr("src") ?: "")
+        val mainPoster = fixUrl(doc.selectFirst("img.img-fluid")?.attr("src") ?: "")
         val description = doc.selectFirst("div.text-large")?.text() ?: ""
 
         if (isMovie) {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = poster
+                this.posterUrl = mainPoster
                 this.plot = description
                 this.year = year
             }
@@ -169,12 +169,12 @@ class PelisplusProvider : MainAPI() {
 
                 val epThumb = element.selectFirst("img")?.attr("src")
                     ?: element.attr("data-img")
-                    ?: poster
+                    ?: mainPoster
 
                 val season = Regex("(?i)T(\\d+)").find(epRawName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 val episode = Regex("(?i)E(\\d+)").find(epRawName)?.groupValues?.get(1)?.toIntOrNull()
 
-                Log.d(TAG, "Episodio encontrado: $cleanEpName - Poster: $epThumb")
+                Log.d(TAG, "Episodio: $cleanEpName | Poster asignado: $epThumb")
 
                 newEpisode(EpisodeLoadData(cleanEpName, epUrl).toJson()) {
                     this.name = cleanEpName
@@ -184,8 +184,10 @@ class PelisplusProvider : MainAPI() {
                 }
             }
 
+            if (episodes.isEmpty()) Log.w(TAG, "No se encontraron episodios para: $title")
+
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                this.posterUrl = poster
+                this.posterUrl = mainPoster
                 this.plot = description
                 this.year = year
             }
