@@ -219,7 +219,7 @@ class NetflixProvider : MainAPI() {
         playlist.forEach { item ->
             item.sources.forEach { source ->
                 val finalName = "$name ${source.label}".trim()
-                
+
                 callback.invoke(
                     newExtractorLink(
                         source = finalName,

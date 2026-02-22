@@ -27,11 +27,22 @@ class PelisplusProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
 
+    private val TAG = "PelisPlusProvider"
+
+
+    private fun cleanTitle(title: String?): String? {
+        if (title == null) return null
+        return title
+            .replace(Regex("(?i)^(Ver|Ver Online)\\s+"), "")
+            .replace(Regex("(?i)\\s+Online\\s+Gratis.*$"), "")
+            .replace(Regex("(?i)\\s+HD$"), "")
+            .replace(Regex("\\s+\\(\\d{4}\\)$"), "")
+            .replace(Regex("\\s+\\d{4}$"), "")
+            .trim()
+    }
+
     @Serializable
-    data class EpisodeLoadData(
-        val title: String,
-        val url: String
-    )
+    data class EpisodeLoadData(val title: String, val url: String)
 
     @Serializable
     data class SortedEmbed(
@@ -96,40 +107,49 @@ class PelisplusProvider : MainAPI() {
         val homePageLists = urls.amap { (name, url) ->
             val doc = app.get(url).document
             val homeItems = doc.select("div.Posters a.Posters-link").mapNotNull { element ->
-                val title = element.attr("data-title") ?: return@mapNotNull null
+                val rawTitle = element.attr("data-title")
+                val cleanTitle = cleanTitle(rawTitle) ?: return@mapNotNull null
                 val link = element.attr("href") ?: return@mapNotNull null
                 val img = element.selectFirst("img.Posters-img")?.attr("src")
 
-                newAnimeSearchResponse(title, fixUrl(link)) {
+                newAnimeSearchResponse(cleanTitle, fixUrl(link)) {
                     this.posterUrl = fixUrl(img ?: "")
                     this.type = if (url.contains("peliculas")) TvType.Movie else TvType.TvSeries
                 }
             }
             HomePageList(name, homeItems)
         }
-
         return newHomePageResponse(homePageLists, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/search?s=$query"
+        Log.d(TAG, "Iniciando búsqueda: $url")
         val doc = app.get(url).document
 
         return doc.select("div.Posters a.Posters-link").mapNotNull {
-            val title = it.attr("data-title") ?: return@mapNotNull null
+            val rawTitle = it.attr("data-title")
+            val cleanTitle = cleanTitle(rawTitle) ?: return@mapNotNull null
             val link = it.attr("href") ?: return@mapNotNull null
             val img = it.selectFirst("img.Posters-img")?.attr("src")
 
-            newAnimeSearchResponse(title, fixUrl(link)) {
+            newAnimeSearchResponse(cleanTitle, fixUrl(link)) {
                 this.posterUrl = fixUrl(img ?: "")
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "Cargando URL: $url")
         val doc = app.get(url).document
         val isMovie = url.contains("pelicula")
-        val title = doc.selectFirst("h1.m-b-5")?.text() ?: ""
+
+        val rawTitle = doc.selectFirst("h1.m-b-5")?.text() ?: ""
+        val title = cleanTitle(rawTitle) ?: rawTitle
+
+        val yearRegex = Regex("(\\d{4})")
+        val year = yearRegex.find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+
         val poster = fixUrl(doc.selectFirst("img.img-fluid")?.attr("src") ?: "")
         val description = doc.selectFirst("div.text-large")?.text() ?: ""
 
@@ -137,17 +157,20 @@ class PelisplusProvider : MainAPI() {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.plot = description
+                this.year = year
             }
         } else {
             val episodes = doc.select("div.tab-pane a.btn-primary").mapNotNull { element ->
                 val epUrl = fixUrl(element.attr("href") ?: "")
-                val epTitle = element.text() ?: ""
+                val epRawName = element.text() ?: ""
 
-                val season = Regex("""T(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                val episode = Regex("""E(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
+                val cleanEpName = epRawName.replace(Regex("(?i)T\\d+\\s*-\\s*E\\d+:\\s*"), "").trim()
 
-                newEpisode(EpisodeLoadData(epTitle, epUrl).toJson()) {
-                    this.name = epTitle
+                val season = Regex("(?i)T(\\d+)").find(epRawName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val episode = Regex("(?i)E(\\d+)").find(epRawName)?.groupValues?.get(1)?.toIntOrNull()
+
+                newEpisode(EpisodeLoadData(cleanEpName, epUrl).toJson()) {
+                    this.name = cleanEpName
                     this.season = season
                     this.episode = episode
                 }
@@ -155,6 +178,7 @@ class PelisplusProvider : MainAPI() {
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
                 this.plot = description
+                this.year = year
             }
         }
     }
