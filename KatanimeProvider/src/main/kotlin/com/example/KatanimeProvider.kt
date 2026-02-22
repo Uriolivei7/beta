@@ -121,27 +121,41 @@ class KatanimeProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val response = app.get(mainUrl)
-        val doc = Jsoup.parse(response.text)
         val homePageLists = mutableListOf<HomePageList>()
 
-        val recientes = doc.select("div#article-div.recientes div._135yj").mapNotNull {
-            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
-            val animeLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
-            val imgElem = it.selectFirst("img")
-            val img = imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: ""
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img) }
-        }
-        if (recientes.isNotEmpty()) homePageLists.add(HomePageList("Animes Recientes", recientes))
+        try {
+            val resRecientes = app.get("$mainUrl/animes").document
+            val recientes = resRecientes.select("div._135yj").mapNotNull {
+                val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+                val animeLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
+                val imgElem = it.selectFirst("img")
+                val img = imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: ""
 
-        val populares = doc.select("div#widget div._type3").mapNotNull {
-            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
-            val animeLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
-            val imgElem = it.selectFirst("img")
-            val img = imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: ""
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img) }
+                newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) {
+                    this.posterUrl = fixUrl(img)
+                }
+            }
+            if (recientes.isNotEmpty()) homePageLists.add(HomePageList("Animes Recientes", recientes))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cargando recientes: ${e.message}")
         }
-        if (populares.isNotEmpty()) homePageLists.add(HomePageList("Animes Populares", populares))
+
+        try {
+            val resPopulares = app.get("$mainUrl/populares").document
+            val populares = resPopulares.select("div._135yj").mapNotNull {
+                val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+                val animeLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
+                val imgElem = it.selectFirst("img")
+                val img = imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: ""
+
+                newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) {
+                    this.posterUrl = fixUrl(img)
+                }
+            }
+            if (populares.isNotEmpty()) homePageLists.add(HomePageList("Animes Populares", populares))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cargando populares: ${e.message}")
+        }
 
         return newHomePageResponse(homePageLists, false)
     }
