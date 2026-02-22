@@ -207,16 +207,26 @@ class KatanimeProvider : MainAPI() {
                             Log.d(TAG, "LOG-FINAL-OK ($serverName): $decryptedUrl")
 
                             if (serverName.contains("SendVid", ignoreCase = true)) {
-                                callback(
-                                    newExtractorLink(
-                                        source = this@KatanimeProvider.name,
-                                        name = serverName,
-                                        url = decryptedUrl,
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = mainUrl
+                                val extractor = extractorApis.find { it.name.contains("sendvid", ignoreCase = true) }
+
+                                if (extractor != null) {
+                                    extractor.getUrl(decryptedUrl, mainUrl)?.forEach { link: ExtractorLink ->
+                                        callback(link)
                                     }
-                                )
+                                    Log.d(TAG, "SENDVID: Procesado por extractor oficial")
+                                } else {
+                                    callback(
+                                        newExtractorLink(
+                                            source = this@KatanimeProvider.name,
+                                            name = serverName,
+                                            url = decryptedUrl,
+                                            type = ExtractorLinkType.VIDEO
+                                        ) {
+                                            this.referer = mainUrl
+                                        }
+                                    )
+                                    Log.d(TAG, "SENDVID: Extractor no encontrado, inyectado link crudo")
+                                }
                             } else {
                                 val finalUrl = when {
                                     decryptedUrl.contains("mediafire.com") -> decryptedUrl.replace("/file/", "/download/")
