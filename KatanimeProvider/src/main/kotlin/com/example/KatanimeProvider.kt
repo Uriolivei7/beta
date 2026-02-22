@@ -36,6 +36,8 @@ class KatanimeProvider : MainAPI() {
     @Serializable
     data class Ep(
         @SerialName("last_page") val lastPage: Int? = null,
+        @SerialName("current_page") val currentPage: Int? = null,
+        @SerialName("total") val total: Int? = null,
         val data: List<DataEpisode> = emptyList()
     )
 
@@ -83,7 +85,7 @@ class KatanimeProvider : MainAPI() {
             val decrypted = String(cipher.doFinal(ctBytes), Charsets.UTF_8)
             decrypted.replace("\"", "").trim()
         } catch (e: Exception) {
-            Log.e(TAG, "Error en descifrado: ${e.message}")
+            Log.e(TAG, "FALLO CRITICO DESCIFRADO: ${e.message}")
             ""
         }
     }
@@ -93,7 +95,6 @@ class KatanimeProvider : MainAPI() {
         val doc = Jsoup.parse(response.text)
         val homePageLists = mutableListOf<HomePageList>()
 
-        // 1. Capítulos Recientes
         val recientesCaps = doc.select("div#article-div.chap div._135yj").mapNotNull {
             val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
             val capLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
@@ -101,39 +102,17 @@ class KatanimeProvider : MainAPI() {
                 val slug = capLink.substringAfter("/capitulo/").substringBeforeLast("-")
                 "$mainUrl/anime/$slug"
             } else capLink
-
             val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
-
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) {
-                this.posterUrl = fixUrl(img ?: "")
-            }
+            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img ?: "") }
         }
         if (recientesCaps.isNotEmpty()) homePageLists.add(HomePageList("Capítulos Recientes", recientesCaps))
-
-        // 2. Animes Recientes (Sección abajo en la web)
-        val recientesAnimes = doc.select("div.recientes div._135yj").mapNotNull {
-            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
-            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
-                this.posterUrl = fixUrl(img ?: "")
-            }
-        }
-        if (recientesAnimes.isNotEmpty()) homePageLists.add(HomePageList("Animes Recientes", recientesAnimes))
-
-        // 3. Populares
-        val populares = doc.select("div._type3").mapNotNull {
-            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
-            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
-                this.posterUrl = fixUrl(img ?: "")
-            }
-        }
-        if (populares.isNotEmpty()) homePageLists.add(HomePageList("Animes Populares", populares))
 
         return newHomePageResponse(homePageLists, false)
     }
 
+    // --- SEARCH REINSERTADO ---
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(TAG, "LOG-SEARCH: Buscando $query")
         val doc = app.get("$mainUrl/buscar?q=$query").document
         return doc.select("div._135yj").mapNotNull {
             val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
@@ -145,6 +124,7 @@ class KatanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "LOG-LOAD: Iniciando en $url")
         val response = app.get(url)
         val doc = Jsoup.parse(response.text)
 
@@ -161,6 +141,7 @@ class KatanimeProvider : MainAPI() {
             var page = 1
             var lastPage = 1
             do {
+                Log.d(TAG, "LOG-API: Pidiendo página $page de $lastPage")
                 val apiRes = app.post(
                     apiUrl,
                     data = mapOf("_token" to apiToken, "pagina" to page.toString()),
@@ -169,7 +150,10 @@ class KatanimeProvider : MainAPI() {
                 )
 
                 val parsed = tryParseJson<EpisodeList>(apiRes.text)
-                parsed?.ep?.data?.forEach { ep ->
+                val items = parsed?.ep?.data ?: emptyList()
+                Log.d(TAG, "LOG-API: Pag $page tiene ${items.size} eps. Total meta: ${parsed?.ep?.total}")
+
+                items.forEach { ep ->
                     episodesList.add(newEpisode(EpisodeLoadData(fixUrl(ep.url ?: "")).toJson()) {
                         this.name = "Episodio ${ep.numero}"
                         this.episode = ep.numero?.toIntOrNull()
@@ -181,7 +165,8 @@ class KatanimeProvider : MainAPI() {
             } while (page <= lastPage)
         }
 
-        return newTvSeriesLoadResponse(title, url, TvType.Anime, episodesList.sortedBy { it.episode }) {
+        Log.d(TAG, "LOG-LOAD: Final con ${episodesList.size} episodios")
+        return newTvSeriesLoadResponse(title, url, TvType.Anime, episodesList.distinctBy { it.episode }.sortedBy { it.episode }) {
             this.posterUrl = mainPoster
             this.plot = doc.selectFirst("#sinopsis p")?.text()
             this.year = doc.selectFirst(".details-by")?.text()?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() }
@@ -196,10 +181,14 @@ class KatanimeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
         val episodeUrl = tryParseJson<EpisodeLoadData>(data)?.url ?: data
+        Log.d(TAG, "LOG-LINKS: Entrando a $episodeUrl")
+
         val doc = app.get(episodeUrl).document
         val players = doc.select("ul.ul-drop li a[data-player]")
+        Log.d(TAG, "LOG-LINKS: ${players.size} servidores encontrados")
 
         players.amap { element ->
+            val serverName = element.text()
             try {
                 val dataPlayer = element.attr("data-player")
                 val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
@@ -211,13 +200,15 @@ class KatanimeProvider : MainAPI() {
 
                     if (crypto?.ct != null && crypto.s != null) {
                         val decryptedUrl = decryptWithSalt(crypto.ct, crypto.s, DECRYPTION_PASSWORD)
+                        Log.d(TAG, "LOG-DECRYPT: $serverName -> $decryptedUrl")
+
                         if (decryptedUrl.startsWith("http")) {
                             loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en link: ${e.message}")
+                Log.e(TAG, "LOG-ERROR-LINK: $serverName -> ${e.message}")
             }
         }
         true
