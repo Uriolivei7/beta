@@ -55,12 +55,12 @@ class KatanimeProvider : MainAPI() {
         return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
-    // Decodificador seguro que limpia caracteres de escape de JS
     private fun safeBase64Decode(input: String): ByteArray {
         val cleaned = input.replace("\\", "").replace("\"", "").replace(" ", "").trim()
         return try {
             AndroidBase64.decode(cleaned, AndroidBase64.DEFAULT)
         } catch (e: Exception) {
+            Log.e(TAG, "ERROR BASE64: ${e.message}")
             ByteArray(0)
         }
     }
@@ -76,7 +76,6 @@ class KatanimeProvider : MainAPI() {
             var generatedLength = 0
             var lastDigest = ByteArray(0)
 
-            // Lógica exacta de Aniyomi para generar Key e IV
             while (generatedLength < 48) {
                 md.reset()
                 if (generatedLength > 0) md.update(lastDigest)
@@ -95,10 +94,12 @@ class KatanimeProvider : MainAPI() {
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
             val decrypted = String(cipher.doFinal(ctBytes), Charsets.UTF_8)
 
-            // Limpieza final de la URL descifrada
-            decrypted.replace("\\/", "/").replace("\"", "").trim()
+            // LIMPIEZA CRITICA: Quitar escapes de JSON y comillas
+            val finalUrl = decrypted.replace("\\/", "/").replace("\"", "").trim()
+            Log.d(TAG, "DECRYPT-SUCCESS: $finalUrl")
+            finalUrl
         } catch (e: Exception) {
-            Log.e(TAG, "LOG-DECRYPT-ERROR: ${e.message}")
+            Log.e(TAG, "DECRYPT-FAILED: ${e.message}")
             ""
         }
     }
@@ -192,9 +193,9 @@ class KatanimeProvider : MainAPI() {
             val serverName = element.text()
             try {
                 val dataPlayer = element.attr("data-player")
-                val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
+                Log.d(TAG, "OBTENIENDO PLAYER: $serverName ($dataPlayer)")
 
-                // Extraemos el string 'e' que es un JSON Base64
+                val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
                 val encrypted = playerPage.substringAfter("var e = '", "").substringBefore("';", "")
 
                 if (encrypted.isNotEmpty()) {
@@ -203,14 +204,21 @@ class KatanimeProvider : MainAPI() {
 
                     if (crypto?.ct != null && crypto.s != null) {
                         val decryptedUrl = decryptWithSalt(crypto.ct, crypto.s, DECRYPTION_PASSWORD)
+
                         if (decryptedUrl.startsWith("http")) {
-                            Log.d(TAG, "LOG-OK: $serverName -> $decryptedUrl")
-                            loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
+                            Log.d(TAG, "LINK-FINAL-PARA-EXTRACTOR: $serverName -> $decryptedUrl")
+
+                            // Forzamos el referer para evitar que el servidor bloquee la carga
+                            loadExtractor(decryptedUrl, "https://katanime.net/", subtitleCallback, callback)
+                        } else {
+                            Log.w(TAG, "URL DESCIFRADA NO VALIDA: $decryptedUrl")
                         }
+                    } else {
+                        Log.e(TAG, "JSON CRYPTO INVALIDO PARA $serverName")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "LOG-LINK-FAIL: $serverName -> ${e.message}")
+                Log.e(TAG, "FALLO TOTAL EN SERVER $serverName: ${e.message}")
             }
         }
         true
