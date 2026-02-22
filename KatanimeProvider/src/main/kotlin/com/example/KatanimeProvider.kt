@@ -193,32 +193,34 @@ class KatanimeProvider : MainAPI() {
             val serverName = element.text()
             try {
                 val dataPlayer = element.attr("data-player")
-                Log.d(TAG, "OBTENIENDO PLAYER: $serverName ($dataPlayer)")
+                Log.d(TAG, "OBTENIENDO PLAYER: $serverName")
 
                 val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
                 val encrypted = playerPage.substringAfter("var e = '", "").substringBefore("';", "")
 
                 if (encrypted.isNotEmpty()) {
-                    val rawJson = String(safeBase64Decode(encrypted))
-                    val crypto = tryParseJson<CryptoDto>(rawJson)
+                    // CORRECCIÓN AQUÍ: El log muestra que 'encrypted' ya es el JSON o está escapado.
+                    // No intentamos decodificar Base64 directamente al string completo.
+                    val cleanJson = encrypted.replace("\\", "")
+                    Log.d(TAG, "JSON LIMPIO ($serverName): $cleanJson")
+
+                    val crypto = tryParseJson<CryptoDto>(cleanJson)
 
                     if (crypto?.ct != null && crypto.s != null) {
                         val decryptedUrl = decryptWithSalt(crypto.ct, crypto.s, DECRYPTION_PASSWORD)
 
                         if (decryptedUrl.startsWith("http")) {
-                            Log.d(TAG, "LINK-FINAL-PARA-EXTRACTOR: $serverName -> $decryptedUrl")
-
-                            // Forzamos el referer para evitar que el servidor bloquee la carga
+                            Log.d(TAG, "LOG-FINAL-OK ($serverName): $decryptedUrl")
                             loadExtractor(decryptedUrl, "https://katanime.net/", subtitleCallback, callback)
                         } else {
-                            Log.w(TAG, "URL DESCIFRADA NO VALIDA: $decryptedUrl")
+                            Log.w(TAG, "URL DESCIFRADA VACÍA O MALFORMADA: $decryptedUrl")
                         }
                     } else {
-                        Log.e(TAG, "JSON CRYPTO INVALIDO PARA $serverName")
+                        Log.e(TAG, "ESTRUCTURA CRYPTO NO RECONOCIDA PARA $serverName")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "FALLO TOTAL EN SERVER $serverName: ${e.message}")
+                Log.e(TAG, "FALLO EN SERVER $serverName: ${e.message}")
             }
         }
         true
