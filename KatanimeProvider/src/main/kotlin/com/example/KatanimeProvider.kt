@@ -47,7 +47,7 @@ class KatanimeProvider : MainAPI() {
         val numero: String? = null,
         val thumb: String? = null,
         val url: String? = null,
-        val created_at: String? = null 
+        val created_at: String? = null
     )
 
     @Serializable
@@ -181,16 +181,15 @@ class KatanimeProvider : MainAPI() {
                     cookies = response.cookies
                 )
                 val parsed = tryParseJson<EpisodeList>(apiRes.text)
-                val items: List<EpisodeDto> = parsed?.ep?.data ?: emptyList()
+                val items = parsed?.ep?.data ?: emptyList()
 
                 if (page == 1) maxEpisodes = parsed?.ep?.total ?: 0
 
-                items.forEach { ep: EpisodeDto ->
+                items.forEach { ep ->
                     episodesList.add(newEpisode(EpisodeLoadData(fixUrl(ep.url ?: "")).toJson()) {
                         this.name = "Episodio ${ep.numero}"
                         this.episode = ep.numero?.toIntOrNull()
                         this.posterUrl = fixUrl(ep.thumb ?: mainPoster)
-
                         this.addDate(ep.created_at)
 
                         Log.d("KATANIME", "Ep ${ep.numero} fecha: ${ep.created_at}")
