@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Element
 import kotlinx.coroutines.*
 import java.security.MessageDigest
 import javax.crypto.Cipher
@@ -14,7 +13,6 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64 as AndroidBase64
 import kotlinx.serialization.*
-import kotlinx.serialization.json.*
 
 class KatanimeProvider : MainAPI() {
     override var mainUrl = "https://katanime.net"
@@ -37,7 +35,6 @@ class KatanimeProvider : MainAPI() {
 
     @Serializable
     data class Ep(
-        @SerialName("current_page") val currentPage: Int? = null,
         @SerialName("last_page") val lastPage: Int? = null,
         val data: List<DataEpisode> = emptyList()
     )
@@ -46,15 +43,11 @@ class KatanimeProvider : MainAPI() {
     data class DataEpisode(
         val numero: String? = null,
         val thumb: String? = null,
-        val url: String? = null,
-        @SerialName("created_at") val createdAt: String? = null
+        val url: String? = null
     )
 
     private fun cleanTitle(title: String?): String? {
-        if (title == null) return null
-        return title.replace(Regex("(?i)^(Ver|Ver Online)\\s+"), "")
-            .replace(Regex("(?i)\\s+Online\\s+Gratis.*$"), "")
-            .replace(Regex("\\s+\\(\\d{4}\\)$"), "").trim()
+        return title?.replace(Regex("(?i)^(Ver|Ver Online)\\s+|\\s+Online\\s+Gratis.*$|\\s+\\(\\d{4}\\)$"), "")?.trim()
     }
 
     private fun String.decodeHex(): ByteArray {
@@ -87,129 +80,110 @@ class KatanimeProvider : MainAPI() {
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
-            String(cipher.doFinal(ctBytes), Charsets.UTF_8).replace("\"", "")
+            val decrypted = String(cipher.doFinal(ctBytes), Charsets.UTF_8)
+            decrypted.replace("\"", "").trim()
         } catch (e: Exception) {
-            Log.e(TAG, "Error decriptando: ${e.message}")
+            Log.e(TAG, "Error en descifrado: ${e.message}")
             ""
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/buscar?q=$query"
-        val response = app.get(url)
-        val doc = Jsoup.parse(response.text)
-
-        return doc.select("div#article-div div._135yj").mapNotNull {
-            val title = cleanTitle(it.selectFirst("a._2uHIS")?.text()) ?: return@mapNotNull null
-            val href = it.selectFirst("a._1A2Dc")?.attr("href") ?: return@mapNotNull null
-            val poster = it.selectFirst("img")?.attr("src") ?: it.selectFirst("img")?.attr("data-src")
-
-            newAnimeSearchResponse(title, fixUrl(href)) {
-                this.posterUrl = fixUrl(poster ?: "")
-            }
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val html = app.get(mainUrl).text
-        val doc = Jsoup.parse(html)
+        val response = app.get(mainUrl)
+        val doc = Jsoup.parse(response.text)
         val homePageLists = mutableListOf<HomePageList>()
 
-        val recientes = doc.select("div#article-div.recientes div._135yj").mapNotNull {
-            val title = cleanTitle(it.selectFirst("a._2uHIS")?.text()) ?: return@mapNotNull null
-            val link = fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")
-            val poster = it.selectFirst("img")?.attr("data-src") ?: it.selectFirst("img")?.attr("src")
+        // 1. Capítulos Recientes
+        val recientesCaps = doc.select("div#article-div.chap div._135yj").mapNotNull {
+            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+            val capLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
+            val animeLink = if (capLink.contains("/capitulo/")) {
+                val slug = capLink.substringAfter("/capitulo/").substringBeforeLast("-")
+                "$mainUrl/anime/$slug"
+            } else capLink
 
-            newAnimeSearchResponse(title, link) {
-                this.posterUrl = fixUrl(poster ?: "")
+            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
+
+            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) {
+                this.posterUrl = fixUrl(img ?: "")
             }
         }
-        if (recientes.isNotEmpty()) homePageLists.add(HomePageList("Animes Recientes", recientes))
+        if (recientesCaps.isNotEmpty()) homePageLists.add(HomePageList("Capítulos Recientes", recientesCaps))
+
+        // 2. Animes Recientes (Sección abajo en la web)
+        val recientesAnimes = doc.select("div.recientes div._135yj").mapNotNull {
+            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
+            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
+                this.posterUrl = fixUrl(img ?: "")
+            }
+        }
+        if (recientesAnimes.isNotEmpty()) homePageLists.add(HomePageList("Animes Recientes", recientesAnimes))
+
+        // 3. Populares
+        val populares = doc.select("div._type3").mapNotNull {
+            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
+            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
+                this.posterUrl = fixUrl(img ?: "")
+            }
+        }
+        if (populares.isNotEmpty()) homePageLists.add(HomePageList("Animes Populares", populares))
 
         return newHomePageResponse(homePageLists, false)
     }
 
-    override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Iniciando carga: $url")
+    override suspend fun search(query: String): List<SearchResponse> {
+        val doc = app.get("$mainUrl/buscar?q=$query").document
+        return doc.select("div._135yj").mapNotNull {
+            val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
+            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
+            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
+                this.posterUrl = fixUrl(img ?: "")
+            }
+        }
+    }
 
+    override suspend fun load(url: String): LoadResponse? {
         val response = app.get(url)
         val doc = Jsoup.parse(response.text)
-        val cookies = response.cookies
 
         val title = cleanTitle(doc.selectFirst("h1.comics-title")?.text()) ?: ""
-        val mainPoster = fixUrl(doc.selectFirst("div#animeinfo img")?.attr("data-src") ?: "")
-        val description = doc.selectFirst("#sinopsis p")?.text() ?: ""
+        val imgElem = doc.selectFirst("div#animeinfo img")
+        val mainPoster = fixUrl(imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: "")
 
         val apiToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         val apiUrl = doc.selectFirst("div._pagination")?.attr("data-url")
 
-        val allEpisodes = mutableListOf<Episode>()
+        val episodesList = mutableListOf<Episode>()
 
         if (apiToken != null && apiUrl != null) {
-            var pageToLoad = 1
-            var totalPages = 1
+            var page = 1
+            var lastPage = 1
+            do {
+                val apiRes = app.post(
+                    apiUrl,
+                    data = mapOf("_token" to apiToken, "pagina" to page.toString()),
+                    headers = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to url),
+                    cookies = response.cookies
+                )
 
-            try {
-                do {
-                    Log.d(TAG, "Solicitando API Pag $pageToLoad a $apiUrl con Token $apiToken")
-
-                    val apiRes = app.post(
-                        apiUrl,
-                        data = mapOf("_token" to apiToken, "pagina" to pageToLoad.toString()),
-                        cookies = cookies,
-                        headers = mapOf(
-                            "Referer" to url,
-                            "X-Requested-With" to "XMLHttpRequest",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        )
-                    )
-
-                    if (!apiRes.isSuccessful) {
-                        Log.e(TAG, "Error en API: Código ${apiRes.code}. Cuerpo: ${apiRes.text}")
-                        break
-                    }
-
-                    val parsed = tryParseJson<EpisodeList>(apiRes.text)
-                    val epData = parsed?.ep?.data
-
-                    if (epData.isNullOrEmpty()) {
-                        Log.w(TAG, "La API devolvió datos vacíos en la página $pageToLoad")
-                        break
-                    }
-
-                    if (pageToLoad == 1) {
-                        totalPages = parsed.ep?.lastPage ?: 1
-                        Log.d(TAG, "Total de páginas detectadas: $totalPages")
-                    }
-
-                    epData.forEach { item ->
-                        val epUrl = item.url ?: ""
-                        if (epUrl.isNotEmpty()) {
-                            allEpisodes.add(newEpisode(EpisodeLoadData(fixUrl(epUrl)).toJson()) {
-                                this.name = "Episodio ${item.numero}"
-                                this.episode = item.numero?.toIntOrNull()
-                                this.posterUrl = if (!item.thumb.isNullOrBlank()) fixUrl(item.thumb) else mainPoster
-                            })
-                        }
-                    }
-
-                    pageToLoad++
-                } while (pageToLoad <= totalPages)
-            } catch (e: Exception) {
-                Log.e(TAG, "Excepción cargando episodios: ${e.message}")
-                e.printStackTrace()
-            }
-        } else {
-            Log.e(TAG, "No se encontró apiToken ($apiToken) o apiUrl ($apiUrl)")
+                val parsed = tryParseJson<EpisodeList>(apiRes.text)
+                parsed?.ep?.data?.forEach { ep ->
+                    episodesList.add(newEpisode(EpisodeLoadData(fixUrl(ep.url ?: "")).toJson()) {
+                        this.name = "Episodio ${ep.numero}"
+                        this.episode = ep.numero?.toIntOrNull()
+                        this.posterUrl = fixUrl(ep.thumb ?: mainPoster)
+                    })
+                }
+                lastPage = parsed?.ep?.lastPage ?: 1
+                page++
+            } while (page <= lastPage)
         }
 
-        if (allEpisodes.isEmpty()) {
-            Log.e(TAG, "CRÍTICO: No se pudo extraer ningún episodio de $url")
-        }
-
-        return newTvSeriesLoadResponse(title, url, TvType.Anime, allEpisodes.sortedBy { it.episode }) {
+        return newTvSeriesLoadResponse(title, url, TvType.Anime, episodesList.sortedBy { it.episode }) {
             this.posterUrl = mainPoster
-            this.plot = description
+            this.plot = doc.selectFirst("#sinopsis p")?.text()
             this.year = doc.selectFirst(".details-by")?.text()?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() }
             this.tags = doc.select(".anime-genres a").map { it.text() }
         }
@@ -223,24 +197,27 @@ class KatanimeProvider : MainAPI() {
     ): Boolean = coroutineScope {
         val episodeUrl = tryParseJson<EpisodeLoadData>(data)?.url ?: data
         val doc = app.get(episodeUrl).document
+        val players = doc.select("ul.ul-drop li a[data-player]")
 
-        doc.select("ul.ul-drop li a[data-player]").amap { element ->
-            val serverTitle = element.text()
-            val dataPlayer = element.attr("data-player")
+        players.amap { element ->
+            try {
+                val dataPlayer = element.attr("data-player")
+                val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
+                val encrypted = playerPage.substringAfter("var e = '", "").substringBefore("';", "")
 
-            val playerDoc = app.get("$mainUrl/reproductor?url=$dataPlayer").document
-            val script = playerDoc.selectFirst("script:containsData(var e =)")?.data()
-            val encryptedBase64 = script?.substringAfter("var e = '")?.substringBefore("';")
+                if (encrypted.isNotEmpty()) {
+                    val rawJson = String(AndroidBase64.decode(encrypted, AndroidBase64.DEFAULT))
+                    val crypto = tryParseJson<CryptoDto>(rawJson)
 
-            if (!encryptedBase64.isNullOrBlank()) {
-                val jsonCrypto = tryParseJson<CryptoDto>(
-                    String(AndroidBase64.decode(encryptedBase64, AndroidBase64.DEFAULT))
-                )
-
-                if (jsonCrypto?.ct != null && jsonCrypto.s != null) {
-                    val decryptedUrl = decryptWithSalt(jsonCrypto.ct, jsonCrypto.s, DECRYPTION_PASSWORD)
-                    loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
+                    if (crypto?.ct != null && crypto.s != null) {
+                        val decryptedUrl = decryptWithSalt(crypto.ct, crypto.s, DECRYPTION_PASSWORD)
+                        if (decryptedUrl.startsWith("http")) {
+                            loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
+                        }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en link: ${e.message}")
             }
         }
         true
