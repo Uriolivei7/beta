@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
 import kotlinx.coroutines.*
 import java.security.MessageDigest
+import java.util.Arrays
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -37,6 +38,7 @@ class KatanimeProvider : MainAPI() {
     data class Ep(
         @SerialName("last_page") val lastPage: Int? = null,
         val total: Int? = null,
+        @SerialName("per_page") val perPage: Int? = null,
         val data: List<DataEpisode> = emptyList()
     )
 
@@ -47,64 +49,53 @@ class KatanimeProvider : MainAPI() {
         val url: String? = null
     )
 
-    private fun cleanTitle(title: String?): String? {
-        return title?.replace(Regex("(?i)^(Ver|Ver Online)\\s+|\\s+Online\\s+Gratis.*$|\\s+\\(\\d{4}\\)$"), "")?.trim()
+    private fun decryptWithSalt(cipherTextBase64: String, saltHex: String, password: String): String {
+        return try {
+            val keySize = 32
+            val ivSize = 16
+
+            val ctBytes = AndroidBase64.decode(cipherTextBase64, AndroidBase64.DEFAULT)
+            val saltBytes = saltHex.decodeHex()
+            val passBytes = password.toByteArray(Charsets.UTF_8)
+
+            val md = MessageDigest.getInstance("MD5")
+            val generatedData = ByteArray(keySize + ivSize)
+            var generatedLength = 0
+            var lastDigest = ByteArray(0)
+
+            while (generatedLength < keySize + ivSize) {
+                md.reset()
+                if (generatedLength > 0) md.update(lastDigest)
+                md.update(passBytes)
+                md.update(saltBytes, 0, 8)
+                lastDigest = md.digest()
+
+                val copyLen = minOf(lastDigest.size, generatedData.size - generatedLength)
+                System.arraycopy(lastDigest, 0, generatedData, generatedLength, copyLen)
+                generatedLength += copyLen
+            }
+
+            val key = generatedData.copyOfRange(0, keySize)
+            val iv = generatedData.copyOfRange(keySize, keySize + ivSize)
+
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+
+            val decryptedBytes = cipher.doFinal(ctBytes)
+            String(decryptedBytes, Charsets.UTF_8).replace("\"", "").trim()
+        } catch (e: Exception) {
+            Log.e(TAG, "ERROR DECRYPT: ${e.message}")
+            ""
+        }
     }
 
     private fun String.decodeHex(): ByteArray {
         return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
-    // Nueva función para limpiar y arreglar Base64 antes de decodificar
-    private fun safeBase64Decode(input: String): ByteArray {
-        val cleaned = input.replace(Regex("[^A-Za-z0-9+/=]"), "")
-        val padded = when (cleaned.length % 4) {
-            2 -> "$cleaned=="
-            3 -> "$cleaned="
-            else -> cleaned
-        }
-        return AndroidBase64.decode(padded, AndroidBase64.DEFAULT)
-    }
-
-    private fun decryptWithSalt(cipherText: String, salt: String, password: String): String {
-        return try {
-            val ctBytes = safeBase64Decode(cipherText)
-            val saltBytes = salt.decodeHex()
-            val passBytes = password.toByteArray(Charsets.UTF_8)
-
-            val md5 = MessageDigest.getInstance("MD5")
-            val generatedData = ByteArray(48)
-            var generatedLength = 0
-            var lastDigest = ByteArray(0)
-
-            while (generatedLength < 48) {
-                md5.reset()
-                md5.update(lastDigest)
-                md5.update(passBytes)
-                md5.update(saltBytes, 0, 8)
-                lastDigest = md5.digest()
-                System.arraycopy(lastDigest, 0, generatedData, generatedLength, lastDigest.size)
-                generatedLength += lastDigest.size
-            }
-
-            val key = generatedData.copyOfRange(0, 32)
-            val iv = generatedData.copyOfRange(32, 48)
-
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
-            val decrypted = String(cipher.doFinal(ctBytes), Charsets.UTF_8)
-            decrypted.replace("\"", "").trim()
-        } catch (e: Exception) {
-            Log.e(TAG, "LOG-DECRYPT-ERROR: ${e.message}")
-            ""
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val response = app.get(mainUrl)
-        val doc = Jsoup.parse(response.text)
+        val doc = app.get(mainUrl).document
         val homePageLists = mutableListOf<HomePageList>()
-
         val recientesCaps = doc.select("div#article-div.chap div._135yj").mapNotNull {
             val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
             val capLink = it.selectFirst("a._1A2Dc")?.attr("href") ?: ""
@@ -112,8 +103,7 @@ class KatanimeProvider : MainAPI() {
                 val slug = capLink.substringAfter("/capitulo/").substringBeforeLast("-")
                 "$mainUrl/anime/$slug"
             } else capLink
-            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(animeLink)) { this.posterUrl = fixUrl(img ?: "") }
+            newAnimeSearchResponse(title, fixUrl(animeLink)) { this.posterUrl = fixUrl(it.selectFirst("img")?.attr("data-src") ?: "") }
         }
         if (recientesCaps.isNotEmpty()) homePageLists.add(HomePageList("Capítulos Recientes", recientesCaps))
         return newHomePageResponse(homePageLists, false)
@@ -123,9 +113,8 @@ class KatanimeProvider : MainAPI() {
         val doc = app.get("$mainUrl/buscar?q=$query").document
         return doc.select("div._135yj").mapNotNull {
             val title = it.selectFirst("a._2uHIS")?.text() ?: return@mapNotNull null
-            val img = it.selectFirst("img")?.let { i -> i.attr("data-src").ifBlank { i.attr("src") } }
-            newAnimeSearchResponse(cleanTitle(title)!!, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
-                this.posterUrl = fixUrl(img ?: "")
+            newAnimeSearchResponse(title, fixUrl(it.selectFirst("a._1A2Dc")?.attr("href") ?: "")) {
+                this.posterUrl = fixUrl(it.selectFirst("img")?.attr("data-src") ?: "")
             }
         }
     }
@@ -133,29 +122,26 @@ class KatanimeProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val response = app.get(url)
         val doc = Jsoup.parse(response.text)
-        val title = cleanTitle(doc.selectFirst("h1.comics-title")?.text()) ?: ""
+        val title = doc.selectFirst("h1.comics-title")?.text() ?: ""
         val mainPoster = fixUrl(doc.selectFirst("div#animeinfo img")?.attr("data-src") ?: "")
 
-        val apiToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
-        val apiUrl = doc.selectFirst("div._pagination")?.attr("data-url")
+        val apiToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: ""
+        val apiUrl = doc.selectFirst("div._pagination")?.attr("data-url") ?: ""
 
         val episodesList = mutableListOf<Episode>()
 
-        if (apiToken != null && apiUrl != null) {
+        if (apiToken.isNotEmpty() && apiUrl.isNotEmpty()) {
             var page = 1
             var totalProcessed = 0
             var maxEpisodes = 0
-
             do {
-                val apiRes = app.post(
-                    apiUrl,
+                val apiRes = app.post(apiUrl,
                     data = mapOf("_token" to apiToken, "pagina" to page.toString()),
                     headers = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to url),
                     cookies = response.cookies
                 )
                 val parsed = tryParseJson<EpisodeList>(apiRes.text)
                 val items = parsed?.ep?.data ?: emptyList()
-
                 if (page == 1) maxEpisodes = parsed?.ep?.total ?: 0
 
                 items.forEach { ep ->
@@ -165,10 +151,8 @@ class KatanimeProvider : MainAPI() {
                         this.posterUrl = fixUrl(ep.thumb ?: mainPoster)
                     })
                 }
-
                 totalProcessed += items.size
                 page++
-                // Seguimos pidiendo páginas mientras no tengamos todos los episodios declarados por el "total"
             } while (totalProcessed < maxEpisodes && items.isNotEmpty())
         }
 
@@ -193,22 +177,24 @@ class KatanimeProvider : MainAPI() {
             try {
                 val dataPlayer = element.attr("data-player")
                 val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
+
+                // Limpieza de la variable e para evitar el error Base64
                 val encrypted = playerPage.substringAfter("var e = '", "").substringBefore("';", "")
+                    .replace("\\/", "/")
+                    .replace(" ", "")
 
                 if (encrypted.isNotEmpty()) {
-                    // Usamos la decodificación segura aquí
-                    val rawJson = String(safeBase64Decode(encrypted))
-                    val crypto = tryParseJson<CryptoDto>(rawJson)
-
+                    val crypto = tryParseJson<CryptoDto>(encrypted)
                     if (crypto?.ct != null && crypto.s != null) {
                         val decryptedUrl = decryptWithSalt(crypto.ct, crypto.s, DECRYPTION_PASSWORD)
                         if (decryptedUrl.startsWith("http")) {
+                            Log.d(TAG, "LOG-OK: $serverName -> $decryptedUrl")
                             loadExtractor(decryptedUrl, episodeUrl, subtitleCallback, callback)
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "LOG-LINK-FAIL: $serverName -> ${e.message}")
+                Log.e(TAG, "FAIL: $serverName -> ${e.message}")
             }
         }
         true
