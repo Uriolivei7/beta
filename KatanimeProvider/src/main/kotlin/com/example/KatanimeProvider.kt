@@ -207,37 +207,46 @@ class KatanimeProvider : MainAPI() {
                             Log.d(TAG, "LOG-FINAL-OK ($serverName): $decryptedUrl")
 
                             if (serverName.contains("SendVid", ignoreCase = true)) {
-                                // Buscamos el extractor en la lista global de forma segura
-                                val extractor = extractorApis.find { it.name.contains("sendvid", ignoreCase = true) }
+                                try {
+                                    // Usamos la URL del embed para obtener el HTML real
+                                    val response = app.get(decryptedUrl, referer = mainUrl).text
 
-                                if (extractor != null) {
-                                    // Obtenemos los links de forma asíncrona
-                                    val links = extractor.getUrl(decryptedUrl, mainUrl)
+                                    // Buscamos el MP4. Añadimos .replace para limpiar posibles barras escapadas (\/)
+                                    var videoUrl = response.substringAfter("source src=\"", "").substringBefore("\"", "")
+                                        .ifEmpty { response.substringAfter("video_url: '", "").substringBefore("'", "") }
+                                        .replace("\\/", "/")
 
-                                    if (links != null && links.isNotEmpty()) {
-                                        links.forEach { link ->
-                                            callback(link)
-                                            Log.d(TAG, "SENDVID: Link extraído correctamente -> ${link.url}")
-                                        }
-                                    } else {
-                                        Log.w(TAG, "SENDVID: El extractor no devolvió nada. Intentando inyección manual...")
-                                        // Fallback manual si el extractor falla
+                                    if (videoUrl.isNotEmpty() && videoUrl.startsWith("http")) {
+                                        Log.d(TAG, "SENDVID: ¡MP4 encontrado! -> $videoUrl")
                                         callback(
                                             newExtractorLink(
                                                 source = this@KatanimeProvider.name,
-                                                name = "$serverName (Directo)",
-                                                url = decryptedUrl,
+                                                name = "SendVid",
+                                                url = videoUrl,
+                                                // Definimos VIDEO como tipo y asignamos una calidad por defecto
                                                 type = ExtractorLinkType.VIDEO
                                             ) {
-                                                this.referer = mainUrl
+                                                // Importante: Referer a la web de origen para que el stream no se corte
+                                                this.referer = "https://sendvid.com/"
+                                                this.quality = Qualities.P720.value
                                             }
                                         )
+                                    } else {
+                                        Log.w(TAG, "SENDVID: MP4 no hallado. El HTML cambió o está protegido.")
+                                        // Mantenemos el fallback por si acaso
+                                        callback(
+                                            newExtractorLink(
+                                                source = this@KatanimeProvider.name,
+                                                name = "$serverName (Embed)",
+                                                url = decryptedUrl,
+                                                type = ExtractorLinkType.VIDEO
+                                            )
+                                        )
                                     }
-                                } else {
-                                    Log.e(TAG, "SENDVID: No se encontró el extractor en la SDK.")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error en SendVid manual: ${e.message}")
                                 }
                             } else {
-                                // ... resto de tu lógica (Mediafire, etc.) ...
                                 val finalUrl = when {
                                     decryptedUrl.contains("mediafire.com") -> decryptedUrl.replace("/file/", "/download/")
                                     decryptedUrl.contains("sfastwish.com") -> decryptedUrl.replace("/e/", "/v/")
