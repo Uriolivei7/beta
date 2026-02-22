@@ -193,17 +193,11 @@ class KatanimeProvider : MainAPI() {
             val serverName = element.text()
             try {
                 val dataPlayer = element.attr("data-player")
-                Log.d(TAG, "OBTENIENDO PLAYER: $serverName")
-
                 val playerPage = app.get("$mainUrl/reproductor?url=$dataPlayer", referer = episodeUrl).text
                 val encrypted = playerPage.substringAfter("var e = '", "").substringBefore("';", "")
 
                 if (encrypted.isNotEmpty()) {
-                    // CORRECCIÓN AQUÍ: El log muestra que 'encrypted' ya es el JSON o está escapado.
-                    // No intentamos decodificar Base64 directamente al string completo.
                     val cleanJson = encrypted.replace("\\", "")
-                    Log.d(TAG, "JSON LIMPIO ($serverName): $cleanJson")
-
                     val crypto = tryParseJson<CryptoDto>(cleanJson)
 
                     if (crypto?.ct != null && crypto.s != null) {
@@ -211,12 +205,27 @@ class KatanimeProvider : MainAPI() {
 
                         if (decryptedUrl.startsWith("http")) {
                             Log.d(TAG, "LOG-FINAL-OK ($serverName): $decryptedUrl")
-                            loadExtractor(decryptedUrl, "https://katanime.net/", subtitleCallback, callback)
-                        } else {
-                            Log.w(TAG, "URL DESCIFRADA VACÍA O MALFORMADA: $decryptedUrl")
+
+                            if (serverName.contains("SendVid", ignoreCase = true)) {
+                                callback(
+                                    newExtractorLink(
+                                        source = this@KatanimeProvider.name,
+                                        name = serverName,
+                                        url = decryptedUrl,
+                                        type = ExtractorLinkType.VIDEO
+                                    ) {
+                                        this.referer = mainUrl
+                                    }
+                                )
+                            } else {
+                                val finalUrl = when {
+                                    decryptedUrl.contains("mediafire.com") -> decryptedUrl.replace("/file/", "/download/")
+                                    decryptedUrl.contains("sfastwish.com") -> decryptedUrl.replace("/e/", "/v/")
+                                    else -> decryptedUrl
+                                }
+                                loadExtractor(finalUrl, mainUrl, subtitleCallback, callback)
+                            }
                         }
-                    } else {
-                        Log.e(TAG, "ESTRUCTURA CRYPTO NO RECONOCIDA PARA $serverName")
                     }
                 }
             } catch (e: Exception) {
