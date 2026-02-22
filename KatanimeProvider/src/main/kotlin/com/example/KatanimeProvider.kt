@@ -31,7 +31,24 @@ class KatanimeProvider : MainAPI() {
     data class EpisodeLoadData(val url: String)
 
     @Serializable
-    data class EpisodeList(val ep: Ep? = null)
+    data class EpisodeList(
+        val ep: EpData? = null
+    )
+
+    @Serializable
+    data class EpData(
+        @SerialName("last_page") val lastPage: Int? = null,
+        val total: Int? = null,
+        val data: List<EpisodeDto> = emptyList()
+    )
+
+    @Serializable
+    data class EpisodeDto(
+        val numero: String? = null,
+        val thumb: String? = null,
+        val url: String? = null,
+        val created_at: String? = null 
+    )
 
     @Serializable
     data class Ep(
@@ -94,7 +111,6 @@ class KatanimeProvider : MainAPI() {
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
             val decrypted = String(cipher.doFinal(ctBytes), Charsets.UTF_8)
 
-            // LIMPIEZA CRITICA: Quitar escapes de JSON y comillas
             val finalUrl = decrypted.replace("\\/", "/").replace("\"", "").trim()
             Log.d(TAG, "DECRYPT-SUCCESS: $finalUrl")
             finalUrl
@@ -143,6 +159,13 @@ class KatanimeProvider : MainAPI() {
         val imgElem = doc.selectFirst("div#animeinfo img")
         val mainPoster = fixUrl(imgElem?.attr("data-src")?.ifBlank { imgElem.attr("src") } ?: "")
 
+        val statusBadge = doc.select("span.badge, .anime-info-content span").text().lowercase()
+        val status = when {
+            statusBadge.contains("en emision") || statusBadge.contains("estreno") -> ShowStatus.Ongoing
+            statusBadge.contains("finalizado") || statusBadge.contains("completado") -> ShowStatus.Completed
+            else -> null
+        }
+
         val apiToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         val apiUrl = doc.selectFirst("div._pagination")?.attr("data-url")
         val episodesList = mutableListOf<Episode>()
@@ -158,14 +181,19 @@ class KatanimeProvider : MainAPI() {
                     cookies = response.cookies
                 )
                 val parsed = tryParseJson<EpisodeList>(apiRes.text)
-                val items = parsed?.ep?.data ?: emptyList()
+                val items: List<EpisodeDto> = parsed?.ep?.data ?: emptyList()
+
                 if (page == 1) maxEpisodes = parsed?.ep?.total ?: 0
 
-                items.forEach { ep ->
+                items.forEach { ep: EpisodeDto ->
                     episodesList.add(newEpisode(EpisodeLoadData(fixUrl(ep.url ?: "")).toJson()) {
                         this.name = "Episodio ${ep.numero}"
                         this.episode = ep.numero?.toIntOrNull()
                         this.posterUrl = fixUrl(ep.thumb ?: mainPoster)
+
+                        this.addDate(ep.created_at)
+
+                        Log.d("KATANIME", "Ep ${ep.numero} fecha: ${ep.created_at}")
                     })
                 }
                 totalProcessed += items.size
@@ -173,9 +201,13 @@ class KatanimeProvider : MainAPI() {
             } while (totalProcessed < maxEpisodes && items.isNotEmpty())
         }
 
-        return newTvSeriesLoadResponse(title, url, TvType.Anime, episodesList.distinctBy { it.episode }.sortedBy { it.episode }) {
+        return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = mainPoster
             this.plot = doc.selectFirst("#sinopsis p")?.text()
+            this.showStatus = status
+
+            val finalEpisodes = episodesList.distinctBy { it.episode }.sortedBy { it.episode }
+            addEpisodes(DubStatus.Subbed, finalEpisodes)
         }
     }
 
@@ -208,10 +240,8 @@ class KatanimeProvider : MainAPI() {
 
                             if (serverName.contains("SendVid", ignoreCase = true)) {
                                 try {
-                                    // Usamos la URL del embed para obtener el HTML real
                                     val response = app.get(decryptedUrl, referer = mainUrl).text
 
-                                    // Buscamos el MP4. Añadimos .replace para limpiar posibles barras escapadas (\/)
                                     var videoUrl = response.substringAfter("source src=\"", "").substringBefore("\"", "")
                                         .ifEmpty { response.substringAfter("video_url: '", "").substringBefore("'", "") }
                                         .replace("\\/", "/")
@@ -223,17 +253,14 @@ class KatanimeProvider : MainAPI() {
                                                 source = this@KatanimeProvider.name,
                                                 name = "SendVid",
                                                 url = videoUrl,
-                                                // Definimos VIDEO como tipo y asignamos una calidad por defecto
                                                 type = ExtractorLinkType.VIDEO
                                             ) {
-                                                // Importante: Referer a la web de origen para que el stream no se corte
                                                 this.referer = "https://sendvid.com/"
                                                 this.quality = Qualities.P720.value
                                             }
                                         )
                                     } else {
                                         Log.w(TAG, "SENDVID: MP4 no hallado. El HTML cambió o está protegido.")
-                                        // Mantenemos el fallback por si acaso
                                         callback(
                                             newExtractorLink(
                                                 source = this@KatanimeProvider.name,
@@ -248,8 +275,12 @@ class KatanimeProvider : MainAPI() {
                                 }
                             } else {
                                 val finalUrl = when {
-                                    decryptedUrl.contains("mediafire.com") -> decryptedUrl.replace("/file/", "/download/")
-                                    decryptedUrl.contains("sfastwish.com") -> decryptedUrl.replace("/e/", "/v/")
+                                    decryptedUrl.contains("mediafire.com") -> {
+                                        decryptedUrl.replace("/file/", "/download/")
+                                    }
+                                    decryptedUrl.contains("sfastwish.com") -> {
+                                        decryptedUrl.replace("/e/", "/v/")
+                                    }
                                     else -> decryptedUrl
                                 }
                                 loadExtractor(finalUrl, mainUrl, subtitleCallback, callback)
