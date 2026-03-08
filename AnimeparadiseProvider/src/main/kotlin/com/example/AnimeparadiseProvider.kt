@@ -199,15 +199,18 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val epUuid = parts.getOrNull(0) ?: ""
+        val rawUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        if (epUuid.isBlank() || epUuid.contains("www.animeparadise.moe")) {
-            Log.e(TAG, "Logs: Error - epUuid inválido: '$epUuid'")
+        val epUuid = rawUuid.substringAfterLast("/").trim()
+
+        if (epUuid.isBlank() || epUuid.length < 5) {
+            Log.e(TAG, "Logs: Error - epUuid inválido tras limpieza: '$epUuid'")
             return false
         }
 
         Log.d(TAG, "Logs: Solicitando enlaces para Ep REAL: $epUuid (Origin: $originId)")
+
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
         return try {
