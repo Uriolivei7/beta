@@ -155,21 +155,22 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
-            val episodes = epData.data?.map { ep ->
-                // IMPORTANTE: La API de Paradise suele usar 'id' o 'uuid'.
-                // Si 'id' es una URL, necesitamos extraer la parte final.
-                val rawId = ep.id ?: ""
-                val cleanEpId = rawId.removeSuffix("/").substringAfterLast("/")
+            val episodes = epData.data?.mapNotNull { ep ->
+                val finalId = ep.id
 
-                newEpisode("$cleanEpId|$internalId") {
-                    this.episode = ep.number?.toIntOrNull() ?: 0
-                    this.name = ep.title ?: "Episodio ${ep.number}"
-                    this.posterUrl = ep.image
+                if (finalId.isNullOrBlank() || finalId.startsWith("http")) {
+                    null
+                } else {
+                    Log.d(TAG, "Logs: Mapeando Ep ${ep.number} con ID: $finalId")
+                    newEpisode("$finalId|$internalId") {
+                        this.episode = ep.number?.toIntOrNull() ?: 0
+                        this.name = ep.title ?: "Episodio ${ep.number}"
+                        this.posterUrl = ep.image
+                    }
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
-            // 2. Mapeo de Recomendaciones con tipos explícitos
-            val recommendations = simData.data?.map { sim: SimilarAnime ->
+            val recommendations = simData.data?.map { sim ->
                 newAnimeSearchResponse(sim.title ?: "", "$mainUrl/anime/${sim.link}") {
                     this.posterUrl = sim.posterImage?.large
                 }
@@ -198,17 +199,11 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: return false
+        val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        // Limpieza agresiva del ID para evitar que sea "www.animeparadise.moe"
-        val epUuid = rawEpId.replace("https://", "")
-            .replace("www.animeparadise.moe", "")
-            .replace("/", "")
-            .trim()
-
-        if (epUuid.isEmpty()) {
-            Log.e(TAG, "Logs: Error - epUuid quedó vacío")
+        if (epUuid.isBlank() || epUuid.contains("www.animeparadise.moe")) {
+            Log.e(TAG, "Logs: Error - epUuid inválido: '$epUuid'")
             return false
         }
 
@@ -220,30 +215,27 @@ class AnimeParadiseProvider : MainAPI() {
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
-                "referer" to watchUrl
+                "referer" to watchUrl,
+                "origin" to mainUrl
             )
 
             val requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBody)
             val resText = response.text
 
-            // 1. Subtítulos con filtrado de duplicados
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
             val foundSubs = mutableSetOf<String>()
             subRegex.findAll(resText).forEach { match ->
                 val (src, label) = match.destructured
                 val cleanSrc = src.replace("\\/", "/")
-                if (foundSubs.add(cleanSrc)) { // Solo agrega si no estaba ya
+                if (foundSubs.add(cleanSrc)) {
                     val subUrl = if (!cleanSrc.startsWith("http")) "https://api.animeparadise.moe/stream/file/$cleanSrc" else cleanSrc
                     subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
             }
 
-            // 2. Video con filtrado de duplicados (Usando Set)
             val cleanResText = resText.replace("\\/", "/").replace("\\\"", "\"")
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-
-            // El Set elimina automáticamente las URLs idénticas
             val uniqueLinks = videoRegex.findAll(cleanResText).map { it.value }.toSet()
 
             uniqueLinks.forEach { rawUrl ->
@@ -258,7 +250,7 @@ class AnimeParadiseProvider : MainAPI() {
                         type = ExtractorLinkType.M3U8,
                         initializer = {
                             this.quality = Qualities.P1080.value
-                            this.referer = "https://www.animeparadise.moe/"
+                            this.referer = "$mainUrl/"
                         }
                     )
                 )
@@ -292,7 +284,6 @@ data class Episode(
 )
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
 
-// Respuesta para el detalle del anime
 data class AnimeDetailResponse(
     val success: Boolean?,
     val data: AnimeData?
@@ -300,10 +291,10 @@ data class AnimeDetailResponse(
 
 data class AnimeData(
     val _id: String?,
-    @JsonProperty("id") val id: String?, // Algunos endpoints usan 'id' y otros '_id'
+    @JsonProperty("id") val id: String?,
     val title: String?,
     val link: String?,
-    val synopsis: String?, // Mapeamos ambos por si acaso
+    val synopsis: String?,
     val synopsys: String?,
     val genres: List<String>?,
     val tags: List<String>?,
@@ -321,7 +312,6 @@ data class PosterImages(
     val original: String?
 )
 
-// Respuesta para animes similares (Recomendaciones)
 data class SimilarResponse(
     val success: Boolean?,
     val data: List<SimilarAnime>?
@@ -333,14 +323,13 @@ data class SimilarAnime(
     val posterImage: PosterImages?
 )
 
-// Respuesta de Episodios (Asegúrate de tener esta para el size)
 data class EpisodeListResponse(
     val success: Boolean?,
     val data: List<EpisodeData>?
 )
 
 data class EpisodeData(
-    val id: String?,
+    @JsonProperty("_id") val id: String?,
     val title: String?,
     val number: String?,
     val image: String?
