@@ -37,14 +37,18 @@ class AnimeParadiseProvider : MainAPI() {
             val recentRes = app.get("$apiUrl/ep/recently-added?v=1", headers = apiHeaders)
             val popularRes = app.get("$apiUrl/search?sort=POPULARITY&limit=15&v=1", headers = apiHeaders)
 
+            Log.d(TAG, "Logs: API Status - Recent: ${recentRes.code}, Popular: ${popularRes.code}")
+
             val recentData = parseNextJsJson<AnimeListResponse>(recentRes.text)
             val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
 
             val homePages = mutableListOf<HomePageList>()
             recentData?.data?.let { list ->
+                Log.d(TAG, "Logs: Agregando ${list.size} items a Recientes")
                 homePages.add(HomePageList("Recién Agregados", list.map { it.toSearchResponse() }))
             }
             popularData?.data?.let { list ->
+                Log.d(TAG, "Logs: Agregando ${list.size} items a Populares")
                 homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
             }
 
@@ -56,6 +60,7 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
         return try {
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -73,9 +78,13 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = requestBody.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
+            Log.d(TAG, "Logs: Search Status: ${response.code}")
             val cleanJson = parseNextJsJson<AnimeListResponse>(response.text)
-            cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
+            val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
+            Log.d(TAG, "Logs: Encontrados ${results.size} resultados")
+            results
         } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
         }
     }
@@ -83,7 +92,10 @@ class AnimeParadiseProvider : MainAPI() {
     private inline fun <reified T> parseNextJsJson(input: String): T? {
         return try {
             val startIndex = input.indexOf("{\"success\":true")
-            if (startIndex == -1) return null
+            if (startIndex == -1) {
+                Log.e(TAG, "Logs: No se encontró JSON de éxito en la respuesta")
+                return null
+            }
 
             var braceCount = 0
             var endIndex = -1
@@ -98,6 +110,7 @@ class AnimeParadiseProvider : MainAPI() {
             val json = input.substring(startIndex, endIndex)
             mapper.readValue<T>(json)
         } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error parseando JSON: ${e.message}")
             null
         }
     }
@@ -112,8 +125,6 @@ class AnimeParadiseProvider : MainAPI() {
     private fun AnimeObject.toSearchResponse(): SearchResponse {
         val rawImage = this.image ?: this.posterImage?.large ?: this.posterImage?.original
         val rawLink = this.link ?: ""
-
-        // Mejorado: Obtiene el slug de "/anime/slug" o directamente del link
         val cleanSlug = rawLink.trim('/').split('/').lastOrNull() ?: this.id ?: ""
 
         return newAnimeSearchResponse(
@@ -127,6 +138,7 @@ class AnimeParadiseProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
+        Log.d(TAG, "Logs: --- CARGANDO DETALLES: $slug ---")
         if (slug.isBlank() || slug == "null") return null
 
         return try {
@@ -145,6 +157,8 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
+            Log.d(TAG, "Logs: ${episodes.size} episodios cargados")
+
             newAnimeLoadResponse(animeData.data?.title ?: "Anime", url, TvType.Anime) {
                 this.posterUrl = fixImageUrl(animeData.data?.posterImage?.large)
                 this.plot = animeData.data?.synopsis
@@ -152,6 +166,7 @@ class AnimeParadiseProvider : MainAPI() {
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error en load: ${e.message}")
             null
         }
     }
@@ -166,10 +181,14 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
 
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS PARA EP: $epUuid ===")
+
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
+
             val pageReq = app.get(watchUrl, headers = apiHeaders)
             val cookies = pageReq.cookies
+            Log.d(TAG, "Logs: Cookies obtenidas: ${cookies.size}")
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -187,14 +206,24 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            val cleanResponse = response.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
+            Log.d(TAG, "Logs: Raw Response (200c): ${response.take(200)}")
+
+            val cleanResponse = response
+                .replace("\\u002F", "/")
+                .replace("\\/", "/")
+                .replace("\\\"", "\"")
+                .replace("\\", "")
 
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
             val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
 
+            Log.d(TAG, "Logs: Enlaces m3u8 encontrados: ${links.size}")
+
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
+
+                Log.d(TAG, "Logs: Link Final [$index]: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
@@ -210,7 +239,7 @@ class AnimeParadiseProvider : MainAPI() {
             }
             links.isNotEmpty()
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
             false
         }
     }
