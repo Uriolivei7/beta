@@ -155,32 +155,31 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
+            // 1. Mapeo de Episodios con ID ÚNICO
             val episodes = epData.data?.map { ep ->
-                val cleanEpId = (ep.id ?: "").substringAfterLast("/")
-                newEpisode("$cleanEpId|$internalId") {
+                val epId = ep.id ?: ""
+                newEpisode("$epId|$internalId") { // Enviamos ambos IDs separados por pipe
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.posterUrl = ep.image
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
-            val recommendations = simData.data?.map { sim ->
+            // 2. Mapeo de Recomendaciones con tipos explícitos
+            val recommendations = simData.data?.map { sim: SimilarAnime ->
                 newAnimeSearchResponse(sim.title ?: "", "$mainUrl/anime/${sim.link}") {
                     this.posterUrl = sim.posterImage?.large
                 }
             }
 
-            Log.d(TAG, "Logs: ${episodes.size} episodios y ${recommendations?.size ?: 0} recomendaciones")
+            Log.d(TAG, "Logs: ${episodes.size} episodios encontrados")
 
             newAnimeLoadResponse(data.title ?: "Anime", url, TvType.Anime) {
                 this.posterUrl = data.posterImage?.original ?: data.posterImage?.large
                 this.plot = data.synopsis ?: data.synopsys
-
                 this.tags = if (data.tags?.isNotEmpty() == true) data.tags else data.genres
-
                 this.year = data.animeSeason?.year
                 this.recommendations = recommendations
-
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
@@ -195,77 +194,55 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // Separamos el ID del episodio y el del anime
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: return false
+        val epUuid = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: Intentando cargar Ep: $rawEpId de Anime: $originId")
+        Log.d(TAG, "Logs: Cargando Ep UUID: $epUuid con Origin: $originId")
 
-        val epUuid = rawEpId.substringAfterLast("/")
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
         return try {
-            val pageReq = app.get(watchUrl, headers = apiHeaders)
-            val cookieStr = pageReq.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
-                "cookie" to cookieStr,
-                "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "referer" to watchUrl
             )
 
-            val response = app.post(
-                watchUrl,
-                headers = actionHeaders,
-                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            )
-
+            val requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBody)
             val resText = response.text
 
+            // --- Subtítulos ---
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val subMap = mutableMapOf<String, String>()
-
             subRegex.findAll(resText).forEach { match ->
-                val (src, label, _) = match.destructured
-                if (src.isNotBlank() && !subMap.containsKey(label)) {
-                    val subUrl = if (!src.startsWith("http")) "https://api.animeparadise.moe/stream/file/$src" else src
-                    subMap[label] = subUrl
-                }
+                val (src, label) = match.destructured
+                val subUrl = if (!src.startsWith("http")) "https://api.animeparadise.moe/stream/file/$src" else src
+                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
-            subMap.forEach { (label, url) ->
-                Log.d(TAG, "Logs: Subtítulo API -> $label: $url")
-                subtitleCallback.invoke(newSubtitleFile(label, url))
-            }
-
-            val cleanResponse = resText.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
+            // --- Enlaces de Video ---
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-
-            val linksFound = videoRegex.findAll(cleanResponse).map { it.value }.toList()
+            val linksFound = videoRegex.findAll(resText.replace("\\", "")).map { it.value }.distinct().toList()
 
             linksFound.forEach { rawUrl ->
-                val serverName = rawUrl.substringAfter("://").substringBefore(".").replace("stream", "Server Main")
-
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
+                // CORRECCIÓNnewExtractorLink: Usando la firma correcta del método
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "${this.name} - $serverName",
+                        name = "${this.name} - Server",
                         url = finalUrl,
-                        type = ExtractorLinkType.M3U8
-                    ).apply {
-                        this.quality = Qualities.P1080.value
-                        this.referer = "https://www.animeparadise.moe/"
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Origin" to "https://www.animeparadise.moe"
-                        )
-                    }
+                        type = ExtractorLinkType.M3U8, // Especificamos el tipo correctamente
+                        initializer = {
+                            this.quality = Qualities.P1080.value
+                            this.referer = "https://www.animeparadise.moe/"
+                        }
+                    )
                 )
             }
 
