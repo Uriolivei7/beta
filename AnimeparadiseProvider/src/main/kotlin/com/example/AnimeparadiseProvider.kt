@@ -203,11 +203,10 @@ class AnimeParadiseProvider : MainAPI() {
         val currentEpId = allIds.getOrNull(0) ?: ""
         val currentOriginId = allIds.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: IDs EXTRAÍDOS -> EpId: $currentEpId, OriginId: $currentOriginId")
+        Log.d(TAG, "Logs: IDs SOLICITADOS -> EpId: $currentEpId, OriginId: $currentOriginId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
-
             val actionHeaders = mapOf(
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
@@ -216,58 +215,54 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val mediaType = "text/plain; charset=utf-8".toMediaTypeOrNull()
-            val body = requestBodyString.toRequestBody(mediaType)
+            val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
 
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
-            Log.d(TAG, "Logs: Status Code -> ${response.code}")
-
             val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
 
-            if (resText.isBlank()) {
-                Log.e(TAG, "Logs: Respuesta VACÍA")
-                return false
-            }
+            val chunks = resText.split("{\"id\":\"")
 
-            val videoRegex = Regex("""\"id\":\"$currentEpId\".*?\"streamLink\":\"(https?://[^\"]+)""")
-            val match = videoRegex.find(resText)
+            val myChunk = chunks.find { it.startsWith(currentEpId) }
 
-            val finalVideoUrl = match?.groupValues?.get(1)
-                ?: Regex("""\"streamLink\":\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1) // Fallback al primero si falla el filtro
+            if (myChunk != null) {
+                Log.d(TAG, "Logs: Bloque de episodio $currentEpId encontrado.")
 
-            if (finalVideoUrl != null) {
-                Log.d(TAG, "Logs: URL ENCONTRADA PARA $currentEpId -> ${finalVideoUrl.takeLast(40)}")
+                val videoRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
+                val finalVideoUrl = videoRegex.find(myChunk)?.groupValues?.get(1)
 
-                val link = newExtractorLink(
-                    source = this.name,
-                    name = "AnimeParadise",
-                    url = "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}",
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
+                if (finalVideoUrl != null) {
+                    Log.d(TAG, "Logs: URL CORRECTA EXTRAÍDA -> ${finalVideoUrl.takeLast(50)}")
+
+                    val link = newExtractorLink(
+                        source = this.name,
+                        name = "AnimeParadise",
+                        url = "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}",
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$mainUrl/"
+                    }
+                    callback.invoke(link)
+                } else {
+                    Log.e(TAG, "Logs: No hay streamLink en el bloque del ID $currentEpId")
                 }
-                callback.invoke(link)
+
+                val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+                subRegex.findAll(myChunk).forEach { m ->
+                    val src = m.groupValues[1]
+                    val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                    subtitleCallback.invoke(newSubtitleFile(m.groupValues[2], subUrl))
+                }
             } else {
-                Log.e(TAG, "Logs: No se encontró streamLink para el ID $currentEpId")
-            }
-
-            val subSection = resText.substringAfter(currentEpId).substringBefore("}]")
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-
-            val subsFound = subRegex.findAll(subSection).toList()
-            Log.d(TAG, "Logs: Subs para este episodio -> ${subsFound.size}")
-
-            subsFound.forEach { m ->
-                val src = m.groupValues[1]
-                val label = m.groupValues[2]
-                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                Log.e(TAG, "Logs: No se encontró un bloque que inicie con $currentEpId. Reintentando búsqueda global...")
+                val fallbackRegex = Regex("""\"id\":\"$currentEpId\"[^}]+\"streamLink\":\"(https?://[^\"]+)""")
+                fallbackRegex.find(resText)?.groupValues?.get(1)?.let { url ->
+                    callback.invoke(newExtractorLink(this.name, "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=${url.encodeUri()}", ExtractorLinkType.M3U8) { this.referer = "$mainUrl/" })
+                }
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks -> ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Logs: Error crítico -> ${e.message}")
             false
         }
     }
