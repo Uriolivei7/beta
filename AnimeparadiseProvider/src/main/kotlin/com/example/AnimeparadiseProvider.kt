@@ -204,6 +204,8 @@ class AnimeParadiseProvider : MainAPI() {
 
         if (epUuid.length < 5) return false
 
+        Log.d(TAG, "Logs: Solicitando enlaces para Ep: $epUuid con Origin: $originId")
+
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
         return try {
@@ -215,14 +217,21 @@ class AnimeParadiseProvider : MainAPI() {
                 "origin" to mainUrl
             )
 
+            val requestBodyString = "[\"$epUuid\",\"$originId\"]"
+            val requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
-                data = mapOf("0" to epUuid, "1" to originId)
+                requestBody = requestBody
             )
-            val resText = response.text
 
-            // --- SUBTÍTULOS ---
+            val resText = response.text
+            if (resText.isBlank()) {
+                Log.e(TAG, "Logs: Respuesta vacía del servidor")
+                return false
+            }
+
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
             val foundSubs = mutableSetOf<String>()
 
@@ -239,12 +248,11 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }
 
-            // --- VIDEOS ---
             val cleanResText = resText.replace("\\/", "/").replace("\\\"", "\"")
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-            val links = videoRegex.findAll(cleanResText).map { it.value }.toSet()
+            val uniqueLinks = videoRegex.findAll(cleanResText).map { it.value }.toSet()
 
-            links.forEach { rawUrl ->
+            uniqueLinks.forEach { rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
@@ -255,14 +263,16 @@ class AnimeParadiseProvider : MainAPI() {
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8,
                         initializer = {
-                            this.referer = "$mainUrl/"
                             this.quality = Qualities.P1080.value
+                            this.referer = "$mainUrl/"
                         }
                     )
                 )
             }
 
-            links.isNotEmpty()
+            if (uniqueLinks.isEmpty()) Log.d(TAG, "Logs: No se encontraron enlaces .m3u8 en la respuesta")
+
+            uniqueLinks.isNotEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
