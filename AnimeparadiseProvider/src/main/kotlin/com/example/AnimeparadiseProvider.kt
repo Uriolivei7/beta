@@ -198,41 +198,44 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. Extraer los IDs del data (vienen separados por comas o en el link)
-        val idRegex = Regex("""([a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}|[a-zA-Z0-9]{15,16})""")
+        val idRegex = Regex("""([a-z0-9-]{32,}|[a-zA-Z0-9]{10,})""")
         val ids = idRegex.findAll(data).map { it.value }.toList()
 
         val currentEpId = ids.getOrNull(0) ?: return false
         val currentOriginId = ids.getOrNull(1) ?: ""
-
-        Log.d(TAG, "Logs: Iniciando carga para Ep: $currentEpId")
+        val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
         return try {
-            val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
+            val page = app.get(watchUrl)
 
-            // 2. Headers COPIADOS EXACTAMENTE de tu curl
+            val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(page.text)?.groupValues?.get(1)
+                ?: "603712faba47e30723d32819533284371173c10bbd"
+
+            Log.d(TAG, "Logs: Usando Action ID: $actionId")
+
             val actionHeaders = mapOf(
-                "accept" to "text/x-component", // Crucial para Next.js
+                "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "next-action" to actionId,
                 "origin" to mainUrl,
                 "referer" to watchUrl,
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
-            // 3. El cuerpo exacto: ["ID1","ID2"]
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
 
-            // 4. Petición POST
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = requestBodyString.toRequestBody("text/plain".toMediaTypeOrNull())
+            )
+
             val resText = response.text.replace("\\/", "/")
 
-            // 5. Extraer el streamLink del componente de respuesta
             val videoUrl = Regex("""\"streamLink\":\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: ¡ÉXITO! Link encontrado: ${videoUrl.takeLast(35)}")
+                Log.d(TAG, "Logs: URL Encontrada para $currentEpId: ${videoUrl.takeLast(30)}")
 
                 callback.invoke(
                     newExtractorLink(
@@ -240,22 +243,11 @@ class AnimeParadiseProvider : MainAPI() {
                         "AnimeParadise",
                         "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$mainUrl/"
-                    }
+                    ) { this.referer = "$mainUrl/" }
                 )
-
-                // Extraer subtítulos del mismo JSON
-                val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
-                subRegex.findAll(resText).forEach { m ->
-                    val src = m.groupValues[1]
-                    val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                    subtitleCallback.invoke(newSubtitleFile(m.groupValues[2], subUrl))
-                }
             } else {
-                Log.e(TAG, "Logs: No hay streamLink. Respuesta: ${resText.take(150)}")
+                Log.e(TAG, "Logs: No se encontró streamLink en la respuesta")
             }
-
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
