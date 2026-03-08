@@ -196,7 +196,8 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
                 "cookie" to cookieStr,
-                "referer" to watchUrl
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
 
             val response = app.post(
@@ -207,26 +208,21 @@ class AnimeParadiseProvider : MainAPI() {
 
             val resText = response.text
 
+            val foundSubtitles = mutableSetOf<String>()
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val subMatches = subRegex.findAll(resText)
 
-            subMatches.forEach { match ->
+            subRegex.findAll(resText).forEach { match ->
                 val (src, label, type) = match.destructured
-
                 val subUrl = if (!src.startsWith("http")) {
                     "https://docs.google.com/uc?export=download&id=$src"
                 } else {
                     src
                 }
 
-                Log.d(TAG, "Logs: Subtítulo encontrado: $label ($type)")
-
-                subtitleCallback.invoke(
-                    newSubtitleFile(
-                        label,
-                        subUrl
-                    )
-                )
+                if (foundSubtitles.add(subUrl)) {
+                    Log.d(TAG, "Logs: Subtítulo único: $label")
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                }
             }
 
             val cleanResponse = resText.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
@@ -246,6 +242,10 @@ class AnimeParadiseProvider : MainAPI() {
                     ).apply {
                         this.quality = Qualities.P1080.value
                         this.referer = watchUrl
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Origin" to "https://www.animeparadise.moe"
+                        )
                     }
                 )
             }
@@ -256,6 +256,7 @@ class AnimeParadiseProvider : MainAPI() {
             false
         }
     }
+
 }
 
 data class AnimeObject(
