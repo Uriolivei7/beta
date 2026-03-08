@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -142,34 +143,28 @@ class AnimeParadiseProvider : MainAPI() {
         if (slug.isBlank() || slug == "null") return null
 
         return try {
-            // 1. Obtener detalles principales
             val detailRes = app.get("$apiUrl/anime/$slug?v=1", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
             val data = animeData.data ?: throw Exception("Data de anime nula")
 
-            // La API a veces usa _id o id, verificamos ambos
             val internalId = data._id ?: data.id ?: throw Exception("ID interno no encontrado")
 
-            // 2. Obtener Episodios y Recomendaciones
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val simResponse = app.get("$apiUrl/anime/similar?animeId=$internalId", headers = apiHeaders).text
 
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
-            // Procesar Episodios
             val episodes = epData.data?.map { ep ->
                 val cleanEpId = (ep.id ?: "").substringAfterLast("/")
                 newEpisode("$cleanEpId|$internalId") {
-                    this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
-                    this.posterUrl = ep.image // Tu función fixImageUrl si es necesaria
+                    this.name = ep.title ?: "Episodio ${ep.number}"
+                    this.posterUrl = ep.image
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
-            // Procesar Recomendaciones
             val recommendations = simData.data?.map { sim ->
-                // Usamos mainUrl porque las recomendaciones suelen apuntar al slug del anime
                 newAnimeSearchResponse(sim.title ?: "", "$mainUrl/anime/${sim.link}") {
                     this.posterUrl = sim.posterImage?.large
                 }
@@ -177,13 +172,10 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: ${episodes.size} episodios y ${recommendations?.size ?: 0} recomendaciones")
 
-            // 3. Respuesta Final
             newAnimeLoadResponse(data.title ?: "Anime", url, TvType.Anime) {
                 this.posterUrl = data.posterImage?.original ?: data.posterImage?.large
-                // Priorizamos synopsis sobre synopsys (por el typo en la API)
                 this.plot = data.synopsis ?: data.synopsys
 
-                // Corregido: Verificamos si tags no es nulo ni vacío
                 this.tags = if (data.tags?.isNotEmpty() == true) data.tags else data.genres
 
                 this.year = data.animeSeason?.year
@@ -206,6 +198,8 @@ class AnimeParadiseProvider : MainAPI() {
         val parts = data.split("|")
         val rawEpId = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
+
+        Log.d(TAG, "Logs: Intentando cargar Ep: $rawEpId de Anime: $originId")
 
         val epUuid = rawEpId.substringAfterLast("/")
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
@@ -237,41 +231,31 @@ class AnimeParadiseProvider : MainAPI() {
             subRegex.findAll(resText).forEach { match ->
                 val (src, label, _) = match.destructured
                 if (src.isNotBlank() && !subMap.containsKey(label)) {
-                    val subUrl = if (!src.startsWith("http")) {
-                        "https://api.animeparadise.moe/stream/file/$src"
-                    } else {
-                        src
-                    }
+                    val subUrl = if (!src.startsWith("http")) "https://api.animeparadise.moe/stream/file/$src" else src
                     subMap[label] = subUrl
                 }
             }
 
             subMap.forEach { (label, url) ->
                 Log.d(TAG, "Logs: Subtítulo API -> $label: $url")
-                subtitleCallback.invoke(
-                    newSubtitleFile(label, url)
-                )
+                subtitleCallback.invoke(newSubtitleFile(label, url))
             }
 
             val cleanResponse = resText.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
 
-            val links = videoRegex.findAll(cleanResponse)
-                .map { it.value }
-                .distinctBy { url ->
-                    val domain = url.substringAfter("://").substringBefore("/")
-                    domain
-                }
-                .toList()
+            val linksFound = videoRegex.findAll(cleanResponse).map { it.value }.toList()
 
-            links.forEach { rawUrl ->
+            linksFound.forEach { rawUrl ->
+                val serverName = rawUrl.substringAfter("://").substringBefore(".").replace("stream", "Server Main")
+
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
-                else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
+                else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise",
+                        name = "${this.name} - $serverName",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ).apply {
@@ -279,14 +263,13 @@ class AnimeParadiseProvider : MainAPI() {
                         this.referer = "https://www.animeparadise.moe/"
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Origin" to "https://www.animeparadise.moe",
-                            "Accept" to "*/*"
+                            "Origin" to "https://www.animeparadise.moe"
                         )
                     }
                 )
             }
 
-            links.isNotEmpty()
+            linksFound.isNotEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
