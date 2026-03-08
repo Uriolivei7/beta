@@ -198,28 +198,44 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // 1. Extraer IDs de nuevo
         val cleanData = data.replace("animeparadise", "").replace("AnimeParadise", "")
         val idRegex = Regex("""([a-zA-Z0-9-]{12,})""")
         val allIds = idRegex.findAll(cleanData).map { it.value }.toList()
         val currentEpId = allIds.getOrNull(0) ?: ""
         val currentOriginId = allIds.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: Cargando EpId: $currentEpId")
+        Log.d(TAG, "Logs: Intentando Acción para Ep: $currentEpId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-            // 1. Obtenemos el HTML completo de la página del episodio
-            val response = app.get(watchUrl, cacheTime = 0)
-            val html = response.text.replace("\\/", "/")
+            // 2. Headers de "Navegador Moderno" para Next.js Actions
+            val actionHeaders = mapOf(
+                "accept" to "*/*",
+                "content-type" to "text/plain;charset=UTF-8",
+                // Este ID de acción es el que suele manejar la obtención del stream
+                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "referer" to watchUrl,
+                "origin" to mainUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "x-nextjs-data" to "1"
+            )
 
-            // 2. Buscamos el link de video en todo el HTML, sin importar donde esté
-            // Usamos un regex que busca el valor de streamLink específico para este ID
-            val streamRegex = Regex("""["']streamLink["']\s*:\s*["'](https?://[^"']+)""", RegexOption.IGNORE_CASE)
-            val videoUrl = streamRegex.find(html)?.groupValues?.get(1)
+            // El body debe ir exactamente como lo manda la web: un array JSON en texto plano
+            val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
+            val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
+
+            // 3. Petición POST con los IDs específicos
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
+            val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
+
+            // 4. Regex para buscar el link en el JSON de respuesta
+            val streamRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
+            val videoUrl = streamRegex.find(resText)?.groupValues?.get(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: LINK ESPECÍFICO ENCONTRADO -> ${videoUrl.takeLast(50)}")
+                Log.d(TAG, "Logs: ¡POR FIN! Link del episodio: ${videoUrl.takeLast(40)}")
 
                 callback.invoke(
                     newExtractorLink(
@@ -230,23 +246,22 @@ class AnimeParadiseProvider : MainAPI() {
                     ) { this.referer = "$mainUrl/" }
                 )
 
-                // 3. Extraemos subtítulos del mismo HTML
-                val subRegex = Regex("""["']src["']\s*:\s*["']([^"']+)["']\s*,\s*["']label["']\s*:\s*["']([^"']+)""", RegexOption.IGNORE_CASE)
-                subRegex.findAll(html).forEach { m ->
+                // Subtítulos
+                val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
+                subRegex.findAll(resText).forEach { m ->
                     val src = m.groupValues[1]
-                    val label = m.groupValues[2]
                     val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                    subtitleCallback.invoke(newSubtitleFile(m.groupValues[2], subUrl))
                 }
             } else {
-                Log.e(TAG, "Logs: No se encontró streamLink en el HTML. Intentando método alternativo...")
-                // Si no está en el HTML, el link se genera dinámicamente.
-                // Revisa si en la web al cambiar de episodio cambia la URL o solo el contenido.
+                // Log de emergencia: ¿Qué nos está devolviendo el servidor?
+                val preview = if(resText.length > 100) resText.take(100) else resText
+                Log.e(TAG, "Logs: El servidor respondió algo sin link: $preview")
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error -> ${e.message}")
+            Log.e(TAG, "Logs: Fallo crítico -> ${e.message}")
             false
         }
     }
