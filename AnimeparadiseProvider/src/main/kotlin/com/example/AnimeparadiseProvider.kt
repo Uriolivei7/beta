@@ -174,6 +174,8 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
+    //Yeji
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
