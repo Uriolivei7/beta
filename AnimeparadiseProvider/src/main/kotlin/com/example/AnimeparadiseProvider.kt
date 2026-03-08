@@ -215,17 +215,19 @@ class AnimeParadiseProvider : MainAPI() {
                 val (src, label, _) = match.destructured
                 if (src.isNotBlank() && !subMap.containsKey(label)) {
                     val subUrl = if (!src.startsWith("http")) {
-                        "https://docs.google.com/uc?export=download&id=$src"
+                        "https://api.animeparadise.moe/stream/file/$src"
                     } else {
                         src
                     }
-                    Log.d(TAG, "Logs: DETECTADO SUB -> Idioma: $label | URL: $subUrl")
                     subMap[label] = subUrl
                 }
             }
 
             subMap.forEach { (label, url) ->
-                subtitleCallback.invoke(newSubtitleFile(label, url))
+                Log.d(TAG, "Logs: Subtítulo API -> $label: $url")
+                subtitleCallback.invoke(
+                    newSubtitleFile(label, url)
+                )
             }
 
             val cleanResponse = resText.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
@@ -233,35 +235,29 @@ class AnimeParadiseProvider : MainAPI() {
 
             val links = videoRegex.findAll(cleanResponse)
                 .map { it.value }
-                .distinctBy { it.substringBefore(".m3u8") }
+                .distinctBy { url ->
+                    val domain = url.substringAfter("://").substringBefore("/")
+                    domain
+                }
                 .toList()
 
-            Log.d(TAG, "Logs: Total de videos únicos después del filtro: ${links.size}")
-
-            links.forEachIndexed { index, rawUrl ->
-                Log.d(TAG, "Logs: DETECTADO VIDEO -> Index: $index | URL: $rawUrl")
-
+            links.forEach { rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
-
-                val linkName = when {
-                    rawUrl.contains("windflash") -> "Paradise Wind"
-                    rawUrl.contains("stream") -> "Paradise Stream"
-                    else -> "Paradise Mirror"
-                }
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = linkName,
+                        name = "Paradise Main",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ).apply {
                         this.quality = Qualities.P1080.value
-                        this.referer = watchUrl
+                        this.referer = "https://www.animeparadise.moe/"
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Origin" to "https://www.animeparadise.moe"
+                            "Origin" to "https://www.animeparadise.moe",
+                            "Accept" to "*/*"
                         )
                     }
                 )
