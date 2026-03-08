@@ -225,18 +225,28 @@ class AnimeParadiseProvider : MainAPI() {
             val videoRegex = Regex("""https?://[a-zA-Z0-9.-]+/_v7/[^"\\\s]+master\.m3u8""")
             val allMatches = videoRegex.findAll(resText).toList()
 
-            val finalVideoUrl = allMatches.find { match ->
-                val start = (match.range.first - 1000).coerceAtLeast(0)
-                val end = (match.range.last + 1000).coerceAtMost(resText.length)
-                resText.substring(start, end).contains(currentEpId)
-            }?.value ?: allMatches.firstOrNull()?.value
+            val epPos = resText.indexOf(currentEpId)
+
+            val finalVideoUrl = if (epPos != -1) {
+                val lookAheadText = resText.substring(epPos, (epPos + 3000).coerceAtMost(resText.length))
+                val match = videoRegex.find(lookAheadText)
+
+                if (match != null) {
+                    Log.d(TAG, "Logs: Video correcto encontrado para EpId: $currentEpId")
+                    match.value
+                } else {
+                    videoRegex.find(resText)?.value
+                }
+            } else {
+                videoRegex.find(resText)?.value
+            }
 
             if (finalVideoUrl != null) {
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}"
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "Server Principal",
+                        name = "AnimeParadise",
                         url = proxyUrl,
                         type = ExtractorLinkType.M3U8,
                         initializer = {
@@ -249,7 +259,6 @@ class AnimeParadiseProvider : MainAPI() {
 
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
 
-            val epPos = resText.indexOf(currentEpId)
             val searchArea = if (epPos != -1) {
                 resText.substring(epPos, (epPos + 3000).coerceAtMost(resText.length))
             } else resText
