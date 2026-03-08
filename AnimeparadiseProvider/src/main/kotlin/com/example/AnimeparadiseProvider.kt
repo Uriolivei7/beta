@@ -215,30 +215,28 @@ class AnimeParadiseProvider : MainAPI() {
                 "origin" to mainUrl
             )
 
-            val requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            val resText = app.post(watchUrl, headers = actionHeaders, requestBody = requestBody).text
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody())
+            val resText = response.text.replace("\\/", "/")
 
-            val cleanText = resText.replace("\\/", "/")
-
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(cleanText).forEach { match ->
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)".*?\}""")
+            subRegex.findAll(resText).forEach { match ->
                 val src = match.groupValues[1]
                 val label = match.groupValues[2]
-
-                if (src.contains(epUuid, ignoreCase = true)) {
-                    val fullSubUrl = if (src.startsWith("http")) src
-                    else "https://api.animeparadise.moe/stream/file/$src"
-                    subtitleCallback.invoke(newSubtitleFile(label, fullSubUrl))
-                }
+                val fullSubUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(label, fullSubUrl))
             }
 
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-            val foundLinks = videoRegex.findAll(cleanText)
-                .map { it.value }
-                .filter { it.contains(epUuid, ignoreCase = true) } 
-                .distinct()
+            val allUrls = videoRegex.findAll(resText).map { it.value }.toSet()
 
-            foundLinks.forEach { rawUrl ->
+            var finalLinks = allUrls.filter { it.contains(epUuid, ignoreCase = true) }
+
+            if (finalLinks.isEmpty()) {
+                val backup = allUrls.firstOrNull { it.contains("master", ignoreCase = true) }
+                if (backup != null) finalLinks = listOf(backup)
+            }
+
+            finalLinks.forEach { rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
@@ -247,7 +245,7 @@ class AnimeParadiseProvider : MainAPI() {
                         source = this.name,
                         name = "${this.name} - Server Principal",
                         url = finalUrl,
-                        type = ExtractorLinkType.M3U8,
+                        type = ExtractorLinkType.M3U8, 
                         initializer = {
                             this.quality = Qualities.P1080.value
                             this.referer = "$mainUrl/"
@@ -256,7 +254,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            foundLinks.any()
+            finalLinks.isNotEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
