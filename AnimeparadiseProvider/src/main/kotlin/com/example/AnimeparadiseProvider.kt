@@ -204,61 +204,40 @@ class AnimeParadiseProvider : MainAPI() {
         val currentEpId = allIds.getOrNull(0) ?: ""
         val currentOriginId = allIds.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpId: $currentEpId | Origin: $currentOriginId")
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpId: $currentEpId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-            // Headers de "Navegador Real" para evitar el Error 500
             val actionHeaders = mapOf(
                 "accept" to "*/*",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
                 "referer" to watchUrl,
                 "origin" to mainUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "sec-ch-ua" to "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"",
-                "sec-ch-ua-mobile" to "?0",
-                "sec-ch-ua-platform" to "\"Windows\""
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-
-            val response = app.post(
-                watchUrl,
-                headers = actionHeaders,
-                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            ).text
-
-            // Limpiamos la respuesta de caracteres de escape
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())).text
             val resText = response.replace("\\", "")
 
-            // --- EL TRUCO PARA EL EPISODIO CORRECTO ---
-            // Buscamos el ID del episodio dentro de la respuesta gigante del servidor
-            val epIndex = resText.indexOf(currentEpId)
-
-            if (epIndex == -1) {
-                Log.e(TAG, "Logs: El ID del episodio no aparece en la respuesta del servidor")
-                // Si no aparece, el servidor nos dio una respuesta errónea o vacía
-                return false
-            }
-
-            // Cortamos el texto para que empiece JUSTO donde está la info de nuestro episodio
-            val relevantText = resText.substring(epIndex)
-
-            // Regex para el master.m3u8
             val videoRegex = Regex("""https?://[a-zA-Z0-9.-]+/_v7/[^"\\\s]+master\.m3u8""")
-            val videoMatch = videoRegex.find(relevantText)
+            val allMatches = videoRegex.findAll(resText).toList()
 
-            if (videoMatch != null) {
-                val rawUrl = videoMatch.value
-                Log.d(TAG, "Logs: Link filtrado encontrado para el EP: $currentEpId")
+            val finalVideoUrl = allMatches.find { match ->
+                val start = (match.range.first - 1000).coerceAtLeast(0)
+                val end = (match.range.last + 1000).coerceAtMost(resText.length)
+                resText.substring(start, end).contains(currentEpId)
+            }?.value ?: allMatches.firstOrNull()?.value
 
+            if (finalVideoUrl != null) {
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}"
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = "Server Principal",
-                        url = "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}",
+                        url = proxyUrl,
                         type = ExtractorLinkType.M3U8,
                         initializer = {
                             this.quality = Qualities.P1080.value
@@ -266,13 +245,16 @@ class AnimeParadiseProvider : MainAPI() {
                         }
                     )
                 )
-            } else {
-                Log.e(TAG, "Logs: No se encontró el m3u8 en el área del episodio")
             }
 
-            // Subtítulos filtrados también por área
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            subRegex.findAll(relevantText.substringBefore("{\"id\":")).forEach { match ->
+
+            val epPos = resText.indexOf(currentEpId)
+            val searchArea = if (epPos != -1) {
+                resText.substring(epPos, (epPos + 3000).coerceAtMost(resText.length))
+            } else resText
+
+            subRegex.findAll(searchArea).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                 subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
