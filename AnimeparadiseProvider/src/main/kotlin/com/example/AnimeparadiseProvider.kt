@@ -32,32 +32,37 @@ class AnimeParadiseProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "Logs: Cargando MainPage...")
+        Log.d(TAG, "Logs: --- INICIANDO MAIN PAGE ---")
         return try {
-            val recentRes = app.get("$apiUrl/ep/recently-added?v=1", headers = apiHeaders).text
-            val popularRes = app.get("$apiUrl/search?sort=POPULARITY&limit=15&v=1", headers = apiHeaders).text
+            val recentRes = app.get("$apiUrl/ep/recently-added?v=1", headers = apiHeaders)
+            Log.d(TAG, "Logs: Recent API Status: ${recentRes.code}")
 
-            val recentData: AnimeListResponse = mapper.readValue(recentRes)
-            val popularData: AnimeListResponse = mapper.readValue(popularRes)
+            val popularRes = app.get("$apiUrl/search?sort=POPULARITY&limit=15&v=1", headers = apiHeaders)
+            Log.d(TAG, "Logs: Popular API Status: ${popularRes.code}")
+
+            val recentData = parseNextJsJson<AnimeListResponse>(recentRes.text)
+            val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
+
+            Log.d(TAG, "Logs: Recent items: ${recentData?.data?.size ?: "null"}")
+            Log.d(TAG, "Logs: Popular items: ${popularData?.data?.size ?: "null"}")
 
             val homePages = mutableListOf<HomePageList>()
-
-            recentData.data?.let { list ->
+            recentData?.data?.let { list ->
                 homePages.add(HomePageList("Recién Agregados", list.map { it.toSearchResponse() }))
             }
-            popularData.data?.let { list ->
+            popularData?.data?.let { list ->
                 homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
             }
 
             newHomePageResponse(homePages, false)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en getMainPage: ${e.message}")
             null
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: Buscando -> $query")
+        Log.d(TAG, "Logs: --- INICIANDO BÚSQUEDA: $query ---")
         return try {
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -73,28 +78,71 @@ class AnimeParadiseProvider : MainAPI() {
                 "$mainUrl/search",
                 headers = searchHeaders,
                 requestBody = requestBody.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            ).text
+            )
 
-            val jsonRegex = Regex("""\{"data":\[.*?]\}""")
-            val match = jsonRegex.find(response)?.value ?: return emptyList()
+            Log.d(TAG, "Logs: Search Response Code: ${response.code}")
+            if (response.text.isBlank()) Log.e(TAG, "Logs: La respuesta de búsqueda está VACÍA")
 
-            val resData: AnimeListResponse = mapper.readValue(match)
-            resData.data?.map { it.toSearchResponse() } ?: emptyList()
+            val cleanJson = parseNextJsJson<AnimeListResponse>(response.text)
+            val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
 
+            Log.d(TAG, "Logs: Resultados encontrados: ${results.size}")
+            results
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
         }
     }
 
+    private inline fun <reified T> parseNextJsJson(input: String): T? {
+        return try {
+            // Log para ver el inicio de la cadena y detectar si el formato cambió
+            Log.d(TAG, "Logs: Parseando texto (primeros 50 caracteres): ${input.take(50)}")
+
+            val startIndex = input.indexOf("{\"data\":")
+            if (startIndex == -1) {
+                Log.e(TAG, "Logs: No se encontró el marcador '{\"data\":' en la respuesta")
+                return null
+            }
+
+            var braceCount = 0
+            var endIndex = -1
+            for (i in startIndex until input.length) {
+                if (input[i] == '{') braceCount++
+                else if (input[i] == '}') braceCount--
+
+                if (braceCount == 0) {
+                    endIndex = i + 1
+                    break
+                }
+            }
+
+            val json = input.substring(startIndex, endIndex)
+            mapper.readValue<T>(json)
+        } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error de parseo Jackson: ${e.message}")
+            null
+        }
+    }
+
+    private fun fixImageUrl(url: String?): String? {
+        if (url == null) return null
+        if (url.startsWith("http")) return url
+
+        if (url.startsWith("//")) return "https:$url"
+
+        return if (url.startsWith("/")) "$mainUrl$url" else "$mainUrl/$url"
+    }
+
     private fun AnimeObject.toSearchResponse(): SearchResponse {
+        val rawImage = this.image ?: this.posterImage?.large ?: this.posterImage?.original
+
         return newAnimeSearchResponse(
             this.title ?: "Sin título",
             "$mainUrl/anime/${this.link}",
             TvType.Anime
         ) {
-            this.posterUrl = if (posterImage?.large?.startsWith("http") == true) posterImage.large
-            else "$mainUrl${posterImage?.large ?: posterImage?.original ?: ""}"
+            this.posterUrl = fixImageUrl(rawImage)
         }
     }
 
@@ -110,23 +158,26 @@ class AnimeParadiseProvider : MainAPI() {
             val epResponse = app.get("$apiUrl/anime/$internalAnimeId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
-            val episodes = epData.data.map { ep ->
+            val episodes = epData.data?.map { ep ->
                 val epUuid = ep.id ?: ""
                 newEpisode("$epUuid|$internalAnimeId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
-                    this.posterUrl = ep.image
+                    this.posterUrl = fixImageUrl(ep.image)
                 }
-            }.sortedBy { it.episode }
+            }?.sortedBy { it.episode } ?: emptyList()
+
+            Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios para $slug")
 
             newAnimeLoadResponse(animeData.data?.title ?: "Anime", url, TvType.Anime) {
-                this.posterUrl = animeData.data?.posterImage?.large
+                this.posterUrl = fixImageUrl(animeData.data?.posterImage?.large ?: animeData.data?.posterImage?.original)
                 this.plot = animeData.data?.synopsis
                 this.tags = animeData.data?.genres
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load: ${e.message}")
+            Log.e(TAG, "Logs: Error en load para $slug: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
@@ -190,11 +241,17 @@ class AnimeParadiseProvider : MainAPI() {
                 }
 
                 callback.invoke(
-                    newExtractorLink(this.name, serverName, finalUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(
+                        source = this.name,
+                        name = serverName,
+                        url = finalUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
                         this.quality = Qualities.P1080.value
+                        this.referer = "$mainUrl/"
                         this.headers = mapOf(
-                            "Referer" to "$mainUrl/",
-                            "User-Agent" to actionHeaders["user-agent"]!!
+                            "Origin" to mainUrl,
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
                         )
                     }
                 )
@@ -208,20 +265,23 @@ class AnimeParadiseProvider : MainAPI() {
     }
 }
 
+
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
     val title: String? = null,
     val link: String? = null,
     val status: String? = null,
-    @JsonProperty("synopsys") val synopsis: String? = null,
+    @JsonAlias("synopsys", "synopsis") val synopsis: String? = null,
     val genres: List<String>? = null,
-    val animeSeason: SeasonInfo? = null,
-    val posterImage: ImageInfo? = null
+    val posterImage: ImageInfo? = null,
+    val image: String? = null
 )
+
 data class SeasonInfo(val year: Int? = null)
 data class ImageInfo(val original: String? = null, val large: String? = null)
 data class AnimeDetailResponse(val data: AnimeObject? = null)
-data class EpisodeListResponse(val data: List<Episode>)
+data class EpisodeListResponse(val data: List<Episode>? = null)
+
 data class Episode(
     @JsonProperty("_id") val id: String? = null,
     val number: String? = null,
