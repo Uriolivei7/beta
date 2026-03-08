@@ -225,19 +225,18 @@ class AnimeParadiseProvider : MainAPI() {
             val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
 
             if (resText.isBlank()) {
-                Log.e(TAG, "Logs: Respuesta VACÍA del servidor")
+                Log.e(TAG, "Logs: Respuesta VACÍA")
                 return false
             }
 
-            val videoRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-            val allVideoLinks = videoRegex.findAll(resText).map { it.groupValues[1] }.toList()
+            val videoRegex = Regex("""\"id\":\"$currentEpId\".*?\"streamLink\":\"(https?://[^\"]+)""")
+            val match = videoRegex.find(resText)
 
-            Log.d(TAG, "Logs: Enlaces encontrados -> ${allVideoLinks.size}")
-
-            val finalVideoUrl = allVideoLinks.firstOrNull()
+            val finalVideoUrl = match?.groupValues?.get(1)
+                ?: Regex("""\"streamLink\":\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1) // Fallback al primero si falla el filtro
 
             if (finalVideoUrl != null) {
-                Log.d(TAG, "Logs: URL FINAL -> ${finalVideoUrl.takeLast(30)}")
+                Log.d(TAG, "Logs: URL ENCONTRADA PARA $currentEpId -> ${finalVideoUrl.takeLast(40)}")
 
                 val link = newExtractorLink(
                     source = this.name,
@@ -249,27 +248,26 @@ class AnimeParadiseProvider : MainAPI() {
                 }
                 callback.invoke(link)
             } else {
-                Log.e(TAG, "Logs: No se encontró streamLink en el texto: ${resText.take(200)}")
+                Log.e(TAG, "Logs: No se encontró streamLink para el ID $currentEpId")
             }
 
+            val subSection = resText.substringAfter(currentEpId).substringBefore("}]")
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val subsFound = subRegex.findAll(resText).toList()
 
-            Log.d(TAG, "Logs: Subs encontrados -> ${subsFound.size}")
+            val subsFound = subRegex.findAll(subSection).toList()
+            Log.d(TAG, "Logs: Subs para este episodio -> ${subsFound.size}")
 
-            subsFound.forEach { match ->
-                val src = match.groupValues[1]
-                val label = match.groupValues[2]
+            subsFound.forEach { m ->
+                val src = m.groupValues[1]
+                val label = m.groupValues[2]
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-
-                subtitleCallback.invoke(
-                    newSubtitleFile(label, subUrl)
-                )
+                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
 
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks -> ${e.message}")
+            e.printStackTrace()
             false
         }
     }
