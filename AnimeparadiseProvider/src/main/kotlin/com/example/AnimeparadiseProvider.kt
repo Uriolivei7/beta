@@ -230,59 +230,65 @@ class AnimeParadiseProvider : MainAPI() {
             val idExists = resText.contains(currentEpId)
             Log.d(TAG, "Logs: ¿ID solicitado existe en la respuesta? -> $idExists")
 
-            // 2. BUSCAR BLOQUES DE VIDEO (Asociación ID -> Link)
-            val videoBlocksRegex = Regex("""\"id\":\"([^\"]+)\".*?\"streamLink\":\"([^\"]+)""")
+            // 2. BUSCAR BLOQUES DE VIDEO (Regex más flexible)
+            // Buscamos el ID y cualquier cosa que diga streamLink después, sin importar el orden exacto
+            val videoBlocksRegex = Regex("""\"id\":\"([^\"]+)\".*?\"streamLink\":\"([^\"]+)\"""")
             val allMatches = videoBlocksRegex.findAll(resText).toList()
 
-            Log.d(TAG, "Logs: Se encontraron ${allMatches.size} bloques de video en total")
+            // Si el regex anterior falla (0 bloques), probamos uno ultra-simple
+            // que busque links de video directamente
+            val fallbackVideoRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
 
-            // Imprimir todos los IDs encontrados para debug
-            allMatches.forEachIndexed { index, match ->
-                Log.d(TAG, "Logs: Bloque[$index] detectado con ID: ${match.groupValues[1]}")
-            }
+            Log.d(TAG, "Logs: Bloques específicos encontrados -> ${allMatches.size}")
 
             // 3. SELECCIONAR EL CORRECTO
             val correctMatch = allMatches.find { it.groupValues[1] == currentEpId }
-            val finalVideoUrl = correctMatch?.groupValues?.get(2) ?: allMatches.firstOrNull()?.groupValues?.get(2)
+
+            var finalVideoUrl = correctMatch?.groupValues?.get(2)
+
+            // Si no encontramos el bloque exacto, buscamos el primer link de video que aparezca
+            // después de la posición de nuestro ID en el texto
+            if (finalVideoUrl == null) {
+                val idPos = resText.indexOf("\"id\":\"$currentEpId\"")
+                if (idPos != -1) {
+                    val searchArea = resText.substring(idPos).take(5000)
+                    finalVideoUrl = fallbackVideoRegex.find(searchArea)?.groupValues?.get(1)
+                    Log.d(TAG, "Logs: Usando búsqueda por cercanía al ID")
+                }
+            }
 
             if (finalVideoUrl != null) {
-                val resultMode = if (correctMatch != null) "MATCH DIRECTO" else "FALLBACK (EP 1?)"
-                Log.d(TAG, "Logs: Resultado -> $resultMode")
-                Log.d(TAG, "Logs: URL extraída -> ${finalVideoUrl.take(60)}...")
+                Log.d(TAG, "Logs: URL FINAL LOCALIZADA -> ${finalVideoUrl.takeLast(50)}")
 
                 callback.invoke(
                     newExtractorLink(
-                        source = this.name,
-                        name = "AnimeParadise",
-                        url = "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}",
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$mainUrl/"
-                    }
+                        this.name, "AnimeParadise",
+                        "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}",
+                        ExtractorLinkType.M3U8
+                    ) { this.referer = "$mainUrl/" }
                 )
             } else {
-                Log.e(TAG, "Logs: ERROR -> No se encontró ningún streamLink en toda la respuesta")
+                // Log del texto para ver qué está llegando realmente (solo una parte para no saturar)
+                Log.e(TAG, "Logs: FALLO TOTAL. Muestra de respuesta cerca del ID: ${resText.substring(resText.indexOf(currentEpId)).take(500)}")
             }
 
-            // 4. SUBTÍTULOS (Localizados por posición para no mezclar)
-            val idIndex = resText.indexOf("\"id\":\"$currentEpId\"")
-            if (idIndex != -1) {
-                Log.d(TAG, "Logs: Extrayendo subs desde posición $idIndex")
-                val subSection = resText.substring(idIndex).take(5000)
-                val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            // 4. SUBTÍTULOS (Regex más tolerante)
+            val idPosSub = resText.indexOf("\"id\":\"$currentEpId\"")
+            if (idPosSub != -1) {
+                val subSection = resText.substring(idPosSub).take(8000)
+                // Regex más flexible para subs: busca label y src en cualquier orden dentro del objeto
+                val subRegex = Regex("""\{[^{]*?\"src\":\"([^\"]+)\"[^{]*?\"label\":\"([^\"]+)\"""")
 
                 val foundSubs = subRegex.findAll(subSection).toList()
-                Log.d(TAG, "Logs: Se encontraron ${foundSubs.size} subtítulos para este episodio")
+                Log.d(TAG, "Logs: Subtítulos encontrados -> ${foundSubs.size}")
 
                 foundSubs.forEach { m ->
                     val label = m.groupValues[2]
                     val src = m.groupValues[1]
                     val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                    Log.d(TAG, "Logs: Añadiendo subtítulo -> $label")
                     subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
             }
-
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: EXCEPCIÓN CRÍTICA -> ${e.message}")
