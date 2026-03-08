@@ -183,64 +183,59 @@ class AnimeParadiseProvider : MainAPI() {
         val parts = data.split("|")
         val rawEpId = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
+
         val epUuid = rawEpId.substringAfterLast("/")
-
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
-
-        Log.d(TAG, "Logs: === LOADLINKS CORREGIDO ===")
-        Log.d(TAG, "Logs: EP_UUID LIMPIO: $epUuid")
-        Log.d(TAG, "Logs: URL FINAL: $watchUrl")
 
         return try {
             val pageReq = app.get(watchUrl, headers = apiHeaders)
-            val cookies = pageReq.cookies
-            val cookieStr = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            Log.d(TAG, "Logs: Cookies encontradas: ${cookies.size} -> $cookieStr")
+            val cookieStr = pageReq.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-router-state-tree" to "%5B%22%22%2C%7B%22children%22%3A%5B%22watch%22%2C%7B%22children%22%3A%5B%22$epUuid%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D",
-                "origin" to mainUrl,
-                "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "cookie" to cookieStr
+                "cookie" to cookieStr,
+                "referer" to watchUrl
             )
-
-            val bodyString = "[\"$epUuid\",\"$originId\"]"
-            Log.d(TAG, "Logs: Enviando POST con Body: $bodyString")
 
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
-                requestBody = bodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
             val resText = response.text
-            Log.d(TAG, "Logs: HTTP Status: ${response.code}")
-            Log.d(TAG, "Logs: Raw Response (500c): ${resText.take(500)}")
 
-            if (resText.contains("1:null")) {
-                Log.e(TAG, "Logs: EL SERVIDOR DEVOLVIÓ NULL. Es posible que el 'next-action' ID haya cambiado.")
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            val subMatches = subRegex.findAll(resText)
+
+            subMatches.forEach { match ->
+                val (src, label, type) = match.destructured
+
+                val subUrl = if (!src.startsWith("http")) {
+                    "https://docs.google.com/uc?export=download&id=$src"
+                } else {
+                    src
+                }
+
+                Log.d(TAG, "Logs: Subtítulo encontrado: $label ($type)")
+
+                subtitleCallback.invoke(
+                    newSubtitleFile(
+                        label,
+                        subUrl
+                    )
+                )
             }
 
-            val cleanResponse = resText
-                .replace("\\u002F", "/")
-                .replace("\\/", "/")
-                .replace("\\\"", "\"")
-                .replace("\\", "")
-
+            val cleanResponse = resText.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
             val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
-
-            Log.d(TAG, "Logs: Enlaces m3u8 detectados por Regex: ${links.size}")
 
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
-
-                Log.d(TAG, "Logs: Link final generado [$index]: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
@@ -255,13 +250,9 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            val success = links.isNotEmpty()
-            Log.d(TAG, "Logs: loadLinks finalizado con éxito: $success")
-            success
-
+            links.isNotEmpty()
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: ERROR CRÍTICO en loadLinks: ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
