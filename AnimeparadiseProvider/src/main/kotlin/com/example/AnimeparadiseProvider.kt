@@ -150,7 +150,8 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data?.map { ep ->
-                newEpisode("${ep.id}|$internalId") {
+                val cleanEpId = ep.id?.substringAfterLast("/") ?: ""
+                newEpisode("$cleanEpId|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.posterUrl = fixImageUrl(ep.image)
@@ -185,14 +186,13 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
-
             val pageReq = app.get(watchUrl, headers = apiHeaders)
             val cookies = pageReq.cookies
-            Log.d(TAG, "Logs: Cookies obtenidas: ${cookies.size}")
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "next-router-state-tree" to "%5B%22%22%2C%7B%22children%22%3A%5B%22watch%22%2C%7B%22children%22%3A%5B%22$epUuid%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D",
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to mainUrl,
                 "referer" to watchUrl,
@@ -200,19 +200,17 @@ class AnimeParadiseProvider : MainAPI() {
                 "cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
             )
 
+            val bodyString = "[\"$epUuid\",\"$originId\"]"
+
             val response = app.post(
-                watchUrl,
+                "$mainUrl/watch/$epUuid?origin=$originId",
                 headers = actionHeaders,
-                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                requestBody = bodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
             Log.d(TAG, "Logs: Raw Response (200c): ${response.take(200)}")
 
-            val cleanResponse = response
-                .replace("\\u002F", "/")
-                .replace("\\/", "/")
-                .replace("\\\"", "\"")
-                .replace("\\", "")
+            val cleanResponse = response.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
 
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
             val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
@@ -222,8 +220,6 @@ class AnimeParadiseProvider : MainAPI() {
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
-
-                Log.d(TAG, "Logs: Link Final [$index]: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
@@ -239,7 +235,7 @@ class AnimeParadiseProvider : MainAPI() {
             }
             links.isNotEmpty()
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
