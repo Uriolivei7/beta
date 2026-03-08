@@ -218,20 +218,26 @@ class AnimeParadiseProvider : MainAPI() {
             val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
 
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
+
+            // Limpiamos los escapes para que el Regex trabaje sobre URLs limpias
             val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
 
-            val chunks = resText.split("{\"id\":\"")
+            // --- ESTRATEGIA POR POSICIÓN ---
+            // Buscamos dónde empieza la información de NUESTRO episodio
+            val idIndex = resText.indexOf("\"id\":\"$currentEpId\"")
 
-            val myChunk = chunks.find { it.startsWith(currentEpId) }
+            if (idIndex != -1) {
+                Log.d(TAG, "Logs: ID encontrado en posición $idIndex")
 
-            if (myChunk != null) {
-                Log.d(TAG, "Logs: Bloque de episodio $currentEpId encontrado.")
+                // Tomamos un fragmento de texto (p.ej. 3000 caracteres) DESPUÉS del ID
+                // Esto asegura que el streamLink que encontremos sea el que sigue a ese ID
+                val relevantText = resText.substring(idIndex).take(3000)
 
                 val videoRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-                val finalVideoUrl = videoRegex.find(myChunk)?.groupValues?.get(1)
+                val finalVideoUrl = videoRegex.find(relevantText)?.groupValues?.get(1)
 
                 if (finalVideoUrl != null) {
-                    Log.d(TAG, "Logs: URL CORRECTA EXTRAÍDA -> ${finalVideoUrl.takeLast(50)}")
+                    Log.d(TAG, "Logs: URL LOCALIZADA -> ${finalVideoUrl.takeLast(50)}")
 
                     val link = newExtractorLink(
                         source = this.name,
@@ -243,26 +249,31 @@ class AnimeParadiseProvider : MainAPI() {
                     }
                     callback.invoke(link)
                 } else {
-                    Log.e(TAG, "Logs: No hay streamLink en el bloque del ID $currentEpId")
+                    Log.e(TAG, "Logs: No se encontró streamLink cerca del ID $currentEpId")
+
+                    // Fallback: Si no hay link cerca, buscamos el primero en todo el texto
+                    // para no dejar al usuario sin nada (aunque sea el ep 1)
+                    videoRegex.find(resText)?.groupValues?.get(1)?.let { url ->
+                        callback.invoke(newExtractorLink(this.name, "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=${url.encodeUri()}", ExtractorLinkType.M3U8) { this.referer = "$mainUrl/" })
+                    }
                 }
 
+                // --- SUBTÍTULOS ---
+                // Buscamos subtítulos solo en la sección relevante para este episodio
                 val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-                subRegex.findAll(myChunk).forEach { m ->
+                subRegex.findAll(relevantText).forEach { m ->
                     val src = m.groupValues[1]
                     val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                     subtitleCallback.invoke(newSubtitleFile(m.groupValues[2], subUrl))
                 }
             } else {
-                Log.e(TAG, "Logs: No se encontró un bloque que inicie con $currentEpId. Reintentando búsqueda global...")
-                val fallbackRegex = Regex("""\"id\":\"$currentEpId\"[^}]+\"streamLink\":\"(https?://[^\"]+)""")
-                fallbackRegex.find(resText)?.groupValues?.get(1)?.let { url ->
-                    callback.invoke(newExtractorLink(this.name, "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=${url.encodeUri()}", ExtractorLinkType.M3U8) { this.referer = "$mainUrl/" })
-                }
+                Log.e(TAG, "Logs: El ID $currentEpId no aparece en la respuesta del POST")
             }
 
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error crítico -> ${e.message}")
+            e.printStackTrace()
             false
         }
     }
