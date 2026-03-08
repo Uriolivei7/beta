@@ -207,7 +207,6 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
-            Log.d(TAG, "Logs: POST a -> $watchUrl")
 
             val actionHeaders = mapOf(
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
@@ -221,31 +220,24 @@ class AnimeParadiseProvider : MainAPI() {
             val body = requestBodyString.toRequestBody(mediaType)
 
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
-
             Log.d(TAG, "Logs: Status Code -> ${response.code}")
 
-            val resText = response.text.replace("\\", "")
+            val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
 
             if (resText.isBlank()) {
-                Log.e(TAG, "Logs: La respuesta del servidor está VACÍA")
+                Log.e(TAG, "Logs: Respuesta VACÍA del servidor")
                 return false
             }
-
-            Log.d(TAG, "Logs: JSON Recibido (inicio) -> ${resText.take(150)}")
-
-            val episodeData = resText.substringAfter("\"episode\":{", "ERROR")
-            if (episodeData == "ERROR") {
-                Log.e(TAG, "Logs: No se encontró el bloque 'episode' en el JSON")
-                return false
-            }
-
-            val cleanEpisodeData = episodeData.substringBefore(",\"episodeList\"")
 
             val videoRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-            val finalVideoUrl = videoRegex.find(cleanEpisodeData)?.groupValues?.get(1)
+            val allVideoLinks = videoRegex.findAll(resText).map { it.groupValues[1] }.toList()
+
+            Log.d(TAG, "Logs: Enlaces encontrados -> ${allVideoLinks.size}")
+
+            val finalVideoUrl = allVideoLinks.firstOrNull()
 
             if (finalVideoUrl != null) {
-                Log.d(TAG, "Logs: URL DE VIDEO ENCONTRADA -> ${finalVideoUrl.take(30)}...")
+                Log.d(TAG, "Logs: URL FINAL -> ${finalVideoUrl.takeLast(30)}")
 
                 val link = newExtractorLink(
                     source = this.name,
@@ -257,12 +249,13 @@ class AnimeParadiseProvider : MainAPI() {
                 }
                 callback.invoke(link)
             } else {
-                Log.e(TAG, "Logs: No se pudo extraer el streamLink. ¿Cambió el formato del JSON?")
+                Log.e(TAG, "Logs: No se encontró streamLink en el texto: ${resText.take(200)}")
             }
 
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val subsFound = subRegex.findAll(cleanEpisodeData).toList()
-            Log.d(TAG, "Logs: Subtítulos encontrados -> ${subsFound.size}")
+            val subsFound = subRegex.findAll(resText).toList()
+
+            Log.d(TAG, "Logs: Subs encontrados -> ${subsFound.size}")
 
             subsFound.forEach { match ->
                 val src = match.groupValues[1]
@@ -276,8 +269,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: EXCEPCIÓN en loadLinks -> ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Logs: Error en loadLinks -> ${e.message}")
             false
         }
     }
