@@ -207,36 +207,45 @@ class AnimeParadiseProvider : MainAPI() {
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
         return try {
+            // Headers para la acción de Next.js
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
                 "referer" to watchUrl,
-                "origin" to mainUrl
+                "origin" to mainUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody())
             val resText = response.text.replace("\\/", "/")
 
-            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)".*?\}""")
+            // --- SUBTÍTULOS: Filtrado por coincidencia de ID ---
+            val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)"\}""")
             subRegex.findAll(resText).forEach { match ->
                 val src = match.groupValues[1]
                 val label = match.groupValues[2]
-                val fullSubUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(label, fullSubUrl))
+
+                // Si el texto de la respuesta trae muchos subs, solo agarramos
+                // los que el servidor asocia a este epUuid en el JSON
+                if (resText.contains("""{"id":"$epUuid".*?"src":"$src"""".toRegex(RegexOption.DOT_MATCHES_ALL))) {
+                    val fullSubUrl = if (src.startsWith("http")) src
+                    else "https://api.animeparadise.moe/stream/file/$src"
+
+                    subtitleCallback.invoke(newSubtitleFile(label, fullSubUrl))
+                }
             }
 
+            // --- VIDEO: Extracción y Limpieza de duplicados ---
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-            val allUrls = videoRegex.findAll(resText).map { it.value }.toSet()
+            val foundUrls = videoRegex.findAll(resText).map { it.value }.toSet()
 
-            var finalLinks = allUrls.filter { it.contains(epUuid, ignoreCase = true) }
+            // Buscamos el link que sea específico para este ID.
+            // Si no lo hay, tomamos el primer 'master.m3u8' que encontremos
+            val bestLink = foundUrls.find { it.contains(epUuid, ignoreCase = true) }
+                ?: foundUrls.find { it.contains("master", ignoreCase = true) }
 
-            if (finalLinks.isEmpty()) {
-                val backup = allUrls.firstOrNull { it.contains("master", ignoreCase = true) }
-                if (backup != null) finalLinks = listOf(backup)
-            }
-
-            finalLinks.forEach { rawUrl ->
+            bestLink?.let { rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
@@ -245,7 +254,7 @@ class AnimeParadiseProvider : MainAPI() {
                         source = this.name,
                         name = "${this.name} - Server Principal",
                         url = finalUrl,
-                        type = ExtractorLinkType.M3U8, 
+                        type = ExtractorLinkType.M3U8,
                         initializer = {
                             this.quality = Qualities.P1080.value
                             this.referer = "$mainUrl/"
@@ -254,7 +263,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            finalLinks.isNotEmpty()
+            bestLink != null
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
