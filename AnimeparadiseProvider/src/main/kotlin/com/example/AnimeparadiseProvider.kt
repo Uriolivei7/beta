@@ -199,17 +199,10 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawUuid = parts.getOrNull(0) ?: ""
+        val epUuid = parts.getOrNull(0)?.substringAfterLast("/")?.trim() ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        val epUuid = rawUuid.substringAfterLast("/").trim()
-
-        if (epUuid.isBlank() || epUuid.length < 5) {
-            Log.e(TAG, "Logs: Error - epUuid inválido tras limpieza: '$epUuid'")
-            return false
-        }
-
-        Log.d(TAG, "Logs: Solicitando enlaces para Ep REAL: $epUuid (Origin: $originId)")
+        if (epUuid.length < 5) return false
 
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
@@ -222,26 +215,36 @@ class AnimeParadiseProvider : MainAPI() {
                 "origin" to mainUrl
             )
 
-            val requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBody)
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                data = mapOf("0" to epUuid, "1" to originId)
+            )
             val resText = response.text
 
+            // --- SUBTÍTULOS ---
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
             val foundSubs = mutableSetOf<String>()
+
             subRegex.findAll(resText).forEach { match ->
                 val (src, label) = match.destructured
                 val cleanSrc = src.replace("\\/", "/")
+
                 if (foundSubs.add(cleanSrc)) {
-                    val subUrl = if (!cleanSrc.startsWith("http")) "https://api.animeparadise.moe/stream/file/$cleanSrc" else cleanSrc
+                    val subUrl = if (!cleanSrc.startsWith("http")) {
+                        "https://api.animeparadise.moe/stream/file/$cleanSrc"
+                    } else cleanSrc
+
                     subtitleCallback.invoke(newSubtitleFile(label, subUrl))
                 }
             }
 
+            // --- VIDEOS ---
             val cleanResText = resText.replace("\\/", "/").replace("\\\"", "\"")
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-            val uniqueLinks = videoRegex.findAll(cleanResText).map { it.value }.toSet()
+            val links = videoRegex.findAll(cleanResText).map { it.value }.toSet()
 
-            uniqueLinks.forEach { rawUrl ->
+            links.forEach { rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
@@ -252,14 +255,14 @@ class AnimeParadiseProvider : MainAPI() {
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8,
                         initializer = {
-                            this.quality = Qualities.P1080.value
                             this.referer = "$mainUrl/"
+                            this.quality = Qualities.P1080.value
                         }
                     )
                 )
             }
 
-            uniqueLinks.isNotEmpty()
+            links.isNotEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
