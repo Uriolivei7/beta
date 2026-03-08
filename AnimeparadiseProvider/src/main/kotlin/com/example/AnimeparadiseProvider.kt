@@ -155,10 +155,16 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
-            // 1. Mapeo de Episodios con ID ÚNICO
             val episodes = epData.data?.map { ep ->
-                val epId = ep.id ?: ""
-                newEpisode("$epId|$internalId") { // Enviamos ambos IDs separados por pipe
+                // LIMPIEZA DE ID: Si el id es una URL, tomamos solo la parte final
+                val rawId = ep.id ?: ""
+                val cleanEpId = if (rawId.contains("/")) {
+                    rawId.trimEnd('/').substringAfterLast("/")
+                } else {
+                    rawId
+                }
+
+                newEpisode("$cleanEpId|$internalId") {
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.posterUrl = ep.image
@@ -194,13 +200,24 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Separamos el ID del episodio y el del anime
+        // 1. Extraer y limpiar IDs
         val parts = data.split("|")
-        val epUuid = parts.getOrNull(0) ?: return false
+        val rawEpId = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: Cargando Ep UUID: $epUuid con Origin: $originId")
+        // Asegurarnos de que el epUuid no sea una URL completa
+        val epUuid = if (rawEpId.contains("/")) {
+            rawEpId.trimEnd('/').substringAfterLast("/")
+        } else {
+            rawEpId
+        }
 
+        if (epUuid.isBlank() || epUuid.startsWith("http")) {
+            Log.e(TAG, "Logs: epUuid inválido: $epUuid")
+            return false
+        }
+
+        Log.d(TAG, "Logs: Solicitando enlaces para Ep: $epUuid (Origin: $originId)")
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
         return try {
@@ -208,43 +225,65 @@ class AnimeParadiseProvider : MainAPI() {
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
-                "referer" to watchUrl
+                "referer" to watchUrl,
+                "origin" to mainUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
 
+            // El cuerpo debe ser un array JSON stringificado: ["epId", "animeId"]
             val requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBody)
             val resText = response.text
 
-            // --- Subtítulos ---
+            // --- LÓGICA DE SUBTÍTULOS REINTEGRADA ---
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
             subRegex.findAll(resText).forEach { match ->
                 val (src, label) = match.destructured
-                val subUrl = if (!src.startsWith("http")) "https://api.animeparadise.moe/stream/file/$src" else src
-                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                if (src.isNotBlank()) {
+                    // Limpiar posibles escapes de la URL del sub
+                    val cleanSrc = src.replace("\\/", "/")
+                    val subUrl = if (!cleanSrc.startsWith("http")) "https://api.animeparadise.moe/stream/file/$cleanSrc" else cleanSrc
+                    Log.d(TAG, "Logs: Subtítulo encontrado: $label")
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                }
             }
 
-            // --- Enlaces de Video ---
+            // --- LÓGICA DE VIDEO ---
+            // Limpiamos los escapes de la respuesta para que el regex funcione mejor
+            val cleanResText = resText.replace("\\/", "/").replace("\\\"", "\"")
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-            val linksFound = videoRegex.findAll(resText.replace("\\", "")).map { it.value }.distinct().toList()
+
+            val linksFound = videoRegex.findAll(cleanResText)
+                .map { it.value }
+                .distinct()
+                .toList()
 
             linksFound.forEach { rawUrl ->
-                val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
-                else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
+                val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) {
+                    rawUrl
+                } else {
+                    "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
+                }
 
-                // CORRECCIÓNnewExtractorLink: Usando la firma correcta del método
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "${this.name} - Server",
+                        name = "${this.name} - Server Main",
                         url = finalUrl,
-                        type = ExtractorLinkType.M3U8, // Especificamos el tipo correctamente
+                        type = ExtractorLinkType.M3U8,
                         initializer = {
                             this.quality = Qualities.P1080.value
-                            this.referer = "https://www.animeparadise.moe/"
+                            this.headers = mapOf(
+                                "Referer" to "$mainUrl/",
+                                "Origin" to mainUrl,
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                            )
                         }
                     )
                 )
             }
+
+            if (linksFound.isEmpty()) Log.w(TAG, "Logs: No se detectaron enlaces de video en la respuesta")
 
             linksFound.isNotEmpty()
         } catch (e: Exception) {
