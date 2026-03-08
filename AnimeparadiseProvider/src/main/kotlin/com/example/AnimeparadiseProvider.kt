@@ -96,15 +96,9 @@ class AnimeParadiseProvider : MainAPI() {
 
     private inline fun <reified T> parseNextJsJson(input: String): T? {
         return try {
-            Log.d(TAG, "Logs: Parseando texto (primeros 100 caracteres): ${input.take(100)}")
-
-            if (input.trim().startsWith("{")) {
-                return mapper.readValue<T>(input)
-            }
-
-            val startIndex = input.indexOf("{\"data\":")
+            val startIndex = input.indexOf("{\"success\":true")
             if (startIndex == -1) {
-                Log.e(TAG, "Logs: No se encontró el marcador '{\"data\":'")
+                Log.e(TAG, "Logs: No se encontró el inicio del JSON (success:true)")
                 return null
             }
 
@@ -121,6 +115,7 @@ class AnimeParadiseProvider : MainAPI() {
             }
 
             val json = input.substring(startIndex, endIndex)
+            Log.d(TAG, "Logs: JSON extraído con éxito")
             mapper.readValue<T>(json)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error de parseo: ${e.message}")
@@ -139,10 +134,11 @@ class AnimeParadiseProvider : MainAPI() {
 
     private fun AnimeObject.toSearchResponse(): SearchResponse {
         val rawImage = this.image ?: this.posterImage?.large ?: this.posterImage?.original
+        val cleanSlug = this.link?.substringBefore("/") ?: ""
 
         return newAnimeSearchResponse(
             this.title ?: "Sin título",
-            "$mainUrl/anime/${this.link}",
+            "$mainUrl/anime/$cleanSlug",
             TvType.Anime
         ) {
             this.posterUrl = fixImageUrl(rawImage)
@@ -151,6 +147,10 @@ class AnimeParadiseProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
+        if (slug == "null" || slug.isBlank()) {
+            Log.e(TAG, "Logs: Abortando load, slug es inválido")
+            return null
+        }
         Log.d(TAG, "Logs: Iniciando load para slug: $slug")
 
         return try {
@@ -223,7 +223,7 @@ class AnimeParadiseProvider : MainAPI() {
                 subtitleCallback.invoke(newSubtitleFile("Spanish", subUrl))
             }
 
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+index[^\s"\\\\]*\.m3u8[^"\\\s]*|https?[:\\/]+[^"\\\s]+master\.m3u8[^"\\\s]*""")
+            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.m3u8[^"\\\s]*""")
 
             val links = videoRegex.findAll(response)
                 .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
