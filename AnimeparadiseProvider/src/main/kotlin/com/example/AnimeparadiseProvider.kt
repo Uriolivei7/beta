@@ -28,23 +28,17 @@ class AnimeParadiseProvider : MainAPI() {
         "accept" to "*/*",
         "origin" to mainUrl,
         "referer" to "$mainUrl/",
-        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "Logs: --- INICIANDO MAIN PAGE ---")
         return try {
             val recentRes = app.get("$apiUrl/ep/recently-added?v=1", headers = apiHeaders)
-            Log.d(TAG, "Logs: Recent API Status: ${recentRes.code}")
-
             val popularRes = app.get("$apiUrl/search?sort=POPULARITY&limit=15&v=1", headers = apiHeaders)
-            Log.d(TAG, "Logs: Popular API Status: ${popularRes.code}")
 
             val recentData = parseNextJsJson<AnimeListResponse>(recentRes.text)
             val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
-
-            Log.d(TAG, "Logs: Recent items: ${recentData?.data?.size ?: "null"}")
-            Log.d(TAG, "Logs: Popular items: ${popularData?.data?.size ?: "null"}")
 
             val homePages = mutableListOf<HomePageList>()
             recentData?.data?.let { list ->
@@ -56,13 +50,12 @@ class AnimeParadiseProvider : MainAPI() {
 
             newHomePageResponse(homePages, false)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en getMainPage: ${e.message}")
+            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
             null
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: --- INICIANDO BÚSQUEDA: $query ---")
         return try {
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -80,16 +73,9 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = requestBody.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
-            Log.d(TAG, "Logs: Search Response Code: ${response.code}")
-            if (response.text.isBlank()) Log.e(TAG, "Logs: La respuesta de búsqueda está VACÍA")
-
             val cleanJson = parseNextJsJson<AnimeListResponse>(response.text)
-            val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
-
-            Log.d(TAG, "Logs: Resultados encontrados: ${results.size}")
-            results
+            cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
         }
     }
@@ -97,38 +83,29 @@ class AnimeParadiseProvider : MainAPI() {
     private inline fun <reified T> parseNextJsJson(input: String): T? {
         return try {
             val startIndex = input.indexOf("{\"success\":true")
-            if (startIndex == -1) {
-                Log.e(TAG, "Logs: No se encontró el inicio del JSON (success:true)")
-                return null
-            }
+            if (startIndex == -1) return null
 
             var braceCount = 0
             var endIndex = -1
             for (i in startIndex until input.length) {
                 if (input[i] == '{') braceCount++
                 else if (input[i] == '}') braceCount--
-
                 if (braceCount == 0) {
                     endIndex = i + 1
                     break
                 }
             }
-
             val json = input.substring(startIndex, endIndex)
-            Log.d(TAG, "Logs: JSON extraído con éxito")
             mapper.readValue<T>(json)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error de parseo: ${e.message}")
             null
         }
     }
 
     private fun fixImageUrl(url: String?): String? {
-        if (url == null) return null
+        if (url.isNullOrBlank()) return null
         if (url.startsWith("http")) return url
-
         if (url.startsWith("//")) return "https:$url"
-
         return if (url.startsWith("/")) "$mainUrl$url" else "$mainUrl/$url"
     }
 
@@ -136,7 +113,8 @@ class AnimeParadiseProvider : MainAPI() {
         val rawImage = this.image ?: this.posterImage?.large ?: this.posterImage?.original
         val rawLink = this.link ?: ""
 
-        val cleanSlug = rawLink.trim('/').split('/').lastOrNull() ?: ""
+        // Mejorado: Obtiene el slug de "/anime/slug" o directamente del link
+        val cleanSlug = rawLink.trim('/').split('/').lastOrNull() ?: this.id ?: ""
 
         return newAnimeSearchResponse(
             this.title ?: "Sin título",
@@ -149,40 +127,31 @@ class AnimeParadiseProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
-        if (slug == "null" || slug.isBlank()) {
-            Log.e(TAG, "Logs: Abortando load, slug es inválido")
-            return null
-        }
-        Log.d(TAG, "Logs: Iniciando load para slug: $slug")
+        if (slug.isBlank() || slug == "null") return null
 
         return try {
             val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
-            val internalAnimeId = animeData.data?.id ?: throw Exception("ID de anime no encontrado")
+            val internalId = animeData.data?.id ?: throw Exception("ID no encontrado")
 
-            val epResponse = app.get("$apiUrl/anime/$internalAnimeId/episode", headers = apiHeaders).text
+            val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data?.map { ep ->
-                val epUuid = ep.id ?: ""
-                newEpisode("$epUuid|$internalAnimeId") {
+                newEpisode("${ep.id}|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.posterUrl = fixImageUrl(ep.image)
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
-            Log.d(TAG, "Logs: Se cargaron ${episodes.size} episodios para $slug")
-
             newAnimeLoadResponse(animeData.data?.title ?: "Anime", url, TvType.Anime) {
-                this.posterUrl = fixImageUrl(animeData.data?.posterImage?.large ?: animeData.data?.posterImage?.original)
+                this.posterUrl = fixImageUrl(animeData.data?.posterImage?.large)
                 this.plot = animeData.data?.synopsis
                 this.tags = animeData.data?.genres
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en load para $slug: ${e.message}")
-            e.printStackTrace()
             null
         }
     }
@@ -194,13 +163,13 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val epUuid = parts.getOrNull(0) ?: ""
+        val epUuid = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
-
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS (PROTOCOLO CRUDO) ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
+            val pageReq = app.get(watchUrl, headers = apiHeaders)
+            val cookies = pageReq.cookies
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -208,38 +177,20 @@ class AnimeParadiseProvider : MainAPI() {
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to mainUrl,
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
             )
-
-            val rawBody = "[\"$epUuid\",\"$originId\"]"
 
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
-                requestBody = rawBody.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            val cleanResponse = response
-                .replace("\\/", "/")
-                .replace("\\u002F", "/")
-                .replace("\\u0026", "&")
-                .replace("\\\"", "\"")
+            val cleanResponse = response.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
 
-            Log.d(TAG, "Logs: Respuesta (100 char): ${cleanResponse.take(100)}")
-
-            val videoRegex = Regex("""https?://[^\s"\\,]+?\.m3u8[^\s"\\,]*""")
-            val subRegex = Regex("""https?://[^\s"\\,]+?\.vtt[^\s"\\,]*""")
-
-            subRegex.findAll(cleanResponse).forEach {
-                subtitleCallback.invoke(newSubtitleFile("Spanish", it.value))
-            }
-
-            val links = videoRegex.findAll(cleanResponse)
-                .map { it.value }
-                .distinct()
-                .toList()
-
-            Log.d(TAG, "Logs: Enlaces encontrados: ${links.size}")
+            val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
+            val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
 
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
@@ -251,14 +202,12 @@ class AnimeParadiseProvider : MainAPI() {
                         name = if (rawUrl.contains("windflash")) "Paradise Wind" else "Mirror ${index + 1}",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
-                    ) {
+                    ).apply {
                         this.quality = Qualities.P1080.value
                         this.referer = watchUrl
-                        this.headers = mapOf("Origin" to mainUrl)
                     }
                 )
             }
-
             links.isNotEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
@@ -266,7 +215,6 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 }
-
 
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
@@ -278,17 +226,13 @@ data class AnimeObject(
     val posterImage: ImageInfo? = null,
     val image: String? = null
 )
-
-data class SeasonInfo(val year: Int? = null)
 data class ImageInfo(val original: String? = null, val large: String? = null)
 data class AnimeDetailResponse(val data: AnimeObject? = null)
 data class EpisodeListResponse(val data: List<Episode>? = null)
-
 data class Episode(
     @JsonProperty("_id") val id: String? = null,
     val number: String? = null,
     val title: String? = null,
     val image: String? = null
 )
-
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
