@@ -150,7 +150,9 @@ class AnimeParadiseProvider : MainAPI() {
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
 
             val episodes = epData.data?.map { ep ->
-                val cleanEpId = ep.id?.substringAfterLast("/") ?: ""
+                val rawId = ep.id ?: ""
+                val cleanEpId = rawId.substringAfterLast("/")
+
                 newEpisode("$cleanEpId|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
@@ -179,13 +181,15 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val epUuid = parts.getOrNull(0) ?: return false
+        val rawEpId = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
+        val epUuid = rawEpId.substringAfterLast("/")
 
         val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS ===")
-        Log.d(TAG, "Logs: EP_UUID: $epUuid | ORIGIN_ID: $originId")
-        Log.d(TAG, "Logs: URL Objetivo: $watchUrl")
+
+        Log.d(TAG, "Logs: === LOADLINKS CORREGIDO ===")
+        Log.d(TAG, "Logs: EP_UUID LIMPIO: $epUuid")
+        Log.d(TAG, "Logs: URL FINAL: $watchUrl")
 
         return try {
             val pageReq = app.get(watchUrl, headers = apiHeaders)
