@@ -174,8 +174,6 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
-    //Yeji
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -210,19 +208,24 @@ class AnimeParadiseProvider : MainAPI() {
 
             val resText = response.text
 
-            val foundLanguages = mutableSetOf<String>()
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
+            val subMap = mutableMapOf<String, String>()
 
             subRegex.findAll(resText).forEach { match ->
-                val (src, label, type) = match.destructured
-                if (foundLanguages.add(label)) {
+                val (src, label, _) = match.destructured
+                if (src.isNotBlank() && !subMap.containsKey(label)) {
                     val subUrl = if (!src.startsWith("http")) {
                         "https://docs.google.com/uc?export=download&id=$src"
                     } else {
                         src
                     }
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                    subMap[label] = subUrl
                 }
+            }
+
+            subMap.forEach { (label, url) ->
+                Log.d(TAG, "Logs: Subtítulo único encontrado: $label")
+                subtitleCallback.invoke(newSubtitleFile(label, url))
             }
 
             val cleanResponse = resText.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
@@ -230,7 +233,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             val links = videoRegex.findAll(cleanResponse)
                 .map { it.value }
-                .distinct()
+                .distinctBy { it.substringBefore(".m3u8") }
                 .toList()
 
             links.forEachIndexed { index, rawUrl ->
