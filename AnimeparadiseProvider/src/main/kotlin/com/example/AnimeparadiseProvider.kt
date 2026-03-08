@@ -198,44 +198,41 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. Extraer IDs de nuevo
-        val cleanData = data.replace("animeparadise", "").replace("AnimeParadise", "")
-        val idRegex = Regex("""([a-zA-Z0-9-]{12,})""")
-        val allIds = idRegex.findAll(cleanData).map { it.value }.toList()
-        val currentEpId = allIds.getOrNull(0) ?: ""
-        val currentOriginId = allIds.getOrNull(1) ?: ""
+        // 1. Extraer los IDs del data (vienen separados por comas o en el link)
+        val idRegex = Regex("""([a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}|[a-zA-Z0-9]{15,16})""")
+        val ids = idRegex.findAll(data).map { it.value }.toList()
 
-        Log.d(TAG, "Logs: Intentando Acción para Ep: $currentEpId")
+        val currentEpId = ids.getOrNull(0) ?: return false
+        val currentOriginId = ids.getOrNull(1) ?: ""
+
+        Log.d(TAG, "Logs: Iniciando carga para Ep: $currentEpId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-            // 2. Headers de "Navegador Moderno" para Next.js Actions
+            // 2. Headers COPIADOS EXACTAMENTE de tu curl
             val actionHeaders = mapOf(
-                "accept" to "*/*",
+                "accept" to "text/x-component", // Crucial para Next.js
                 "content-type" to "text/plain;charset=UTF-8",
-                // Este ID de acción es el que suele manejar la obtención del stream
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                "referer" to watchUrl,
                 "origin" to mainUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "x-nextjs-data" to "1"
+                "referer" to watchUrl,
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
-            // El body debe ir exactamente como lo manda la web: un array JSON en texto plano
+            // 3. El cuerpo exacto: ["ID1","ID2"]
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
             val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
 
-            // 3. Petición POST con los IDs específicos
+            // 4. Petición POST
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
-            val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
+            val resText = response.text.replace("\\/", "/")
 
-            // 4. Regex para buscar el link en el JSON de respuesta
-            val streamRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-            val videoUrl = streamRegex.find(resText)?.groupValues?.get(1)
+            // 5. Extraer el streamLink del componente de respuesta
+            val videoUrl = Regex("""\"streamLink\":\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: ¡POR FIN! Link del episodio: ${videoUrl.takeLast(40)}")
+                Log.d(TAG, "Logs: ¡ÉXITO! Link encontrado: ${videoUrl.takeLast(35)}")
 
                 callback.invoke(
                     newExtractorLink(
@@ -243,10 +240,12 @@ class AnimeParadiseProvider : MainAPI() {
                         "AnimeParadise",
                         "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
-                    ) { this.referer = "$mainUrl/" }
+                    ) {
+                        this.referer = "$mainUrl/"
+                    }
                 )
 
-                // Subtítulos
+                // Extraer subtítulos del mismo JSON
                 val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
                 subRegex.findAll(resText).forEach { m ->
                     val src = m.groupValues[1]
@@ -254,14 +253,12 @@ class AnimeParadiseProvider : MainAPI() {
                     subtitleCallback.invoke(newSubtitleFile(m.groupValues[2], subUrl))
                 }
             } else {
-                // Log de emergencia: ¿Qué nos está devolviendo el servidor?
-                val preview = if(resText.length > 100) resText.take(100) else resText
-                Log.e(TAG, "Logs: El servidor respondió algo sin link: $preview")
+                Log.e(TAG, "Logs: No hay streamLink. Respuesta: ${resText.take(150)}")
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Fallo crítico -> ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
