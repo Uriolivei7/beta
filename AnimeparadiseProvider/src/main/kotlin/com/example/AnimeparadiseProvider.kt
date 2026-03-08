@@ -25,41 +25,76 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     private val apiHeaders = mapOf(
-        "Accept" to "application/json, text/plain, */*",
-        "Origin" to mainUrl,
-        "Referer" to "$mainUrl/",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+        "accept" to "*/*",
+        "origin" to mainUrl,
+        "referer" to "$mainUrl/",
+        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        Log.d(TAG, "Logs: Cargando MainPage...")
         return try {
-            val url = "$apiUrl/?sort=%7B%22rate%22:-1%7D"
-            val response = app.get(url, headers = apiHeaders).text
-            val resData: AnimeListResponse = mapper.readValue(response)
+            val recentRes = app.get("$apiUrl/ep/recently-added?v=1", headers = apiHeaders).text
+            val popularRes = app.get("$apiUrl/search?sort=POPULARITY&limit=15&v=1", headers = apiHeaders).text
 
-            val animeList = resData.data.map {
-                newAnimeSearchResponse(it.title ?: "Sin título", it.link ?: "", TvType.Anime) {
-                    this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
-                }
+            val recentData: AnimeListResponse = mapper.readValue(recentRes)
+            val popularData: AnimeListResponse = mapper.readValue(popularRes)
+
+            val homePages = mutableListOf<HomePageList>()
+
+            recentData.data?.let { list ->
+                homePages.add(HomePageList("Recién Agregados", list.map { it.toSearchResponse() }))
             }
-            newHomePageResponse(listOf(HomePageList("Animes Populares", animeList)), true)
+            popularData.data?.let { list ->
+                homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
+            }
+
+            newHomePageResponse(homePages, false)
         } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error en getMainPage: ${e.message}")
             null
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(TAG, "Logs: Buscando -> $query")
         return try {
-            val response = app.get("$apiUrl/?title=$query", headers = apiHeaders).text
-            val resData: AnimeListResponse = mapper.readValue(response)
+            val searchHeaders = mapOf(
+                "accept" to "text/x-component",
+                "next-action" to "70e67558d075165016c3b05cb0bba485a351870862",
+                "content-type" to "text/plain;charset=UTF-8",
+                "origin" to mainUrl,
+                "referer" to "$mainUrl/search"
+            )
 
-            resData.data.map {
-                newAnimeSearchResponse(it.title ?: "Sin título", it.link ?: "", TvType.Anime) {
-                    this.posterUrl = it.posterImage?.large ?: it.posterImage?.original
-                }
-            }
+            val requestBody = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
+
+            val response = app.post(
+                "$mainUrl/search",
+                headers = searchHeaders,
+                requestBody = requestBody.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            ).text
+
+            val jsonRegex = Regex("""\{"data":\[.*?]\}""")
+            val match = jsonRegex.find(response)?.value ?: return emptyList()
+
+            val resData: AnimeListResponse = mapper.readValue(match)
+            resData.data?.map { it.toSearchResponse() } ?: emptyList()
+
         } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
+        }
+    }
+
+    private fun AnimeObject.toSearchResponse(): SearchResponse {
+        return newAnimeSearchResponse(
+            this.title ?: "Sin título",
+            "$mainUrl/anime/${this.link}",
+            TvType.Anime
+        ) {
+            this.posterUrl = if (posterImage?.large?.startsWith("http") == true) posterImage.large
+            else "$mainUrl${posterImage?.large ?: posterImage?.original ?: ""}"
         }
     }
 
@@ -173,7 +208,6 @@ class AnimeParadiseProvider : MainAPI() {
     }
 }
 
-data class AnimeListResponse(val data: List<AnimeObject>)
 data class AnimeObject(
     @JsonProperty("_id") val id: String? = null,
     val title: String? = null,
@@ -194,3 +228,5 @@ data class Episode(
     val title: String? = null,
     val image: String? = null
 )
+
+data class AnimeListResponse(val data: List<AnimeObject>? = null)
