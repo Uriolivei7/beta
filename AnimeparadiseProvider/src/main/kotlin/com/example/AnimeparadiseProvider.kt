@@ -206,30 +206,26 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-            var response = app.get(watchUrl, headers = mapOf(
+            val actionHeaders = mapOf(
+                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "content-type" to "text/plain;charset=UTF-8",
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "referer" to "$mainUrl/"
-            )).text
+                "referer" to watchUrl
+            )
 
-            var resText = response.replace("\\", "")
+            val response = app.post(watchUrl, headers = actionHeaders, requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody()).text
+            val resText = response.replace("\\", "")
 
-            val videoRegex = Regex(""""id"\s*:\s*"$currentEpId".*?"url"\s*:\s*"(https?://[^"]+master\.m3u8)"""")
-            var finalVideoUrl = videoRegex.find(resText)?.groupValues?.get(1)
+            val epPos = resText.indexOf(currentEpId)
+            val searchArea = if (epPos != -1) {
+                resText.substring(epPos, (epPos + 10000).coerceAtMost(resText.length))
+            } else resText
 
-            if (finalVideoUrl == null) {
-                Log.d(TAG, "Logs: GET falló para video, intentando POST...")
-                val actionHeaders = mapOf(
-                    "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                    "content-type" to "text/plain;charset=UTF-8",
-                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-                )
-                response = app.post(watchUrl, headers = actionHeaders, requestBody = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody()).text
-                resText = response.replace("\\", "")
-                finalVideoUrl = videoRegex.find(resText)?.groupValues?.get(1)
-            }
+            val videoRegex = Regex("""https?://[a-zA-Z0-9.-]+/[^"\\\s]+master\.m3u8""")
+            val finalVideoUrl = videoRegex.find(searchArea)?.value
 
             if (finalVideoUrl != null) {
-                Log.d(TAG, "Logs: EP CORRECTO ENCONTRADO: $currentEpId")
+                Log.d(TAG, "Logs: VIDEO ENCONTRADO: $finalVideoUrl")
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
@@ -243,22 +239,11 @@ class AnimeParadiseProvider : MainAPI() {
                     )
                 )
             } else {
-                Log.e(TAG, "Logs: No se encontró video para $currentEpId")
-            }
-
-            val epPos = resText.indexOf(currentEpId)
-            val searchArea = if (epPos != -1) {
-                resText.substring(epPos, (epPos + 5000).coerceAtMost(resText.length))
-            } else {
-                resText
+                Log.e(TAG, "Logs: Sigo sin hallar el video en el área del ID")
             }
 
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val subsFound = subRegex.findAll(searchArea).toList()
-
-            Log.d(TAG, "Logs: Subtítulos encontrados en el área: ${subsFound.size}")
-
-            subsFound.forEach { match ->
+            subRegex.findAll(searchArea).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
                 val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
                 subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], subUrl))
@@ -266,7 +251,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error: ${e.message}")
             false
         }
     }
