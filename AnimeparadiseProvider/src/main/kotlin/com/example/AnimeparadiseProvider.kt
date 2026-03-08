@@ -198,13 +198,19 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val currentEpId = data.substringAfter("/watch/").substringBefore("?")
-        val currentOriginId = data.substringAfter("origin=").substringBefore("&")
+        val cleanData = data.substringAfter("/watch/").substringBefore("|")
+        val currentEpId = cleanData.substringBefore("?")
 
-        Log.d(TAG, "Logs: === INICIO LOADLINKS === Buscando Ep: $currentEpId")
+        val currentOriginId = if (data.contains("origin=")) {
+            data.substringAfter("origin=").substringBefore("&").substringBefore("|")
+        } else {
+            data.substringAfter("|")
+        }
+
+        Log.d(TAG, "Logs: === INICIO LOADLINKS === EpId: $currentEpId | Origin: $currentOriginId")
 
         return try {
-            val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
+            val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
             val actionHeaders = mapOf(
                 "accept" to "*/*",
@@ -216,21 +222,27 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())).text
+
+            Log.d(TAG, "Logs: Enviando POST a $watchUrl con body $requestBodyString")
+
+            val response = app.post(
+                watchUrl,
+                headers = actionHeaders,
+                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            ).text
+
             val resText = response.replace("\\", "")
 
-            val videoRegex = Regex("""https://[a-zA-Z0-9.-]+/_v7/[^"\\\s]+master\.m3u8""")
-            val allVideos = videoRegex.findAll(resText).map { it.value }.toList()
+            val videoRegex = Regex("""https?://[a-zA-Z0-9.-]+/_v7/[^"\\\s]+master\.m3u8""")
 
-            val finalVideoUrl = if (allVideos.size > 1) {
-                val epBlock = resText.substringAfter(currentEpId).take(2000)
-                videoRegex.find(epBlock)?.value ?: allVideos.first()
-            } else {
-                allVideos.firstOrNull()
-            }
+            val searchIndex = resText.indexOf(currentEpId)
+            val targetText = if (searchIndex != -1) resText.substring(searchIndex) else resText
 
-            if (finalVideoUrl != null) {
-                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}"
+            val videoMatch = videoRegex.find(targetText) ?: videoRegex.find(resText)
+
+            if (videoMatch != null) {
+                val rawUrl = videoMatch.value
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${rawUrl.encodeUri()}"
 
                 callback.invoke(
                     newExtractorLink(
@@ -244,10 +256,14 @@ class AnimeParadiseProvider : MainAPI() {
                         }
                     )
                 )
+            } else {
+                Log.e(TAG, "Logs: No se encontró link de video en la respuesta")
             }
 
             val subRegex = Regex("""\{"src":"([^"]+)","label":"([^"]+)","type":"([^"]+)"\}""")
-            val subArea = resText.substringAfter(currentEpId).substringBefore("{\"id\":")
+            val subArea = if (searchIndex != -1) {
+                resText.substring(searchIndex).substringBefore("{\"id\":")
+            } else resText
 
             subRegex.findAll(subArea).forEach { match ->
                 val src = match.groupValues[1].replace("\\/", "/")
@@ -257,7 +273,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en LoadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico en LoadLinks: ${e.message}")
             false
         }
     }
