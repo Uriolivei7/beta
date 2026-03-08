@@ -134,7 +134,13 @@ class AnimeParadiseProvider : MainAPI() {
 
     private fun AnimeObject.toSearchResponse(): SearchResponse {
         val rawImage = this.image ?: this.posterImage?.large ?: this.posterImage?.original
-        val cleanSlug = this.link?.substringBefore("/") ?: ""
+
+        val rawLink = this.link ?: ""
+        val cleanSlug = if (rawLink.contains("/")) {
+            rawLink.substringAfter("/")
+        } else {
+            rawLink
+        }
 
         return newAnimeSearchResponse(
             this.title ?: "Sin título",
@@ -195,7 +201,7 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS CON TOKEN ACTUALIZADO ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS CON LIMPIEZA DE UNICODE ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
@@ -209,52 +215,40 @@ class AnimeParadiseProvider : MainAPI() {
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
-            val requestBodyString = "[\"$epUuid\",\"$originId\"]"
             val response = app.post(
                 watchUrl,
                 headers = actionHeaders,
-                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                requestBody = "[\"$epUuid\",\"$originId\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text
 
-            val subRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.vtt""")
-            subRegex.findAll(response).forEach {
-                val subUrl = it.value.replace("\\/", "/")
-                Log.d(TAG, "Logs: Subtítulo encontrado: $subUrl")
-                subtitleCallback.invoke(newSubtitleFile("Spanish", subUrl))
+            val cleanResponse = response.replace("\\/", "/").replace("\\u002F", "/")
+
+            val subRegex = Regex("""https?://[^"\\\s]+?\.vtt""")
+            subRegex.findAll(cleanResponse).forEach {
+                subtitleCallback.invoke(newSubtitleFile("Spanish", it.value))
             }
 
-            val videoRegex = Regex("""https?[:\\/]+[^"\\\s]+?\.m3u8[^"\\\s]*""")
-
-            val links = videoRegex.findAll(response)
-                .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
+            val videoRegex = Regex("""https?://[^"\\\s]+?\.m3u8[^"\\\s]*""")
+            val links = videoRegex.findAll(cleanResponse)
+                .map { it.value }
                 .distinct()
                 .toList()
 
-            Log.d(TAG, "Logs: Enlaces crudos encontrados: ${links.size}")
+            Log.d(TAG, "Logs: Enlaces encontrados tras limpieza: ${links.size}")
 
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
 
-                val serverName = when {
-                    finalUrl.contains("windflash") -> "Paradise Wind"
-                    finalUrl.contains("lightning") -> "Paradise Light"
-                    else -> "Paradise Mirror ${index + 1}"
-                }
-
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = serverName,
+                        name = if (finalUrl.contains("windflash")) "Paradise Wind" else "Paradise Mirror ${index + 1}",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = Qualities.P1080.value
-                        this.referer = "$mainUrl/"
-                        this.headers = mapOf(
-                            "Origin" to mainUrl,
-                            "User-Agent" to actionHeaders["user-agent"]!!
-                        )
+                        this.referer = watchUrl
                     }
                 )
             }
