@@ -182,44 +182,61 @@ class AnimeParadiseProvider : MainAPI() {
         val epUuid = parts.getOrNull(0) ?: return false
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === INICIANDO LOADLINKS PARA EP: $epUuid ===")
+        val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS ===")
+        Log.d(TAG, "Logs: EP_UUID: $epUuid | ORIGIN_ID: $originId")
+        Log.d(TAG, "Logs: URL Objetivo: $watchUrl")
 
         return try {
-            val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
             val pageReq = app.get(watchUrl, headers = apiHeaders)
             val cookies = pageReq.cookies
+            val cookieStr = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            Log.d(TAG, "Logs: Cookies encontradas: ${cookies.size} -> $cookieStr")
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                "next-router-state-tree" to "%5B%22%22%2C%7B%22children%22%3A%5B%22watch%22%2C%7B%22children%22%3A%5B%22$epUuid%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D",
                 "content-type" to "text/plain;charset=UTF-8",
+                "next-router-state-tree" to "%5B%22%22%2C%7B%22children%22%3A%5B%22watch%22%2C%7B%22children%22%3A%5B%22$epUuid%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D",
                 "origin" to mainUrl,
                 "referer" to watchUrl,
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                "cookie" to cookieStr
             )
 
             val bodyString = "[\"$epUuid\",\"$originId\"]"
+            Log.d(TAG, "Logs: Enviando POST con Body: $bodyString")
 
             val response = app.post(
-                "$mainUrl/watch/$epUuid?origin=$originId",
+                watchUrl,
                 headers = actionHeaders,
                 requestBody = bodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            ).text
+            )
 
-            Log.d(TAG, "Logs: Raw Response (200c): ${response.take(200)}")
+            val resText = response.text
+            Log.d(TAG, "Logs: HTTP Status: ${response.code}")
+            Log.d(TAG, "Logs: Raw Response (500c): ${resText.take(500)}")
 
-            val cleanResponse = response.replace("\\u002F", "/").replace("\\/", "/").replace("\\\"", "\"").replace("\\", "")
+            if (resText.contains("1:null")) {
+                Log.e(TAG, "Logs: EL SERVIDOR DEVOLVIÓ NULL. Es posible que el 'next-action' ID haya cambiado.")
+            }
+
+            val cleanResponse = resText
+                .replace("\\u002F", "/")
+                .replace("\\/", "/")
+                .replace("\\\"", "\"")
+                .replace("\\", "")
 
             val videoRegex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
             val links = videoRegex.findAll(cleanResponse).map { it.value }.distinct().toList()
 
-            Log.d(TAG, "Logs: Enlaces m3u8 encontrados: ${links.size}")
+            Log.d(TAG, "Logs: Enlaces m3u8 detectados por Regex: ${links.size}")
 
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
                 else "https://stream.animeparadise.moe/m3u8?url=${rawUrl.replace("/", "%2F").replace(":", "%3A")}"
+
+                Log.d(TAG, "Logs: Link final generado [$index]: $finalUrl")
 
                 callback.invoke(
                     newExtractorLink(
@@ -233,9 +250,14 @@ class AnimeParadiseProvider : MainAPI() {
                     }
                 )
             }
-            links.isNotEmpty()
+
+            val success = links.isNotEmpty()
+            Log.d(TAG, "Logs: loadLinks finalizado con éxito: $success")
+            success
+
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: ERROR CRÍTICO en loadLinks: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
