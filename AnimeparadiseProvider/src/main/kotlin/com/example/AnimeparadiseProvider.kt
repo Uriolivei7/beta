@@ -216,11 +216,20 @@ class AnimeParadiseProvider : MainAPI() {
 
             val actionHeaders = mapOf(
                 "accept" to "*/*",
+                "accept-language" to "es-ES,es;q=0.7",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
-                "referer" to watchUrl,
                 "origin" to mainUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "priority" to "u=1, i",
+                "referer" to watchUrl,
+                "sec-ch-ua" to "\"Not:A-Brand\";v=\"99\", \"Brave\";v=\"145\", \"Chromium\";v=\"145\"",
+                "sec-ch-ua-mobile" to "?0",
+                "sec-ch-ua-platform" to "\"Windows\"",
+                "sec-fetch-dest" to "empty",
+                "sec-fetch-mode" to "cors",
+                "sec-fetch-site" to "same-site",
+                "sec-gpc" to "1",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
