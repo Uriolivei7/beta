@@ -142,30 +142,53 @@ class AnimeParadiseProvider : MainAPI() {
         if (slug.isBlank() || slug == "null") return null
 
         return try {
-            val detailRes = app.get("$apiUrl/anime/$slug", headers = apiHeaders).text
+            // 1. Obtener detalles principales
+            val detailRes = app.get("$apiUrl/anime/$slug?v=1", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
-            val internalId = animeData.data?.id ?: throw Exception("ID no encontrado")
+            val data = animeData.data ?: throw Exception("Data de anime nula")
 
+            // La API a veces usa _id o id, verificamos ambos
+            val internalId = data._id ?: data.id ?: throw Exception("ID interno no encontrado")
+
+            // 2. Obtener Episodios y Recomendaciones
             val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
+            val simResponse = app.get("$apiUrl/anime/similar?animeId=$internalId", headers = apiHeaders).text
+
             val epData: EpisodeListResponse = mapper.readValue(epResponse)
+            val simData: SimilarResponse = mapper.readValue(simResponse)
 
+            // Procesar Episodios
             val episodes = epData.data?.map { ep ->
-                val rawId = ep.id ?: ""
-                val cleanEpId = rawId.substringAfterLast("/")
-
+                val cleanEpId = (ep.id ?: "").substringAfterLast("/")
                 newEpisode("$cleanEpId|$internalId") {
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.episode = ep.number?.toIntOrNull() ?: 0
-                    this.posterUrl = fixImageUrl(ep.image)
+                    this.posterUrl = ep.image // Tu función fixImageUrl si es necesaria
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
-            Log.d(TAG, "Logs: ${episodes.size} episodios cargados")
+            // Procesar Recomendaciones
+            val recommendations = simData.data?.map { sim ->
+                // Usamos mainUrl porque las recomendaciones suelen apuntar al slug del anime
+                newAnimeSearchResponse(sim.title ?: "", "$mainUrl/anime/${sim.link}") {
+                    this.posterUrl = sim.posterImage?.large
+                }
+            }
 
-            newAnimeLoadResponse(animeData.data?.title ?: "Anime", url, TvType.Anime) {
-                this.posterUrl = fixImageUrl(animeData.data?.posterImage?.large)
-                this.plot = animeData.data?.synopsis
-                this.tags = animeData.data?.genres
+            Log.d(TAG, "Logs: ${episodes.size} episodios y ${recommendations?.size ?: 0} recomendaciones")
+
+            // 3. Respuesta Final
+            newAnimeLoadResponse(data.title ?: "Anime", url, TvType.Anime) {
+                this.posterUrl = data.posterImage?.original ?: data.posterImage?.large
+                // Priorizamos synopsis sobre synopsys (por el typo en la API)
+                this.plot = data.synopsis ?: data.synopsys
+
+                // Corregido: Verificamos si tags no es nulo ni vacío
+                this.tags = if (data.tags?.isNotEmpty() == true) data.tags else data.genres
+
+                this.year = data.animeSeason?.year
+                this.recommendations = recommendations
+
                 addEpisodes(DubStatus.Subbed, episodes)
             }
         } catch (e: Exception) {
@@ -248,7 +271,7 @@ class AnimeParadiseProvider : MainAPI() {
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "Paradise Main",
+                        name = "AnimeParadise",
                         url = finalUrl,
                         type = ExtractorLinkType.M3U8
                     ).apply {
@@ -283,8 +306,6 @@ data class AnimeObject(
     val image: String? = null
 )
 data class ImageInfo(val original: String? = null, val large: String? = null)
-data class AnimeDetailResponse(val data: AnimeObject? = null)
-data class EpisodeListResponse(val data: List<Episode>? = null)
 data class Episode(
     @JsonProperty("_id") val id: String? = null,
     val number: String? = null,
@@ -292,3 +313,57 @@ data class Episode(
     val image: String? = null
 )
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
+
+// Respuesta para el detalle del anime
+data class AnimeDetailResponse(
+    val success: Boolean?,
+    val data: AnimeData?
+)
+
+data class AnimeData(
+    val _id: String?,
+    @JsonProperty("id") val id: String?, // Algunos endpoints usan 'id' y otros '_id'
+    val title: String?,
+    val link: String?,
+    val synopsis: String?, // Mapeamos ambos por si acaso
+    val synopsys: String?,
+    val genres: List<String>?,
+    val tags: List<String>?,
+    val posterImage: PosterImages?,
+    val animeSeason: SeasonInfo?
+)
+
+data class SeasonInfo(
+    val season: String?,
+    val year: Int?
+)
+
+data class PosterImages(
+    val large: String?,
+    val original: String?
+)
+
+// Respuesta para animes similares (Recomendaciones)
+data class SimilarResponse(
+    val success: Boolean?,
+    val data: List<SimilarAnime>?
+)
+
+data class SimilarAnime(
+    val title: String?,
+    val link: String?,
+    val posterImage: PosterImages?
+)
+
+// Respuesta de Episodios (Asegúrate de tener esta para el size)
+data class EpisodeListResponse(
+    val success: Boolean?,
+    val data: List<EpisodeData>?
+)
+
+data class EpisodeData(
+    val id: String?,
+    val title: String?,
+    val number: String?,
+    val image: String?
+)
