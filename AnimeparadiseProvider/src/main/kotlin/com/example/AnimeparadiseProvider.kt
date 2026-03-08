@@ -198,56 +198,47 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Limpiamos 'data' para quitar el nombre del provider si viene pegado
+        // 1. Limpieza y extracción de IDs
         val cleanData = data.replace("animeparadise", "").replace("AnimeParadise", "")
-
-        // Capturamos solo los IDs alfanuméricos largos
         val idRegex = Regex("""([a-zA-Z0-9-]{12,})""")
         val allIds = idRegex.findAll(cleanData).map { it.value }.toList()
-
-        // IMPORTANTE: Aseguramos que no estamos agarrando basura
         val currentEpId = allIds.getOrNull(0) ?: ""
         val currentOriginId = allIds.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: START -> EpId Real: $currentEpId | Origin: $currentOriginId")
-
-        if (currentEpId.isEmpty()) {
-            Log.e(TAG, "Logs: Error -> EpId vacío. Data original era: $data")
-            return false
-        }
+        Log.d(TAG, "Logs: Intentando EpId: $currentEpId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-            val actionHeaders = mapOf(
-                "accept" to "*/*",
-                "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
+            // 2. OBTENER COOKIES Y PÁGINA (Simulando entrada real)
+            // Pedimos la página con un GET normal para que nos den el token de sesión
+            val pageResponse = app.get(watchUrl, cacheTime = 0)
+            val resText = pageResponse.text.replace("\\/", "/").replace("\\\"", "\"")
+            val cookies = pageResponse.cookies
 
-            val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
-            val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
+            // 3. BUSCAR EL LINK EN EL HTML (A veces está en un script de Next.js)
+            // Buscamos "streamLink" con cualquier combinación de comillas o espacios
+            val streamRegex = Regex("""streamLink["']\s*:\s*["'](https?://[^"']+)""", RegexOption.IGNORE_CASE)
+            var videoUrl = streamRegex.find(resText)?.groupValues?.get(1)
 
-            // Intentamos el POST
-            val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
-            var resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
-
-            // Si Next.js nos da undefined, vamos directo al HTML con un GET
-            if (resText.contains("\$undefined") || !resText.contains("streamLink")) {
-                Log.d(TAG, "Logs: POST fallido o vacío, intentando GET...")
-                val getResponse = app.get(watchUrl, headers = actionHeaders)
-                resText = getResponse.text.replace("\\/", "/").replace("\\\"", "\"")
+            // 4. SI FALLA EL HTML, INTENTAMOS EL POST PERO CON LAS COOKIES OBTENIDAS
+            if (videoUrl == null) {
+                Log.d(TAG, "Logs: No está en el HTML, intentando POST con Cookies...")
+                val actionHeaders = mapOf(
+                    "accept" to "*/*",
+                    "content-type" to "text/plain;charset=UTF-8",
+                    "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                    "referer" to watchUrl,
+                    "x-nextjs-data" to "1" // Header clave para Next.js
+                )
+                val body = "[\"$currentEpId\",\"$currentOriginId\"]".toRequestBody()
+                val postRes = app.post(watchUrl, headers = actionHeaders, requestBody = body, cookies = cookies)
+                val postText = postRes.text.replace("\\/", "/").replace("\\\"", "\"")
+                videoUrl = streamRegex.find(postText)?.groupValues?.get(1)
             }
 
-            // Extracción de video
-            val streamRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-            val videoUrl = streamRegex.find(resText)?.groupValues?.get(1)
-
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: URL ENCONTRADA -> ${videoUrl.takeLast(45)}")
-
+                Log.d(TAG, "Logs: ¡LINK ENCONTRADO! -> ${videoUrl.takeLast(40)}")
                 callback.invoke(
                     newExtractorLink(
                         this.name, "AnimeParadise",
@@ -256,19 +247,17 @@ class AnimeParadiseProvider : MainAPI() {
                     ) { this.referer = "$mainUrl/" }
                 )
 
-                // Extracción de subtítulos (uno por uno)
-                val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
+                // Subtítulos
+                val subRegex = Regex("""["']src["']\s*:\s*["']([^"']+)["']\s*,\s*["']label["']\s*:\s*["']([^"']+)""", RegexOption.IGNORE_CASE)
                 subRegex.findAll(resText).forEach { m ->
-                    val label = m.groupValues[2]
                     val src = m.groupValues[1]
                     val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                    Log.d(TAG, "Logs: Sub añadido -> $label")
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                    subtitleCallback.invoke(newSubtitleFile(m.groupValues[2], subUrl))
                 }
             } else {
-                Log.e(TAG, "Logs: No se encontró link de video. ¿Cambiaron los headers?")
+                // ÚLTIMO RECURSO: Imprimir qué tipo de scripts hay
+                Log.e(TAG, "Logs: Error total. ¿Hay scripts de datos? -> ${resText.contains("__NEXT_DATA__")}")
             }
-
             true
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks -> ${e.message}")
