@@ -198,101 +198,87 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. EXTRAER IDS (Soportando guiones de UUID)
-        val idRegex = Regex("([a-zA-Z0-9-]{16,})")
+        // 1. Regex mejorado para capturar CUALQUIER ID (alfanumérico o con guiones)
+        val idRegex = Regex("""([a-zA-Z0-9-]{12,})""")
         val allIds = idRegex.findAll(data).map { it.value }.toList()
         val currentEpId = allIds.getOrNull(0) ?: ""
         val currentOriginId = allIds.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: START -> Buscando Ep: $currentEpId | Origin: $currentOriginId")
+        Log.d(TAG, "Logs: START -> Ep: $currentEpId | Origin: $currentOriginId")
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
+
+            // Headers exactos para engañar a Next.js
             val actionHeaders = mapOf(
-                "accept" to "text/x-component",
-                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "accept" to "*/*",
+                "accept-language" to "es-ES,es;q=0.9",
                 "content-type" to "text/plain;charset=UTF-8",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "priority" to "u=1, i",
                 "referer" to watchUrl,
-                "origin" to mainUrl
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
             val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
 
-            Log.d(TAG, "Logs: POST a $watchUrl con body $requestBodyString")
+            // IMPORTANTE: En Next.js a veces la respuesta buena viene en una segunda petición
+            // o con un token de sesión. Intentamos el POST normal primero.
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
+            var resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
 
-            // Limpiamos los escapes
-            val resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
+            // 2. BUSQUEDA DINÁMICA: Si el POST devuelve "undefined", intentamos leer el HTML de la página
+            if (resText.contains("\$undefined")) {
+                Log.d(TAG, "Logs: Detectado 'undefined' en POST, intentando GET a la página...")
+                val getResponse = app.get(watchUrl, headers = actionHeaders)
+                resText = getResponse.text.replace("\\/", "/").replace("\\\"", "\"")
+            }
 
-            // LOG DE SEGURIDAD: ¿El ID solicitado está siquiera en la respuesta?
-            val idExists = resText.contains(currentEpId)
-            Log.d(TAG, "Logs: ¿ID solicitado existe en la respuesta? -> $idExists")
+            // 3. EXTRACCIÓN MAESTRA (Regex que busca el patrón de streamLink sin importar el orden)
+            // Buscamos: "streamLink":"URL"
+            val streamRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
+            val allStreams = streamRegex.findAll(resText).toList()
 
-            // 2. BUSCAR BLOQUES DE VIDEO (Regex más flexible)
-            // Buscamos el ID y cualquier cosa que diga streamLink después, sin importar el orden exacto
-            val videoBlocksRegex = Regex("""\"id\":\"([^\"]+)\".*?\"streamLink\":\"([^\"]+)\"""")
-            val allMatches = videoBlocksRegex.findAll(resText).toList()
+            Log.d(TAG, "Logs: Total de streamLinks encontrados -> ${allStreams.size}")
 
-            // Si el regex anterior falla (0 bloques), probamos uno ultra-simple
-            // que busque links de video directamente
-            val fallbackVideoRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-
-            Log.d(TAG, "Logs: Bloques específicos encontrados -> ${allMatches.size}")
-
-            // 3. SELECCIONAR EL CORRECTO
-            val correctMatch = allMatches.find { it.groupValues[1] == currentEpId }
-
-            var finalVideoUrl = correctMatch?.groupValues?.get(2)
-
-            // Si no encontramos el bloque exacto, buscamos el primer link de video que aparezca
-            // después de la posición de nuestro ID en el texto
-            if (finalVideoUrl == null) {
-                val idPos = resText.indexOf("\"id\":\"$currentEpId\"")
-                if (idPos != -1) {
-                    val searchArea = resText.substring(idPos).take(5000)
-                    finalVideoUrl = fallbackVideoRegex.find(searchArea)?.groupValues?.get(1)
-                    Log.d(TAG, "Logs: Usando búsqueda por cercanía al ID")
-                }
+            // Si hay varios, intentamos buscar uno que esté cerca del ID de nuestro episodio
+            val idPos = resText.indexOf(currentEpId)
+            val finalVideoUrl = if (idPos != -1 && allStreams.size > 1) {
+                // Buscamos el link que aparezca DESPUÉS de nuestro ID
+                val textAfterId = resText.substring(idPos)
+                streamRegex.find(textAfterId)?.groupValues?.get(1) ?: allStreams.firstOrNull()?.groupValues?.get(1)
+            } else {
+                allStreams.firstOrNull()?.groupValues?.get(1)
             }
 
             if (finalVideoUrl != null) {
-                Log.d(TAG, "Logs: URL FINAL LOCALIZADA -> ${finalVideoUrl.takeLast(50)}")
+                Log.d(TAG, "Logs: URL ENCONTRADA -> ${finalVideoUrl.takeLast(60)}")
 
                 callback.invoke(
                     newExtractorLink(
-                        this.name, "AnimeParadise",
+                        this.name,
+                        "AnimeParadise",
                         "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
                     ) { this.referer = "$mainUrl/" }
                 )
             } else {
-                // Log del texto para ver qué está llegando realmente (solo una parte para no saturar)
-                Log.e(TAG, "Logs: FALLO TOTAL. Muestra de respuesta cerca del ID: ${resText.substring(resText.indexOf(currentEpId)).take(500)}")
+                Log.e(TAG, "Logs: No se encontró ningún link de video en el POST ni en el GET")
             }
 
-            // 4. SUBTÍTULOS (Regex más tolerante)
-            val idPosSub = resText.indexOf("\"id\":\"$currentEpId\"")
-            if (idPosSub != -1) {
-                val subSection = resText.substring(idPosSub).take(8000)
-                // Regex más flexible para subs: busca label y src en cualquier orden dentro del objeto
-                val subRegex = Regex("""\{[^{]*?\"src\":\"([^\"]+)\"[^{]*?\"label\":\"([^\"]+)\"""")
-
-                val foundSubs = subRegex.findAll(subSection).toList()
-                Log.d(TAG, "Logs: Subtítulos encontrados -> ${foundSubs.size}")
-
-                foundSubs.forEach { m ->
-                    val label = m.groupValues[2]
-                    val src = m.groupValues[1]
-                    val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
-                }
+            // 4. SUBTÍTULOS
+            val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
+            subRegex.findAll(resText).forEach { m ->
+                val label = m.groupValues[2]
+                val src = m.groupValues[1]
+                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
             }
+
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: EXCEPCIÓN CRÍTICA -> ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG, "Logs: Error crítico -> ${e.message}")
             false
         }
     }
