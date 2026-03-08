@@ -96,12 +96,15 @@ class AnimeParadiseProvider : MainAPI() {
 
     private inline fun <reified T> parseNextJsJson(input: String): T? {
         return try {
-            // Log para ver el inicio de la cadena y detectar si el formato cambió
-            Log.d(TAG, "Logs: Parseando texto (primeros 50 caracteres): ${input.take(50)}")
+            Log.d(TAG, "Logs: Parseando texto (primeros 100 caracteres): ${input.take(100)}")
+
+            if (input.trim().startsWith("{")) {
+                return mapper.readValue<T>(input)
+            }
 
             val startIndex = input.indexOf("{\"data\":")
             if (startIndex == -1) {
-                Log.e(TAG, "Logs: No se encontró el marcador '{\"data\":' en la respuesta")
+                Log.e(TAG, "Logs: No se encontró el marcador '{\"data\":'")
                 return null
             }
 
@@ -120,7 +123,7 @@ class AnimeParadiseProvider : MainAPI() {
             val json = input.substring(startIndex, endIndex)
             mapper.readValue<T>(json)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error de parseo Jackson: ${e.message}")
+            Log.e(TAG, "Logs: Error de parseo: ${e.message}")
             null
         }
     }
@@ -189,23 +192,21 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: ""
-        val epUuid = if (rawEpId.contains("/")) rawEpId.substringAfterLast("/") else rawEpId
+        val epUuid = parts.getOrNull(0) ?: ""
         val originId = parts.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: === LOADLINKS (VERSION MEJORADA) ===")
+        Log.d(TAG, "Logs: === INICIANDO LOADLINKS CON TOKEN ACTUALIZADO ===")
 
         return try {
             val watchUrl = "$mainUrl/watch/$epUuid?origin=$originId"
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
-                "next-action" to "604a8a337238f40e9a47f69916d68967b49f8fc44b",
+                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "content-type" to "text/plain;charset=UTF-8",
                 "origin" to mainUrl,
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-                "sec-gpc" to "1"
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             )
 
             val requestBodyString = "[\"$epUuid\",\"$originId\"]"
@@ -227,8 +228,9 @@ class AnimeParadiseProvider : MainAPI() {
             val links = videoRegex.findAll(response)
                 .map { it.value.replace("\\u002F", "/").replace("\\/", "/").replace("\\", "") }
                 .distinct()
-                .take(3)
                 .toList()
+
+            Log.d(TAG, "Logs: Enlaces crudos encontrados: ${links.size}")
 
             links.forEachIndexed { index, rawUrl ->
                 val finalUrl = if (rawUrl.contains("stream.animeparadise.moe")) rawUrl
@@ -251,13 +253,13 @@ class AnimeParadiseProvider : MainAPI() {
                         this.referer = "$mainUrl/"
                         this.headers = mapOf(
                             "Origin" to mainUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                            "User-Agent" to actionHeaders["user-agent"]!!
                         )
                     }
                 )
             }
 
-            true
+            links.isNotEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
