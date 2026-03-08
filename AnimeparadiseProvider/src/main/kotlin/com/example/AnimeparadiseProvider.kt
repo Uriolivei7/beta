@@ -198,24 +198,31 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. Regex mejorado para capturar CUALQUIER ID (alfanumérico o con guiones)
+        // Limpiamos 'data' para quitar el nombre del provider si viene pegado
+        val cleanData = data.replace("animeparadise", "").replace("AnimeParadise", "")
+
+        // Capturamos solo los IDs alfanuméricos largos
         val idRegex = Regex("""([a-zA-Z0-9-]{12,})""")
-        val allIds = idRegex.findAll(data).map { it.value }.toList()
+        val allIds = idRegex.findAll(cleanData).map { it.value }.toList()
+
+        // IMPORTANTE: Aseguramos que no estamos agarrando basura
         val currentEpId = allIds.getOrNull(0) ?: ""
         val currentOriginId = allIds.getOrNull(1) ?: ""
 
-        Log.d(TAG, "Logs: START -> Ep: $currentEpId | Origin: $currentOriginId")
+        Log.d(TAG, "Logs: START -> EpId Real: $currentEpId | Origin: $currentOriginId")
+
+        if (currentEpId.isEmpty()) {
+            Log.e(TAG, "Logs: Error -> EpId vacío. Data original era: $data")
+            return false
+        }
 
         return try {
             val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-            // Headers exactos para engañar a Next.js
             val actionHeaders = mapOf(
                 "accept" to "*/*",
-                "accept-language" to "es-ES,es;q=0.9",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                "priority" to "u=1, i",
                 "referer" to watchUrl,
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
@@ -223,62 +230,48 @@ class AnimeParadiseProvider : MainAPI() {
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
             val body = requestBodyString.toRequestBody("text/plain; charset=utf-8".toMediaTypeOrNull())
 
-            // IMPORTANTE: En Next.js a veces la respuesta buena viene en una segunda petición
-            // o con un token de sesión. Intentamos el POST normal primero.
+            // Intentamos el POST
             val response = app.post(watchUrl, headers = actionHeaders, requestBody = body)
             var resText = response.text.replace("\\/", "/").replace("\\\"", "\"")
 
-            // 2. BUSQUEDA DINÁMICA: Si el POST devuelve "undefined", intentamos leer el HTML de la página
-            if (resText.contains("\$undefined")) {
-                Log.d(TAG, "Logs: Detectado 'undefined' en POST, intentando GET a la página...")
+            // Si Next.js nos da undefined, vamos directo al HTML con un GET
+            if (resText.contains("\$undefined") || !resText.contains("streamLink")) {
+                Log.d(TAG, "Logs: POST fallido o vacío, intentando GET...")
                 val getResponse = app.get(watchUrl, headers = actionHeaders)
                 resText = getResponse.text.replace("\\/", "/").replace("\\\"", "\"")
             }
 
-            // 3. EXTRACCIÓN MAESTRA (Regex que busca el patrón de streamLink sin importar el orden)
-            // Buscamos: "streamLink":"URL"
+            // Extracción de video
             val streamRegex = Regex("""\"streamLink\":\"(https?://[^\"]+)""")
-            val allStreams = streamRegex.findAll(resText).toList()
+            val videoUrl = streamRegex.find(resText)?.groupValues?.get(1)
 
-            Log.d(TAG, "Logs: Total de streamLinks encontrados -> ${allStreams.size}")
-
-            // Si hay varios, intentamos buscar uno que esté cerca del ID de nuestro episodio
-            val idPos = resText.indexOf(currentEpId)
-            val finalVideoUrl = if (idPos != -1 && allStreams.size > 1) {
-                // Buscamos el link que aparezca DESPUÉS de nuestro ID
-                val textAfterId = resText.substring(idPos)
-                streamRegex.find(textAfterId)?.groupValues?.get(1) ?: allStreams.firstOrNull()?.groupValues?.get(1)
-            } else {
-                allStreams.firstOrNull()?.groupValues?.get(1)
-            }
-
-            if (finalVideoUrl != null) {
-                Log.d(TAG, "Logs: URL ENCONTRADA -> ${finalVideoUrl.takeLast(60)}")
+            if (videoUrl != null) {
+                Log.d(TAG, "Logs: URL ENCONTRADA -> ${videoUrl.takeLast(45)}")
 
                 callback.invoke(
                     newExtractorLink(
-                        this.name,
-                        "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${finalVideoUrl.encodeUri()}",
+                        this.name, "AnimeParadise",
+                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
                     ) { this.referer = "$mainUrl/" }
                 )
-            } else {
-                Log.e(TAG, "Logs: No se encontró ningún link de video en el POST ni en el GET")
-            }
 
-            // 4. SUBTÍTULOS
-            val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
-            subRegex.findAll(resText).forEach { m ->
-                val label = m.groupValues[2]
-                val src = m.groupValues[1]
-                val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
-                subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                // Extracción de subtítulos (uno por uno)
+                val subRegex = Regex("""\"src\":\"([^\"]+)\",\"label\":\"([^\"]+)\"""")
+                subRegex.findAll(resText).forEach { m ->
+                    val label = m.groupValues[2]
+                    val src = m.groupValues[1]
+                    val subUrl = if (src.startsWith("http")) src else "https://api.animeparadise.moe/stream/file/$src"
+                    Log.d(TAG, "Logs: Sub añadido -> $label")
+                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                }
+            } else {
+                Log.e(TAG, "Logs: No se encontró link de video. ¿Cambiaron los headers?")
             }
 
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico -> ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks -> ${e.message}")
             false
         }
     }
