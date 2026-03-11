@@ -226,13 +226,23 @@ class AnimeonsenProvider : MainAPI() {
             if (videoUrl.isNotEmpty()) {
                 res.uri.subtitles?.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
-                    val finalSubUrl = if (subUrl.contains("?")) "$subUrl&format=vtt" else "$subUrl?format=vtt"
+
+                    val finalSubUrl = "${subUrl}?format=vtt&t=${System.currentTimeMillis()}"
 
                     subtitleCallback.invoke(
                         newSubtitleFile(langName, finalSubUrl) {
-                            this.headers = commonHeaders
+                            this.headers = mapOf(
+                                "Authorization" to "Bearer $token",
+                                "Origin" to "https://www.animeonsen.xyz",
+                                "Referer" to "https://www.animeonsen.xyz/",
+                                "Accept" to "application/json, text/plain, */*",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+                                "Sec-Fetch-Mode" to "cors",
+                                "Sec-Fetch-Site" to "same-site"
+                            )
                         }
                     )
+                    Log.d(TAG, "Logs: Subtítulo enviado al callback: $langName")
                 }
 
                 val isDash = videoUrl.contains(".mpd")
