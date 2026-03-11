@@ -128,14 +128,16 @@ class GnulaProvider : MainAPI() {
 
         return if (!post.seasons.isNullOrEmpty()) {
             val episodes = post.seasons.flatMap { season ->
-                season.episodes.map { ep ->
+                season.episodes.asIterable().map { ep ->
                     val sNum = ep.slug.season ?: season.number?.toString() ?: "1"
                     val eNum = ep.slug.episode ?: ep.number?.toString() ?: "1"
                     val epSlug = ep.slug.name ?: slugRaw
 
-
-                    val cleanName = ep.title?.replace(title, "")?.replace(Regex("""\d+x\d+"""), "")?.trim()
-                        ?.removePrefix("-")?.trim()
+                    val cleanName = ep.title?.replace(title, "")
+                        ?.replace(Regex("""\d+x\d+"""), "")
+                        ?.trim()
+                        ?.removePrefix("-")
+                        ?.trim()
                         .let { if (it.isNullOrBlank()) "Episodio $eNum" else it }
 
                     newEpisode("$mainUrl/series/$epSlug/seasons/$sNum/episodes/$eNum") {
