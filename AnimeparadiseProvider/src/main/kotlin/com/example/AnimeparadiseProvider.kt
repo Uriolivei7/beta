@@ -221,7 +221,6 @@ class AnimeParadiseProvider : MainAPI() {
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text.replace("\\/", "/")
 
-            // Video
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""")
                 .find(resText)?.groupValues?.getOrNull(1)
 
@@ -237,7 +236,6 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            // Subtítulos desde subData
             val subDataJson = Regex(""""subData"\s*:\s*(\[.*?](?=\s*[,}]))""")
                 .find(resText)?.groupValues?.getOrNull(1)
 
@@ -337,7 +335,6 @@ class AnimeParadiseProvider : MainAPI() {
             return "$h:$m:$s.${ms.toString().padStart(3, '0')}"
         }
 
-        // Parsear todos los diálogos primero
         data class Cue(val start: String, val end: String, val text: String, val isTop: Boolean)
         val cues = mutableListOf<Cue>()
 
@@ -360,44 +357,26 @@ class AnimeParadiseProvider : MainAPI() {
             }
         }
 
-        // Agrupar cues con el mismo start+end en uno solo
-        val grouped = mutableMapOf<String, MutableList<Cue>>()
+        // LinkedHashMap para preservar orden cronológico
+        val grouped = LinkedHashMap<String, MutableList<Cue>>()
         cues.forEach { cue ->
             val key = "${cue.start}|${cue.end}"
             grouped.getOrPut(key) { mutableListOf() }.add(cue)
         }
 
-        // Generar VTT combinando simultáneos
         grouped.forEach { (_, group) ->
             val start = group[0].start
             val end   = group[0].end
+            val topCues    = group.filter { it.isTop }
+            val bottomCues = group.filter { !it.isTop }
 
-            if (group.size == 1) {
-                val cue = group[0]
-                val position = if (cue.isTop) "line:5% position:50% align:center"
-                else "line:90% position:50% align:center"
-                sb.append("$start --> $end $position\n${cue.text}\n\n")
-            } else {
-                // Combinar: texto de arriba primero, luego salto, luego texto de abajo
-                val topCues    = group.filter { it.isTop }
-                val bottomCues = group.filter { !it.isTop }
-                val topText    = topCues.joinToString("\n") { it.text }
+            if (topCues.isNotEmpty()) {
+                val topText = topCues.joinToString("\n") { it.text }
+                sb.append("$start --> $end line:5% position:50% align:center\n$topText\n\n")
+            }
+            if (bottomCues.isNotEmpty()) {
                 val bottomText = bottomCues.joinToString("\n") { it.text }
-
-                when {
-                    topCues.isNotEmpty() && bottomCues.isNotEmpty() -> {
-                        // Texto arriba en cue separado line:5%
-                        sb.append("$start --> $end line:5% position:50% align:center\n$topText\n\n")
-                        // Texto abajo en cue separado line:90%
-                        sb.append("$start --> $end line:90% position:50% align:center\n$bottomText\n\n")
-                    }
-                    topCues.isNotEmpty() -> {
-                        sb.append("$start --> $end line:5% position:50% align:center\n$topText\n\n")
-                    }
-                    else -> {
-                        sb.append("$start --> $end line:90% position:50% align:center\n$bottomText\n\n")
-                    }
-                }
+                sb.append("$start --> $end line:90% position:50% align:center\n$bottomText\n\n")
             }
         }
 
