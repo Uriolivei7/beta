@@ -201,44 +201,45 @@ class AnimeParadiseProvider : MainAPI() {
     ): Boolean {
         val parts = data.split("|")
         val currentEpId = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
-        // Añadimos un parámetro aleatorio para saltar la caché del servidor
-        val watchUrl = "$mainUrl/watch/$currentEpId?t=${System.currentTimeMillis()}"
+        val watchUrl = "$mainUrl/watch/$currentEpId"
 
         return try {
-            // 1. Limpieza total de cookies
-            app.baseClient.cookieJar.saveFromResponse(mainUrl.toHttpUrl(), emptyList())
+            // 1. LIMPIEZA DE COOKIES PARA EL DOMINIO
+            app.baseClient.cookieJar.saveFromResponse("https://www.animeparadise.moe".toHttpUrl(), emptyList())
 
-            // 2. Simular visita a la Home para obtener cookies base
-            app.get(mainUrl, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"))
-
-            // 3. Cargar la página del episodio con headers de "navegación"
-            val response = app.get(watchUrl, headers = mapOf(
+            // 2. PETICIÓN DE DATOS (RSC): Esto es lo que hace Next.js al cambiar de episodio
+            // Pedimos el componente de la página directamente
+            val rscResponse = app.get(watchUrl, headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Referer" to "$mainUrl/",
-                "Cache-Control" to "no-cache",
-                "Pragma" to "no-cache"
+                "Accept" to "text/x-component",
+                "Next-Router-State-Tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]""",
+                "Next-Url" to "/watch/$currentEpId"
             ))
-            val html = response.text
 
-            // Intentar extraer origin de varias formas
-            val realOrigin = Regex("""origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(html)?.groupValues?.getOrNull(1)
-                ?: Regex("""origin":"([a-zA-Z0-9_-]+)"""").find(html)?.groupValues?.getOrNull(1)
+            val rscText = rscResponse.text
+
+            // 3. EXTRAER ORIGIN DEL RSC (Viene en un formato distinto)
+            val realOrigin = Regex("""origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(rscText)?.groupValues?.getOrNull(1)
+                ?: Regex("""origin":"([a-zA-Z0-9_-]+)"""").find(rscText)?.groupValues?.getOrNull(1)
                 ?: "a49n4AuZawoJY7Wl"
 
-            Log.d(TAG, "Logs: EP: $currentEpId | Origin: $realOrigin")
+            Log.d(TAG, "Logs: EP ID: $currentEpId | Origin Extraído: $realOrigin")
 
-            // 4. POST con el Header de Next-Action exacto
+            // 4. POST DE ACCIÓN (Obtener el link)
+            val actionHeaders = mapOf(
+                "accept" to "text/x-component",
+                "content-type" to "text/plain;charset=UTF-8",
+                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]""",
+                "origin" to mainUrl,
+                "referer" to "$watchUrl?origin=$realOrigin",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
+            )
+
+            // Enviamos el Body como un Array JSON stringificado
             val postResponse = app.post(
                 "$mainUrl/watch/$currentEpId?origin=$realOrigin",
-                headers = mapOf(
-                    "accept" to "text/x-component",
-                    "content-type" to "text/plain;charset=UTF-8",
-                    "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                    "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]""",
-                    "referer" to watchUrl,
-                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
-                ),
+                headers = actionHeaders,
                 requestBody = "[\"$currentEpId\",\"$realOrigin\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
@@ -253,11 +254,11 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: Error - No se obtuvo link. Server respondió: ${resText.take(150)}")
+                Log.e(TAG, "Logs: No se encontró streamLink en el POST. Res: ${resText.take(100)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Fallo total: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
