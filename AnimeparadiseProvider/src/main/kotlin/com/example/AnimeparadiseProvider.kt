@@ -245,13 +245,12 @@ class AnimeParadiseProvider : MainAPI() {
             val subDataJson = Regex(""""subData"\s*:\s*(\[.*?](?=\s*[,}]))""")
                 .find(resText)?.groupValues?.getOrNull(1)
 
-            Log.d(TAG, "Logs: subData encontrado: $subDataJson")
+            Log.d(TAG, "Logs: subData RAW: $subDataJson")
 
             if (subDataJson != null) {
-                Log.d(TAG, "Logs: Post response: ${resText.take(500)}")
-                Log.d(TAG, "Logs: subData RAW: $subDataJson")
                 val subList = mapper.readValue<List<SubData>>(subDataJson)
                 Log.d(TAG, "Logs: subList size: ${subList.size}")
+
                 subList.forEach { sub ->
                     val label = sub.label ?: "Unknown"
                     val src = sub.src ?: return@forEach
@@ -270,16 +269,13 @@ class AnimeParadiseProvider : MainAPI() {
                                 ).text
 
                                 val vttContent = convertAssToVtt(assContent)
+                                val tmpDir = System.getProperty("java.io.tmpdir") ?: "/data/local/tmp"
+                                val vttFile = File(tmpDir, "sub_${src.take(12)}.vtt")
+                                vttFile.writeText(vttContent)
 
-                                // Codificar como base64 data URI en lugar de archivo local
-                                val base64 = android.util.Base64.encodeToString(
-                                    vttContent.toByteArray(Charsets.UTF_8),
-                                    android.util.Base64.NO_WRAP
-                                )
-                                val dataUri = "data:text/vtt;base64,$base64"
-
-                                subtitleCallback.invoke(newSubtitleFile(label, dataUri))
-                                Log.d(TAG, "Logs: Sub ASS->VTT (dataUri) agregado: $label, len=${vttContent.length}")
+                                val fileUri = "file://${vttFile.absolutePath}"
+                                subtitleCallback.invoke(newSubtitleFile(label, fileUri))
+                                Log.d(TAG, "Logs: Sub ASS->VTT: $label -> $fileUri, exists=${vttFile.exists()}, size=${vttFile.length()}")
                             }
                         }
                     } catch (e: Exception) {
@@ -319,7 +315,7 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: convertAssToVtt -> ${sb.length} chars, lines input: ${ass.lines().size}")
         return sb.toString()
     }
-    
+
 }
 
 data class AnimeObject(
