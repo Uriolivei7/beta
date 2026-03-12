@@ -157,15 +157,12 @@ class AnimeParadiseProvider : MainAPI() {
 
             val episodes = epData.data?.mapNotNull { ep ->
                 val finalId = ep.id
-
-                if (finalId.isNullOrBlank() || finalId.startsWith("http")) {
+                if (finalId.isNullOrBlank()) {
                     null
                 } else {
-                    Log.d(TAG, "Logs: Mapeando Ep ${ep.number} con ID: $finalId")
                     newEpisode("$finalId|$internalId") {
                         this.episode = ep.number?.toIntOrNull() ?: 0
                         this.name = ep.title ?: "Episodio ${ep.number}"
-                        this.posterUrl = ep.image
                     }
                 }
             }?.sortedBy { it.episode } ?: emptyList()
