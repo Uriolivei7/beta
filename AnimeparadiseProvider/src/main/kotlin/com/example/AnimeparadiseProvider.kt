@@ -201,66 +201,63 @@ class AnimeParadiseProvider : MainAPI() {
     ): Boolean {
         val parts = data.split("|")
         val currentEpId = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
-        val watchUrl = "$mainUrl/watch/$currentEpId"
+        // Añadimos un parámetro aleatorio para saltar la caché del servidor
+        val watchUrl = "$mainUrl/watch/$currentEpId?t=${System.currentTimeMillis()}"
 
         return try {
-            app.baseClient.cookieJar.saveFromResponse(
-                "https://www.animeparadise.moe".toHttpUrl(),
-                emptyList()
-            )
+            // 1. Limpieza total de cookies
+            app.baseClient.cookieJar.saveFromResponse(mainUrl.toHttpUrl(), emptyList())
 
+            // 2. Simular visita a la Home para obtener cookies base
+            app.get(mainUrl, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"))
+
+            // 3. Cargar la página del episodio con headers de "navegación"
             val response = app.get(watchUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Referer" to "$mainUrl/"
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Referer" to "$mainUrl/",
+                "Cache-Control" to "no-cache",
+                "Pragma" to "no-cache"
             ))
             val html = response.text
 
-            val realOrigin = Regex("""\\"origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(html)?.groupValues?.getOrNull(1)
-                ?: Regex("""origin["\\= ]+([a-zA-Z0-9_-]{10,25})""").find(html)?.groupValues?.getOrNull(1)
-                ?: "a49n4AuZawoJY7Wl" // Fallback solo si falla la extracción
+            // Intentar extraer origin de varias formas
+            val realOrigin = Regex("""origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(html)?.groupValues?.getOrNull(1)
+                ?: Regex("""origin":"([a-zA-Z0-9_-]+)"""").find(html)?.groupValues?.getOrNull(1)
+                ?: "a49n4AuZawoJY7Wl"
 
-            Log.d(TAG, "Logs: EP ID Solicitado: $currentEpId")
-            Log.d(TAG, "Logs: Origin detectado: $realOrigin")
+            Log.d(TAG, "Logs: EP: $currentEpId | Origin: $realOrigin")
 
-            val actionHeaders = mapOf(
-                "accept" to "text/x-component",
-                "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                "origin" to mainUrl,
-                "referer" to "$watchUrl?origin=$realOrigin",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
-            )
-
+            // 4. POST con el Header de Next-Action exacto
             val postResponse = app.post(
                 "$mainUrl/watch/$currentEpId?origin=$realOrigin",
-                headers = actionHeaders,
+                headers = mapOf(
+                    "accept" to "text/x-component",
+                    "content-type" to "text/plain;charset=UTF-8",
+                    "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                    "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]""",
+                    "referer" to watchUrl,
+                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
+                ),
                 requestBody = "[\"$currentEpId\",\"$realOrigin\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
             val resText = postResponse.text.replace("\\/", "/")
-
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.getOrNull(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: ¡Link obtenido con éxito!")
                 callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
-                        ExtractorLinkType.M3U8
-                    ) {
+                    newExtractorLink(this.name, "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}", ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
                     }
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: El servidor no devolvió streamLink. Respuesta: ${resText.take(200)}")
+                Log.e(TAG, "Logs: Error - No se obtuvo link. Server respondió: ${resText.take(150)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Fallo total: ${e.message}")
             false
         }
     }
