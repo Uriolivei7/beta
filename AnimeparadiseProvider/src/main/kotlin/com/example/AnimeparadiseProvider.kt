@@ -354,15 +354,16 @@ class AnimeParadiseProvider : MainAPI() {
                 .trim()
 
             if (text.isNotEmpty()) {
-                // Si el estilo es "arriba" o contiene _Up/_top, posicionar arriba
                 val isTop = upStyles.contains(style) ||
                         style.contains("Up", ignoreCase = true) ||
                         style.contains("top", ignoreCase = true)
 
                 if (isTop) {
-                    sb.append("$start --> $end line:5%\n$text\n\n")
+                    // Arriba: line:5% y position:50% centrado
+                    sb.append("$start --> $end line:5% position:50% align:center\n$text\n\n")
                 } else {
-                    sb.append("$start --> $end line:95%\n$text\n\n")
+                    // Abajo: line:90% explícito para que no suba
+                    sb.append("$start --> $end line:90% position:50% align:center\n$text\n\n")
                 }
             }
         }
