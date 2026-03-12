@@ -316,16 +316,29 @@ class AnimeParadiseProvider : MainAPI() {
     private fun convertAssToVtt(ass: String): String {
         val sb = StringBuilder("WEBVTT\n\n")
         val dialogueRegex = Regex(
-            """Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),[^,]*,[^,]*,\d+,\d+,\d+,[^,]*,(.*)"""
+            """Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),([^,]*),([^,]*),\d+,\d+,\d+,[^,]*,(.*)"""
         )
 
+        // Detectar estilos "arriba" leyendo el campo Alignment correctamente
+        val upStyles = mutableSetOf<String>()
+        ass.lines().forEach { line ->
+            if (line.startsWith("Style:")) {
+                val fields = line.removePrefix("Style:").split(",")
+                val styleName = fields.getOrNull(0)?.trim() ?: return@forEach
+                val alignment = fields.getOrNull(18)?.trim()?.toIntOrNull() ?: return@forEach
+                // Alignment 7,8,9 = arriba | 4,5,6 = medio | 1,2,3 = abajo
+                if (alignment in 4..9) {
+                    upStyles.add(styleName)
+                }
+            }
+        }
+
         fun fixTime(t: String): String {
-            // ASS: H:MM:SS.cc (centisegundos) → VTT: HH:MM:SS.mmm (milisegundos)
             val parts = t.split(":", ".")
             val h = parts[0].padStart(2, '0')
             val m = parts[1]
             val s = parts[2]
-            val ms = (parts[3].toIntOrNull() ?: 0) * 10  // centisegundos → milisegundos
+            val ms = (parts[3].toIntOrNull() ?: 0) * 10
             return "$h:$m:$s.${ms.toString().padStart(3, '0')}"
         }
 
@@ -333,14 +346,24 @@ class AnimeParadiseProvider : MainAPI() {
             val match = dialogueRegex.find(line) ?: return@forEach
             val start = fixTime(match.groupValues[1])
             val end   = fixTime(match.groupValues[2])
-            val text  = match.groupValues[3]
+            val style = match.groupValues[3].trim()
+            val text  = match.groupValues[5]
                 .replace(Regex("""\{[^}]*\}"""), "")
                 .replace("""\N""", "\n")
                 .replace("""\n""", "\n")
                 .trim()
 
             if (text.isNotEmpty()) {
-                sb.append("$start --> $end\n$text\n\n")
+                // Si el estilo es "arriba" o contiene _Up/_top, posicionar arriba
+                val isTop = upStyles.contains(style) ||
+                        style.contains("Up", ignoreCase = true) ||
+                        style.contains("top", ignoreCase = true)
+
+                if (isTop) {
+                    sb.append("$start --> $end line:5%\n$text\n\n")
+                } else {
+                    sb.append("$start --> $end line:95%\n$text\n\n")
+                }
             }
         }
 
