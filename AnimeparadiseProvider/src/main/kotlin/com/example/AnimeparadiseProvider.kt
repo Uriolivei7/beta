@@ -159,15 +159,16 @@ class AnimeParadiseProvider : MainAPI() {
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
             val episodes = epData.data?.mapNotNull { ep ->
-                val finalId = ep.id?.substringAfterLast("/")
-                if (finalId.isNullOrBlank()) {
-                    null
-                } else {
-                    newEpisode("$finalId|$internalId") {
-                        this.episode = ep.number?.toIntOrNull() ?: 0
-                        this.name = ep.title ?: "Episodio ${ep.number}"
-                        this.posterUrl = ep.image
-                    }
+                // LOG CRÍTICO - muestra todos los campos del episodio
+                Log.d(TAG, "Logs: EP completo - _id: ${ep.id}, title: ${ep.title}, number: ${ep.number}")
+
+                val epUuid = ep.uuid ?: ep.id?.substringAfterLast("/") ?: return@mapNotNull null
+                Log.d(TAG, "Logs: UUID extraído: $epUuid")
+
+                newEpisode("$epUuid|$internalId") {
+                    this.episode = ep.number?.toIntOrNull() ?: 0
+                    this.name = ep.title ?: "Episodio ${ep.number}"
+                    this.posterUrl = ep.image
                 }
             }?.sortedBy { it.episode } ?: emptyList()
 
@@ -199,46 +200,38 @@ class AnimeParadiseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. Extraer el ID (UUID o Hash) del data
-        val currentEpId = data.split("|").getOrNull(0)?.substringAfterLast("/") ?: return false
-        val watchUrl = "$mainUrl/watch/$currentEpId"
+        val parts = data.split("|")
+        val currentEpId = parts.getOrNull(0) ?: return false
+
+        Log.d(TAG, "Logs: EP ID recibido: $currentEpId")
 
         return try {
-            // --- PASO 1: LIMPIEZA Y PRE-CARGA DE SESIÓN ---
-            // Borramos cookies viejas para que no nos ancle al Ep 1
-            app.baseClient.cookieJar.saveFromResponse(mainUrl.toHttpUrl(), emptyList())
-
-            // Simulamos el prefetch que se ve en tus logs (el rsc=8dup5)
-            val prefetchHeaders = mapOf(
-                "accept" to "*/*",
-                "rsc" to "1",
-                "next-router-prefetch" to "1",
-                "next-url" to "/watch/$currentEpId",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "referer" to "$watchUrl?origin=a49n4AuZawoJY7Wl"
+            val response = app.get(
+                "$mainUrl/watch/$currentEpId",
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                )
             )
+            val html = response.text
 
-            // Esta petición genera la cookie 'anp_session' correcta para este episodio
-            val firstStep = app.get("$mainUrl/anime/kimetsu-no-yaiba?_rsc=8dup5", headers = prefetchHeaders)
-            val htmlSession = firstStep.text
-
-            // --- PASO 2: OBTENER EL ORIGIN REAL ---
-            // Buscamos el origin dentro de la respuesta RSC o usamos el fallback
-            val realOrigin = Regex("""origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(htmlSession)?.groupValues?.getOrNull(1)
+            // El origin está en: "searchParams":{"origin":"VALOR"}
+            val realOrigin = Regex(""""searchParams"\s*:\s*\{"origin"\s*:\s*"([^"]+)"""")
+                .find(html)?.groupValues?.getOrNull(1)
+                ?: Regex("""[?&]origin=([a-zA-Z0-9_-]+)""")
+                    .find(html)?.groupValues?.getOrNull(1)
                 ?: "a49n4AuZawoJY7Wl"
 
-            Log.d(TAG, "Logs: Iniciando extracción para $currentEpId con Origin: $realOrigin")
+            Log.d(TAG, "Logs: Origin extraído: $realOrigin")
+            Log.d(TAG, "Logs: Solicitando EP: $currentEpId con Origin: $realOrigin")
 
-            // --- PASO 3: EL POST DE ACCIÓN ---
-            // Usamos exactamente los mismos headers de Next.js Action
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
-                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]""",
                 "origin" to mainUrl,
-                "referer" to "$watchUrl?origin=$realOrigin",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                "referer" to "$mainUrl/watch/$currentEpId?origin=$realOrigin",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
             )
 
             val postResponse = app.post(
@@ -248,16 +241,15 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val resText = postResponse.text.replace("\\/", "/")
+            Log.d(TAG, "Logs: Post response: ${resText.take(500)}")
 
-            // Buscamos el streamLink en la respuesta del componente
-            val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.getOrNull(1)
+            val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""")
+                .find(resText)?.groupValues?.getOrNull(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: ¡Éxito! URL de video diferente detectada.")
                 callback.invoke(
                     newExtractorLink(
-                        this.name,
-                        "AnimeParadise",
+                        this.name, "AnimeParadise",
                         "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
                     ) {
@@ -266,11 +258,11 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: El servidor no soltó el link. RSC Response: ${resText.take(200)}")
+                Log.e(TAG, "Logs: No se encontró streamLink. Respuesta: ${resText.take(1000)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en la secuencia RSC: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
     }
@@ -342,6 +334,8 @@ data class EpisodeListResponse(
 
 data class EpisodeData(
     @JsonProperty("_id") val id: String?,
+    val uuid: String?,        // <-- agrega esto
+    val animeId: String?,     // <-- y esto por si acaso
     val title: String?,
     val number: String?,
     val image: String?
