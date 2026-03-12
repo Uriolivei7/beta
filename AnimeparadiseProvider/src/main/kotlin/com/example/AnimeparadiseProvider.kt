@@ -196,15 +196,14 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val currentEpId = parts.getOrNull(0) ?: return false
+        val currentEpId = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
         val currentOriginId = parts.getOrNull(1) ?: ""
-        val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
-        Log.d(TAG, "Logs: --- OBTENIENDO LINKS PARA: $currentEpId ---")
+        val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
+        Log.d(TAG, "Logs: --- SOLICITANDO LINK PARA EP: $currentEpId ---")
 
         return try {
             val page = app.get(watchUrl, headers = apiHeaders)
-
             val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(page.text)?.groupValues?.get(1)
                 ?: "603712faba47e30723d32819533284371173c10bbd"
 
@@ -230,7 +229,7 @@ class AnimeParadiseProvider : MainAPI() {
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: URL Exitosa: ${videoUrl.take(40)}...")
+                Log.d(TAG, "Logs: URL Encontrada con éxito")
 
                 val finalUrl = "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}"
 
@@ -246,7 +245,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: No se encontró streamLink en la respuesta: ${resText.take(150)}")
+                Log.e(TAG, "Logs: Falló la respuesta del servidor: ${resText.take(100)}")
                 false
             }
         } catch (e: Exception) {
