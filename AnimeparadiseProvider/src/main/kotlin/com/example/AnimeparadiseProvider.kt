@@ -269,13 +269,27 @@ class AnimeParadiseProvider : MainAPI() {
                                 ).text
 
                                 val vttContent = convertAssToVtt(assContent)
-                                val vttFile = File(
-                                    System.getProperty("java.io.tmpdir"),
-                                    "sub_${src.take(12)}.vtt"
-                                )
-                                vttFile.writeText(vttContent)
-                                Log.d(TAG, "Logs: tmpdir=${System.getProperty("java.io.tmpdir")}, exists=${vttFile.exists()}, size=${vttFile.length()}")
-                                subtitleCallback.invoke(newSubtitleFile(label, "file://${vttFile.absolutePath}"))
+
+                                try {
+                                    val boundary = "----FormBoundary${System.currentTimeMillis()}"
+                                    val body = "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sub.vtt\"\r\nContent-Type: text/vtt\r\n\r\n$vttContent\r\n--$boundary--\r\n"
+
+                                    val uploadedUrl = app.post(
+                                        "https://0x0.st",
+                                        headers = mapOf(
+                                            "Content-Type" to "multipart/form-data; boundary=$boundary",
+                                            "User-Agent" to "curl/7.68.0"
+                                        ),
+                                        requestBody = body.toRequestBody("multipart/form-data; boundary=$boundary".toMediaTypeOrNull())
+                                    ).text.trim()
+
+                                    Log.d(TAG, "Logs: Sub ASS->VTT subido: $label -> $uploadedUrl")
+                                    if (uploadedUrl.startsWith("https://")) {
+                                        subtitleCallback.invoke(newSubtitleFile(label, uploadedUrl))
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Logs: Error subiendo sub $label: ${e.message}")
+                                }
                             }
                         }
                     } catch (e: Exception) {
