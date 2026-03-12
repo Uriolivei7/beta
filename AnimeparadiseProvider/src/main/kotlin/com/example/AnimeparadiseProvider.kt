@@ -7,13 +7,11 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.lagradost.cloudstream3.syncproviders.providers.SubSourceApi
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Cookie
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import android.net.Uri
+import java.io.File
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -259,23 +257,22 @@ class AnimeParadiseProvider : MainAPI() {
                     try {
                         when (type.lowercase()) {
                             "vtt" -> {
-                                // URL directa
                                 subtitleCallback.invoke(newSubtitleFile(label, src))
                                 Log.d(TAG, "Logs: Sub VTT agregado: $label -> $src")
                             }
                             "ass" -> {
-                                // Necesita resolver la URL via API
-                                val streamRes = app.get(
+                                val assContent = app.get(
                                     "$apiUrl/stream/file/$src",
                                     headers = apiHeaders
                                 ).text
-                                Log.d(TAG, "Logs: Stream file response para $label: $streamRes")
-                                val streamData = mapper.readValue<StreamFileResponse>(streamRes)
-                                val subUrl = streamData.url
-                                if (subUrl != null) {
-                                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
-                                    Log.d(TAG, "Logs: Sub ASS agregado: $label -> $subUrl")
-                                }
+
+                                val assFile = File(
+                                    System.getProperty("java.io.tmpdir"),
+                                    "sub_${src.take(8)}.ass"
+                                )
+                                assFile.writeText(assContent)
+                                subtitleCallback.invoke(newSubtitleFile(label, Uri.fromFile(assFile).toString()))
+                                Log.d(TAG, "Logs: Sub ASS agregado: $label")
                             }
                         }
                     } catch (e: Exception) {
@@ -368,9 +365,4 @@ data class SubData(
     @JsonProperty("src") val src: String? = null,
     @JsonProperty("label") val label: String? = null,
     @JsonProperty("type") val type: String? = null
-)
-
-data class StreamFileResponse(
-    val url: String? = null,
-    val success: Boolean? = null
 )
