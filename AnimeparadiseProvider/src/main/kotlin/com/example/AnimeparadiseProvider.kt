@@ -319,28 +319,27 @@ class AnimeParadiseProvider : MainAPI() {
             """Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),([^,]*),([^,]*),\d+,\d+,\d+,[^,]*,(.*)"""
         )
 
-        // Detectar estilos "arriba" leyendo el campo Alignment correctamente
         val upStyles = mutableSetOf<String>()
         ass.lines().forEach { line ->
             if (line.startsWith("Style:")) {
                 val fields = line.removePrefix("Style:").split(",")
                 val styleName = fields.getOrNull(0)?.trim() ?: return@forEach
                 val alignment = fields.getOrNull(18)?.trim()?.toIntOrNull() ?: return@forEach
-                // Alignment 7,8,9 = arriba | 4,5,6 = medio | 1,2,3 = abajo
-                if (alignment in 4..9) {
-                    upStyles.add(styleName)
-                }
+                if (alignment in 4..9) upStyles.add(styleName)
             }
         }
 
         fun fixTime(t: String): String {
             val parts = t.split(":", ".")
             val h = parts[0].padStart(2, '0')
-            val m = parts[1]
-            val s = parts[2]
+            val m = parts[1]; val s = parts[2]
             val ms = (parts[3].toIntOrNull() ?: 0) * 10
             return "$h:$m:$s.${ms.toString().padStart(3, '0')}"
         }
+
+        // Parsear todos los diálogos primero
+        data class Cue(val start: String, val end: String, val text: String, val isTop: Boolean)
+        val cues = mutableListOf<Cue>()
 
         ass.lines().forEach { line ->
             val match = dialogueRegex.find(line) ?: return@forEach
@@ -357,13 +356,47 @@ class AnimeParadiseProvider : MainAPI() {
                 val isTop = upStyles.contains(style) ||
                         style.contains("Up", ignoreCase = true) ||
                         style.contains("top", ignoreCase = true)
+                cues.add(Cue(start, end, text, isTop))
+            }
+        }
 
-                if (isTop) {
-                    // Arriba: line:5% y position:50% centrado
-                    sb.append("$start --> $end line:5% position:50% align:center\n$text\n\n")
-                } else {
-                    // Abajo: line:90% explícito para que no suba
-                    sb.append("$start --> $end line:90% position:50% align:center\n$text\n\n")
+        // Agrupar cues con el mismo start+end en uno solo
+        val grouped = mutableMapOf<String, MutableList<Cue>>()
+        cues.forEach { cue ->
+            val key = "${cue.start}|${cue.end}"
+            grouped.getOrPut(key) { mutableListOf() }.add(cue)
+        }
+
+        // Generar VTT combinando simultáneos
+        grouped.forEach { (_, group) ->
+            val start = group[0].start
+            val end   = group[0].end
+
+            if (group.size == 1) {
+                val cue = group[0]
+                val position = if (cue.isTop) "line:5% position:50% align:center"
+                else "line:90% position:50% align:center"
+                sb.append("$start --> $end $position\n${cue.text}\n\n")
+            } else {
+                // Combinar: texto de arriba primero, luego salto, luego texto de abajo
+                val topCues    = group.filter { it.isTop }
+                val bottomCues = group.filter { !it.isTop }
+                val topText    = topCues.joinToString("\n") { it.text }
+                val bottomText = bottomCues.joinToString("\n") { it.text }
+
+                when {
+                    topCues.isNotEmpty() && bottomCues.isNotEmpty() -> {
+                        // Texto arriba en cue separado line:5%
+                        sb.append("$start --> $end line:5% position:50% align:center\n$topText\n\n")
+                        // Texto abajo en cue separado line:90%
+                        sb.append("$start --> $end line:90% position:50% align:center\n$bottomText\n\n")
+                    }
+                    topCues.isNotEmpty() -> {
+                        sb.append("$start --> $end line:5% position:50% align:center\n$topText\n\n")
+                    }
+                    else -> {
+                        sb.append("$start --> $end line:90% position:50% align:center\n$bottomText\n\n")
+                    }
                 }
             }
         }
