@@ -198,8 +198,15 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val uid = parts.getOrNull(0) ?: return false
-        val origin = parts.getOrNull(1) ?: return false
+        val uid = parts.getOrNull(0)
+            ?.substringAfterLast("/")
+            ?: return false
+        val origin = parts.getOrNull(1)
+            ?.substringAfterLast("/")  // por si también le añade URL al origin
+            ?: return false
+
+        Log.d(TAG, "Logs: uid limpio: $uid")
+        Log.d(TAG, "Logs: origin limpio: $origin")
 
         Log.d(TAG, "Logs: Solicitando EP uid: $uid con Origin: $origin")
 
