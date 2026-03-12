@@ -269,13 +269,13 @@ class AnimeParadiseProvider : MainAPI() {
                                 ).text
 
                                 val vttContent = convertAssToVtt(assContent)
-                                val tmpDir = System.getProperty("java.io.tmpdir") ?: "/data/local/tmp"
-                                val vttFile = File(tmpDir, "sub_${src.take(12)}.vtt")
+                                val vttFile = File(
+                                    System.getProperty("java.io.tmpdir"),
+                                    "sub_${src.take(12)}.vtt"
+                                )
                                 vttFile.writeText(vttContent)
-
-                                val fileUri = "file://${vttFile.absolutePath}"
-                                subtitleCallback.invoke(newSubtitleFile(label, fileUri))
-                                Log.d(TAG, "Logs: Sub ASS->VTT: $label -> $fileUri, exists=${vttFile.exists()}, size=${vttFile.length()}")
+                                Log.d(TAG, "Logs: tmpdir=${System.getProperty("java.io.tmpdir")}, exists=${vttFile.exists()}, size=${vttFile.length()}")
+                                subtitleCallback.invoke(newSubtitleFile(label, "file://${vttFile.absolutePath}"))
                             }
                         }
                     } catch (e: Exception) {
