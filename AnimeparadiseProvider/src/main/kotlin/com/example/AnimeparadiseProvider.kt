@@ -201,7 +201,7 @@ class AnimeParadiseProvider : MainAPI() {
         val uid = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
         val origin = parts.getOrNull(1)?.substringAfterLast("/") ?: return false
 
-        Log.d(TAG, "Logs: uid limpio: $uid | origin limpio: $origin")
+        Log.d(TAG, "Logs: uid: $uid | origin: $origin")
 
         return try {
             val actionHeaders = mapOf(
@@ -214,77 +214,138 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
             )
 
-            val postResponse = app.post(
+            val resText = app.post(
                 "$mainUrl/watch/$uid?origin=$origin",
                 headers = actionHeaders,
                 requestBody = "[\"$uid\",\"$origin\"]"
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            )
+            ).text.replace("\\/", "/")
 
-            val resText = postResponse.text.replace("\\/", "/")
-
+            // Video
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""")
                 .find(resText)?.groupValues?.getOrNull(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: streamLink encontrado: $videoUrl")
-
-                // --- Lógica de Subtítulos ---
-                val fileId = videoUrl.substringAfterLast("/").substringBefore("?")
-                if (fileId.isNotEmpty()) {
-                    try {
-                        val apiSubsUrl = "https://api.animeparadise.moe/stream/file/$fileId"
-                        Log.d(TAG, "Logs: Consultando API de subs: $apiSubsUrl")
-
-                        val subResponse = app.get(apiSubsUrl, headers = mapOf(
-                            "referer" to "$mainUrl/",
-                            "accept" to "application/json"
-                        )).text
-
-                        // Extraemos todos los subtítulos si la API devuelve una lista
-                        val subRegex = Regex("""\"url\"\s*:\s*\"(https?://[^\"]+)\".*?\"lang\"\s*:\s*\"([^\"]+)""")
-                        val matches = subRegex.findAll(subResponse)
-
-                        if (matches.none()) {
-                            // Intento de respaldo si el JSON es simple o solo trae una URL directa
-                            val simpleUrl = Regex("""\"url\"\s*:\s*\"(https?://[^\"]+)""").find(subResponse)?.groupValues?.get(1)
-                            if (simpleUrl != null) {
-                                subtitleCallback.invoke(newSubtitleFile("Español", simpleUrl))
-                                Log.d(TAG, "Logs: Subtítulo único cargado: $simpleUrl")
-                            }
-                        } else {
-                            matches.forEach { match ->
-                                val sUrl = match.groupValues[1]
-                                val sLang = match.groupValues[2]
-                                subtitleCallback.invoke(newSubtitleFile(sLang, sUrl))
-                                Log.d(TAG, "Logs: Subtítulo múltiple cargado: $sLang -> $sUrl")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Logs: Error en peticion de subs: ${e.message}")
-                    }
-                }
-
-                // --- Carga del Video ---
                 callback.invoke(
                     newExtractorLink(
-                        this.name,
-                        "AnimeParadise",
+                        this.name, "AnimeParadise",
                         "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$mainUrl/"
                     }
                 )
-                true
-            } else {
-                Log.e(TAG, "Logs: No se encontro streamLink en la respuesta")
-                false
             }
+
+            // Subtítulos desde subData
+            val subDataJson = Regex(""""subData"\s*:\s*(\[.*?](?=\s*[,}]))""")
+                .find(resText)?.groupValues?.getOrNull(1)
+
+            Log.d(TAG, "Logs: subData: $subDataJson")
+
+            if (subDataJson != null) {
+                val subList = mapper.readValue<List<SubData>>(subDataJson)
+                Log.d(TAG, "Logs: ${subList.size} subtítulos encontrados")
+
+                subList.forEach { sub ->
+                    val label = sub.label ?: "Unknown"
+                    val src = sub.src ?: return@forEach
+                    val type = sub.type ?: "vtt"
+
+                    try {
+                        when (type.lowercase()) {
+                            "vtt" -> {
+                                subtitleCallback.invoke(newSubtitleFile(label, src))
+                                Log.d(TAG, "Logs: Sub VTT: $label -> $src")
+                            }
+                            "ass" -> {
+                                val assContent = app.get(
+                                    "$apiUrl/stream/file/$src",
+                                    headers = apiHeaders
+                                ).text
+
+                                val vttContent = convertAssToVtt(assContent)
+                                val boundary = "Boundary${System.currentTimeMillis()}"
+                                val CRLF = "\r\n"
+                                val vttBytes = vttContent.toByteArray(Charsets.UTF_8)
+
+                                val prefix = ("--$boundary$CRLF" +
+                                        "Content-Disposition: form-data; name=\"reqtype\"$CRLF$CRLF" +
+                                        "fileupload$CRLF" +
+                                        "--$boundary$CRLF" +
+                                        "Content-Disposition: form-data; name=\"time\"$CRLF$CRLF" +
+                                        "1h$CRLF" +
+                                        "--$boundary$CRLF" +
+                                        "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\"sub.vtt\"$CRLF" +
+                                        "Content-Type: text/vtt$CRLF$CRLF").toByteArray(Charsets.UTF_8)
+
+                                val suffix = ("$CRLF--$boundary--$CRLF").toByteArray(Charsets.UTF_8)
+                                val fullBody = prefix + vttBytes + suffix
+
+                                val uploadedUrl = app.post(
+                                    "https://litterbox.catbox.moe/resources/internals/api.php",
+                                    headers = mapOf(
+                                        "Content-Type" to "multipart/form-data; boundary=$boundary"
+                                    ),
+                                    requestBody = fullBody.toRequestBody(
+                                        "multipart/form-data; boundary=$boundary".toMediaTypeOrNull()
+                                    )
+                                ).text.trim()
+
+                                Log.d(TAG, "Logs: Sub ASS->VTT subido: $label -> $uploadedUrl")
+                                if (uploadedUrl.startsWith("https://")) {
+                                    subtitleCallback.invoke(newSubtitleFile(label, uploadedUrl))
+                                } else {
+                                    Log.e(TAG, "Logs: Litterbox error para $label: $uploadedUrl")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Logs: Error sub $label: ${e.message}")
+                    }
+                }
+            }
+
+            videoUrl != null
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error general en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
+    }
+
+    private fun convertAssToVtt(ass: String): String {
+        val sb = StringBuilder("WEBVTT\n\n")
+        val dialogueRegex = Regex(
+            """Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),[^,]*,[^,]*,\d+,\d+,\d+,[^,]*,(.*)"""
+        )
+
+        fun fixTime(t: String): String {
+            // ASS: H:MM:SS.cc (centisegundos) → VTT: HH:MM:SS.mmm (milisegundos)
+            val parts = t.split(":", ".")
+            val h = parts[0].padStart(2, '0')
+            val m = parts[1]
+            val s = parts[2]
+            val ms = (parts[3].toIntOrNull() ?: 0) * 10  // centisegundos → milisegundos
+            return "$h:$m:$s.${ms.toString().padStart(3, '0')}"
+        }
+
+        ass.lines().forEach { line ->
+            val match = dialogueRegex.find(line) ?: return@forEach
+            val start = fixTime(match.groupValues[1])
+            val end   = fixTime(match.groupValues[2])
+            val text  = match.groupValues[3]
+                .replace(Regex("""\{[^}]*\}"""), "")
+                .replace("""\N""", "\n")
+                .replace("""\n""", "\n")
+                .trim()
+
+            if (text.isNotEmpty()) {
+                sb.append("$start --> $end\n$text\n\n")
+            }
+        }
+
+        Log.d(TAG, "Logs: convertAssToVtt -> ${sb.length} chars, lines input: ${ass.lines().size}")
+        return sb.toString()
     }
 
 }
@@ -358,4 +419,10 @@ data class EpisodeData(
     val title: String?,
     val number: String?,
     val image: String?
+)
+
+data class SubData(
+    val src: String?,
+    val label: String?,
+    val type: String?
 )
