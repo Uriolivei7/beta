@@ -12,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -203,22 +204,23 @@ class AnimeParadiseProvider : MainAPI() {
         val watchUrl = "$mainUrl/watch/$currentEpId"
 
         return try {
+            app.baseClient.cookieJar.saveFromResponse(
+                "https://www.animeparadise.moe".toHttpUrl(),
+                emptyList()
+            )
+
             val response = app.get(watchUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Referer" to "$mainUrl/"
             ))
             val html = response.text
 
-            val realOrigin = Regex(""""origin"\s*:\s*"([a-zA-Z0-9_-]{10,})" """).find(html)?.groupValues?.getOrNull(1)
-                ?: Regex("""origin["\s]*:["\s]*([a-zA-Z0-9_-]{10,})""").find(html)?.groupValues?.getOrNull(1)
-                ?: Regex("""[?&]origin=([a-zA-Z0-9_-]+)""").find(html)?.groupValues?.getOrNull(1)
-                ?: "a49n4AuZawoJY7Wl"
+            val realOrigin = Regex("""\\"origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(html)?.groupValues?.getOrNull(1)
+                ?: Regex("""origin["\\= ]+([a-zA-Z0-9_-]{10,25})""").find(html)?.groupValues?.getOrNull(1)
+                ?: "a49n4AuZawoJY7Wl" // Fallback solo si falla la extracción
 
-            Log.d(TAG, "Logs: HTML snippet: ${html.take(3000)}")
-
-            Log.d(TAG, "Logs: Origin encontrado: $realOrigin")
-            Log.d(TAG, "Logs: HTML contiene 'origin': ${html.contains("origin")}")
-
-            Log.d(TAG, "Logs: Solicitando EP: $currentEpId con Origin: $realOrigin")
+            Log.d(TAG, "Logs: EP ID Solicitado: $currentEpId")
+            Log.d(TAG, "Logs: Origin detectado: $realOrigin")
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -226,7 +228,7 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "origin" to mainUrl,
                 "referer" to "$watchUrl?origin=$realOrigin",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
             )
 
@@ -237,17 +239,24 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val resText = postResponse.text.replace("\\/", "/")
+
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.getOrNull(1)
 
             if (videoUrl != null) {
+                Log.d(TAG, "Logs: ¡Link obtenido con éxito!")
                 callback.invoke(
-                    newExtractorLink(this.name, "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}", ExtractorLinkType.M3U8) {
+                    newExtractorLink(
+                        this.name,
+                        "AnimeParadise",
+                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
+                        ExtractorLinkType.M3U8
+                    ) {
                         this.referer = "$mainUrl/"
                     }
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: No se encontró link en la respuesta del servidor.")
+                Log.e(TAG, "Logs: El servidor no devolvió streamLink. Respuesta: ${resText.take(200)}")
                 false
             }
         } catch (e: Exception) {
