@@ -269,13 +269,16 @@ class AnimeParadiseProvider : MainAPI() {
                                     headers = apiHeaders
                                 ).text
 
-                                val assFile = File(
+                                // Convertir ASS a VTT en memoria
+                                val vttContent = convertAssToVtt(assContent)
+
+                                val vttFile = File(
                                     System.getProperty("java.io.tmpdir"),
-                                    "sub_${src.take(8)}.ass"
+                                    "sub_${src.take(8)}.vtt"
                                 )
-                                assFile.writeText(assContent)
-                                subtitleCallback.invoke(newSubtitleFile(label, Uri.fromFile(assFile).toString()))
-                                Log.d(TAG, "Logs: Sub ASS agregado: $label")
+                                vttFile.writeText(vttContent)
+                                subtitleCallback.invoke(newSubtitleFile(label, Uri.fromFile(vttFile).toString()))
+                                Log.d(TAG, "Logs: Sub ASS->VTT agregado: $label")
                             }
                         }
                     } catch (e: Exception) {
@@ -289,6 +292,29 @@ class AnimeParadiseProvider : MainAPI() {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
+    }
+
+    private fun convertAssToVtt(ass: String): String {
+        val sb = StringBuilder("WEBVTT\n\n")
+        val dialogueRegex = Regex(
+            """Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),[^,]*,[^,]*,\d+,\d+,\d+,[^,]*,(.*)"""
+        )
+
+        ass.lines().forEach { line ->
+            val match = dialogueRegex.find(line) ?: return@forEach
+            val start = match.groupValues[1].replace(Regex("""(\d+:\d{2}:\d{2})\.(\d{2})"""), "$1.$20")
+            val end   = match.groupValues[2].replace(Regex("""(\d+:\d{2}:\d{2})\.(\d{2})"""), "$1.$20")
+            val text  = match.groupValues[3]
+                .replace(Regex("""\{[^}]*\}"""), "")   // eliminar tags ASS
+                .replace("""\N""", "\n")
+                .replace("""\n""", "\n")
+                .trim()
+
+            if (text.isNotEmpty()) {
+                sb.append("$start --> $end\n$text\n\n")
+            }
+        }
+        return sb.toString()
     }
 
 }
