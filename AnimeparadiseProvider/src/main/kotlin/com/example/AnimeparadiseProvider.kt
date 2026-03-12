@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.syncproviders.providers.SubSourceApi
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -198,16 +199,11 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val uid = parts.getOrNull(0)
-            ?.substringAfterLast("/")
-            ?: return false
-        val origin = parts.getOrNull(1)
-            ?.substringAfterLast("/")  // por si también le añade URL al origin
-            ?: return false
+        val uid = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
+        val origin = parts.getOrNull(1)?.substringAfterLast("/") ?: return false
 
         Log.d(TAG, "Logs: uid limpio: $uid")
         Log.d(TAG, "Logs: origin limpio: $origin")
-
         Log.d(TAG, "Logs: Solicitando EP uid: $uid con Origin: $origin")
 
         return try {
@@ -231,6 +227,7 @@ class AnimeParadiseProvider : MainAPI() {
             val resText = postResponse.text.replace("\\/", "/")
             Log.d(TAG, "Logs: Post response: ${resText.take(500)}")
 
+            // Extraer streamLink
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""")
                 .find(resText)?.groupValues?.getOrNull(1)
 
@@ -244,11 +241,50 @@ class AnimeParadiseProvider : MainAPI() {
                         this.referer = "$mainUrl/"
                     }
                 )
-                true
-            } else {
-                Log.e(TAG, "Logs: No streamLink. Response: ${resText.take(1000)}")
-                false
             }
+
+            // Extraer subData del response
+            val subDataJson = Regex(""""subData"\s*:\s*(\[.*?](?=\s*[,}]))""")
+                .find(resText)?.groupValues?.getOrNull(1)
+
+            Log.d(TAG, "Logs: subData encontrado: $subDataJson")
+
+            if (subDataJson != null) {
+                val subList = mapper.readValue<List<SubData>>(subDataJson)
+                subList.forEach { sub ->
+                    val label = sub.label ?: "Unknown"
+                    val src = sub.src ?: return@forEach
+                    val type = sub.type ?: "vtt"
+
+                    try {
+                        when (type.lowercase()) {
+                            "vtt" -> {
+                                // URL directa
+                                subtitleCallback.invoke(newSubtitleFile(label, src))
+                                Log.d(TAG, "Logs: Sub VTT agregado: $label -> $src")
+                            }
+                            "ass" -> {
+                                // Necesita resolver la URL via API
+                                val streamRes = app.get(
+                                    "$apiUrl/stream/file/$src",
+                                    headers = apiHeaders
+                                ).text
+                                Log.d(TAG, "Logs: Stream file response para $label: $streamRes")
+                                val streamData = mapper.readValue<StreamFileResponse>(streamRes)
+                                val subUrl = streamData.url
+                                if (subUrl != null) {
+                                    subtitleCallback.invoke(newSubtitleFile(label, subUrl))
+                                    Log.d(TAG, "Logs: Sub ASS agregado: $label -> $subUrl")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Logs: Error procesando sub $label: ${e.message}")
+                    }
+                }
+            }
+
+            videoUrl != null
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
@@ -326,4 +362,15 @@ data class EpisodeData(
     val title: String?,
     val number: String?,
     val image: String?
+)
+
+data class SubData(
+    @JsonProperty("src") val src: String? = null,
+    @JsonProperty("label") val label: String? = null,
+    @JsonProperty("type") val type: String? = null
+)
+
+data class StreamFileResponse(
+    val url: String? = null,
+    val success: Boolean? = null
 )
