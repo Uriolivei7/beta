@@ -156,7 +156,7 @@ class AnimeParadiseProvider : MainAPI() {
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
             val episodes = epData.data?.mapNotNull { ep ->
-                val finalId = ep.id
+                val finalId = ep.id?.substringAfterLast("/") 
                 if (finalId.isNullOrBlank()) {
                     null
                 } else {
@@ -197,7 +197,9 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val currentEpId = parts.getOrNull(0) ?: return false
+        val rawEpId = parts.getOrNull(0) ?: return false
+        val currentEpId = if (rawEpId.contains("/")) rawEpId.substringAfterLast("/") else rawEpId
+
         val currentOriginId = parts.getOrNull(1) ?: ""
         val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
 
@@ -209,16 +211,13 @@ class AnimeParadiseProvider : MainAPI() {
             val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(page.text)?.groupValues?.get(1)
                 ?: "603712faba47e30723d32819533284371173c10bbd"
 
-            Log.d(TAG, "Logs: Usando Action ID: $actionId")
-
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to actionId,
                 "origin" to mainUrl,
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "next-router-state-tree" to "[\"\",{\"children\":[\"watch\",{\"children\":[[\"id\",\"$currentEpId\",\"d\"],{\"children\":[\"__PAGE__\",{},null,null]}]}]}]"
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
@@ -231,8 +230,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             val resText = response.text.replace("\\/", "/")
 
-            val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
-                ?: Regex("""streamLink.*?\"(https?://.*?)\"""").find(resText)?.groupValues?.get(1)
+            val videoUrl = Regex("""\"streamLink\":\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
 
             if (videoUrl != null) {
                 Log.d(TAG, "Logs: ¡Enlace obtenido con éxito!")
@@ -249,11 +247,11 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: Respuesta fallida del servidor (snippet): ${resText.take(150)}")
+                Log.e(TAG, "Logs: Fallo en streamLink. Respuesta: ${resText.take(150)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error crítico en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico: ${e.message}")
             false
         }
     }
