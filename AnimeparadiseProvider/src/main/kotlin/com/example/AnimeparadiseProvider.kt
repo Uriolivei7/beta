@@ -271,19 +271,24 @@ class AnimeParadiseProvider : MainAPI() {
                                 val vttContent = convertAssToVtt(assContent)
 
                                 try {
-                                    val boundary = "----FormBoundary${System.currentTimeMillis()}"
-                                    val body = "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sub.vtt\"\r\nContent-Type: text/vtt\r\n\r\n$vttContent\r\n--$boundary--\r\n"
+                                    val boundary = "----Boundary${System.currentTimeMillis()}"
+                                    val bodyBytes = ("--$boundary\r\n" +
+                                            "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\nanonymous\r\n" +
+                                            "--$boundary\r\n" +
+                                            "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\"sub.vtt\"\r\n" +
+                                            "Content-Type: text/vtt\r\n\r\n" +
+                                            vttContent + "\r\n" +
+                                            "--$boundary--\r\n").toByteArray()
 
                                     val uploadedUrl = app.post(
-                                        "https://0x0.st",
+                                        "https://catbox.moe/user/api.php",
                                         headers = mapOf(
-                                            "Content-Type" to "multipart/form-data; boundary=$boundary",
-                                            "User-Agent" to "curl/7.68.0"
+                                            "Content-Type" to "multipart/form-data; boundary=$boundary"
                                         ),
-                                        requestBody = body.toRequestBody("multipart/form-data; boundary=$boundary".toMediaTypeOrNull())
+                                        requestBody = bodyBytes.toRequestBody("multipart/form-data; boundary=$boundary".toMediaTypeOrNull())
                                     ).text.trim()
 
-                                    Log.d(TAG, "Logs: Sub ASS->VTT subido: $label -> $uploadedUrl")
+                                    Log.d(TAG, "Logs: Sub subido: $label -> $uploadedUrl")
                                     if (uploadedUrl.startsWith("https://")) {
                                         subtitleCallback.invoke(newSubtitleFile(label, uploadedUrl))
                                     }
