@@ -159,13 +159,10 @@ class AnimeParadiseProvider : MainAPI() {
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
             val episodes = epData.data?.mapNotNull { ep ->
-                val mongoId = ep.id ?: return@mapNotNull null
+                val uid = ep.uid ?: return@mapNotNull null
+                Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
 
-                // Llamar a la API para obtener el UUID real del episodio
-                val epDetailRes = app.get("$apiUrl/ep/$mongoId?v=1", headers = apiHeaders).text
-                Log.d(TAG, "Logs: EP Detail para $mongoId: ${epDetailRes.take(300)}")
-
-                newEpisode(mongoId) {
+                newEpisode("$uid|$internalId") {  // uid|animeId
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.posterUrl = ep.image
@@ -201,47 +198,27 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val currentEpId = parts.getOrNull(0)
-            ?.substringAfterLast("/")  // elimina la URL base si viene completa
-            ?: return false
+        val uid = parts.getOrNull(0) ?: return false
+        val origin = parts.getOrNull(1) ?: return false
 
-        Log.d(TAG, "Logs: EP ID limpio: $currentEpId")
-
-        Log.d(TAG, "Logs: EP ID recibido: $currentEpId")
+        Log.d(TAG, "Logs: Solicitando EP uid: $uid con Origin: $origin")
 
         return try {
-            val response = app.get(
-                "$mainUrl/watch/$currentEpId",
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-                )
-            )
-            val html = response.text
-
-            // El origin está en: "searchParams":{"origin":"VALOR"}
-            val realOrigin = Regex(""""searchParams"\s*:\s*\{"origin"\s*:\s*"([^"]+)"""")
-                .find(html)?.groupValues?.getOrNull(1)
-                ?: Regex("""[?&]origin=([a-zA-Z0-9_-]+)""")
-                    .find(html)?.groupValues?.getOrNull(1)
-                ?: "a49n4AuZawoJY7Wl"
-
-            Log.d(TAG, "Logs: Origin extraído: $realOrigin")
-            Log.d(TAG, "Logs: Solicitando EP: $currentEpId con Origin: $realOrigin")
-
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to "603712faba47e30723d32819533284371173c10bbd",
                 "origin" to mainUrl,
-                "referer" to "$mainUrl/watch/$currentEpId?origin=$realOrigin",
+                "referer" to "$mainUrl/watch/$uid?origin=$origin",
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$currentEpId","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
+                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
             )
 
             val postResponse = app.post(
-                "$mainUrl/watch/$currentEpId?origin=$realOrigin",
+                "$mainUrl/watch/$uid?origin=$origin",
                 headers = actionHeaders,
-                requestBody = "[\"$currentEpId\",\"$realOrigin\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                requestBody = "[\"$uid\",\"$origin\"]"
+                    .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
             val resText = postResponse.text.replace("\\/", "/")
@@ -262,7 +239,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: No se encontró streamLink. Respuesta: ${resText.take(1000)}")
+                Log.e(TAG, "Logs: No streamLink. Response: ${resText.take(1000)}")
                 false
             }
         } catch (e: Exception) {
@@ -338,8 +315,7 @@ data class EpisodeListResponse(
 
 data class EpisodeData(
     @JsonProperty("_id") val id: String?,
-    val uuid: String?,        // <-- agrega esto
-    val animeId: String?,     // <-- y esto por si acaso
+    val uid: String?,
     val title: String?,
     val number: String?,
     val image: String?
