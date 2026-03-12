@@ -208,8 +208,15 @@ class AnimeParadiseProvider : MainAPI() {
             ))
             val html = response.text
 
-            val realOrigin = Regex("""\\"origin\\":\\"([a-zA-Z0-9_-]+)\\"""").find(html)?.groupValues?.getOrNull(1)
+            val realOrigin = Regex(""""origin"\s*:\s*"([a-zA-Z0-9_-]{10,})" """).find(html)?.groupValues?.getOrNull(1)
+                ?: Regex("""origin["\s]*:["\s]*([a-zA-Z0-9_-]{10,})""").find(html)?.groupValues?.getOrNull(1)
+                ?: Regex("""[?&]origin=([a-zA-Z0-9_-]+)""").find(html)?.groupValues?.getOrNull(1)
                 ?: "a49n4AuZawoJY7Wl"
+
+            Log.d(TAG, "Logs: HTML snippet: ${html.take(3000)}")
+
+            Log.d(TAG, "Logs: Origin encontrado: $realOrigin")
+            Log.d(TAG, "Logs: HTML contiene 'origin': ${html.contains("origin")}")
 
             Log.d(TAG, "Logs: Solicitando EP: $currentEpId con Origin: $realOrigin")
 
