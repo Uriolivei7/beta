@@ -248,7 +248,10 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: subData encontrado: $subDataJson")
 
             if (subDataJson != null) {
+                Log.d(TAG, "Logs: Post response: ${resText.take(500)}")
+                Log.d(TAG, "Logs: subData RAW: $subDataJson")
                 val subList = mapper.readValue<List<SubData>>(subDataJson)
+                Log.d(TAG, "Logs: subList size: ${subList.size}")
                 subList.forEach { sub ->
                     val label = sub.label ?: "Unknown"
                     val src = sub.src ?: return@forEach
