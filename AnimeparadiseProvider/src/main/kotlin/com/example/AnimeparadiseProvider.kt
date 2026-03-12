@@ -10,6 +10,8 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Cookie
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -197,48 +199,55 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val rawEpId = parts.getOrNull(0) ?: return false
-        val currentEpId = if (rawEpId.contains("/")) rawEpId.substringAfterLast("/") else rawEpId
+        val currentEpId = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
 
-        val fallbackOrigin = parts.getOrNull(1) ?: ""
+        mainUrl.toHttpUrlOrNull()?.let { httpUrl ->
+            app.baseClient.cookieJar.saveFromResponse(httpUrl, emptyList<Cookie>())
+        }
+
         val watchUrl = "$mainUrl/watch/$currentEpId"
-
-        Log.d(TAG, "Logs: --- SOLICITANDO ENLACE REAL --- EP: $currentEpId")
+        Log.d(TAG, "Logs: --- SOLICITUD LIMPIA PARA EP: $currentEpId ---")
 
         return try {
-            val page = app.get(watchUrl, headers = apiHeaders).text
+            val pageResponse = app.get(watchUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Cache-Control" to "no-cache"
+            ))
+            val html = pageResponse.text
 
-            val realOrigin = Regex("""origin=([a-zA-Z0-9_-]+)""").find(page)?.groupValues?.get(1)
-                ?: fallbackOrigin
+            val originRegex = Regex("""origin["\\]+[:=]["\\]+([a-zA-Z0-9_-]+)""")
+            val match = originRegex.find(html)
 
-            val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(page)?.groupValues?.get(1)
+            val realOrigin = if (match != null && match.groupValues.size > 1) {
+                match.groupValues[1]
+            } else {
+                val altMatch = Regex("""origin=([a-zA-Z0-9_-]+)""").find(html)
+                altMatch?.groupValues?.getOrNull(1) ?: throw Exception("No se encontró token Origin")
+            }
+
+            val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(html)?.groupValues?.getOrNull(1)
                 ?: "603712faba47e30723d32819533284371173c10bbd"
 
-            Log.d(TAG, "Logs: Tokens encontrados -> Action: ${actionId.take(5)}, Origin: $realOrigin")
+            Log.d(TAG, "Logs: TOKEN DINÁMICO: $realOrigin")
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to actionId,
                 "origin" to mainUrl,
-                "referer" to "$watchUrl?origin=$realOrigin",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                "referer" to "$watchUrl?origin=$realOrigin"
             )
-
-            val requestBodyString = "[\"$currentEpId\",\"$realOrigin\"]"
 
             val response = app.post(
                 "$mainUrl/watch/$currentEpId?origin=$realOrigin",
                 headers = actionHeaders,
-                requestBody = requestBodyString.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                requestBody = "[\"$currentEpId\",\"$realOrigin\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
             val resText = response.text.replace("\\/", "/")
-            val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
+            val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.getOrNull(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: URL Única obtenida para este episodio")
-
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
@@ -251,11 +260,11 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: No se pudo obtener el streamLink. Origin usado: $realOrigin")
+                Log.e(TAG, "Logs: No se obtuvo link. Respuesta: ${resText.take(100)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error: ${e.message}")
             false
         }
     }
