@@ -269,16 +269,17 @@ class AnimeParadiseProvider : MainAPI() {
                                     headers = apiHeaders
                                 ).text
 
-                                // Convertir ASS a VTT en memoria
                                 val vttContent = convertAssToVtt(assContent)
 
-                                val vttFile = File(
-                                    System.getProperty("java.io.tmpdir"),
-                                    "sub_${src.take(8)}.vtt"
+                                // Codificar como base64 data URI en lugar de archivo local
+                                val base64 = android.util.Base64.encodeToString(
+                                    vttContent.toByteArray(Charsets.UTF_8),
+                                    android.util.Base64.NO_WRAP
                                 )
-                                vttFile.writeText(vttContent)
-                                subtitleCallback.invoke(newSubtitleFile(label, Uri.fromFile(vttFile).toString()))
-                                Log.d(TAG, "Logs: Sub ASS->VTT agregado: $label")
+                                val dataUri = "data:text/vtt;base64,$base64"
+
+                                subtitleCallback.invoke(newSubtitleFile(label, dataUri))
+                                Log.d(TAG, "Logs: Sub ASS->VTT (dataUri) agregado: $label, len=${vttContent.length}")
                             }
                         }
                     } catch (e: Exception) {
@@ -305,7 +306,7 @@ class AnimeParadiseProvider : MainAPI() {
             val start = match.groupValues[1].replace(Regex("""(\d+:\d{2}:\d{2})\.(\d{2})"""), "$1.$20")
             val end   = match.groupValues[2].replace(Regex("""(\d+:\d{2}:\d{2})\.(\d{2})"""), "$1.$20")
             val text  = match.groupValues[3]
-                .replace(Regex("""\{[^}]*\}"""), "")   // eliminar tags ASS
+                .replace(Regex("""\{[^}]*\}"""), "")
                 .replace("""\N""", "\n")
                 .replace("""\n""", "\n")
                 .trim()
@@ -314,9 +315,11 @@ class AnimeParadiseProvider : MainAPI() {
                 sb.append("$start --> $end\n$text\n\n")
             }
         }
+
+        Log.d(TAG, "Logs: convertAssToVtt -> ${sb.length} chars, lines input: ${ass.lines().size}")
         return sb.toString()
     }
-
+    
 }
 
 data class AnimeObject(
