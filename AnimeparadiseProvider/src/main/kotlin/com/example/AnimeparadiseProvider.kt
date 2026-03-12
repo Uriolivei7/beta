@@ -163,6 +163,7 @@ class AnimeParadiseProvider : MainAPI() {
                     newEpisode("$finalId|$internalId") {
                         this.episode = ep.number?.toIntOrNull() ?: 0
                         this.name = ep.title ?: "Episodio ${ep.number}"
+                        this.posterUrl = ep.image
                     }
                 }
             }?.sortedBy { it.episode } ?: emptyList()
@@ -196,14 +197,13 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val currentEpId = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
+        val currentEpId = parts.getOrNull(0) ?: return false
         val currentOriginId = parts.getOrNull(1) ?: ""
-
         val watchUrl = "$mainUrl/watch/$currentEpId?origin=$currentOriginId"
-        Log.d(TAG, "Logs: --- SOLICITANDO LINK PARA EP: $currentEpId ---")
 
         return try {
             val page = app.get(watchUrl, headers = apiHeaders)
+
             val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(page.text)?.groupValues?.get(1)
                 ?: "603712faba47e30723d32819533284371173c10bbd"
 
@@ -213,7 +213,7 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-action" to actionId,
                 "origin" to mainUrl,
                 "referer" to watchUrl,
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                "x-nextjs-data" to "1"
             )
 
             val requestBodyString = "[\"$currentEpId\",\"$currentOriginId\"]"
@@ -225,19 +225,16 @@ class AnimeParadiseProvider : MainAPI() {
             )
 
             val resText = response.text.replace("\\/", "/")
-
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.get(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: URL Encontrada con éxito")
-
-                val finalUrl = "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}"
+                Log.d(TAG, "Logs: Link obtenido para Ep $currentEpId")
 
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = "AnimeParadise",
-                        url = finalUrl,
+                        url = "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$mainUrl/"
@@ -245,7 +242,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: Falló la respuesta del servidor: ${resText.take(100)}")
+                Log.e(TAG, "Logs: No se encontró el streamLink específico del episodio")
                 false
             }
         } catch (e: Exception) {
