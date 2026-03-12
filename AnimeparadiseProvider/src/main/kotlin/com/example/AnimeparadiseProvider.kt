@@ -159,13 +159,13 @@ class AnimeParadiseProvider : MainAPI() {
             val simData: SimilarResponse = mapper.readValue(simResponse)
 
             val episodes = epData.data?.mapNotNull { ep ->
-                // LOG CRÍTICO - muestra todos los campos del episodio
-                Log.d(TAG, "Logs: EP completo - _id: ${ep.id}, title: ${ep.title}, number: ${ep.number}")
+                val mongoId = ep.id ?: return@mapNotNull null
 
-                val epUuid = ep.uuid ?: ep.id?.substringAfterLast("/") ?: return@mapNotNull null
-                Log.d(TAG, "Logs: UUID extraído: $epUuid")
+                // Llamar a la API para obtener el UUID real del episodio
+                val epDetailRes = app.get("$apiUrl/ep/$mongoId?v=1", headers = apiHeaders).text
+                Log.d(TAG, "Logs: EP Detail para $mongoId: ${epDetailRes.take(300)}")
 
-                newEpisode("$epUuid|$internalId") {
+                newEpisode(mongoId) {
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.posterUrl = ep.image
@@ -201,7 +201,11 @@ class AnimeParadiseProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val parts = data.split("|")
-        val currentEpId = parts.getOrNull(0) ?: return false
+        val currentEpId = parts.getOrNull(0)
+            ?.substringAfterLast("/")  // elimina la URL base si viene completa
+            ?: return false
+
+        Log.d(TAG, "Logs: EP ID limpio: $currentEpId")
 
         Log.d(TAG, "Logs: EP ID recibido: $currentEpId")
 
