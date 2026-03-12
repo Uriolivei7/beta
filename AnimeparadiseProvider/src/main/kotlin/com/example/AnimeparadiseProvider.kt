@@ -200,23 +200,27 @@ class AnimeParadiseProvider : MainAPI() {
     ): Boolean {
         val parts = data.split("|")
         val currentEpId = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
-
         val watchUrl = "$mainUrl/watch/$currentEpId"
 
         return try {
             val pageResponse = app.get(watchUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "Referer" to mainUrl
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
             ))
             val html = pageResponse.text
 
-            val realOrigin = Regex("""origin["\\=]+([a-zA-Z0-9_-]{10,25})""").find(html)?.groupValues?.getOrNull(1)
-                ?: throw Exception("No se encontró el token Origin")
+            val realOrigin = Regex("""origin["\\= ]+([a-zA-Z0-9_-]{10,25})""").find(html)?.groupValues?.getOrNull(1)
+
+            if (realOrigin == null) {
+                val index = html.indexOf("origin")
+                val context = if (index != -1) html.substring(index, (index + 100).coerceAtMost(html.length)) else "No se halló la palabra origin"
+                Log.e(TAG, "Logs: Fallo total. Contexto cerca de origin: $context")
+                throw Exception("No se encontró el token Origin")
+            }
 
             val actionId = Regex("""\"([a-f0-9]{40})\"[^}]*streamLink""").find(html)?.groupValues?.getOrNull(1)
                 ?: "603712faba47e30723d32819533284371173c10bbd"
 
-            Log.d(TAG, "Logs: Sesión lista. Origin: $realOrigin | Action: ${actionId.take(5)}")
+            Log.d(TAG, "Logs: Token Origin capturado -> $realOrigin")
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -238,24 +242,19 @@ class AnimeParadiseProvider : MainAPI() {
             val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""").find(resText)?.groupValues?.getOrNull(1)
 
             if (videoUrl != null) {
-                Log.d(TAG, "Logs: ¡Enlace único obtenido con éxito!")
+                Log.d(TAG, "Logs: ¡Enlace único obtenido!")
                 callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
-                        ExtractorLinkType.M3U8
-                    ) {
+                    newExtractorLink(this.name, "AnimeParadise", "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}", ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
                     }
                 )
                 true
             } else {
-                Log.e(TAG, "Logs: No se encontró streamLink en la respuesta.")
+                Log.e(TAG, "Logs: El servidor no devolvió el streamLink. Respuesta: ${resText.take(150)}")
                 false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
+            Log.e(TAG, "Logs: Error crítico: ${e.message}")
             false
         }
     }
