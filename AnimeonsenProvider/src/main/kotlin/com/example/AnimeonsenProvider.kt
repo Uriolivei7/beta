@@ -220,15 +220,14 @@ class AnimeonsenProvider : MainAPI() {
             data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
 
-        // ✅ Sin Accept-Encoding para evitar respuesta comprimida
         val apiHeaders = mapOf(
             "Authorization" to "Bearer $token",
             "Referer" to "https://www.animeonsen.xyz/",
             "Origin" to "https://www.animeonsen.xyz",
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Accept" to "application/json, text/plain, */*",
+            "Accept-Encoding" to "identity",  // ✅ Fuerza respuesta sin compresión
             "Accept-Language" to "en-US,en;q=0.9",
-            // ❌ NO incluir Accept-Encoding aquí — causa que la API devuelva gzip binario
         )
 
         val cdnHeaders = mapOf(
@@ -254,8 +253,9 @@ class AnimeonsenProvider : MainAPI() {
             val rawText = decompress(response.body.bytes())
 
             Log.d(TAG, "Logs: Response code: ${response.code}, primeros chars: ${rawText.take(100)}")
+            Log.d(TAG, "Logs: Response code: ${response.code}, Content-Encoding: ${response.headers["content-encoding"]}")
 
-            val res = AppUtils.parseJson<VideoDataDto>(rawText)
+            val res = AppUtils.parseJson<VideoDataDto>(response.text)
 
             Log.d(TAG, "Logs: Response code: ${response.code}, Content-Type: ${response.headers["content-type"]}")
 
