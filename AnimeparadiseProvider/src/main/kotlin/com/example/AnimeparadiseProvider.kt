@@ -257,6 +257,12 @@ class AnimeParadiseProvider : MainAPI() {
                                 Log.d(TAG, "Logs: Sub VTT: $label -> $src")
                             }
                             "ass" -> {
+                                val assUrl = "$apiUrl/stream/file/$src"
+                                subtitleCallback.invoke(newSubtitleFile(label, assUrl))
+                                Log.d(TAG, "Logs: Sub ASS directo: $label -> $assUrl")
+                            }
+
+                          /*  "ass" -> {
                                 val assContent = app.get(
                                     "$apiUrl/stream/file/$src",
                                     headers = apiHeaders
@@ -296,7 +302,8 @@ class AnimeParadiseProvider : MainAPI() {
                                 } else {
                                     Log.e(TAG, "Logs: Litterbox error para $label: $uploadedUrl")
                                 }
-                            }
+                            } */
+
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Logs: Error sub $label: ${e.message}")
