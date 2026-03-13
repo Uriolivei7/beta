@@ -202,16 +202,6 @@ class AnimeonsenProvider : MainAPI() {
         }
     }
 
-    // Función helper para descomprimir
-    private fun decompress(bytes: ByteArray): String {
-        return try {
-            GZIPInputStream(ByteArrayInputStream(bytes)).bufferedReader(Charsets.UTF_8).readText()
-        } catch (e: Exception) {
-            // Si no es gzip, devolver como texto normal
-            bytes.toString(Charsets.UTF_8)
-        }
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -223,7 +213,6 @@ class AnimeonsenProvider : MainAPI() {
         val token = getAuthToken() ?: return false
 
         return try {
-            // ✅ OkHttp directo para controlar la descompresión
             val client = OkHttpClient.Builder().build()
 
             val request = Request.Builder()
@@ -234,7 +223,6 @@ class AnimeonsenProvider : MainAPI() {
                 .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
                 .addHeader("Accept", "application/json, text/plain, */*")
                 .addHeader("Accept-Language", "en-US,en;q=0.9")
-                // ✅ Sin Accept-Encoding — OkHttp agrega gzip automáticamente y descomprime solo
                 .build()
 
             val rawText = client.newCall(request).execute().use { response ->
