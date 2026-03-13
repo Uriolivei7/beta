@@ -208,10 +208,20 @@ class AnimeonsenProvider : MainAPI() {
             data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
 
-        // ✅ Headers que coinciden EXACTAMENTE con lo que el CDN espera
+        // ✅ Sin Accept-Encoding para evitar respuesta comprimida
+        val apiHeaders = mapOf(
+            "Authorization" to "Bearer $token",
+            "Referer" to "https://www.animeonsen.xyz/",
+            "Origin" to "https://www.animeonsen.xyz",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Accept" to "application/json, text/plain, */*",
+            "Accept-Language" to "en-US,en;q=0.9",
+            // ❌ NO incluir Accept-Encoding aquí — causa que la API devuelva gzip binario
+        )
+
         val cdnHeaders = mapOf(
             "Authorization" to "Bearer $token",
-            "Referer" to "https://www.animeonsen.xyz/",   // ← www. y slash final, crítico
+            "Referer" to "https://www.animeonsen.xyz/",
             "Origin" to "https://www.animeonsen.xyz",
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Accept" to "*/*",
@@ -226,14 +236,15 @@ class AnimeonsenProvider : MainAPI() {
         return try {
             val response = app.get(
                 "$apiUrl/content/$cleanPath",
-                headers = cdnHeaders
+                headers = apiHeaders  // ← headers sin Accept-Encoding para la API
             )
+
+            Log.d(TAG, "Logs: Response code: ${response.code}, Content-Type: ${response.headers["content-type"]}")
 
             val res = AppUtils.parseJson<VideoDataDto>(response.text)
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
-                // Subtítulos
                 res.uri.subtitles?.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
                     val finalSubUrl = "${subUrl}?format=vtt&t=${System.currentTimeMillis()}"
@@ -249,9 +260,9 @@ class AnimeonsenProvider : MainAPI() {
                             )
                         }
                     )
+                    Log.d(TAG, "Logs: Subtítulo: $langName -> $finalSubUrl")
                 }
 
-                // ✅ Es DASH (.mpd), tipo correcto
                 callback(
                     newExtractorLink(
                         source = this.name,
@@ -260,14 +271,17 @@ class AnimeonsenProvider : MainAPI() {
                         type = ExtractorLinkType.DASH
                     ) {
                         this.quality = Qualities.P720.value
-                        this.referer = "https://www.animeonsen.xyz/"  // ← www. y slash final
-                        this.headers = cdnHeaders
+                        this.referer = "https://www.animeonsen.xyz/"
+                        this.headers = cdnHeaders  // ← headers completos para el CDN
                     }
                 )
 
-                Log.d(TAG, "Logs: Stream DASH cargado: $videoUrl")
+                Log.d(TAG, "Logs: Stream DASH cargado correctamente: $videoUrl")
                 true
-            } else false
+            } else {
+                Log.e(TAG, "Logs: videoUrl vacío")
+                false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Logs Error Crítico loadLinks: ${e.message}")
             false
