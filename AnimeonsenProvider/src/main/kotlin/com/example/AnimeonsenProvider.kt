@@ -5,9 +5,11 @@ import com.google.gson.annotations.SerializedName
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.serialization.*
+import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
 import java.net.URLEncoder
 import java.util.zip.GZIPInputStream
+import okhttp3.Request
 
 class AnimeonsenProvider : MainAPI() {
     override var mainUrl = "https://animeonsen.xyz"
@@ -220,49 +222,42 @@ class AnimeonsenProvider : MainAPI() {
             data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
 
-        val apiHeaders = mapOf(
-            "Authorization" to "Bearer $token",
-            "Referer" to "https://www.animeonsen.xyz/",
-            "Origin" to "https://www.animeonsen.xyz",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-            "Accept" to "application/json, text/plain, */*",
-            "Accept-Language" to "en-US,en;q=0.9",
-            // ✅ NO incluir Accept-Encoding en absoluto
-            // OkHttp maneja gzip/brotli automáticamente SOLO si no defines este header
-        )
-
-        val cdnHeaders = mapOf(
-            "Authorization" to "Bearer $token",
-            "Referer" to "https://www.animeonsen.xyz/",
-            "Origin" to "https://www.animeonsen.xyz",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Connection" to "keep-alive",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "same-site"
-        )
-
         return try {
-            val response = app.get(
-                "$apiUrl/content/$cleanPath",
-                headers = apiHeaders
-            )
+            // ✅ OkHttp directo para controlar la descompresión
+            val client = OkHttpClient.Builder().build()
 
-            val rawText = decompress(response.body.bytes())
+            val request = Request.Builder()
+                .url("$apiUrl/content/$cleanPath")
+                .addHeader("Authorization", "Bearer $token")
+                .addHeader("Referer", "https://www.animeonsen.xyz/")
+                .addHeader("Origin", "https://www.animeonsen.xyz")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+                .addHeader("Accept", "application/json, text/plain, */*")
+                .addHeader("Accept-Language", "en-US,en;q=0.9")
+                // ✅ Sin Accept-Encoding — OkHttp agrega gzip automáticamente y descomprime solo
+                .build()
 
-            Log.d(TAG, "Logs: Response code: ${response.code}, primeros chars: ${rawText.take(100)}")
-            Log.d(TAG, "Logs: Response code: ${response.code}")
+            val rawText = client.newCall(request).execute().use { response ->
+                Log.d(TAG, "Logs: Code: ${response.code}, Encoding: ${response.header("content-encoding")}")
+                response.body?.string() ?: return false
+            }
 
-            val res = AppUtils.parseJson<VideoDataDto>(response.text)
+            Log.d(TAG, "Logs: Primeros chars: ${rawText.take(50)}")
 
-            Log.d(TAG, "Logs: Response code: ${response.code}, Content-Type: ${response.headers["content-type"]}")
-
+            val res = AppUtils.parseJson<VideoDataDto>(rawText)
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
+                val cdnHeaders = mapOf(
+                    "Authorization" to "Bearer $token",
+                    "Referer" to "https://www.animeonsen.xyz/",
+                    "Origin" to "https://www.animeonsen.xyz",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "Accept" to "*/*",
+                    "Accept-Language" to "en-US,en;q=0.9",
+                    "Connection" to "keep-alive"
+                )
+
                 res.uri.subtitles?.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
                     val finalSubUrl = "${subUrl}?format=vtt&t=${System.currentTimeMillis()}"
@@ -272,13 +267,11 @@ class AnimeonsenProvider : MainAPI() {
                                 "Authorization" to "Bearer $token",
                                 "Origin" to "https://www.animeonsen.xyz",
                                 "Referer" to "https://www.animeonsen.xyz/",
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Sec-Fetch-Mode" to "cors",
-                                "Sec-Fetch-Site" to "same-site"
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                             )
                         }
                     )
-                    Log.d(TAG, "Logs: Subtítulo: $langName -> $finalSubUrl")
+                    Log.d(TAG, "Logs: Subtítulo: $langName")
                 }
 
                 callback(
@@ -290,11 +283,11 @@ class AnimeonsenProvider : MainAPI() {
                     ) {
                         this.quality = Qualities.P720.value
                         this.referer = "https://www.animeonsen.xyz/"
-                        this.headers = cdnHeaders  // ← headers completos para el CDN
+                        this.headers = cdnHeaders
                     }
                 )
 
-                Log.d(TAG, "Logs: Stream DASH cargado correctamente: $videoUrl")
+                Log.d(TAG, "Logs: Stream DASH: $videoUrl")
                 true
             } else {
                 Log.e(TAG, "Logs: videoUrl vacío")
