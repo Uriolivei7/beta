@@ -162,7 +162,7 @@ class AnimeParadiseProvider : MainAPI() {
                 val uid = ep.uid ?: return@mapNotNull null
                 Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
 
-                newEpisode("$uid|$internalId") {  // uid|animeId
+                newEpisode("$uid|$internalId") {  
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.posterUrl = ep.image
@@ -262,48 +262,6 @@ class AnimeParadiseProvider : MainAPI() {
                                 Log.d(TAG, "Logs: Sub ASS directo: $label -> $assUrl")
                             }
 
-                          /*  "ass" -> {
-                                val assContent = app.get(
-                                    "$apiUrl/stream/file/$src",
-                                    headers = apiHeaders
-                                ).text
-
-                                val vttContent = convertAssToVtt(assContent)
-                                val boundary = "Boundary${System.currentTimeMillis()}"
-                                val CRLF = "\r\n"
-                                val vttBytes = vttContent.toByteArray(Charsets.UTF_8)
-
-                                val prefix = ("--$boundary$CRLF" +
-                                        "Content-Disposition: form-data; name=\"reqtype\"$CRLF$CRLF" +
-                                        "fileupload$CRLF" +
-                                        "--$boundary$CRLF" +
-                                        "Content-Disposition: form-data; name=\"time\"$CRLF$CRLF" +
-                                        "1h$CRLF" +
-                                        "--$boundary$CRLF" +
-                                        "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\"sub.vtt\"$CRLF" +
-                                        "Content-Type: text/vtt$CRLF$CRLF").toByteArray(Charsets.UTF_8)
-
-                                val suffix = ("$CRLF--$boundary--$CRLF").toByteArray(Charsets.UTF_8)
-                                val fullBody = prefix + vttBytes + suffix
-
-                                val uploadedUrl = app.post(
-                                    "https://litterbox.catbox.moe/resources/internals/api.php",
-                                    headers = mapOf(
-                                        "Content-Type" to "multipart/form-data; boundary=$boundary"
-                                    ),
-                                    requestBody = fullBody.toRequestBody(
-                                        "multipart/form-data; boundary=$boundary".toMediaTypeOrNull()
-                                    )
-                                ).text.trim()
-
-                                Log.d(TAG, "Logs: Sub ASS->VTT subido: $label -> $uploadedUrl")
-                                if (uploadedUrl.startsWith("https://")) {
-                                    subtitleCallback.invoke(newSubtitleFile(label, uploadedUrl))
-                                } else {
-                                    Log.e(TAG, "Logs: Litterbox error para $label: $uploadedUrl")
-                                }
-                            } */
-
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Logs: Error sub $label: ${e.message}")
@@ -316,79 +274,6 @@ class AnimeParadiseProvider : MainAPI() {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
         }
-    }
-
-    private fun convertAssToVtt(ass: String): String {
-        val sb = StringBuilder("WEBVTT\n\n")
-        val dialogueRegex = Regex(
-            """Dialogue:\s*\d+,(\d+:\d{2}:\d{2}\.\d{2}),(\d+:\d{2}:\d{2}\.\d{2}),([^,]*),([^,]*),\d+,\d+,\d+,[^,]*,(.*)"""
-        )
-
-        val upStyles = mutableSetOf<String>()
-        ass.lines().forEach { line ->
-            if (line.startsWith("Style:")) {
-                val fields = line.removePrefix("Style:").split(",")
-                val styleName = fields.getOrNull(0)?.trim() ?: return@forEach
-                val alignment = fields.getOrNull(18)?.trim()?.toIntOrNull() ?: return@forEach
-                if (alignment in 4..9) upStyles.add(styleName)
-            }
-        }
-
-        fun fixTime(t: String): String {
-            val parts = t.split(":", ".")
-            val h = parts[0].padStart(2, '0')
-            val m = parts[1]; val s = parts[2]
-            val ms = (parts[3].toIntOrNull() ?: 0) * 10
-            return "$h:$m:$s.${ms.toString().padStart(3, '0')}"
-        }
-
-        data class Cue(val start: String, val end: String, val text: String, val isTop: Boolean)
-        val cues = mutableListOf<Cue>()
-
-        ass.lines().forEach { line ->
-            val match = dialogueRegex.find(line) ?: return@forEach
-            val start = fixTime(match.groupValues[1])
-            val end   = fixTime(match.groupValues[2])
-            val style = match.groupValues[3].trim()
-            val text  = match.groupValues[5]
-                .replace(Regex("""\{[^}]*\}"""), "")
-                .replace("""\N""", "\n")
-                .replace("""\n""", "\n")
-                .trim()
-
-            if (text.isNotEmpty()) {
-                val isTop = upStyles.contains(style) ||
-                        style.contains("Up", ignoreCase = true) ||
-                        style.contains("top", ignoreCase = true)
-                cues.add(Cue(start, end, text, isTop))
-            }
-        }
-
-        // LinkedHashMap para preservar orden cronológico
-        val grouped = LinkedHashMap<String, MutableList<Cue>>()
-        cues.forEach { cue ->
-            val key = "${cue.start}|${cue.end}"
-            grouped.getOrPut(key) { mutableListOf() }.add(cue)
-        }
-
-        grouped.forEach { (_, group) ->
-            val start = group[0].start
-            val end   = group[0].end
-            val topCues    = group.filter { it.isTop }
-            val bottomCues = group.filter { !it.isTop }
-
-            if (topCues.isNotEmpty()) {
-                val topText = topCues.joinToString("\n") { it.text }
-                sb.append("$start --> $end line:5% position:50% align:center\n$topText\n\n")
-            }
-            if (bottomCues.isNotEmpty()) {
-                val bottomText = bottomCues.joinToString("\n") { it.text }
-                sb.append("$start --> $end line:90% position:50% align:center\n$bottomText\n\n")
-            }
-        }
-
-        Log.d(TAG, "Logs: convertAssToVtt -> ${sb.length} chars, lines input: ${ass.lines().size}")
-        return sb.toString()
     }
 
 }
@@ -404,12 +289,7 @@ data class AnimeObject(
     val image: String? = null
 )
 data class ImageInfo(val original: String? = null, val large: String? = null)
-data class Episode(
-    @JsonProperty("_id") val id: String? = null,
-    val number: String? = null,
-    val title: String? = null,
-    val image: String? = null
-)
+
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
 
 data class AnimeDetailResponse(
