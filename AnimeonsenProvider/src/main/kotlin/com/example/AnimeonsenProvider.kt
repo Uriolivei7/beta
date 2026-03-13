@@ -5,7 +5,9 @@ import com.google.gson.annotations.SerializedName
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.serialization.*
+import java.io.ByteArrayInputStream
 import java.net.URLEncoder
+import java.util.zip.GZIPInputStream
 
 class AnimeonsenProvider : MainAPI() {
     override var mainUrl = "https://animeonsen.xyz"
@@ -198,6 +200,16 @@ class AnimeonsenProvider : MainAPI() {
         }
     }
 
+    // Función helper para descomprimir
+    private fun decompress(bytes: ByteArray): String {
+        return try {
+            GZIPInputStream(ByteArrayInputStream(bytes)).bufferedReader(Charsets.UTF_8).readText()
+        } catch (e: Exception) {
+            // Si no es gzip, devolver como texto normal
+            bytes.toString(Charsets.UTF_8)
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -236,12 +248,17 @@ class AnimeonsenProvider : MainAPI() {
         return try {
             val response = app.get(
                 "$apiUrl/content/$cleanPath",
-                headers = apiHeaders  // ← headers sin Accept-Encoding para la API
+                headers = apiHeaders
             )
+
+            val rawText = decompress(response.body.bytes())
+
+            Log.d(TAG, "Logs: Response code: ${response.code}, primeros chars: ${rawText.take(100)}")
+
+            val res = AppUtils.parseJson<VideoDataDto>(rawText)
 
             Log.d(TAG, "Logs: Response code: ${response.code}, Content-Type: ${response.headers["content-type"]}")
 
-            val res = AppUtils.parseJson<VideoDataDto>(response.text)
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
