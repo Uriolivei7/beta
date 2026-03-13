@@ -226,8 +226,9 @@ class AnimeonsenProvider : MainAPI() {
             "Origin" to "https://www.animeonsen.xyz",
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Accept" to "application/json, text/plain, */*",
-            "Accept-Encoding" to "identity",  // ✅ Fuerza respuesta sin compresión
             "Accept-Language" to "en-US,en;q=0.9",
+            // ✅ NO incluir Accept-Encoding en absoluto
+            // OkHttp maneja gzip/brotli automáticamente SOLO si no defines este header
         )
 
         val cdnHeaders = mapOf(
@@ -253,7 +254,7 @@ class AnimeonsenProvider : MainAPI() {
             val rawText = decompress(response.body.bytes())
 
             Log.d(TAG, "Logs: Response code: ${response.code}, primeros chars: ${rawText.take(100)}")
-            Log.d(TAG, "Logs: Response code: ${response.code}, Content-Encoding: ${response.headers["content-encoding"]}")
+            Log.d(TAG, "Logs: Response code: ${response.code}")
 
             val res = AppUtils.parseJson<VideoDataDto>(response.text)
 
