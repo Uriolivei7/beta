@@ -204,63 +204,68 @@ class AnimeonsenProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val cleanPath = if (data.contains("animeonsen.xyz/")) data.substringAfter("animeonsen.xyz/") else data
+        val cleanPath = if (data.contains("animeonsen.xyz/"))
+            data.substringAfter("animeonsen.xyz/") else data
         val token = getAuthToken() ?: return false
 
-        val commonHeaders = mapOf(
+        // ✅ Headers que coinciden EXACTAMENTE con lo que el CDN espera
+        val cdnHeaders = mapOf(
             "Authorization" to "Bearer $token",
-            "Referer" to mainUrl,
-            "User-Agent" to userAgent,
-            "Accept" to "*/*"
+            "Referer" to "https://www.animeonsen.xyz/",   // ← www. y slash final, crítico
+            "Origin" to "https://www.animeonsen.xyz",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Accept" to "*/*",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Connection" to "keep-alive",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "same-site"
         )
 
         return try {
             val response = app.get(
                 "$apiUrl/content/$cleanPath",
-                headers = commonHeaders
+                headers = cdnHeaders
             )
 
             val res = AppUtils.parseJson<VideoDataDto>(response.text)
             val videoUrl = res.uri.stream
 
             if (videoUrl.isNotEmpty()) {
+                // Subtítulos
                 res.uri.subtitles?.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
-
                     val finalSubUrl = "${subUrl}?format=vtt&t=${System.currentTimeMillis()}"
-
                     subtitleCallback.invoke(
                         newSubtitleFile(langName, finalSubUrl) {
                             this.headers = mapOf(
                                 "Authorization" to "Bearer $token",
                                 "Origin" to "https://www.animeonsen.xyz",
                                 "Referer" to "https://www.animeonsen.xyz/",
-                                "Accept" to "application/json, text/plain, */*",
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                                 "Sec-Fetch-Mode" to "cors",
                                 "Sec-Fetch-Site" to "same-site"
                             )
                         }
                     )
-                    Log.d(TAG, "Logs: Subtítulo enviado al callback: $langName")
                 }
 
-                val isDash = videoUrl.contains(".mpd")
-
+                // ✅ Es DASH (.mpd), tipo correcto
                 callback(
                     newExtractorLink(
                         source = this.name,
                         name = this.name,
                         url = videoUrl,
-                        type = if (isDash) ExtractorLinkType.DASH else ExtractorLinkType.VIDEO
+                        type = ExtractorLinkType.DASH
                     ) {
                         this.quality = Qualities.P720.value
-                        this.referer = mainUrl
-                        this.headers = commonHeaders + mapOf("Connection" to "keep-alive")
+                        this.referer = "https://www.animeonsen.xyz/"  // ← www. y slash final
+                        this.headers = cdnHeaders
                     }
                 )
 
-                Log.d(TAG, "Logs: Load completo para ${res.metadata.content_title}. Score: ${res.metadata.mal_id}")
+                Log.d(TAG, "Logs: Stream DASH cargado: $videoUrl")
                 true
             } else false
         } catch (e: Exception) {
