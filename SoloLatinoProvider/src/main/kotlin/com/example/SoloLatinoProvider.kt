@@ -81,45 +81,42 @@ class SoloLatinoProvider : MainAPI() {
         delayMs: Long = 2000L,
         timeoutMs: Long = 30000L
     ): String? {
-        initCookies()
-
         for (i in 0 until retries) {
             try {
                 Log.d("SoloLatino", "safeAppGet - Intento ${i + 1}/$retries para URL: $url")
                 val res = app.get(
                     url,
-                    interceptor = cfKiller,
                     timeout = timeoutMs,
-                    cookies = cfCookies,
                     headers = baseHeaders
+                    // SIN interceptor = cfKiller
                 )
                 if (res.isSuccessful) {
-                    Log.d("SoloLatino", "safeAppGet - Petición exitosa para URL: $url")
+                    Log.d("SoloLatino", "safeAppGet - Exitoso (${res.code}) para URL: $url")
                     return res.text
                 } else {
                     Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} para URL: $url")
+                    // Si es 403, intentar con cfKiller
+                    if (res.code == 403) {
+                        Log.d("SoloLatino", "safeAppGet - 403 detectado, reintentando con cfKiller...")
+                        val res2 = app.get(url, interceptor = cfKiller, timeout = timeoutMs, headers = baseHeaders)
+                        if (res2.isSuccessful) return res2.text
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("SoloLatino", "safeAppGet - Error en intento ${i + 1}/$retries para URL: $url: ${e.message}", e)
-                // Si falla, forzar renovación de cookies en el siguiente intento
-                if (i < retries - 1) {
-                    Log.d("SoloLatino", "safeAppGet - Renovando cookies y reintentando en ${delayMs / 1000.0}s...")
-                    cfCookies = emptyMap()
-                    delay(delayMs)
-                }
+                Log.e("SoloLatino", "safeAppGet - Error intento ${i + 1}: ${e.message}", e)
             }
+            if (i < retries - 1) delay(delayMs)
         }
         Log.e("SoloLatino", "safeAppGet - Fallaron todos los intentos para URL: $url")
         return null
     }
-    
+
     private suspend fun safeAppGetDoc(url: String, timeoutMs: Long = 30000L) =
         app.get(
             url,
-            interceptor = cfKiller,
             timeout = timeoutMs,
-            cookies = cfCookies,
             headers = baseHeaders
+            // SIN interceptor
         ).document
 
     private fun extractBestSrcset(srcsetAttr: String?): String? {
