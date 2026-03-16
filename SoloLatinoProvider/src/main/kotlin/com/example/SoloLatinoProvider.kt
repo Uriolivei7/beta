@@ -64,7 +64,7 @@ class SoloLatinoProvider : MainAPI() {
                     res.code == 429 -> {
                         Log.w("SoloLatino", "safeAppGet - Rate limit 429, esperando 15s para: $url")
                         delay(15000L)
-                        continue // saltar el delay normal al final
+                        continue
                     }
                     else -> Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} no exitoso para: $url")
                 }
@@ -80,38 +80,22 @@ class SoloLatinoProvider : MainAPI() {
     private suspend fun safeAppGetDoc(url: String, timeoutMs: Long = 30000L) =
         app.get(url, timeout = timeoutMs, headers = baseHeaders).document
 
-    private fun extractBestSrcset(srcsetAttr: String?): String? {
-        if (srcsetAttr.isNullOrBlank()) return null
-        val sources = srcsetAttr.split(",").map { it.trim().split(" ") }
-        var bestUrl: String? = null
-        var bestMetric = 0
-        for (source in sources) {
-            if (source.size >= 2) {
-                val currentUrl = source[0]
-                val descriptor = source[1]
-                val widthMatch = Regex("""(\d+)w""").find(descriptor)
-                val densityMatch = Regex("""(\d+)x""").find(descriptor)
-                if (widthMatch != null) {
-                    val width = widthMatch.groupValues[1].toIntOrNull()
-                    if (width != null && width > bestMetric) { bestMetric = width; bestUrl = currentUrl }
-                } else if (densityMatch != null) {
-                    val density = densityMatch.groupValues[1].toIntOrNull()
-                    if (density != null && density * 100 > bestMetric) { bestMetric = density * 100; bestUrl = currentUrl }
-                }
-            } else if (source.isNotEmpty() && source.size == 1) {
-                if (bestUrl == null || bestMetric == 0) { bestUrl = source[0]; bestMetric = 1 }
-            }
-        }
-        return bestUrl
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("SoloLatino", "DEBUG: Iniciando getMainPage, página: $page, solicitud: ${request.name}")
         val items = ArrayList<HomePageList>()
         val urls = listOf(
-            Pair("Series", "$mainUrl/series"),
-            Pair("Animes", "$mainUrl/animes"),
-            Pair("Películas", "$mainUrl/peliculas"),
+            Pair("Netflix", "$mainUrl/red/netflix"),
+            Pair("Amazon Prime Video", "$mainUrl/red/amazon-prime-video"),
+            Pair("Disney+", "$mainUrl/red/disney"),
+            Pair("AppleTV+", "$mainUrl/red/apple-tv"),
+            Pair("Hulu", "$mainUrl/red/hulu"),
+            Pair("HBO Max", "$mainUrl/red/hbo-max"),
+            Pair("HBO", "$mainUrl/red/hbo"),
+            Pair("Tokyo Mx", "$mainUrl/tokyo-mx"),
+            Pair("Tv Tokyo", "$mainUrl/tv-tokyo"),
+            Pair("At-X", "$mainUrl/red/at-x"),
+            Pair("Bs11", "$mainUrl/red/bs11"),
+            Pair("Fuji Tv", "$mainUrl/red/fuji-tv"),
         )
 
         val homePageLists = urls.map { (name, url) ->
@@ -173,7 +157,6 @@ class SoloLatinoProvider : MainAPI() {
         }
     }
 
-    data class EpisodeLoadData(val title: String, val url: String)
 
     override suspend fun load(url: String): LoadResponse? {
         delay(1000L)
@@ -198,20 +181,18 @@ class SoloLatinoProvider : MainAPI() {
         }
         val doc = Jsoup.parse(html)
 
-        // 1. Extraemos el texto base del título
         val rawTitle = doc.selectFirst("div.flex-1 h1")?.text()
             ?: doc.selectFirst("title")?.text()?.substringBefore("—")?.trim()
             ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()
             ?: ""
 
-        // 2. Limpiamos las frases innecesarias
         val title = rawTitle
-            .replace(Regex("(?i)Ver\\s+"), "") // Quita "Ver " (sin importar mayúsculas)
-            .replace(Regex("(?i)\\s+online.*"), "") // Quita " online" y todo lo que siga
-            .replace(Regex("(?i)\\s+latino.*"), "") // Quita " latino" y todo lo que siga
-            .replace(Regex("(?i)\\s+en\\s+español.*"), "") // Quita " en español..."
-            .replace(Regex("(?i)\\s+solo\\s+en.*"), "") // Quita " solo en..."
-            .trim() // Quita espacios sobrantes al inicio o final
+            .replace(Regex("(?i)Ver\\s+"), "")
+            .replace(Regex("(?i)\\s+online.*"), "")
+            .replace(Regex("(?i)\\s+latino.*"), "")
+            .replace(Regex("(?i)\\s+en\\s+español.*"), "")
+            .replace(Regex("(?i)\\s+solo\\s+en.*"), "")
+            .trim()
 
         Log.d("SoloLatino", "load - Título limpio: $title")
 
@@ -224,11 +205,9 @@ class SoloLatinoProvider : MainAPI() {
             .firstOrNull { it.text().contains(Regex("(?i)\\d+h|\\d+m|\\d+\\s?min")) }
             ?.text()
             ?.let { durText ->
-                // Caso 1: Formato "1h 30m"
                 val hours = Regex("""(\d+)h""").find(durText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val minutes = Regex("""(\d+)m""").find(durText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-                // Caso 2: Formato simple "90 min" o "90"
                 val pureMinutes = if (hours == 0 && minutes == 0) {
                     Regex("""(\d+)""").find(durText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 } else 0
@@ -306,10 +285,10 @@ class SoloLatinoProvider : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backgroundPoster
                 this.plot = description
-                this.tags = tags // Ahora se llenará con los géneros
+                this.tags = tags
                 this.recommendations = recommendations
-                this.year = year // Ahora extraerá 2019, por ejemplo
-                this.duration = durationMain // Ahora extraerá los minutos totales
+                this.year = year
+                this.duration = durationMain
                 this.score = averageScore?.let { Score.from10(it) }
             }
             else -> null
@@ -332,10 +311,8 @@ class SoloLatinoProvider : MainAPI() {
 
         val episodeDoc = safeAppGetDoc(targetUrl)
 
-        // La nueva estructura de sololatino usa botones con data-server-url, no iframes directos
         val serverUrl = episodeDoc.selectFirst("button[data-server-url]")?.attr("data-server-url")
             ?: episodeDoc.selectFirst("[data-server-url]")?.attr("data-server-url")
-            // Fallback: buscar iframe por si acaso
             ?: episodeDoc.selectFirst("iframe[src^=http]")?.attr("src")
             ?: episodeDoc.selectFirst("iframe[data-src^=http]")?.attr("data-src")
 
