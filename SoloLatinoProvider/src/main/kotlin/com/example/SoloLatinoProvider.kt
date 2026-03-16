@@ -368,14 +368,32 @@ class SoloLatinoProvider : MainAPI() {
                     } ?: Log.e("SoloLatino", "EMBED69: No se extrajo dataLink JSON.")
             }
 
-            fixedSrc.contains("xupalace.org/video") -> {
-                Log.d("SoloLatino", "BRANCH: xupalace.org")
-                val regex = """(go_to_player|go_to_playerVast)\('([^']+)'""".toRegex()
-                val foundLinks = regex.findAll(safeAppGetDoc(fixedSrc).html()).map { it.groupValues[2] }.toList()
+            fixedSrc.contains("xupalace.org") -> {
+                Log.d("SoloLatino", "BRANCH: xupalace.org - Extrayendo enlaces de lista")
+                val html = app.get(fixedSrc, headers = baseHeaders).text
+
+                val regex = Regex("""go_to_playerVast\s*\(\s*'([^']+)'""")
+                val foundLinks = regex.findAll(html).map { it.groupValues[1] }.distinct().toList()
+
                 if (foundLinks.isNotEmpty()) {
-                    foundLinks.amap { loadExtractor(fixHostsLinks(it), targetUrl, subtitleCallback, callback) }
+                    Log.d("SoloLatino", "XUPALACE: ${foundLinks.size} enlaces encontrados")
+                    foundLinks.amap { link ->
+                        val cleanLink = fixHostsLinks(fixUrl(link))
+
+                        loadExtractor(cleanLink, fixedSrc, subtitleCallback, callback)
+                    }
                 } else {
-                    Log.e("SoloLatino", "XUPALACE: No se encontraron links.")
+                    val doc = Jsoup.parse(html)
+                    val liLinks = doc.select("li[onclick*='http']").mapNotNull {
+                        val clickAttr = it.attr("onclick")
+                        Regex("'([^']+)'").find(clickAttr)?.groupValues?.get(1)
+                    }
+
+                    if (liLinks.isNotEmpty()) {
+                        liLinks.amap { loadExtractor(fixHostsLinks(fixUrl(it)), fixedSrc, subtitleCallback, callback) }
+                    } else {
+                        Log.e("SoloLatino", "XUPALACE: No se encontró nada. HTML: ${html.take(200)}")
+                    }
                 }
             }
 
@@ -415,6 +433,8 @@ suspend fun loadSourceNameExtractor(
 
 fun fixHostsLinks(url: String): String {
     return url
+        .replaceFirst("https://hglink.to", "https://streamwish.to")
+        .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
         .replaceFirst("https://hglink.to", "https://streamwish.to")
         .replaceFirst("https://swdyu.com", "https://streamwish.to")
         .replaceFirst("https://cybervynx.com", "https://streamwish.to")
