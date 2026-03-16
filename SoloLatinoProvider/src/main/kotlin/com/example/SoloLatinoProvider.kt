@@ -120,16 +120,11 @@ class SoloLatinoProvider : MainAPI() {
                 return@map null
             }
             val doc = Jsoup.parse(html)
-            val homeItems = doc.select("div.items article.item").mapNotNull { article ->
-                val title = article.selectFirst("a div.data h3")?.text()
-                val link = article.selectFirst("a")?.attr("href")
-                val imgElement = article.selectFirst("div.poster img.lazyload")
-                val srcsetAttr = imgElement?.attr("data-srcset")
-                var img = extractBestSrcset(srcsetAttr)
-                if (img.isNullOrBlank()) {
-                    img = imgElement?.attr("src")
-                    Log.d("SoloLatino", "DEBUG: Fallback a src para título: $title")
-                }
+            val homeItems = doc.select("div.card").mapNotNull { card ->
+                val title = card.selectFirst("div.card__info span.card__title")?.text()
+                val link = card.selectFirst("a")?.attr("href")
+                val img = card.selectFirst("img.card__poster")?.attr("src") ?: ""
+                Log.d("SoloLatino", "DEBUG: título=$title, link=$link, img=$img")
                 if (title != null && link != null) {
                     newAnimeSearchResponse(title, fixUrl(link)) {
                         this.type = tvType
@@ -140,6 +135,7 @@ class SoloLatinoProvider : MainAPI() {
                     null
                 }
             }
+            Log.d("SoloLatino", "DEBUG: $name -> ${homeItems.size} items encontrados")
             HomePageList(name, homeItems)
         }.filterNotNull()
 
@@ -150,18 +146,17 @@ class SoloLatinoProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("SoloLatino", "DEBUG: search para query: $query")
-        val url = "$mainUrl/?s=$query"
+        // El sitio nuevo usa /buscar?q= en lugar de /?s=
+        val url = "$mainUrl/buscar?q=${query}"
         val html = safeAppGet(url) ?: run {
             Log.e("SoloLatino", "search - No se pudo obtener HTML para: $url")
             return emptyList()
         }
         val doc = Jsoup.parse(html)
-        return doc.select("div.items article.item").mapNotNull { article ->
-            val title = article.selectFirst("a div.data h3")?.text()
-            val link = article.selectFirst("a")?.attr("href")
-            val imgElement = article.selectFirst("div.poster img.lazyload")
-            var img = extractBestSrcset(imgElement?.attr("data-srcset"))
-            if (img.isNullOrBlank()) img = imgElement?.attr("src")
+        return doc.select("div.card").mapNotNull { card ->
+            val title = card.selectFirst("div.card__info span.card__title")?.text()
+            val link = card.selectFirst("a")?.attr("href")
+            val img = card.selectFirst("img.card__poster")?.attr("src") ?: ""
             if (title != null && link != null) {
                 newTvSeriesSearchResponse(title, fixUrl(link)) {
                     this.type = TvType.TvSeries
