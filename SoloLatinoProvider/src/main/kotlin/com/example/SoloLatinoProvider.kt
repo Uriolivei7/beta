@@ -51,7 +51,7 @@ class SoloLatinoProvider : MainAPI() {
     private suspend fun safeAppGet(
         url: String,
         retries: Int = 3,
-        delayMs: Long = 2000L,
+        delayMs: Long = 5000L,   // aumenta de 2000 a 5000ms
         timeoutMs: Long = 30000L
     ): String? {
         for (i in 0 until retries) {
@@ -59,8 +59,14 @@ class SoloLatinoProvider : MainAPI() {
                 Log.d("SoloLatino", "safeAppGet - Intento ${i + 1}/$retries para URL: $url")
                 val res = app.get(url, timeout = timeoutMs, headers = baseHeaders)
                 Log.d("SoloLatino", "safeAppGet - HTTP ${res.code} para URL: $url")
-                if (res.isSuccessful) return res.text
-                else Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} no exitoso para: $url")
+                when {
+                    res.isSuccessful -> return res.text
+                    res.code == 429 -> {
+                        Log.w("SoloLatino", "safeAppGet - Rate limit (429), esperando más tiempo...")
+                        delay(10000L) // espera 10 segundos específicamente para 429
+                    }
+                    else -> Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} no exitoso para: $url")
+                }
             } catch (e: Exception) {
                 Log.e("SoloLatino", "safeAppGet - Error intento ${i + 1}: ${e.message}", e)
             }
@@ -102,6 +108,7 @@ class SoloLatinoProvider : MainAPI() {
         Log.d("SoloLatino", "DEBUG: Iniciando getMainPage, página: $page, solicitud: ${request.name}")
         val items = ArrayList<HomePageList>()
         val urls = listOf(
+            Pair("Disney+", "$mainUrl/red/disney"),
             Pair("Series", "$mainUrl/series"),
             Pair("Animes", "$mainUrl/animes"),
             Pair("Películas", "$mainUrl/peliculas"),
@@ -167,6 +174,7 @@ class SoloLatinoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        delay(1000L)
         var cleanUrl = url
         val urlJsonMatch = Regex("""\{"url":"(https?:\/\/[^"]+)"\}""").find(url)
         if (urlJsonMatch != null) {
