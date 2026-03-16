@@ -166,11 +166,7 @@ class SoloLatinoProvider : MainAPI() {
         }
     }
 
-    data class EpisodeLoadData(val title: String, val url: String)
-
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("SoloLatino", "load - URL: $url")
-
         var cleanUrl = url
         val urlJsonMatch = Regex("""\{"url":"(https?:\/\/[^"]+)"\}""").find(url)
         if (urlJsonMatch != null) {
@@ -178,96 +174,105 @@ class SoloLatinoProvider : MainAPI() {
         } else if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
             cleanUrl = "https://" + cleanUrl.removePrefix("//")
         }
+        if (cleanUrl.isBlank()) return null
 
-        if (cleanUrl.isBlank()) {
-            Log.e("SoloLatino", "load - ERROR: URL en blanco.")
-            return null
-        }
-
-        val html = safeAppGet(cleanUrl) ?: run {
-            Log.e("SoloLatino", "load - No se pudo obtener HTML para: $cleanUrl")
-            return null
-        }
+        val html = safeAppGet(cleanUrl) ?: return null
         val doc = Jsoup.parse(html)
 
-        val tvType = if (cleanUrl.contains("peliculas")) TvType.Movie else TvType.TvSeries
-        val title = doc.selectFirst("div.data h1")?.text() ?: ""
-        val description = doc.selectFirst("div.wp-content")?.text() ?: ""
-        val tags = doc.select("div.sgeneros a").map { it.text() }
-        val averageScore = doc.selectFirst("div.nota span")?.ownText()?.trim()?.toDoubleOrNull()
-        val durationMain = doc.selectFirst("span.runtime")?.text()
-            ?.replace(Regex("(?i) min\\.?"), "")?.trim()?.toIntOrNull()
-        val year = doc.selectFirst("div.data span.date")?.text()
+        val tvType = if (cleanUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
+
+        // Título: <h1> dentro del hero
+        val title = doc.selectFirst("div.flex-1 h1, div.detail-hero + div h1")?.text()
+            ?: doc.selectFirst("title")?.text()?.substringBefore("—")?.trim() ?: ""
+
+        // Descripción
+        val description = doc.selectFirst("p.text-sm.leading-relaxed")?.text() ?: ""
+
+        // Géneros
+        val tags = doc.select("div.flex.flex-wrap.items-center a[href*='/genero/']").map { it.text() }
+
+        // Rating
+        val averageScore = doc.selectFirst("span.rating-badge__val")?.text()?.toDoubleOrNull()
+
+        // Año
+        val year = doc.selectFirst("div.flex.flex-wrap.items-center.gap-3 span")?.text()
             ?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
 
-        val posterElement = doc.selectFirst("div.poster img")
-        var poster = posterElement?.attr("data-src") ?: ""
-        if (poster.isBlank()) poster = posterElement?.attr("data-litespeed-src") ?: ""
-        if (poster.isBlank()) poster = posterElement?.attr("src") ?: ""
-        if (poster.contains("data:image")) poster = ""
+        // Póster
+        val poster = doc.selectFirst("div.flex-shrink-0 img")?.attr("src") ?: ""
 
-        var backgroundPoster = poster
-        doc.selectFirst("div.wallpaper")?.attr("style")?.let { style ->
-            Regex("""url\(([^)]+)\)""").find(style)?.let {
-                backgroundPoster = it.groupValues[1].removeSuffix(";")
-            }
-        }
+        // Fondo
+        val backgroundPoster = doc.selectFirst("div.detail-hero__bg")
+            ?.attr("style")
+            ?.let { Regex("""url\('([^']+)'\)""").find(it)?.groupValues?.get(1) }
+            ?: poster
 
+        // Duración
+        val durationMain = doc.selectFirst("div.detail-field dd")?.text()
+            ?.replace(Regex("(?i) min\\.?"), "")?.trim()?.toIntOrNull()
+
+        // Episodios — nueva estructura: <a class="ep-item" href="...">
         val episodes = if (tvType == TvType.TvSeries) {
-            val dateFormatter = SimpleDateFormat("MMM. dd, yyyy", Locale.ENGLISH)
-            doc.select("div#seasons div.se-c").flatMap { seasonElement ->
-                seasonElement.select("ul.episodios li").mapNotNull { element ->
-                    val epurl = fixUrl(element.selectFirst("a")?.attr("href") ?: "")
-                    val epTitle = element.selectFirst("div.episodiotitle div.epst")?.text() ?: ""
-                    val numerandoText = element.selectFirst("div.episodiotitle div.numerando")?.text()
-                    val seasonNumber = numerandoText?.split("-")?.getOrNull(0)?.trim()?.toIntOrNull()
-                    val episodeNumber = numerandoText?.split("-")?.getOrNull(1)?.trim()?.toIntOrNull()
-                    val epDateText = element.selectFirst("div.episodiotitle span.date")?.text()
-                    val imgElement = element.selectFirst("div.imagen img")
-                    val epPoster = imgElement?.attr("data-src")
-                        ?: imgElement?.attr("data-litespeed-src")
-                        ?: imgElement?.attr("src") ?: ""
-                    if (epurl.isNotBlank() && epTitle.isNotBlank()) {
-                        newEpisode(epurl) {
-                            this.name = epTitle
-                            this.season = seasonNumber
-                            this.episode = episodeNumber
-                            this.posterUrl = epPoster
-                            epDateText?.let { dateStr ->
-                                try { addDate(dateFormatter.parse(dateStr)) }
-                                catch (e: Exception) { Log.e("SoloLatino", "Error fecha: ${e.message}") }
-                            }
-                        }
-                    } else null
-                }
+            doc.select("div[data-season-panel] a.ep-item").mapNotNull { element ->
+                val epUrl = fixUrl(element.attr("href"))
+                val epTitle = element.selectFirst("p.text-sm.font-semibold")?.text() ?: ""
+                val epNum = element.selectFirst("p.ep-num")?.text() // "E1", "E2"...
+                val episodeNumber = epNum?.removePrefix("E")?.toIntOrNull()
+
+                // Temporada viene del panel padre
+                val seasonPanel = element.parents().firstOrNull { it.hasAttr("data-season-panel") }
+                val seasonNumber = seasonPanel?.attr("data-season-panel")?.toIntOrNull()
+
+                val epPoster = element.selectFirst("img.ep-thumb")?.attr("src") ?: ""
+                val epDate = element.selectFirst("p.text-xs:last-child")?.text()
+
+                if (epUrl.isNotBlank() && epTitle.isNotBlank()) {
+                    newEpisode(epUrl) {
+                        this.name = epTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.posterUrl = epPoster
+                    }
+                } else null
             }
         } else listOf()
 
-        val recommendations = doc.select("div#single_relacionados article").mapNotNull {
-            val recLink = it.selectFirst("a")?.attr("href")
-            val recImgElement = it.selectFirst("a img.lazyload") ?: it.selectFirst("a img")
-            val recImg = recImgElement?.attr("data-srcset")?.split(",")?.lastOrNull()?.trim()?.split(" ")?.firstOrNull()
-                ?: recImgElement?.attr("src") ?: ""
-            val recTitle = recImgElement?.attr("alt")
+        // Recomendaciones — misma estructura card de getMainPage
+        val recommendations = doc.select("div.scroll-row div.card").mapNotNull { card ->
+            val recLink = card.selectFirst("a")?.attr("href")
+            val recTitle = card.selectFirst("span.card__title")?.text()
+            val recImg = card.selectFirst("img.card__poster")?.attr("src") ?: ""
             if (recTitle != null && recLink != null) {
                 newAnimeSearchResponse(recTitle, fixUrl(recLink)) {
                     this.posterUrl = recImg
-                    this.type = if (recLink.contains("/peliculas/")) TvType.Movie else TvType.TvSeries
+                    this.type = if (recLink.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
                 }
             } else null
         }
 
         return when (tvType) {
-            TvType.TvSeries -> newTvSeriesLoadResponse(name = title, url = cleanUrl, type = tvType, episodes = episodes) {
-                this.posterUrl = poster; this.backgroundPosterUrl = backgroundPoster
-                this.plot = description; this.tags = tags; this.recommendations = recommendations
-                this.year = year; this.duration = durationMain
+            TvType.TvSeries -> newTvSeriesLoadResponse(
+                name = title, url = cleanUrl, type = tvType, episodes = episodes
+            ) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backgroundPoster
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
+                this.year = year
+                this.duration = durationMain
                 this.score = averageScore?.let { Score.from10(it) }
             }
-            TvType.Movie -> newMovieLoadResponse(name = title, url = cleanUrl, type = tvType, dataUrl = cleanUrl) {
-                this.posterUrl = poster; this.backgroundPosterUrl = backgroundPoster
-                this.plot = description; this.tags = tags; this.recommendations = recommendations
-                this.year = year; this.duration = durationMain
+            TvType.Movie -> newMovieLoadResponse(
+                name = title, url = cleanUrl, type = tvType, dataUrl = cleanUrl
+            ) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backgroundPoster
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
+                this.year = year
+                this.duration = durationMain
                 this.score = averageScore?.let { Score.from10(it) }
             }
             else -> null
