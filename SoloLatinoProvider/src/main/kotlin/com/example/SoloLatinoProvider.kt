@@ -50,7 +50,7 @@ class SoloLatinoProvider : MainAPI() {
 
     private suspend fun safeAppGet(
         url: String,
-        retries: Int = 3,
+        retries: Int = 5,
         delayMs: Long = 5000L,
         timeoutMs: Long = 30000L
     ): String? {
@@ -62,8 +62,9 @@ class SoloLatinoProvider : MainAPI() {
                 when {
                     res.isSuccessful -> return res.text
                     res.code == 429 -> {
-                        Log.w("SoloLatino", "safeAppGet - Rate limit 429, esperando 10s para: $url")
-                        delay(10000L)
+                        Log.w("SoloLatino", "safeAppGet - Rate limit 429, esperando 15s para: $url")
+                        delay(15000L)
+                        continue // saltar el delay normal al final
                     }
                     else -> Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} no exitoso para: $url")
                 }
