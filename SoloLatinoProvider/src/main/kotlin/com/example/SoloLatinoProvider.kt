@@ -259,7 +259,7 @@ class SoloLatinoProvider : MainAPI() {
                             if (epDesc.isNotBlank()) append(epDesc)
                             if (epDate.isNotBlank()) {
                                 if (isNotEmpty()) append("\n")
-                                append("📅 $epDate")
+                                append(" $epDate")
                             }
                         }.ifBlank { null }
                     }
@@ -315,17 +315,20 @@ class SoloLatinoProvider : MainAPI() {
 
         val episodeDoc = safeAppGetDoc(targetUrl)
 
-        // Nueva estructura: el player puede estar en cualquier iframe con src http
-        val initialIframeSrc = episodeDoc.selectFirst("iframe[src^=http]")?.attr("src")
+        // La nueva estructura de sololatino usa botones con data-server-url, no iframes directos
+        val serverUrl = episodeDoc.selectFirst("button[data-server-url]")?.attr("data-server-url")
+            ?: episodeDoc.selectFirst("[data-server-url]")?.attr("data-server-url")
+            // Fallback: buscar iframe por si acaso
+            ?: episodeDoc.selectFirst("iframe[src^=http]")?.attr("src")
             ?: episodeDoc.selectFirst("iframe[data-src^=http]")?.attr("data-src")
 
-        if (initialIframeSrc == null) {
-            Log.e("SoloLatino", "loadLinks - ERROR: No se encontró iframe en $targetUrl.")
+        if (serverUrl == null) {
+            Log.e("SoloLatino", "loadLinks - ERROR: No se encontró server URL en $targetUrl.")
             return false
         }
 
-        val fixedSrc = fixUrl(initialIframeSrc)
-        Log.d("SoloLatino", "loadLinks - Iframe principal: $fixedSrc")
+        val fixedSrc = fixUrl(serverUrl)
+        Log.d("SoloLatino", "loadLinks - Server URL: $fixedSrc")
 
         when {
             fixedSrc.contains("embed69.org") -> {
