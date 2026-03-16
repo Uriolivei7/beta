@@ -238,16 +238,16 @@ class GnulaProvider : MainAPI() {
 
                     loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
                         ioSafe {
+                            // CORRECCIÓN: Usar los parámetros de la función según tus logs de compilación
                             val finalLink = newExtractorLink(
                                 source = link.source,
                                 name = "${link.name} [$lang]",
                                 url = link.url,
                                 type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers
-                            }
+                            )
+                            // Si necesitas añadir headers o referer adicionales y la función lo permite:
+                            // finalLink.referer = link.referer
+
                             callback.invoke(finalLink)
                         }
                     }
