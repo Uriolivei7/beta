@@ -10,19 +10,13 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
 import kotlin.collections.ArrayList
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import com.google.gson.annotations.SerializedName
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import kotlin.text.RegexOption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 //yeji
 class SoloLatinoProvider : MainAPI() {
@@ -40,10 +34,6 @@ class SoloLatinoProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
 
-    private val cfKiller = CloudflareKiller()
-    private var cfCookies: Map<String, String> = emptyMap()
-
-    // Headers que imitan un navegador real (igual al curl que funciona)
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -58,23 +48,6 @@ class SoloLatinoProvider : MainAPI() {
         "Referer" to mainUrl
     )
 
-    private suspend fun initCookies() {
-        if (cfCookies.isNotEmpty()) return
-        try {
-            Log.d("SoloLatino", "initCookies - Resolviendo Cloudflare challenge...")
-            val res = app.get(mainUrl, interceptor = cfKiller, headers = baseHeaders, timeout = 30000)
-            // Las cookies las extrae directamente del response
-            cfCookies = res.cookies
-            if (cfCookies.containsKey("cf_clearance")) {
-                Log.d("SoloLatino", "initCookies - cf_clearance obtenida: ${cfCookies["cf_clearance"]?.take(20)}...")
-            } else {
-                Log.w("SoloLatino", "initCookies - cf_clearance no encontrada. Cookies: ${cfCookies.keys}")
-            }
-        } catch (e: Exception) {
-            Log.e("SoloLatino", "initCookies - Error: ${e.message}", e)
-        }
-    }
-
     private suspend fun safeAppGet(
         url: String,
         retries: Int = 3,
@@ -84,24 +57,10 @@ class SoloLatinoProvider : MainAPI() {
         for (i in 0 until retries) {
             try {
                 Log.d("SoloLatino", "safeAppGet - Intento ${i + 1}/$retries para URL: $url")
-                val res = app.get(
-                    url,
-                    timeout = timeoutMs,
-                    headers = baseHeaders
-                    // SIN interceptor = cfKiller
-                )
-                if (res.isSuccessful) {
-                    Log.d("SoloLatino", "safeAppGet - Exitoso (${res.code}) para URL: $url")
-                    return res.text
-                } else {
-                    Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} para URL: $url")
-                    // Si es 403, intentar con cfKiller
-                    if (res.code == 403) {
-                        Log.d("SoloLatino", "safeAppGet - 403 detectado, reintentando con cfKiller...")
-                        val res2 = app.get(url, interceptor = cfKiller, timeout = timeoutMs, headers = baseHeaders)
-                        if (res2.isSuccessful) return res2.text
-                    }
-                }
+                val res = app.get(url, timeout = timeoutMs, headers = baseHeaders)
+                Log.d("SoloLatino", "safeAppGet - HTTP ${res.code} para URL: $url")
+                if (res.isSuccessful) return res.text
+                else Log.w("SoloLatino", "safeAppGet - HTTP ${res.code} no exitoso para: $url")
             } catch (e: Exception) {
                 Log.e("SoloLatino", "safeAppGet - Error intento ${i + 1}: ${e.message}", e)
             }
@@ -112,45 +71,28 @@ class SoloLatinoProvider : MainAPI() {
     }
 
     private suspend fun safeAppGetDoc(url: String, timeoutMs: Long = 30000L) =
-        app.get(
-            url,
-            timeout = timeoutMs,
-            headers = baseHeaders
-            // SIN interceptor
-        ).document
+        app.get(url, timeout = timeoutMs, headers = baseHeaders).document
 
     private fun extractBestSrcset(srcsetAttr: String?): String? {
         if (srcsetAttr.isNullOrBlank()) return null
-
         val sources = srcsetAttr.split(",").map { it.trim().split(" ") }
         var bestUrl: String? = null
         var bestMetric = 0
-
         for (source in sources) {
             if (source.size >= 2) {
                 val currentUrl = source[0]
                 val descriptor = source[1]
                 val widthMatch = Regex("""(\d+)w""").find(descriptor)
                 val densityMatch = Regex("""(\d+)x""").find(descriptor)
-
                 if (widthMatch != null) {
                     val width = widthMatch.groupValues[1].toIntOrNull()
-                    if (width != null && width > bestMetric) {
-                        bestMetric = width
-                        bestUrl = currentUrl
-                    }
+                    if (width != null && width > bestMetric) { bestMetric = width; bestUrl = currentUrl }
                 } else if (densityMatch != null) {
                     val density = densityMatch.groupValues[1].toIntOrNull()
-                    if (density != null && density * 100 > bestMetric) {
-                        bestMetric = density * 100
-                        bestUrl = currentUrl
-                    }
+                    if (density != null && density * 100 > bestMetric) { bestMetric = density * 100; bestUrl = currentUrl }
                 }
             } else if (source.isNotEmpty() && source.size == 1) {
-                if (bestUrl == null || bestMetric == 0) {
-                    bestUrl = source[0]
-                    bestMetric = 1
-                }
+                if (bestUrl == null || bestMetric == 0) { bestUrl = source[0]; bestMetric = 1 }
             }
         }
         return bestUrl
@@ -161,9 +103,7 @@ class SoloLatinoProvider : MainAPI() {
         val items = ArrayList<HomePageList>()
         val urls = listOf(
             Pair("Series", "$mainUrl/series"),
-            Pair("Cartoons", "$mainUrl/genre_series/toons"),
             Pair("Animes", "$mainUrl/animes"),
-            Pair("Doramas", "$mainUrl/genre_series/kdramas"),
             Pair("Películas", "$mainUrl/peliculas"),
         )
 
@@ -171,7 +111,7 @@ class SoloLatinoProvider : MainAPI() {
             val tvType = when (name) {
                 "Series" -> TvType.TvSeries
                 "Animes" -> TvType.Anime
-                "Peliculas" -> TvType.Movie
+                "Películas" -> TvType.Movie
                 else -> TvType.Others
             }
             val html = safeAppGet(url)
@@ -183,23 +123,20 @@ class SoloLatinoProvider : MainAPI() {
             val homeItems = doc.select("div.items article.item").mapNotNull { article ->
                 val title = article.selectFirst("a div.data h3")?.text()
                 val link = article.selectFirst("a")?.attr("href")
-
                 val imgElement = article.selectFirst("div.poster img.lazyload")
                 val srcsetAttr = imgElement?.attr("data-srcset")
                 var img = extractBestSrcset(srcsetAttr)
-
                 if (img.isNullOrBlank()) {
                     img = imgElement?.attr("src")
-                    Log.d("SoloLatino", "DEBUG: Fallback a src para título: $title, img: $img")
+                    Log.d("SoloLatino", "DEBUG: Fallback a src para título: $title")
                 }
-
                 if (title != null && link != null) {
                     newAnimeSearchResponse(title, fixUrl(link)) {
                         this.type = tvType
                         this.posterUrl = img
                     }
                 } else {
-                    Log.w("SoloLatino", "ADVERTENCIA: Elemento de inicio incompleto para URL: $url")
+                    Log.w("SoloLatino", "ADVERTENCIA: Elemento incompleto para URL: $url")
                     null
                 }
             }
@@ -212,68 +149,48 @@ class SoloLatinoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d("SoloLatino", "DEBUG: Iniciando search para query: $query")
+        Log.d("SoloLatino", "DEBUG: search para query: $query")
         val url = "$mainUrl/?s=$query"
-        val html = safeAppGet(url)
-        if (html == null) {
-            Log.e("SoloLatino", "search - No se pudo obtener HTML para la búsqueda: $url")
+        val html = safeAppGet(url) ?: run {
+            Log.e("SoloLatino", "search - No se pudo obtener HTML para: $url")
             return emptyList()
         }
         val doc = Jsoup.parse(html)
         return doc.select("div.items article.item").mapNotNull { article ->
             val title = article.selectFirst("a div.data h3")?.text()
             val link = article.selectFirst("a")?.attr("href")
-
             val imgElement = article.selectFirst("div.poster img.lazyload")
-            val srcsetAttr = imgElement?.attr("data-srcset")
-            var img = extractBestSrcset(srcsetAttr)
-
-            if (img.isNullOrBlank()) {
-                img = imgElement?.attr("src")
-                Log.d("SoloLatino", "DEBUG: Fallback a src para resultado de búsqueda: $title, img: $img")
-            }
-
+            var img = extractBestSrcset(imgElement?.attr("data-srcset"))
+            if (img.isNullOrBlank()) img = imgElement?.attr("src")
             if (title != null && link != null) {
                 newTvSeriesSearchResponse(title, fixUrl(link)) {
                     this.type = TvType.TvSeries
                     this.posterUrl = img
                 }
-            } else {
-                Log.w("SoloLatino", "ADVERTENCIA: Resultado de búsqueda incompleto para query: $query")
-                null
-            }
+            } else null
         }
     }
 
-    data class EpisodeLoadData(
-        val title: String,
-        val url: String
-    )
+    data class EpisodeLoadData(val title: String, val url: String)
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("SoloLatino", "load - URL de entrada: $url")
+        Log.d("SoloLatino", "load - URL: $url")
 
         var cleanUrl = url
         val urlJsonMatch = Regex("""\{"url":"(https?:\/\/[^"]+)"\}""").find(url)
         if (urlJsonMatch != null) {
             cleanUrl = urlJsonMatch.groupValues[1]
-            Log.d("SoloLatino", "load - URL limpia por JSON Regex: $cleanUrl")
-        } else {
-            if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-                cleanUrl = "https://" + cleanUrl.removePrefix("//")
-                Log.d("SoloLatino", "load - URL limpiada con HTTPS: $cleanUrl")
-            }
-            Log.d("SoloLatino", "load - URL ajustada: $cleanUrl")
+        } else if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            cleanUrl = "https://" + cleanUrl.removePrefix("//")
         }
 
         if (cleanUrl.isBlank()) {
-            Log.e("SoloLatino", "load - ERROR: URL limpia está en blanco.")
+            Log.e("SoloLatino", "load - ERROR: URL en blanco.")
             return null
         }
 
-        val html = safeAppGet(cleanUrl)
-        if (html == null) {
-            Log.e("SoloLatino", "load - No se pudo obtener HTML para la URL principal: $cleanUrl")
+        val html = safeAppGet(cleanUrl) ?: run {
+            Log.e("SoloLatino", "load - No se pudo obtener HTML para: $cleanUrl")
             return null
         }
         val doc = Jsoup.parse(html)
@@ -282,71 +199,39 @@ class SoloLatinoProvider : MainAPI() {
         val title = doc.selectFirst("div.data h1")?.text() ?: ""
         val description = doc.selectFirst("div.wp-content")?.text() ?: ""
         val tags = doc.select("div.sgeneros a").map { it.text() }
-
-        val ratingText = doc.selectFirst("div.nota span")?.ownText()?.trim()
-        val averageScore = ratingText?.toDoubleOrNull()
-
-        val runtimeText = doc.selectFirst("span.runtime")?.text()
-        val durationMain = runtimeText?.replace(Regex("(?i) min\\.?"), "")?.trim()?.toIntOrNull()
-
-        if (averageScore == null) Log.w("SoloLatino", "load - LOG FAIL: No se pudo extraer Rating de '$ratingText'")
-        if (durationMain == null) Log.w("SoloLatino", "load - LOG FAIL: No se pudo extraer Duración de '$runtimeText'")
-
-        val dateText = doc.selectFirst("div.data span.date")?.text()
-        val year = dateText?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
-
-        if (year != null) Log.d("SoloLatino", "load - Año extraído: $year")
-        else Log.d("SoloLatino", "load - Aviso: No se pudo extraer el año.")
+        val averageScore = doc.selectFirst("div.nota span")?.ownText()?.trim()?.toDoubleOrNull()
+        val durationMain = doc.selectFirst("span.runtime")?.text()
+            ?.replace(Regex("(?i) min\\.?"), "")?.trim()?.toIntOrNull()
+        val year = doc.selectFirst("div.data span.date")?.text()
+            ?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
 
         val posterElement = doc.selectFirst("div.poster img")
-        var poster = ""
+        var poster = posterElement?.attr("data-src") ?: ""
+        if (poster.isBlank()) poster = posterElement?.attr("data-litespeed-src") ?: ""
+        if (poster.isBlank()) poster = posterElement?.attr("src") ?: ""
+        if (poster.contains("data:image")) poster = ""
 
-        if (posterElement != null) {
-            poster = posterElement.attr("data-src")
-            if (poster.isBlank()) poster = posterElement.attr("data-litespeed-src")
-            if (poster.isBlank()) poster = posterElement.attr("src")
-
-            if (poster.isNotBlank() && !poster.contains("data:image")) {
-                Log.d("SoloLatino", "load - Póster extraído: $poster")
-            } else {
-                Log.e("SoloLatino", "load - ERROR: Póster vacío o es GIF temporal.")
-                poster = ""
-            }
-        } else {
-            Log.e("SoloLatino", "load - ERROR: No se encontró <img> dentro de 'div.poster'.")
-        }
-
-        val backgroundPosterStyle = doc.selectFirst("div.wallpaper")?.attr("style")
         var backgroundPoster = poster
-
-        if (backgroundPosterStyle != null) {
-            val urlMatch = Regex("""url\(([^)]+)\)""").find(backgroundPosterStyle)
-            if (urlMatch != null) {
-                backgroundPoster = urlMatch.groupValues[1].removeSuffix(";")
-                Log.d("SoloLatino", "load - Fondo extraído del style: $backgroundPoster")
+        doc.selectFirst("div.wallpaper")?.attr("style")?.let { style ->
+            Regex("""url\(([^)]+)\)""").find(style)?.let {
+                backgroundPoster = it.groupValues[1].removeSuffix(";")
             }
         }
 
         val episodes = if (tvType == TvType.TvSeries) {
             val dateFormatter = SimpleDateFormat("MMM. dd, yyyy", Locale.ENGLISH)
-
             doc.select("div#seasons div.se-c").flatMap { seasonElement ->
                 seasonElement.select("ul.episodios li").mapNotNull { element ->
                     val epurl = fixUrl(element.selectFirst("a")?.attr("href") ?: "")
                     val epTitle = element.selectFirst("div.episodiotitle div.epst")?.text() ?: ""
-
                     val numerandoText = element.selectFirst("div.episodiotitle div.numerando")?.text()
                     val seasonNumber = numerandoText?.split("-")?.getOrNull(0)?.trim()?.toIntOrNull()
                     val episodeNumber = numerandoText?.split("-")?.getOrNull(1)?.trim()?.toIntOrNull()
-
                     val epDateText = element.selectFirst("div.episodiotitle span.date")?.text()
-
                     val imgElement = element.selectFirst("div.imagen img")
                     val epPoster = imgElement?.attr("data-src")
                         ?: imgElement?.attr("data-litespeed-src")
-                        ?: imgElement?.attr("src")
-                        ?: ""
-
+                        ?: imgElement?.attr("src") ?: ""
                     if (epurl.isNotBlank() && epTitle.isNotBlank()) {
                         newEpisode(epurl) {
                             this.name = epTitle
@@ -354,12 +239,8 @@ class SoloLatinoProvider : MainAPI() {
                             this.episode = episodeNumber
                             this.posterUrl = epPoster
                             epDateText?.let { dateStr ->
-                                try {
-                                    val dateObj = dateFormatter.parse(dateStr)
-                                    addDate(dateObj)
-                                } catch (e: Exception) {
-                                    Log.e("SoloLatino", "Error al parsear fecha del episodio '$dateStr': ${e.message}")
-                                }
+                                try { addDate(dateFormatter.parse(dateStr)) }
+                                catch (e: Exception) { Log.e("SoloLatino", "Error fecha: ${e.message}") }
                             }
                         }
                     } else null
@@ -373,7 +254,6 @@ class SoloLatinoProvider : MainAPI() {
             val recImg = recImgElement?.attr("data-srcset")?.split(",")?.lastOrNull()?.trim()?.split(" ")?.firstOrNull()
                 ?: recImgElement?.attr("src") ?: ""
             val recTitle = recImgElement?.attr("alt")
-
             if (recTitle != null && recLink != null) {
                 newAnimeSearchResponse(recTitle, fixUrl(recLink)) {
                     this.posterUrl = recImg
@@ -383,39 +263,17 @@ class SoloLatinoProvider : MainAPI() {
         }
 
         return when (tvType) {
-            TvType.TvSeries -> {
-                newTvSeriesLoadResponse(
-                    name = title,
-                    url = cleanUrl,
-                    type = tvType,
-                    episodes = episodes,
-                ) {
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = backgroundPoster
-                    this.plot = description
-                    this.tags = tags
-                    this.recommendations = recommendations
-                    this.year = year
-                    this.duration = durationMain
-                    this.score = averageScore?.let { Score.from10(it) }
-                }
+            TvType.TvSeries -> newTvSeriesLoadResponse(name = title, url = cleanUrl, type = tvType, episodes = episodes) {
+                this.posterUrl = poster; this.backgroundPosterUrl = backgroundPoster
+                this.plot = description; this.tags = tags; this.recommendations = recommendations
+                this.year = year; this.duration = durationMain
+                this.score = averageScore?.let { Score.from10(it) }
             }
-            TvType.Movie -> {
-                newMovieLoadResponse(
-                    name = title,
-                    url = cleanUrl,
-                    type = tvType,
-                    dataUrl = cleanUrl
-                ) {
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = backgroundPoster
-                    this.plot = description
-                    this.tags = tags
-                    this.recommendations = recommendations
-                    this.year = year
-                    this.duration = durationMain
-                    this.score = averageScore?.let { Score.from10(it) }
-                }
+            TvType.Movie -> newMovieLoadResponse(name = title, url = cleanUrl, type = tvType, dataUrl = cleanUrl) {
+                this.posterUrl = poster; this.backgroundPosterUrl = backgroundPoster
+                this.plot = description; this.tags = tags; this.recommendations = recommendations
+                this.year = year; this.duration = durationMain
+                this.score = averageScore?.let { Score.from10(it) }
             }
             else -> null
         }
@@ -428,102 +286,68 @@ class SoloLatinoProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val targetUrl = data.trim()
-        Log.d("SoloLatino", "loadLinks - 1. URL objetivo: $targetUrl")
+        Log.d("SoloLatino", "loadLinks - URL objetivo: $targetUrl")
 
         if (targetUrl.isBlank()) {
-            Log.e("SoloLatino", "loadLinks - ERROR: URL objetivo está en blanco.")
+            Log.e("SoloLatino", "loadLinks - ERROR: URL en blanco.")
             return false
         }
 
-        // Aseguramos cookies antes de cualquier request en loadLinks
-        initCookies()
-
         val doc = safeAppGetDoc(targetUrl)
 
-        val selector = "#dooplay_player_response_1 iframe[src^=http]"
-        doc.selectFirst(selector)?.attr("src")?.let { initialIframeSrc ->
+        doc.selectFirst("#dooplay_player_response_1 iframe[src^=http]")?.attr("src")?.let { initialIframeSrc ->
 
-            val fixedInitialIframeSrc = fixUrl(initialIframeSrc)
-            Log.d("SoloLatino", "loadLinks - 2. Iframe principal encontrado: $fixedInitialIframeSrc")
+            val fixedSrc = fixUrl(initialIframeSrc)
+            Log.d("SoloLatino", "loadLinks - Iframe principal: $fixedSrc")
 
-            if (fixedInitialIframeSrc.startsWith("https://embed69.org/")) {
-                Log.d("SoloLatino", "LOADLINKS BRANCH: -> embed69.org detectado.")
-
-                safeAppGetDoc(fixedInitialIframeSrc).select("script")
-                    .firstOrNull { it.html().contains("dataLink = [") }?.html()
-                    ?.substringAfter("dataLink = ")
-                    ?.substringBefore(";")?.let { dataLinkJson ->
-                        Log.d("SoloLatino", "EMBED69 JSON: dataLink JSON extraído.")
-
-                        tryParseJson<List<ServersByLang>>(dataLinkJson)?.amap { lang ->
-                            val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
-
-                            if (encryptedLinks.isEmpty()) {
-                                Log.e("SoloLatino", "EMBED69 ERROR: No se encontraron links cifrados en la lengua ${lang.videoLanguage}.")
-                                return@amap
-                            }
-
-                            val jsonData = LinksRequest(encryptedLinks)
-                            val body = jsonData.toJson()
-                                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-
-                            Log.d("SoloLatino", "EMBED69 API: Llamando a /api/decrypt para ${encryptedLinks.size} links.")
-
-                            val decryptedRes = app.post(
-                                "https://embed69.org/api/decrypt",
-                                requestBody = body,
-                                interceptor = cfKiller,
-                                cookies = cfCookies,
-                                headers = baseHeaders
-                            )
-                            val decrypted = tryParseJson<Loadlinks>(decryptedRes.text)
-
-                            if (decrypted?.success == true && decrypted.links.isNotEmpty()) {
-                                Log.d("SoloLatino", "EMBED69 API SUCCESS: Descifrados ${decrypted.links.size} enlaces finales.")
-                                decrypted.links.amap { link ->
-                                    loadSourceNameExtractor(
-                                        lang.videoLanguage!!,
-                                        fixHostsLinks(link.link),
-                                        targetUrl,
-                                        subtitleCallback,
-                                        callback
-                                    )
+            when {
+                fixedSrc.startsWith("https://embed69.org/") -> {
+                    Log.d("SoloLatino", "BRANCH: embed69.org")
+                    safeAppGetDoc(fixedSrc).select("script")
+                        .firstOrNull { it.html().contains("dataLink = [") }?.html()
+                        ?.substringAfter("dataLink = ")
+                        ?.substringBefore(";")?.let { dataLinkJson ->
+                            tryParseJson<List<ServersByLang>>(dataLinkJson)?.amap { lang ->
+                                val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
+                                if (encryptedLinks.isEmpty()) return@amap
+                                val body = LinksRequest(encryptedLinks).toJson()
+                                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                                val decryptedRes = app.post(
+                                    "https://embed69.org/api/decrypt",
+                                    requestBody = body,
+                                    headers = baseHeaders
+                                )
+                                val decrypted = tryParseJson<Loadlinks>(decryptedRes.text)
+                                if (decrypted?.success == true && decrypted.links.isNotEmpty()) {
+                                    decrypted.links.amap { link ->
+                                        loadSourceNameExtractor(lang.videoLanguage!!, fixHostsLinks(link.link), targetUrl, subtitleCallback, callback)
+                                    }
+                                } else {
+                                    Log.e("SoloLatino", "EMBED69 ERROR: ${decrypted?.reason}")
                                 }
-                            } else {
-                                Log.e("SoloLatino", "EMBED69 API ERROR: Fallo al descifrar. Razón: ${decrypted?.reason}")
                             }
-                        }
-                    } ?: Log.e("SoloLatino", "EMBED69 ERROR: No se pudo extraer dataLink JSON del script.")
-
-            } else if (fixedInitialIframeSrc.startsWith("https://xupalace.org/video")) {
-                Log.d("SoloLatino", "LOADLINKS BRANCH: -> xupalace.org/video detectado.")
-                val regex = """(go_to_player|go_to_playerVast)\('([^']+)'""".toRegex()
-
-                val foundLinks = regex.findAll(safeAppGetDoc(fixedInitialIframeSrc).html())
-                    .map { it.groupValues[2] }.toList()
-
-                if (foundLinks.isNotEmpty()) {
-                    Log.d("SoloLatino", "LOADLINKS --- Encontrados ${foundLinks.size} links JS en xupalace.org/video.")
-                    foundLinks.amap { linkUrl ->
-                        loadExtractor(fixHostsLinks(linkUrl), targetUrl, subtitleCallback, callback)
-                    }
-                } else {
-                    Log.e("SoloLatino", "LOADLINKS --- ERROR: No se encontraron links JS en xupalace.org/video.")
+                        } ?: Log.e("SoloLatino", "EMBED69: No se extrajo dataLink JSON.")
                 }
 
-            } else {
-                Log.d("SoloLatino", "LOADLINKS BRANCH: -> Host intermedio detectado: $fixedInitialIframeSrc.")
+                fixedSrc.startsWith("https://xupalace.org/video") -> {
+                    Log.d("SoloLatino", "BRANCH: xupalace.org")
+                    val regex = """(go_to_player|go_to_playerVast)\('([^']+)'""".toRegex()
+                    val foundLinks = regex.findAll(safeAppGetDoc(fixedSrc).html()).map { it.groupValues[2] }.toList()
+                    if (foundLinks.isNotEmpty()) {
+                        foundLinks.amap { loadExtractor(fixHostsLinks(it), targetUrl, subtitleCallback, callback) }
+                    } else {
+                        Log.e("SoloLatino", "XUPALACE: No se encontraron links.")
+                    }
+                }
 
-                safeAppGetDoc(fixedInitialIframeSrc).selectFirst("iframe")?.attr("src")?.let { nestedIframeSrc ->
-                    val fixedNestedIframeSrc = fixUrl(nestedIframeSrc)
-                    Log.d("SoloLatino", "LOADLINKS --- Cargando extractor para iframe anidado: $fixedNestedIframeSrc")
-                    loadExtractor(fixHostsLinks(fixedNestedIframeSrc), targetUrl, subtitleCallback, callback)
-                } ?: run {
-                    Log.d("SoloLatino", "LOADLINKS --- No se encontró iframe anidado. Intentando extractor directo con $fixedInitialIframeSrc")
-                    loadExtractor(fixHostsLinks(fixedInitialIframeSrc), targetUrl, subtitleCallback, callback)
+                else -> {
+                    Log.d("SoloLatino", "BRANCH: Host intermedio: $fixedSrc")
+                    safeAppGetDoc(fixedSrc).selectFirst("iframe")?.attr("src")?.let { nestedSrc ->
+                        loadExtractor(fixHostsLinks(fixUrl(nestedSrc)), targetUrl, subtitleCallback, callback)
+                    } ?: loadExtractor(fixHostsLinks(fixedSrc), targetUrl, subtitleCallback, callback)
                 }
             }
-        } ?: Log.e("SoloLatino", "loadLinks - ERROR: No se encontró el iframe principal en la página $targetUrl.")
+        } ?: Log.e("SoloLatino", "loadLinks - ERROR: No se encontró iframe en $targetUrl.")
 
         return true
     }
@@ -539,11 +363,7 @@ suspend fun loadSourceNameExtractor(
     loadExtractor(url, referer, subtitleCallback) { link ->
         CoroutineScope(Dispatchers.IO).launch {
             callback.invoke(
-                newExtractorLink(
-                    "$source[${link.source}]",
-                    "$source[${link.source}]",
-                    link.url,
-                ) {
+                newExtractorLink("$source[${link.source}]", "$source[${link.source}]", link.url) {
                     this.quality = link.quality
                     this.type = link.type
                     this.referer = link.referer
@@ -581,12 +401,10 @@ data class Server(
 data class ServersByLang(
     @JsonProperty("file_id") val fileId: String? = null,
     @JsonProperty("video_language") val videoLanguage: String? = null,
-    @JsonProperty("sortedEmbeds") val sortedEmbeds: List<Server> = emptyList<Server>(),
+    @JsonProperty("sortedEmbeds") val sortedEmbeds: List<Server> = emptyList(),
 )
 
-data class LinksRequest(
-    val links: List<String>,
-)
+data class LinksRequest(val links: List<String>)
 
 data class Loadlinks(
     val success: Boolean,
