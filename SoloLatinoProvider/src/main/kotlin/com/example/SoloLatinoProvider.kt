@@ -198,55 +198,65 @@ class SoloLatinoProvider : MainAPI() {
         }
         val doc = Jsoup.parse(html)
 
-        val tvType = if (cleanUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-
-        // Título: h1 dentro del área de detalle, o del <title>
-        val title = doc.selectFirst("div.flex-1 h1")?.text()
+        // 1. Extraemos el texto base del título
+        val rawTitle = doc.selectFirst("div.flex-1 h1")?.text()
             ?: doc.selectFirst("title")?.text()?.substringBefore("—")?.trim()
             ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()
             ?: ""
 
-        // Descripción
+        // 2. Limpiamos las frases innecesarias
+        val title = rawTitle
+            .replace(Regex("(?i)Ver\\s+"), "") // Quita "Ver " (sin importar mayúsculas)
+            .replace(Regex("(?i)\\s+online.*"), "") // Quita " online" y todo lo que siga
+            .replace(Regex("(?i)\\s+latino.*"), "") // Quita " latino" y todo lo que siga
+            .replace(Regex("(?i)\\s+en\\s+español.*"), "") // Quita " en español..."
+            .replace(Regex("(?i)\\s+solo\\s+en.*"), "") // Quita " solo en..."
+            .trim() // Quita espacios sobrantes al inicio o final
+
+        Log.d("SoloLatino", "load - Título limpio: $title")
+
+        val tvType = if (cleanUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
+
         val description = doc.selectFirst("p.text-sm.leading-relaxed")?.text() ?: ""
-
-        // Géneros
-        val tags = doc.select("div.flex.flex-wrap.items-center a[href*='/genero/']").map { it.text() }
-
-        // Rating TMDB
+        val tags = doc.select("a[href*='/genero/']").map { it.text().trim() }
         val averageScore = doc.selectFirst("span.rating-badge__val")?.text()?.toDoubleOrNull()
+        val durationMain = doc.select("div.flex.flex-wrap.items-center.gap-4.text-sm span")
+            .firstOrNull { it.text().contains(Regex("(?i)\\d+h|\\d+m|\\d+\\s?min")) }
+            ?.text()
+            ?.let { durText ->
+                // Caso 1: Formato "1h 30m"
+                val hours = Regex("""(\d+)h""").find(durText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val minutes = Regex("""(\d+)m""").find(durText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-        // Duración (para películas, puede estar en los detail-fields)
-        val durationMain = doc.select("div.detail-field").firstOrNull { field ->
-            field.selectFirst("dt")?.text()?.contains("duración", ignoreCase = true) == true
-        }?.selectFirst("dd")?.text()
-            ?.replace(Regex("(?i) min\\.?"), "")?.trim()?.toIntOrNull()
+                // Caso 2: Formato simple "90 min" o "90"
+                val pureMinutes = if (hours == 0 && minutes == 0) {
+                    Regex("""(\d+)""").find(durText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                } else 0
 
-        // Año — primer span con 4 dígitos en la fila de metadata
-        val year = doc.selectFirst("div.flex.flex-wrap.items-center.gap-3 span")?.text()
-            ?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
+                val total = (hours * 60) + minutes + pureMinutes
+                if (total > 0) total else null
+            }
 
-        // Póster
+        val year = doc.select("div.flex.flex-wrap.items-center.gap-4.text-sm span")
+            .firstOrNull { it.text().matches(Regex("""\d{4}""")) }
+            ?.text()?.toIntOrNull()
+
         val poster = doc.selectFirst("div.flex-shrink-0 img")?.attr("src") ?: ""
-
-        // Fondo desde detail-hero__bg style="background-image:url('...')"
         val backgroundPoster = doc.selectFirst("div.detail-hero__bg")
             ?.attr("style")
             ?.let { Regex("""url\('([^']+)'\)""").find(it)?.groupValues?.get(1) }
             ?: poster
 
-        // Episodios — nueva estructura Laravel
         val episodes = if (tvType == TvType.TvSeries) {
             doc.select("div[data-season-panel] a.ep-item").mapNotNull { element ->
                 val epUrl = fixUrl(element.attr("href"))
                 val epTitle = element.selectFirst("p.text-sm.font-semibold")?.text() ?: ""
-                val epNum = element.selectFirst("p.ep-num")?.text() // "E1", "E2"
+                val epNum = element.selectFirst("p.ep-num")?.text()
                 val episodeNumber = epNum?.removePrefix("E")?.toIntOrNull()
                 val seasonPanel = element.parents().firstOrNull { it.hasAttr("data-season-panel") }
                 val seasonNumber = seasonPanel?.attr("data-season-panel")?.toIntOrNull()
                 val epPoster = element.selectFirst("img.ep-thumb")?.attr("src") ?: ""
-                // Descripción del episodio: párrafo line-clamp-2
                 val epDesc = element.selectFirst("p.line-clamp-2")?.text() ?: ""
-                // Fecha: último párrafo con color #404060
                 val epDate = element.select("p.text-xs").lastOrNull()?.text() ?: ""
                 Log.d("SoloLatino", "load - EP S${seasonNumber}E${episodeNumber}: $epTitle | fecha=$epDate")
                 if (epUrl.isNotBlank() && epTitle.isNotBlank()) {
@@ -269,7 +279,6 @@ class SoloLatinoProvider : MainAPI() {
 
         Log.d("SoloLatino", "load - ${episodes.size} episodios encontrados para $cleanUrl")
 
-        // Recomendaciones — misma estructura card del mainPage
         val recommendations = doc.select("div.scroll-row div.card").mapNotNull { card ->
             val recLink = card.selectFirst("a")?.attr("href")
             val recTitle = card.selectFirst("span.card__title")?.text()
@@ -284,15 +293,23 @@ class SoloLatinoProvider : MainAPI() {
 
         return when (tvType) {
             TvType.TvSeries -> newTvSeriesLoadResponse(name = title, url = cleanUrl, type = tvType, episodes = episodes) {
-                this.posterUrl = poster; this.backgroundPosterUrl = backgroundPoster
-                this.plot = description; this.tags = tags; this.recommendations = recommendations
-                this.year = year; this.duration = durationMain
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backgroundPoster
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
+                this.year = year
+                this.duration = durationMain
                 this.score = averageScore?.let { Score.from10(it) }
             }
             TvType.Movie -> newMovieLoadResponse(name = title, url = cleanUrl, type = tvType, dataUrl = cleanUrl) {
-                this.posterUrl = poster; this.backgroundPosterUrl = backgroundPoster
-                this.plot = description; this.tags = tags; this.recommendations = recommendations
-                this.year = year; this.duration = durationMain
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backgroundPoster
+                this.plot = description
+                this.tags = tags // Ahora se llenará con los géneros
+                this.recommendations = recommendations
+                this.year = year // Ahora extraerá 2019, por ejemplo
+                this.duration = durationMain // Ahora extraerá los minutos totales
                 this.score = averageScore?.let { Score.from10(it) }
             }
             else -> null
