@@ -84,6 +84,9 @@ class SoloLatinoProvider : MainAPI() {
         Log.d("SoloLatino", "DEBUG: Iniciando getMainPage, página: $page, solicitud: ${request.name}")
         val items = ArrayList<HomePageList>()
         val urls = listOf(
+            Pair("Series Recientes", "$mainUrl/series"),
+            Pair("Películas Recientes", "$mainUrl/peliculas"),
+            Pair("Animes Recientes", "$mainUrl/animes"),
             Pair("Netflix", "$mainUrl/red/netflix"),
             Pair("Amazon Prime Video", "$mainUrl/red/amazon-prime-video"),
             Pair("Disney+", "$mainUrl/red/disney"),
@@ -306,18 +309,13 @@ class SoloLatinoProvider : MainAPI() {
 
         if (targetUrl.isBlank()) return false
 
-        // 1. Obtenemos el HTML de la página del episodio/película
         val html = safeAppGet(targetUrl) ?: return false
         val doc = Jsoup.parse(html)
 
-        // 2. Buscamos TODOS los botones de servidor (Xupalace, Fembed, etc.)
-        // Usamos el selector de los botones que me mostraste en el HTML
         val serverButtons = doc.select("button[data-server-url], .server-btn")
 
-        // Lista para guardar las URLs únicas de servidores encontrados
         val serverUrls = serverButtons.mapNotNull { it.attr("data-server-url") }.toMutableList()
 
-        // Respaldo: Si no hay botones, buscamos el iframe que carga por defecto
         if (serverUrls.isEmpty()) {
             doc.selectFirst("div#player-frame iframe, iframe")?.attr("src")?.let {
                 if (it.isNotBlank()) serverUrls.add(it)
@@ -331,13 +329,11 @@ class SoloLatinoProvider : MainAPI() {
 
         Log.d("SoloLatino", "loadLinks - Total servidores detectados: ${serverUrls.size}")
 
-        // 3. Iteramos sobre cada servidor encontrado para extraer sus links
         serverUrls.distinct().forEach { rawUrl ->
             val fixedSrc = fixUrl(rawUrl)
             Log.d("SoloLatino", "loadLinks - Procesando: $fixedSrc")
 
             when {
-                // --- RAMA EMBED69 ---
                 fixedSrc.contains("embed69.org") -> {
                     Log.d("SoloLatino", "BRANCH: embed69.org")
                     val embed69Headers = mapOf(
@@ -370,7 +366,6 @@ class SoloLatinoProvider : MainAPI() {
                         }
                 }
 
-                // --- RAMA XUPALACE / SLPLAYER ---
                 fixedSrc.contains("xupalace.org") -> {
                     Log.d("SoloLatino", "BRANCH: xupalace.org")
                     val xupalaceHtml = app.get(fixedSrc, headers = baseHeaders).text
@@ -391,10 +386,8 @@ class SoloLatinoProvider : MainAPI() {
                     }
                 }
 
-                // --- RAMA GENÉRICA (Fembed, Sololatino.xyz, etc.) ---
                 else -> {
                     Log.d("SoloLatino", "BRANCH: Direct/Generic: $fixedSrc")
-                    // Intentamos cargar directamente o buscar un iframe anidado
                     val cleanUrl = fixHostsLinks(fixedSrc)
                     loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
                 }
