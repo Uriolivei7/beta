@@ -254,39 +254,14 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
-                val reliableUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-
-                // Primer enlace (Directo)
                 callback.invoke(
                     newExtractorLink(
-                        this.name,          // source
-                        "AnimeParadise",    // name
-                        videoUrl,           // url
-                        ExtractorLinkType.M3U8 // type
-                    ) {
-                        Log.d(TAG, "Logs: Cargando link con Referer: ${this.referer}")
-                        // AQUÍ ADENTRO se configuran las propiedades que daban error
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to reliableUserAgent,
-                            "Accept" to "*/*",
-                            "Connection" to "keep-alive"
-                        )
-                    }
-                )
-
-                // Segundo enlace (Proxy)
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        "AnimeParadise Proxy",
-                        "https://stream.animeparadise.moe/m3u8?url=" + videoUrl.encodeUri(),
+                        this.name, "AnimeParadise",
+                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
                         ExtractorLinkType.M3U8
                     ) {
-                        Log.d(TAG, "Logs: Cargando link con Referer: ${this.referer}")
                         this.referer = "$mainUrl/"
-                        this.headers = mapOf("User-Agent" to reliableUserAgent)
+                        this.quality = Qualities.Unknown.value
                     }
                 )
             }
