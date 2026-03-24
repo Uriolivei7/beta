@@ -32,11 +32,11 @@ class AnimeParadiseProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
-    // Obtiene la cookie anp_session visitando la página del episodio
-    private suspend fun getSessionCookie(uid: String, origin: String): String {
+    // Obtiene la cookie anp_session visitando la página indicada
+    private suspend fun getSessionCookie(path: String): String {
         return try {
             val res = app.get(
-                "$mainUrl/watch/$uid?origin=$origin",
+                "$mainUrl/$path",
                 headers = mapOf(
                     "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -47,7 +47,7 @@ class AnimeParadiseProvider : MainAPI() {
                 ?.split(";")
                 ?.firstOrNull { it.trimStart().startsWith("anp_session") }
                 ?.trim() ?: ""
-            Log.d(TAG, "Logs: Cookie obtenida: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
+            Log.d(TAG, "Logs: Cookie: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
             cookie
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error obteniendo cookie: ${e.message}")
@@ -86,11 +86,31 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
         return try {
-            val response = app.get(
-                "$apiUrl/search?query=${query.encodeUri()}&limit=25&v=1",
-                headers = apiHeaders
+            // Obtener cookie para el search
+            val sessionCookie = getSessionCookie("search?q=${query.encodeUri()}&page=1")
+
+            val searchHeaders = mapOf(
+                "accept" to "text/x-component",
+                "content-type" to "text/plain;charset=UTF-8",
+                "next-action" to "70bb5dc82858424fa4bc2324f41b75ee1e0677e006",
+                "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
+                "origin" to mainUrl,
+                "referer" to "$mainUrl/search?q=${query.encodeUri()}&page=1",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "cookie" to sessionCookie
             )
+
+            val body = """["$query",{"genres":[],"year":null,"season":null,"page":1,"limit":25,"sort":null},"${'$'}undefined"]"""
+
+            val response = app.post(
+                "$mainUrl/search?q=${query.encodeUri()}&page=1",
+                headers = searchHeaders,
+                requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+            )
+
             Log.d(TAG, "Logs: Search Status: ${response.code}")
+            Log.d(TAG, "Logs: Search resText[0..300]: ${response.text.take(300)}")
+
             val cleanJson = parseNextJsJson<AnimeListResponse>(response.text)
             val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
             Log.d(TAG, "Logs: Encontrados ${results.size} resultados")
@@ -205,10 +225,8 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: uid: $uid | origin: $origin")
 
         return try {
-            // Paso 1: visitar la página para obtener la cookie anp_session
-            val sessionCookie = getSessionCookie(uid, origin)
+            val sessionCookie = getSessionCookie("watch/$uid?origin=$origin")
 
-            // Router state tree exacto del curl que funciona
             val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
 
             val actionHeaders = mapOf(
@@ -231,20 +249,17 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: resText[0..500]: ${resText.take(500)}")
 
-            // Regex con DOTALL para manejar respuestas multilínea
             val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
+                // Enlace directo sin proxy — mejor rendimiento, sin cortes
                 callback.invoke(
-                    newExtractorLink(
-                        this.name, "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
-                        ExtractorLinkType.M3U8
-                    ) {
+                    newExtractorLink(this.name, "AnimeParadise", videoUrl, ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
                     }
                 )
             }
