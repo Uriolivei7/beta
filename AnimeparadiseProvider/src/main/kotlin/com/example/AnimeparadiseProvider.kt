@@ -98,7 +98,8 @@ class AnimeParadiseProvider : MainAPI() {
                 "cookie" to sessionCookie
             )
 
-            val body = """["$query",{"genres":[],"year":null,"season":null,"page":1,"limit":25,"sort":null},"${'$'}undefined"]"""
+            // Usamos string normal (no triple-quote) para poder escapar $ correctamente
+            val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
 
             val response = app.post(
                 "$mainUrl/search?q=${query.encodeUri()}&page=1",
@@ -252,7 +253,9 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
-            if (videoUrl != null) {.
+            if (videoUrl != null) {
+                // El servidor directo rechaza HTTP/2 con PROTOCOL_ERROR,
+                // el proxy del sitio maneja eso correctamente.
                 callback.invoke(
                     newExtractorLink(
                         this.name, "AnimeParadise",
