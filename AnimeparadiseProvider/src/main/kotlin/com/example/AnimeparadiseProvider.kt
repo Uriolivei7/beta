@@ -32,7 +32,6 @@ class AnimeParadiseProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
-    // Obtiene la cookie anp_session visitando la página indicada
     private suspend fun getSessionCookie(path: String): String {
         return try {
             val res = app.get(
@@ -86,7 +85,6 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
         return try {
-            // Obtener cookie para el search
             val sessionCookie = getSessionCookie("search?q=${query.encodeUri()}&page=1")
 
             val searchHeaders = mapOf(
@@ -254,10 +252,13 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
-            if (videoUrl != null) {
-                // Enlace directo sin proxy — mejor rendimiento, sin cortes
+            if (videoUrl != null) {.
                 callback.invoke(
-                    newExtractorLink(this.name, "AnimeParadise", videoUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(
+                        this.name, "AnimeParadise",
+                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
+                        ExtractorLinkType.M3U8
+                    ) {
                         this.referer = "$mainUrl/"
                         this.quality = Qualities.Unknown.value
                     }
