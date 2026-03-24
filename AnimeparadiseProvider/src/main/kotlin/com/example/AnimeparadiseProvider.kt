@@ -10,9 +10,6 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Cookie
-import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -32,8 +29,31 @@ class AnimeParadiseProvider : MainAPI() {
         "accept" to "*/*",
         "origin" to mainUrl,
         "referer" to "$mainUrl/",
-        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
+
+    // Obtiene la cookie anp_session visitando la página del episodio
+    private suspend fun getSessionCookie(uid: String, origin: String): String {
+        return try {
+            val res = app.get(
+                "$mainUrl/watch/$uid?origin=$origin",
+                headers = mapOf(
+                    "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "referer" to "$mainUrl/"
+                )
+            )
+            val cookie = res.headers["set-cookie"]
+                ?.split(";")
+                ?.firstOrNull { it.trimStart().startsWith("anp_session") }
+                ?.trim() ?: ""
+            Log.d(TAG, "Logs: Cookie obtenida: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
+            cookie
+        } catch (e: Exception) {
+            Log.e(TAG, "Logs: Error obteniendo cookie: ${e.message}")
+            ""
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "Logs: --- INICIANDO MAIN PAGE ---")
@@ -66,22 +86,10 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
         return try {
-            val searchHeaders = mapOf(
-                "accept" to "text/x-component",
-                "next-action" to "70e67558d075165016c3b05cb0bba485a351870862",
-                "content-type" to "text/plain;charset=UTF-8",
-                "origin" to mainUrl,
-                "referer" to "$mainUrl/search"
+            val response = app.get(
+                "$apiUrl/search?query=${query.encodeUri()}&limit=25&v=1",
+                headers = apiHeaders
             )
-
-            val requestBody = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
-
-            val response = app.post(
-                "$mainUrl/search",
-                headers = searchHeaders,
-                requestBody = requestBody.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            )
-
             Log.d(TAG, "Logs: Search Status: ${response.code}")
             val cleanJson = parseNextJsJson<AnimeListResponse>(response.text)
             val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
@@ -100,19 +108,14 @@ class AnimeParadiseProvider : MainAPI() {
                 Log.e(TAG, "Logs: No se encontró JSON de éxito en la respuesta")
                 return null
             }
-
             var braceCount = 0
             var endIndex = -1
             for (i in startIndex until input.length) {
                 if (input[i] == '{') braceCount++
                 else if (input[i] == '}') braceCount--
-                if (braceCount == 0) {
-                    endIndex = i + 1
-                    break
-                }
+                if (braceCount == 0) { endIndex = i + 1; break }
             }
-            val json = input.substring(startIndex, endIndex)
-            mapper.readValue<T>(json)
+            mapper.readValue<T>(input.substring(startIndex, endIndex))
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error parseando JSON: ${e.message}")
             null
@@ -130,7 +133,6 @@ class AnimeParadiseProvider : MainAPI() {
         val rawImage = this.image ?: this.posterImage?.large ?: this.posterImage?.original
         val rawLink = this.link ?: ""
         val cleanSlug = rawLink.trim('/').split('/').lastOrNull() ?: this.id ?: ""
-
         return newAnimeSearchResponse(
             this.title ?: "Sin título",
             "$mainUrl/anime/$cleanSlug",
@@ -149,20 +151,19 @@ class AnimeParadiseProvider : MainAPI() {
             val detailRes = app.get("$apiUrl/anime/$slug?v=1", headers = apiHeaders).text
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
             val data = animeData.data ?: throw Exception("Data de anime nula")
-
             val internalId = data._id ?: data.id ?: throw Exception("ID interno no encontrado")
 
-            val epResponse = app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
-            val simResponse = app.get("$apiUrl/anime/similar?animeId=$internalId", headers = apiHeaders).text
-
-            val epData: EpisodeListResponse = mapper.readValue(epResponse)
-            val simData: SimilarResponse = mapper.readValue(simResponse)
+            val epData: EpisodeListResponse = mapper.readValue(
+                app.get("$apiUrl/anime/$internalId/episode", headers = apiHeaders).text
+            )
+            val simData: SimilarResponse = mapper.readValue(
+                app.get("$apiUrl/anime/similar?animeId=$internalId", headers = apiHeaders).text
+            )
 
             val episodes = epData.data?.mapNotNull { ep ->
                 val uid = ep.uid ?: return@mapNotNull null
                 Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
-
-                newEpisode("$uid|$internalId") {  
+                newEpisode("$uid|$internalId") {
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
                     this.posterUrl = ep.image
@@ -204,14 +205,21 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: uid: $uid | origin: $origin")
 
         return try {
+            // Paso 1: visitar la página para obtener la cookie anp_session
+            val sessionCookie = getSessionCookie(uid, origin)
+
+            // Router state tree exacto del curl que funciona
+            val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
+
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "603712faba47e30723d32819533284371173c10bbd",
+                "next-action" to "60b3f46488dfd22923bda168ef78cd866882713cca",
+                "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/watch/$uid?origin=$origin",
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "next-router-state-tree" to """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]}]}]"""
+                "cookie" to sessionCookie
             )
 
             val resText = app.post(
@@ -221,8 +229,13 @@ class AnimeParadiseProvider : MainAPI() {
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text.replace("\\/", "/")
 
-            val videoUrl = Regex("""\"streamLink\"\s*:\s*\"(https?://[^\"]+)""")
+            Log.d(TAG, "Logs: resText[0..500]: ${resText.take(500)}")
+
+            // Regex con DOTALL para manejar respuestas multilínea
+            val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
+
+            Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
                 callback.invoke(
@@ -236,7 +249,7 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            val subDataJson = Regex(""""subData"\s*:\s*(\[.*?](?=\s*[,}]))""")
+            val subDataJson = Regex(""""subData"\s*:\s*(\[.*?])""", RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
 
             Log.d(TAG, "Logs: subData: $subDataJson")
@@ -244,25 +257,16 @@ class AnimeParadiseProvider : MainAPI() {
             if (subDataJson != null) {
                 val subList = mapper.readValue<List<SubData>>(subDataJson)
                 Log.d(TAG, "Logs: ${subList.size} subtítulos encontrados")
-
                 subList.forEach { sub ->
                     val label = sub.label ?: "Unknown"
                     val src = sub.src ?: return@forEach
                     val type = sub.type ?: "vtt"
-
                     try {
                         when (type.lowercase()) {
-                            "vtt" -> {
-                                subtitleCallback.invoke(newSubtitleFile(label, src))
-                                Log.d(TAG, "Logs: Sub VTT: $label -> $src")
-                            }
-                            "ass" -> {
-                                val assUrl = "$apiUrl/stream/file/$src"
-                                subtitleCallback.invoke(newSubtitleFile(label, assUrl))
-                                Log.d(TAG, "Logs: Sub ASS directo: $label -> $assUrl")
-                            }
-
+                            "vtt" -> subtitleCallback.invoke(newSubtitleFile(label, src))
+                            "ass" -> subtitleCallback.invoke(newSubtitleFile(label, "$apiUrl/stream/file/$src"))
                         }
+                        Log.d(TAG, "Logs: Sub $type: $label -> $src")
                     } catch (e: Exception) {
                         Log.e(TAG, "Logs: Error sub $label: ${e.message}")
                     }
@@ -275,7 +279,6 @@ class AnimeParadiseProvider : MainAPI() {
             false
         }
     }
-
 }
 
 data class AnimeObject(
@@ -289,14 +292,8 @@ data class AnimeObject(
     val image: String? = null
 )
 data class ImageInfo(val original: String? = null, val large: String? = null)
-
 data class AnimeListResponse(val data: List<AnimeObject>? = null)
-
-data class AnimeDetailResponse(
-    val success: Boolean?,
-    val data: AnimeData?
-)
-
+data class AnimeDetailResponse(val success: Boolean?, val data: AnimeData?)
 data class AnimeData(
     val _id: String?,
     @JsonProperty("id") val id: String?,
@@ -309,33 +306,11 @@ data class AnimeData(
     val posterImage: PosterImages?,
     val animeSeason: SeasonInfo?
 )
-
-data class SeasonInfo(
-    val season: String?,
-    val year: Int?
-)
-
-data class PosterImages(
-    val large: String?,
-    val original: String?
-)
-
-data class SimilarResponse(
-    val success: Boolean?,
-    val data: List<SimilarAnime>?
-)
-
-data class SimilarAnime(
-    val title: String?,
-    val link: String?,
-    val posterImage: PosterImages?
-)
-
-data class EpisodeListResponse(
-    val success: Boolean?,
-    val data: List<EpisodeData>?
-)
-
+data class SeasonInfo(val season: String?, val year: Int?)
+data class PosterImages(val large: String?, val original: String?)
+data class SimilarResponse(val success: Boolean?, val data: List<SimilarAnime>?)
+data class SimilarAnime(val title: String?, val link: String?, val posterImage: PosterImages?)
+data class EpisodeListResponse(val success: Boolean?, val data: List<EpisodeData>?)
 data class EpisodeData(
     @JsonProperty("_id") val id: String?,
     val uid: String?,
@@ -343,9 +318,4 @@ data class EpisodeData(
     val number: String?,
     val image: String?
 )
-
-data class SubData(
-    val src: String?,
-    val label: String?,
-    val type: String?
-)
+data class SubData(val src: String?, val label: String?, val type: String?)
