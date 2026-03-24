@@ -254,12 +254,22 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
-                // El servidor directo rechaza HTTP/2 con PROTOCOL_ERROR,
-                // el proxy del sitio maneja eso correctamente.
+                // Enlace directo: más rápido pero puede fallar con HTTP/2 PROTOCOL_ERROR
+                callback.invoke(
+                    newExtractorLink(this.name, "AnimeParadise", videoUrl, ExtractorLinkType.M3U8) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "connection" to "keep-alive",
+                            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                        )
+                    }
+                )
+                // Proxy como segundo enlace por si el directo falla
                 callback.invoke(
                     newExtractorLink(
-                        this.name, "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
+                        this.name, "AnimeParadise 2",
+                        "https://stream.animeparadise.moe/m3u8?url=" + videoUrl.encodeUri(),
                         ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$mainUrl/"
