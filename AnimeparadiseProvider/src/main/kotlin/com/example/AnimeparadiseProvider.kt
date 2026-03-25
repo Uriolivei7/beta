@@ -250,8 +250,7 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
-                // 1. EXTRAER LA URL REAL (Lo que está después de url=)
-                // Esto quita el proxy "https://stream.animeparadise.moe/m3u8?url="
+                // 1. Extraemos la URL directa si viene con el proxy
                 val directUrl = if (videoUrl.contains("url=")) {
                     videoUrl.substringAfter("url=").decodeUri()
                 } else {
@@ -263,17 +262,21 @@ class AnimeParadiseProvider : MainAPI() {
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
-                        name = "AnimeParadise Direct (Fast)",
+                        name = "AnimeParadise Direct",
                         url = directUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        // USAR LOS HEADERS EXACTOS DEL CURL PARA NO SER BLOQUEADO
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                            "Accept" to "*/*",
+                            "Accept-Language" to "es-ES,es;q=0.7",
                             "Origin" to "https://www.animeparadise.moe",
                             "Referer" to "https://www.animeparadise.moe/",
-                            "Accept" to "*/*",
-                            "Accept-Language" to "es-ES,es;q=0.7"
+                            "Cache-Control" to "no-cache",
+                            "Pragma" to "no-cache",
+                            "Sec-Fetch-Dest" to "empty",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "cross-site" // Muy importante para servidores lightningflash/haildrop
                         )
                     }
                 )
