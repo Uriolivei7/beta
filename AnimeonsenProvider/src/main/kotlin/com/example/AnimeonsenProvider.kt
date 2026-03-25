@@ -38,7 +38,9 @@ class AnimeonsenProvider : MainAPI() {
     private suspend fun getAuthToken(): String? {
         if (accessToken != null) return accessToken
         return try {
-            val bodyString = """{"client_id":"f296be26-28b5-4358-b5a1-6259575e23b7","client_secret":"349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235","grant_type":"client_credentials"}"""
+            val bodyString = """{"client_id":"f296be26-28b5-4358-b5a1-6259575e23b7",
+                |"client_secret":"349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
+                |"grant_type":"client_credentials"}""".trimMargin()
 
             val response = app.post(
                 "https://auth.animeonsen.xyz/oauth/token",
@@ -66,7 +68,8 @@ class AnimeonsenProvider : MainAPI() {
 
         val requestHeaders = mapOf(
             "Authorization" to "Bearer $token",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Origin" to "https://www.animeonsen.xyz",
             "Referer" to "https://www.animeonsen.xyz/",
             "Accept" to "application/json, text/plain, */*"
@@ -118,7 +121,8 @@ class AnimeonsenProvider : MainAPI() {
         val token = getAuthToken() ?: return emptyList()
         val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
         return try {
-            val response = app.get("$apiUrl/search/$encodedQuery", headers = mapOf("Authorization" to "Bearer $token"))
+            val response = app.get("$apiUrl/search/$encodedQuery", headers = mapOf(
+                "Authorization" to "Bearer $token"))
             if (response.code == 404) return emptyList()
             val res = AppUtils.parseJson<SearchResponseDto>(response.text)
             res.result?.map { it.toSearchResponse() } ?: emptyList()
@@ -129,9 +133,10 @@ class AnimeonsenProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d(TAG, "Logs: Obteniendo token...")
         val token = getAuthToken()
-        val contentId = if (url.startsWith("http")) url.split("/").last() else url
 
+        val contentId = if (url.startsWith("http")) url.split("/").last() else url
         Log.d(TAG, "Logs: === Iniciando Load para ID: $contentId ===")
 
         val requestHeaders = mapOf(
@@ -147,7 +152,7 @@ class AnimeonsenProvider : MainAPI() {
             AppUtils.parseJson<AnimeDetailsDto>(res.text)
         } catch (e: Exception) {
             Log.e(TAG, "Logs Error Crítico en detalles: ${e.message}")
-            throw Exception("Error cargando detalles del anime")
+            throw Exception("Error en detalles: ${e.message}")
         }
 
         val displayTitle = details.getTitle()
@@ -170,46 +175,31 @@ class AnimeonsenProvider : MainAPI() {
             emptyList<Episode>()
         }
 
-        val relatedItems = try {
-            Log.d(TAG, "Logs: Pidiendo relacionados para $contentId")
-            val recJson = app.get("$apiUrl/content/$contentId/related", headers = requestHeaders, timeout = 20).text
-            val recData = AppUtils.parseJson<List<AnimeListItem>>(recJson)
-            recData.map { it.toSearchResponse() }
-        } catch (e: Exception) {
-            Log.e(TAG, "Logs Error en recomendados: ${e.message}")
-            emptyList<SearchResponse>()
-        }
-
         return newAnimeLoadResponse(displayTitle, url, TvType.Anime) {
             this.posterUrl = posterImg
             this.plot = details.mal_data?.synopsis
             this.score = Score.from10(details.mal_data?.mean_score)
             this.year = details.content_year
 
-            val combinedRecs = relatedItems.toMutableList()
+            val seasons = mutableListOf<SearchResponse>()
 
-            details.previous_season?.let { prevId ->
-                if (prevId.isNotBlank() && prevId != "null") {
-                    combinedRecs.add(0, newAnimeSearchResponse("⏪ Prev Season", prevId, TvType.Anime) {
-                        this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/$prevId"
-                    })
-                }
+            details.previous_season?.takeIf { it.isNotBlank() && it != "null" }?.let { prevId ->
+                seasons.add(newAnimeSearchResponse("⏪ Temporada Anterior", prevId, TvType.Anime) {
+                    this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/$prevId"
+                })
             }
 
-            details.next_season?.let { nextId ->
-                if (nextId.isNotBlank() && nextId != "null") {
-                    combinedRecs.add(newAnimeSearchResponse("⏩ Next Season", nextId, TvType.Anime) {
-                        this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/$nextId"
-                    })
-                }
+            details.next_season?.takeIf { it.isNotBlank() && it != "null" }?.let { nextId ->
+                seasons.add(newAnimeSearchResponse("⏩ Siguiente Temporada", nextId, TvType.Anime) {
+                    this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/$nextId"
+                })
             }
-
-            this.recommendations = combinedRecs
+            this.recommendations = seasons
 
             val tagsList = mutableListOf<String>()
             details.mal_data?.rating?.let { tagsList.add(it.uppercase()) }
-            details.mal_data?.genres?.forEach { (genreName): Genre ->
-                tagsList.add(genreName)
+            details.mal_data?.genres?.forEach { genre: Genre ->
+                tagsList.add(genre.name)
             }
             this.tags = tagsList
 
@@ -242,7 +232,8 @@ class AnimeonsenProvider : MainAPI() {
                 .addHeader("Authorization", "Bearer $token")
                 .addHeader("Referer", "https://www.animeonsen.xyz/")
                 .addHeader("Origin", "https://www.animeonsen.xyz")
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
                 .addHeader("Accept", "application/json, text/plain, */*")
                 .addHeader("Accept-Language", "en-US,en;q=0.9")
                 .build()
@@ -262,7 +253,8 @@ class AnimeonsenProvider : MainAPI() {
                     "Authorization" to "Bearer $token",
                     "Referer" to "https://www.animeonsen.xyz/",
                     "Origin" to "https://www.animeonsen.xyz",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                     "Accept" to "*/*",
                     "Accept-Language" to "en-US,en;q=0.9",
                     "Connection" to "keep-alive"
@@ -321,7 +313,6 @@ class AnimeonsenProvider : MainAPI() {
     @Serializable
     data class AnimeListItem(
         val content_id: String,
-        // Usamos @Contextual Any porque la API a veces manda String y otras veces List<String>
         val content_title: @Contextual Any? = null,
         val content_title_en: String? = null,
         val total_episodes: Int? = null
