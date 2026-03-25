@@ -8,11 +8,13 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.*
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
 import java.net.URLEncoder
 import java.util.zip.GZIPInputStream
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class AnimeonsenProvider : MainAPI() {
     override var mainUrl = "https://animeonsen.xyz"
@@ -36,28 +38,43 @@ class AnimeonsenProvider : MainAPI() {
     )
 
     private suspend fun getAuthToken(): String? {
-        if (accessToken != null) return accessToken
+        if (accessToken != null) {
+            Log.d(TAG, "Logs: Usando Token almacenado")
+            return accessToken
+        }
+
         return try {
-            val bodyString = """{"client_id":"f296be26-28b5-4358-b5a1-6259575e23b7",
-                |"client_secret":"349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
-                |"grant_type":"client_credentials"}""".trimMargin()
+            Log.d(TAG, "Logs: Solicitando nuevo token a auth.animeonsen.xyz...")
+
+            val bodyJson = """{
+            "client_id":"f296be26-28b5-4358-b5a1-6259575e23b7",
+            "client_secret":"349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
+            "grant_type":"client_credentials"
+        }""".trimIndent()
 
             val response = app.post(
                 "https://auth.animeonsen.xyz/oauth/token",
-                headers = mapOf("User-Agent" to userAgent),
-                data = mapOf(
-                    "client_id" to "f296be26-28b5-4358-b5a1-6259575e23b7",
-                    "client_secret" to "349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
-                    "grant_type" to "client_credentials"
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
+                requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
                 timeout = 30
-            ).text
+            )
 
-            val json = AppUtils.parseJson<Map<String, String>>(response)
-            accessToken = json["access_token"]
-            accessToken
+            Log.d(TAG, "Logs: Respuesta Auth Code: ${response.code}")
+
+            if (response.code == 200) {
+                val json = AppUtils.parseJson<TokenResponse>(response.text)
+                accessToken = json.access_token
+                Log.d(TAG, "Logs: Token obtenido correctamente")
+                accessToken
+            } else {
+                Log.e(TAG, "Logs Error Auth: El servidor rechazó las credenciales. Code: ${response.code}")
+                null
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error Token: ${e.message}")
+            Log.e(TAG, "Logs Error Token Crítico: ${e.localizedMessage}")
             null
         }
     }
@@ -300,6 +317,13 @@ class AnimeonsenProvider : MainAPI() {
             false
         }
     }
+
+    @Serializable
+    data class TokenResponse(
+        val access_token: String,
+        val token_type: String? = null,
+        val expires_in: Int? = null
+    )
 
     @Serializable
     data class SearchResponseDto(val result: List<AnimeListItem>? = null)
