@@ -29,8 +29,7 @@ class AnimeParadiseProvider : MainAPI() {
         "accept" to "*/*",
         "origin" to mainUrl,
         "referer" to "$mainUrl/",
-        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
     private suspend fun getSessionCookie(path: String): String {
@@ -39,8 +38,7 @@ class AnimeParadiseProvider : MainAPI() {
                 "$mainUrl/$path",
                 headers = mapOf(
                     "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                     "referer" to "$mainUrl/"
                 )
             )
@@ -68,10 +66,6 @@ class AnimeParadiseProvider : MainAPI() {
             val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
 
             val homePages = mutableListOf<HomePageList>()
-            recentData?.data?.let { list ->
-                Log.d(TAG, "Logs: Agregando ${list.size} items a Recientes")
-                homePages.add(HomePageList("Recién Agregados", list.map { it.toSearchResponse() }))
-            }
             popularData?.data?.let { list ->
                 Log.d(TAG, "Logs: Agregando ${list.size} items a Populares")
                 homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
@@ -93,17 +87,15 @@ class AnimeParadiseProvider : MainAPI() {
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to "70bb5dc82858424fa4bc2324f41b75ee1e0677e006",
-                "next-router-state-tree" to """["",{"children":["search",
-                    |{"children":["__PAGE__",{},null,null]},null,null]}]""".trimMargin(),
+                "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/search?q=${query.encodeUri()}&page=1",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "cookie" to sessionCookie
             )
 
-            val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25," +
-                    "\"sort\":null},\"\$undefined\"]"
+            // Usamos string normal (no triple-quote) para poder escapar $ correctamente
+            val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
 
             val response = app.post(
                 "$mainUrl/search?q=${query.encodeUri()}&page=1",
@@ -185,7 +177,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             val episodes = epData.data?.mapNotNull { ep ->
                 val uid = ep.uid ?: return@mapNotNull null
-                //Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
+                Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
                 newEpisode("$uid|$internalId") {
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
@@ -230,8 +222,7 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val sessionCookie = getSessionCookie("watch/$uid?origin=$origin")
 
-            val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],
-                |{"children":["__PAGE__",{},null,null]}]},null,null]}]""".trimMargin()
+            val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -240,8 +231,7 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/watch/$uid?origin=$origin",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "cookie" to sessionCookie
             )
 
@@ -254,8 +244,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: resText[0..500]: ${resText.take(500)}")
 
-            val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""",
-                RegexOption.DOT_MATCHES_ALL)
+            val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
@@ -288,8 +277,7 @@ class AnimeParadiseProvider : MainAPI() {
                     try {
                         when (type.lowercase()) {
                             "vtt" -> subtitleCallback.invoke(newSubtitleFile(label, src))
-                            "ass" -> subtitleCallback.invoke(newSubtitleFile(
-                                label, "$apiUrl/stream/file/$src"))
+                            "ass" -> subtitleCallback.invoke(newSubtitleFile(label, "$apiUrl/stream/file/$src"))
                         }
                         Log.d(TAG, "Logs: Sub $type: $label -> $src")
                     } catch (e: Exception) {
