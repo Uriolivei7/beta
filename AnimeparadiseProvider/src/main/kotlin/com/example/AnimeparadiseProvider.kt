@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.utils.StringUtils.decodeUri
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -66,10 +67,6 @@ class AnimeParadiseProvider : MainAPI() {
             val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
 
             val homePages = mutableListOf<HomePageList>()
-            recentData?.data?.let { list ->
-                Log.d(TAG, "Logs: Agregando ${list.size} items a Recientes")
-                homePages.add(HomePageList("Recién Agregados", list.map { it.toSearchResponse() }))
-            }
             popularData?.data?.let { list ->
                 Log.d(TAG, "Logs: Agregando ${list.size} items a Populares")
                 homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
@@ -98,7 +95,6 @@ class AnimeParadiseProvider : MainAPI() {
                 "cookie" to sessionCookie
             )
 
-            // Usamos string normal (no triple-quote) para poder escapar $ correctamente
             val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
 
             val response = app.post(
@@ -181,7 +177,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             val episodes = epData.data?.mapNotNull { ep ->
                 val uid = ep.uid ?: return@mapNotNull null
-                Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
+                //Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
                 newEpisode("$uid|$internalId") {
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
@@ -254,14 +250,31 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
+                // 1. EXTRAER LA URL REAL (Lo que está después de url=)
+                // Esto quita el proxy "https://stream.animeparadise.moe/m3u8?url="
+                val directUrl = if (videoUrl.contains("url=")) {
+                    videoUrl.substringAfter("url=").decodeUri()
+                } else {
+                    videoUrl
+                }
+
+                Log.d(TAG, "Logs: Reproduciendo DIRECTO desde: $directUrl")
+
                 callback.invoke(
                     newExtractorLink(
-                        this.name, "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
-                        ExtractorLinkType.M3U8
+                        source = this.name,
+                        name = "AnimeParadise Direct (Fast)",
+                        url = directUrl,
+                        type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.Unknown.value
+                        // USAR LOS HEADERS EXACTOS DEL CURL PARA NO SER BLOQUEADO
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                            "Origin" to "https://www.animeparadise.moe",
+                            "Referer" to "https://www.animeparadise.moe/",
+                            "Accept" to "*/*",
+                            "Accept-Language" to "es-ES,es;q=0.7"
+                        )
                     }
                 )
             }
