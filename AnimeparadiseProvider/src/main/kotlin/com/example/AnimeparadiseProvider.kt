@@ -7,7 +7,6 @@ import com.fasterxml.jackson.annotation.*
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.lagradost.cloudstream3.utils.StringUtils.decodeUri
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -30,7 +29,8 @@ class AnimeParadiseProvider : MainAPI() {
         "accept" to "*/*",
         "origin" to mainUrl,
         "referer" to "$mainUrl/",
-        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
     private suspend fun getSessionCookie(path: String): String {
@@ -39,7 +39,8 @@ class AnimeParadiseProvider : MainAPI() {
                 "$mainUrl/$path",
                 headers = mapOf(
                     "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                     "referer" to "$mainUrl/"
                 )
             )
@@ -67,6 +68,10 @@ class AnimeParadiseProvider : MainAPI() {
             val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
 
             val homePages = mutableListOf<HomePageList>()
+            recentData?.data?.let { list ->
+                Log.d(TAG, "Logs: Agregando ${list.size} items a Recientes")
+                homePages.add(HomePageList("Recién Agregados", list.map { it.toSearchResponse() }))
+            }
             popularData?.data?.let { list ->
                 Log.d(TAG, "Logs: Agregando ${list.size} items a Populares")
                 homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
@@ -88,14 +93,17 @@ class AnimeParadiseProvider : MainAPI() {
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
                 "next-action" to "70bb5dc82858424fa4bc2324f41b75ee1e0677e006",
-                "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
+                "next-router-state-tree" to """["",{"children":["search",
+                    |{"children":["__PAGE__",{},null,null]},null,null]}]""".trimMargin(),
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/search?q=${query.encodeUri()}&page=1",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "cookie" to sessionCookie
             )
 
-            val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
+            val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25," +
+                    "\"sort\":null},\"\$undefined\"]"
 
             val response = app.post(
                 "$mainUrl/search?q=${query.encodeUri()}&page=1",
@@ -222,7 +230,8 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val sessionCookie = getSessionCookie("watch/$uid?origin=$origin")
 
-            val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
+            val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],
+                |{"children":["__PAGE__",{},null,null]}]},null,null]}]""".trimMargin()
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -231,7 +240,8 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/watch/$uid?origin=$origin",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "cookie" to sessionCookie
             )
 
@@ -244,40 +254,21 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: resText[0..500]: ${resText.take(500)}")
 
-            val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
+            val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""",
+                RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
-                // 1. Extraemos la URL directa si viene con el proxy
-                val directUrl = if (videoUrl.contains("url=")) {
-                    videoUrl.substringAfter("url=").decodeUri()
-                } else {
-                    videoUrl
-                }
-
-                Log.d(TAG, "Logs: Reproduciendo DIRECTO desde: $directUrl")
-
                 callback.invoke(
                     newExtractorLink(
-                        source = this.name,
-                        name = "AnimeParadise Direct",
-                        url = directUrl,
-                        type = ExtractorLinkType.M3U8
+                        this.name, "AnimeParadise",
+                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
+                        ExtractorLinkType.M3U8
                     ) {
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                            "Accept" to "*/*",
-                            "Accept-Language" to "es-ES,es;q=0.7",
-                            "Origin" to "https://www.animeparadise.moe",
-                            "Referer" to "https://www.animeparadise.moe/",
-                            "Cache-Control" to "no-cache",
-                            "Pragma" to "no-cache",
-                            "Sec-Fetch-Dest" to "empty",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "cross-site" // Muy importante para servidores lightningflash/haildrop
-                        )
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
                     }
                 )
             }
@@ -297,7 +288,8 @@ class AnimeParadiseProvider : MainAPI() {
                     try {
                         when (type.lowercase()) {
                             "vtt" -> subtitleCallback.invoke(newSubtitleFile(label, src))
-                            "ass" -> subtitleCallback.invoke(newSubtitleFile(label, "$apiUrl/stream/file/$src"))
+                            "ass" -> subtitleCallback.invoke(newSubtitleFile(
+                                label, "$apiUrl/stream/file/$src"))
                         }
                         Log.d(TAG, "Logs: Sub $type: $label -> $src")
                     } catch (e: Exception) {
