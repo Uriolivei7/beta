@@ -44,7 +44,8 @@ class AnimeonsenProvider : MainAPI() {
                     "client_id" to "f296be26-28b5-4358-b5a1-6259575e23b7",
                     "client_secret" to "349038c4157d0480784753841217270c3c5b35f4281eaee029de21cb04084235",
                     "grant_type" to "client_credentials"
-                )
+                ),
+                timeout = 30
             ).text
 
             val json = AppUtils.parseJson<Map<String, String>>(response)
@@ -58,46 +59,60 @@ class AnimeonsenProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val token = getAuthToken()
-        val pages = mutableListOf<HomePageList>()
+        val pages = java.util.concurrent.CopyOnWriteArrayList<HomePageList>()
 
+        // Headers exactos del navegador para evitar bloqueos
+        val requestHeaders = mapOf(
+            "Authorization" to "Bearer $token",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Origin" to "https://www.animeonsen.xyz",
+            "Referer" to "https://www.animeonsen.xyz/",
+            "Accept" to "application/json, text/plain, */*"
+        )
+
+        // Sección principal
         try {
             val response = app.get(
-                "$apiUrl/content/index?start=${(page - 1) * 20}&limit=20",
-                headers = mapOf("Authorization" to "Bearer $token")
+                "$apiUrl/content/index?start=${(page - 1) * 30}&limit=30",
+                headers = requestHeaders,
+                timeout = 30
             ).text
 
             val latestRes = AppUtils.parseJson<AnimeListResponse>(response)
             val items = latestRes.content ?: latestRes.result
 
             if (!items.isNullOrEmpty()) {
-                pages.add(HomePageList("Todos los Animes", items.map { it.toSearchResponse() }))
+                pages.add(HomePageList("Recién agregados", items.map { it.toSearchResponse() }))
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Logs Error en MainPage: ${e.message}")
+            Log.e(TAG, "Logs Error Principal: ${e.message}")
         }
 
+        // Géneros en paralelo
         if (page == 1) {
-            homeGenres.forEach { (name, slug) ->
+            homeGenres.amap { (name, slug) ->
                 try {
                     val genreUrl = "$apiUrl/content/index/genre/$slug?start=0&limit=20"
-                    val genreResponse = app.get(
-                        genreUrl,
-                        headers = mapOf("Authorization" to "Bearer $token")
-                    ).text
-
-                    val genreRes = AppUtils.parseJson<AnimeListResponse>(genreResponse)
+                    val genreRes = app.get(genreUrl, headers = requestHeaders, timeout = 20).parsed<AnimeListResponse>()
                     val items = genreRes.result ?: genreRes.content
 
                     if (!items.isNullOrEmpty()) {
                         pages.add(HomePageList(name, items.map { it.toSearchResponse() }))
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Logs Error cargando género $name")
+                    Log.e(TAG, "Logs Error Género $name: ${e.message}")
                 }
             }
         }
 
-        return newHomePageResponse(pages, pages.isNotEmpty())
+        return newHomePageResponse(pages.toList(), pages.isNotEmpty())
+    }
+
+    // 3. Ajuste en el mapeo de respuesta
+    private fun AnimeListItem.toSearchResponse(): SearchResponse {
+        return newAnimeSearchResponse(this.getTitle(), this.content_id) {
+            this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/${this@toSearchResponse.content_id}"
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -111,13 +126,6 @@ class AnimeonsenProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e(TAG, "Logs Error Search: ${e.message}")
             emptyList()
-        }
-    }
-
-    private fun AnimeListItem.toSearchResponse(): SearchResponse {
-        val title = this.content_title_en ?: this.content_title ?: "Unknown"
-        return newAnimeSearchResponse(title, this.content_id) {
-            this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/${this@toSearchResponse.content_id}"
         }
     }
 
@@ -289,7 +297,22 @@ class AnimeonsenProvider : MainAPI() {
 
     @Serializable data class SearchResponseDto(val result: List<AnimeListItem>? = null)
     @Serializable data class AnimeListResponse(val content: List<AnimeListItem>? = null, val result: List<AnimeListItem>? = null)
-    @Serializable data class AnimeListItem(val content_id: String, val content_title: String? = null, val content_title_en: String? = null)
+
+    @Serializable
+    data class AnimeListItem(
+        val content_id: String,
+        val content_title: @Contextual Any? = null,
+        val content_title_en: String? = null,
+        val content_description: String? = null
+    )
+
+    private fun AnimeListItem.getTitle(): String {
+        return when (val title = this.content_title) {
+            is String -> title
+            is List<*> -> title.firstOrNull()?.toString() ?: "Unknown"
+            else -> this.content_title_en ?: "Unknown"
+        }
+    }
     @Serializable data class EpisodeDto(val contentTitle_episode_en: String? = null, val contentTitle_episode_jp: String? = null)
     @Serializable data class AnimeDetailsDto(
         val content_id: String,
