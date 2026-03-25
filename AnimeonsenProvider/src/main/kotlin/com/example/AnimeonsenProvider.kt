@@ -56,7 +56,8 @@ class AnimeonsenProvider : MainAPI() {
                 "https://auth.animeonsen.xyz/oauth/token",
                 headers = mapOf(
                     "Content-Type" to "application/json",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "Accept" to "application/json",
+                    "User-Agent" to userAgent
                 ),
                 requestBody = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
                 timeout = 30
@@ -64,13 +65,16 @@ class AnimeonsenProvider : MainAPI() {
 
             Log.d(TAG, "Logs: Respuesta Auth Code: ${response.code}")
 
-            if (response.code == 200) {
+            if (response.code == 200 && response.text.startsWith("{")) {
                 val json = AppUtils.parseJson<TokenResponse>(response.text)
                 accessToken = json.access_token
                 Log.d(TAG, "Logs: Token obtenido correctamente")
                 accessToken
             } else {
-                Log.e(TAG, "Logs Error Auth: El servidor rechazó las credenciales. Code: ${response.code}")
+                Log.e(TAG, "Logs Error: El servidor no envió JSON o dio error. Code: ${response.code}")
+                if (response.text.contains("cloudflare")) {
+                    Log.e(TAG, "Logs: Detectado bloqueo o timeout de Cloudflare (Error 522/524)")
+                }
                 null
             }
         } catch (e: Exception) {
