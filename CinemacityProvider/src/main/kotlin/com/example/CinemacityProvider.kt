@@ -432,6 +432,7 @@ class CinemacityProvider : MainAPI() {
         if (streamUrls.isEmpty()) return false
 
         streamUrls.forEach { url ->
+            Log.d("Cinemacity", "Cargando link: $url con headers: $headers")
             callback(
                 newExtractorLink(
                     name,
@@ -439,8 +440,9 @@ class CinemacityProvider : MainAPI() {
                     url,
                     INFER_TYPE
                 ) {
-                    referer = mainUrl
-                    quality = extractQuality(url)
+                    this.referer = mainUrl
+                    this.headers = headers
+                    this.quality = extractQuality(url)
                 }
             )
         }
