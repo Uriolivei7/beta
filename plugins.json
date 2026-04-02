@@ -214,7 +214,7 @@
     "status": 1,
     "version": 1,
     "apiVersion": 1,
-    "name": "MonosChinos3",
+    "name": "MonosChinos",
     "internalName": "MonoschinosProvider",
     "authors": ["Ranita"],
     "description": "Plugin para Animes Subtitulados y con Doblaje",
