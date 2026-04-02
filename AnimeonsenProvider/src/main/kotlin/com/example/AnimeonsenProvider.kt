@@ -133,7 +133,7 @@ class AnimeonsenProvider : MainAPI() {
     }
 
     private fun AnimeListItem.toSearchResponse(): SearchResponse {
-        return newAnimeSearchResponse(this.getTitle(), this.content_id) {
+        return newAnimeSearchResponse(this.getTitle(), this.content_id) { 
             this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/${this@toSearchResponse.content_id}"
         }
     }
@@ -347,20 +347,22 @@ class AnimeonsenProvider : MainAPI() {
     )
 
     private fun AnimeListItem.getTitle(): String {
-        val title = this.content_title
-        return when (title) {
+        if (!this.content_title_en.isNullOrBlank()) return this.content_title_en
+
+        return when (val title = this.content_title) {
             is String -> title
-            is List<*> -> title.firstOrNull()?.toString() ?: "Unknown"
-            else -> this.content_title_en ?: "Unknown"
+            is List<*> -> title.lastOrNull()?.toString() ?: "Unknown"
+            else -> "Unknown"
         }
     }
 
     private fun AnimeDetailsDto.getTitle(): String {
-        val title = this.content_title
-        return when (title) {
+        if (!this.content_title_en.isNullOrBlank()) return this.content_title_en
+
+        return when (val title = this.content_title) {
             is String -> title
-            is List<*> -> title.firstOrNull()?.toString() ?: "Unknown"
-            else -> this.content_title_en ?: "Unknown"
+            is List<*> -> title.lastOrNull()?.toString() ?: "Unknown"
+            else -> "Unknown"
         }
     }
 
