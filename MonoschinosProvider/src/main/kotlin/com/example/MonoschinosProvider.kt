@@ -112,13 +112,15 @@ class MonoschinosProvider : MainAPI() {
     }
 
     data class CapList(
-        @JsonProperty("caps") val caps: List<Ep>,
+        @JsonProperty("eps") val eps: List<Ep>? = null,
+        @JsonProperty("caps") val caps: List<Ep>? = null,
     )
 
     data class Ep(
-        @JsonProperty("episodio") val episodio: Int?,
-        @JsonProperty("url") val url: String?,
-        @JsonProperty("thumb") val thumb: String?,
+        @JsonProperty("num") val num: Int? = null,
+        @JsonProperty("episodio") val episodio: Int? = null,
+        @JsonProperty("url") val url: String? = null,
+        @JsonProperty("thumb") val thumb: String? = null,
     )
 
     override suspend fun load(url: String): LoadResponse {
@@ -157,15 +159,20 @@ class MonoschinosProvider : MainAPI() {
                 cookies = latestCookie,
                data = mapOf("_token" to latestToken)).parsed<CapList>()
 
-        val epList = capJson.caps.map { ep ->
-            val epUrl = ep.url ?: ""
+        val allEpisodes = capJson.eps ?: capJson.caps ?: emptyList()
 
-            val thumbUrl = ep.thumb?.let {
-                if (it.startsWith("http")) it else "$mainUrl$it"
+        val epList = allEpisodes.map { ep ->
+            val episodeNumber = ep.episodio ?: ep.num
+            val epUrl = ep.url ?: "${url.replace("-sub-espanol","").replace("/anime/","/ver/")}-episodio-$episodeNumber"
+
+            val thumbUrl = if (!ep.thumb.isNullOrBlank()) {
+                if (ep.thumb.startsWith("http")) ep.thumb else "$mainUrl${ep.thumb}"
+            } else {
+                backimage 
             }
 
             newEpisode(epUrl) {
-                this.episode = ep.episodio
+                this.episode = episodeNumber
                 this.posterUrl = thumbUrl
             }
         }
