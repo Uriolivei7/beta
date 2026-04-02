@@ -218,8 +218,8 @@
     "internalName": "MonoschinosProvider",
     "authors": ["Ranita"],
     "description": "Plugin para Animes Subtitulados y con Doblaje",
-    "tvTypes": ["Anime", "OVA"],
-    "iconUrl": "https://ww3.monoschinos3.com/img/favicon.ico",
+    "tvTypes": ["Anime", "OVA", "AnimeMovie"],
+    "iconUrl": "https://monoschinos2.com/favicon.ico?v=4.53",
     "language": "mx",
     "fileSize": 17000
   },

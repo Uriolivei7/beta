@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.animeproviders
+package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import java.util.*
 import kotlin.collections.ArrayList
 
-
 class MonoschinosProvider : MainAPI() {
     companion object {
         fun getType(t: String): TvType {
@@ -15,22 +14,18 @@ class MonoschinosProvider : MainAPI() {
             else if (t.contains("Pelicula")) TvType.AnimeMovie
             else TvType.Anime
         }
-
         fun getDubStatus(title: String): DubStatus {
             return if (title.contains("Latino") || title.contains("Castellano"))
                 DubStatus.Dubbed
             else DubStatus.Subbed
         }
-
         var latestCookie: Map<String, String> = emptyMap()
         var latestToken = ""
-
-
     }
 
     override var mainUrl = "https://monoschinos2.com"
-    override var name = "Monoschinos"
-    override var lang = "es"
+    override var name = "MonosChinos"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
@@ -52,7 +47,7 @@ class MonoschinosProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request : MainPageRequest): HomePageResponse {
         val urls = listOf(
-                Pair("$mainUrl/emision", "Estrenos 2024"),
+                Pair("$mainUrl/emision", "Recientes"),
                 Pair("$mainUrl/animes", "Animes"),
         )
         val items = ArrayList<HomePageList>()
@@ -168,8 +163,6 @@ class MonoschinosProvider : MainAPI() {
                 this.episode = epnum.toString().toIntOrNull()
             }
         }
-
-
 
         return newAnimeLoadResponse(title, url, getType(type)) {
             posterUrl = poster
