@@ -133,7 +133,7 @@ class AnimeonsenProvider : MainAPI() {
     }
 
     private fun AnimeListItem.toSearchResponse(): SearchResponse {
-        return newAnimeSearchResponse(this.getTitle(), this.content_id) { 
+        return newAnimeSearchResponse(this.getTitle(), this.content_id) {
             this.posterUrl = "https://api.animeonsen.xyz/v4/image/210x300/${this@toSearchResponse.content_id}"
         }
     }
