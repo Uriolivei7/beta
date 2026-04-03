@@ -74,7 +74,7 @@ private suspend fun extractSubs(html: String, refererUrl: String, subtitleCallba
 
     if (matches.none()) {
         Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(html).forEach { match ->
-            val subUrl = match.groupValues[1].replace("\\/", "/")
+            val subUrl = match.groupValues[1].replace("\\/", "/").trim()
             val label = when {
                 subUrl.contains("_spa") -> "Spanish (Vimeos)"
                 subUrl.contains("_eng") -> "English (Vimeos)"
@@ -95,16 +95,19 @@ private suspend fun extractSubs(html: String, refererUrl: String, subtitleCallba
 private suspend fun invokeSubtitle(label: String, url: String, callback: (SubtitleFile) -> Unit) {
     Log.d("LaMovie", "LOG: Registrando Sub -> $label: $url")
 
-    callback.invoke(
-        newSubtitleFile(label, url) {
-            this.headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "Referer" to "https://vimeos.net/",
-                "Origin" to "https://vimeos.net",
-                "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
-                "sec-ch-ua-mobile" to "?0",
-                "sec-ch-ua-platform" to "\"Windows\""
-            )
-        }
-    )
+    val subFile = newSubtitleFile(label, url) {
+        this.headers = mapOf(
+            "Referer" to "https://vimeos.net/",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Windows\"",
+            "Accept" to "*/*",
+            "Accept-Language" to "es-ES,es;q=0.9"
+        )
+    }
+
+    Log.d("LaMovie", "Headers configurados para $label: ${subFile.headers?.keys}")
+
+    callback.invoke(subFile)
 }
