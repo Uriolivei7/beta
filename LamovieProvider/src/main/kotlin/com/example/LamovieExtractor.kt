@@ -67,15 +67,21 @@ private suspend fun extractSubs(html: String, refererUrl: String, subtitleCallba
 
         trackRegex.findAll(rawTracks).forEach { match ->
             val rawUrl = match.groupValues[1]
-            val subUrl = if (rawUrl.startsWith("http")) rawUrl else "https:$rawUrl"
+            val subUrl = if (rawUrl.startsWith("http")) rawUrl else if (rawUrl.startsWith("//")) "https:$rawUrl" else "https://$rawUrl"
             val subLabel = match.groupValues[2]
 
             if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
+                Log.d("LaMovie", "LOG: Registrando Sub -> $subLabel")
+
                 subtitleCallback.invoke(
                     newSubtitleFile(subLabel, subUrl) {
                         this.headers = mapOf(
-                            "Referer" to refererUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                            "Referer" to "https://vimeos.net/",
+                            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+                            "sec-ch-ua-mobile" to "?0",
+                            "sec-ch-ua-platform" to "\"Windows\"",
+                            "Accept-Language" to "es-MX,es;q=0.9"
                         )
                     }
                 )
