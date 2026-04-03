@@ -242,14 +242,32 @@ class AnimeParadiseProvider : MainAPI() {
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text.replace("\\/", "/")
 
-            Log.d(TAG, "Logs: resText[0..5000]: ${resText.take(5000)}")
+            Log.d(TAG, "Logs: resText[0..2000]: ${resText.take(2000)}")
 
-            val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
+            val streamLink = Regex(""""streamLink"\s*:\s*"([^"]+)""")
                 .find(resText)?.groupValues?.getOrNull(1)
-                ?: Regex(""""url"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
+
+            Log.d(TAG, "Logs: streamLink: $streamLink")
+
+            var videoUrl: String? = null
+
+            if (streamLink != null) {
+                val streamRes = app.get(
+                    "$apiUrl/stream/$streamLink",
+                    headers = apiHeaders + mapOf("cookie" to sessionCookie)
+                )
+                Log.d(TAG, "Logs: streamRes: ${streamRes.code} - ${streamRes.text.take(500)}")
+                
+                videoUrl = Regex(""""url"\s*:\s*"(https?://[^"]+)""")
+                    .find(streamRes.text)?.groupValues?.getOrNull(1)
+                    ?: Regex(""""m3u8"\s*:\s*"(https?://[^"]+)""")
+                        .find(streamRes.text)?.groupValues?.getOrNull(1)
+            }
+
+            if (videoUrl == null) {
+                videoUrl = Regex(""""url"\s*:\s*"(https?://[^"]+)""")
                     .find(resText)?.groupValues?.getOrNull(1)
-                ?: Regex(""""sources"\s*:\s*\[.*?"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
-                    .find(resText)?.groupValues?.getOrNull(1)
+            }
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
