@@ -20,24 +20,44 @@ class Vimeos : ExtractorApi() {
         val response = app.get(embedUrl, referer = "https://vimeos.net/")
         val res = response.text
 
-        extractSubs(res, embedUrl, subtitleCallback, isVimeos = true)
-
         val unpackedJs = unpackJs(response.document) ?: res
+
+        extractSubsFromUnpacked(unpackedJs, subtitleCallback)
+
         Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").find(unpackedJs)?.groupValues?.get(1)?.let { link ->
             val cleanLink = link.replace("\\/", "/")
             val finalLink = if (cleanLink.startsWith("http")) cleanLink else "https:$cleanLink"
-
             M3u8Helper.generateM3u8(this.name, finalLink, "$mainUrl/").forEach(callback)
         }
     }
 
-    private fun unpackJs(element: Element): String? {
-        return element.select("script").find { it.data().contains("eval(function(p,a,c,k,e,d)") }
+    private fun unpackJs(document: org.jsoup.nodes.Document): String? {
+        return document.select("script").find { it.data().contains("eval(function(p,a,c,k,e,d)") }
             ?.data()?.let { getAndUnpack(it) }
     }
 
     private fun getEmbedUrl(url: String): String {
         return if (!url.contains("/embed-")) "$mainUrl/embed-${url.substringAfterLast("/")}" else url
+    }
+
+    private suspend fun extractSubsFromUnpacked(
+        js: String,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        val vttRegex = Regex("""["'](https?://[^"']+\.vtt)["']""")
+        vttRegex.findAll(js).forEach { match ->
+            val rawUrl = match.groupValues[1].replace("\\/", "/")
+            Log.d("LaMovie", "Logs: VTT encontrado en JS desempaquetado -> $rawUrl")
+
+            val label = when {
+                rawUrl.endsWith("_spa.vtt") -> "Spanish"
+                rawUrl.endsWith("_sli.vtt") -> "Spanish (Subtitles)"
+                rawUrl.endsWith("_eng.vtt") -> "English"
+                else -> "Subtitle"
+            }
+
+            invokeSubtitle(label, rawUrl, subtitleCallback)
+        }
     }
 }
 
