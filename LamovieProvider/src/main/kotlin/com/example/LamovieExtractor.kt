@@ -70,22 +70,27 @@ private suspend fun extractSubs(html: String, refererUrl: String, subtitleCallba
             val subUrl = if (rawUrl.startsWith("http")) rawUrl
             else if (rawUrl.startsWith("//")) "https:$rawUrl"
             else "https://$rawUrl"
-            val subLabel = match.groupValues[2]
+
+            val isVimeos = subUrl.contains("vimeos")
+            val sourceName = if (isVimeos) "Vimeos" else "Good"
+            val subLabel = "${match.groupValues[2]} ($sourceName)"
 
             if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
-                Log.d("LaMovie", "LOG: Registrando Sub de Vimeos -> $subLabel: $subUrl")
+                Log.d("LaMovie", "LOG: Registrando Sub de $sourceName -> $subLabel: $subUrl")
 
                 subtitleCallback.invoke(
                     newSubtitleFile(subLabel, subUrl) {
+                        val finalReferer = if (isVimeos) "https://vimeos.net/" else "https://goodstream.one/"
+                        val finalOrigin = if (isVimeos) "https://vimeos.net" else "https://goodstream.one"
+
                         this.headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                            "Referer" to "https://vimeos.net/",
-                            "Origin" to "https://vimeos.net",
+                            "Referer" to finalReferer,
+                            "Origin" to finalOrigin,
                             "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
                             "sec-ch-ua-mobile" to "?0",
                             "sec-ch-ua-platform" to "\"Windows\"",
                             "Accept" to "*/*",
-                            "Accept-Language" to "es-MX,es;q=0.9",
                             "Sec-Fetch-Dest" to "empty",
                             "Sec-Fetch-Mode" to "cors",
                             "Sec-Fetch-Site" to "cross-site"
