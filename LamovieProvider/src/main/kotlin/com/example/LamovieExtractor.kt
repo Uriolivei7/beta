@@ -20,7 +20,7 @@ class Vimeos : ExtractorApi() {
         val response = app.get(embedUrl, referer = referer)
         val res = response.text
 
-        extractSubs(res, embedUrl, subtitleCallback)
+        extractSubs(res, embedUrl, subtitleCallback, isVimeos = true)
 
         val unpackedJs = unpackJs(response.document) ?: res
         Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").find(unpackedJs)?.groupValues?.get(1)?.let { link ->
@@ -55,7 +55,7 @@ class GoodstreamExtractor : ExtractorApi() {
         val response = app.get(url)
         val res = response.text
 
-        extractSubs(res, url, subtitleCallback)
+        extractSubs(res, url, subtitleCallback, isVimeos = false)
 
         Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").find(res)?.groupValues?.get(1)?.let { link ->
             val cleanLink = link.replace("\\/", "/")
@@ -66,48 +66,54 @@ class GoodstreamExtractor : ExtractorApi() {
     }
 }
 
-private suspend fun extractSubs(html: String, refererUrl: String, subtitleCallback: (SubtitleFile) -> Unit) {
+private suspend fun extractSubs(
+    html: String,
+    refererUrl: String,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    isVimeos: Boolean = false
+) {
     if (html.trim().startsWith("WEBVTT")) return
 
-    val trackRegex = Regex("""\{[^}]*file\s*[:=]\s*["']([^"']+\.vtt[^"']*)["'][^}]*label\s*[:=]\s*["']([^"']+)["'][^}]*\}""")
+    val trackRegex = Regex("""["']?file["']?\s*[:=]\s*["']([^"']+\.vtt[^"']*)["'](?:[^}]*["']?label["']?\s*[:=]\s*["']([^"']+)["'])?""")
     val matches = trackRegex.findAll(html)
+
+    suspend fun processSub(rawUrl: String, label: String) {
+        var subUrl = rawUrl.replace("\\/", "/").trim()
+        if (!subUrl.startsWith("http")) subUrl = "https:$subUrl"
+
+        Log.d("LaMovie", "Logs: Detectada URL sub original: $subUrl")
+
+        if (isVimeos && subUrl.contains("goodstream.one")) {
+            val id = subUrl.substringAfterLast("/").substringBefore("_")
+            subUrl = "https://s13.vimeos.net/vtt/02/00008/${id}_spa.vtt"
+            Log.d("LaMovie", "Logs: URL corregida a Vimeos: $subUrl")
+        }
+
+        invokeSubtitle(label, subUrl, subtitleCallback)
+    }
 
     if (matches.none()) {
         Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(html).forEach { match ->
-            val subUrl = match.groupValues[1].replace("\\/", "/").trim()
-            val label = when {
-                subUrl.contains("_spa") -> "Spanish (Vimeos)"
-                subUrl.contains("_eng") -> "English (Vimeos)"
-                else -> "Sub (Vimeos)"
-            }
-            invokeSubtitle(label, subUrl, subtitleCallback)
+            processSub(match.groupValues[1], "Spanish (Vimeos)")
         }
     } else {
         matches.forEach { match ->
-            val rawUrl = match.groupValues[1].replace("\\/", "/")
-            val subUrl = if (rawUrl.startsWith("http")) rawUrl else "https:$rawUrl"
-            val subLabel = "${match.groupValues[2]} (Vimeos)"
-            invokeSubtitle(subLabel, subUrl, subtitleCallback)
+            val label = match.groupValues[2].takeIf { it.isNotBlank() } ?: "Spanish"
+            processSub(match.groupValues[1], "$label (Vimeos)")
         }
     }
 }
 
 private suspend fun invokeSubtitle(label: String, url: String, callback: (SubtitleFile) -> Unit) {
-    Log.d("LaMovie", "LOG: Registrando Sub -> $label: $url")
-
     val subFile = newSubtitleFile(label, url) {
         this.headers = mapOf(
-            "Referer" to "https://vimeos.net/",
+            "Referer" to "https://vimeos.net/", // Referer fijo de Vimeos
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
             "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
-            "Accept" to "*/*",
-            "Accept-Language" to "es-ES,es;q=0.9"
+            "sec-ch-ua-platform" to "\"Windows\""
         )
     }
-
-    Log.d("LaMovie", "Headers configurados para $label: ${subFile.headers?.keys}")
-
+    Log.d("LaMovie", "LOG: Registrando Sub -> $label: $url")
     callback.invoke(subFile)
 }
