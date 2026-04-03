@@ -23,10 +23,13 @@ class Vimeos : ExtractorApi() {
         val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
         val standardHeaders = mapOf(
-            "Referer" to embedUrl,
+            "Referer" to "$embedUrl/",
             "Origin" to mainUrl,
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-            "Cookie" to cookieString
+            "Cookie" to cookieString,
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site"
         )
 
         val unpackedJs = JsUnpacker(res).unpack() ?: res
@@ -34,9 +37,8 @@ class Vimeos : ExtractorApi() {
 
         videoUrl?.let { m3u8 ->
             val finalUrl = fixUrl(m3u8).replace("http://", "https://")
-            Log.i("LaMovie", "LOG: URL Vimeos: $finalUrl")
+            Log.i("LaMovie", "LOG: URL Vimeos Final: $finalUrl")
 
-            Log.w("LaMovie", "LOG: Enviando link directo con headers de movilidad.")
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
@@ -67,15 +69,18 @@ class GoodstreamExtractor : ExtractorApi() {
         val m3u8 = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(res)?.groupValues?.get(1)
 
         val standardHeaders = mapOf(
-            "Referer" to url,
+            "Referer" to "$url/",
             "Origin" to mainUrl,
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-            "Cookie" to cookieString
+            "Cookie" to cookieString,
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site"
         )
 
         m3u8?.let { link ->
             val finalUrl = fixUrl(link).replace("http://", "https://")
-            Log.w("LaMovie", "LOG: Enviando link directo Goodstream.")
+            Log.w("LaMovie", "LOG: Enviando enlace Goodstream con protección CORS.")
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
