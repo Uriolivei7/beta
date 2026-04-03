@@ -25,9 +25,10 @@ class Vimeos : ExtractorApi() {
 
         val headerMap = mapOf(
             "Referer" to "$mainUrl/",
-            "Origin" to mainUrl,
+            "Origin" to mainUrl.removeSuffix("/"),
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-            "Accept-Language" to "es-ES,es;q=0.7"
+            "Accept" to "*/*",
+            "Accept-Language" to "es-ES,es;q=0.9"
         )
 
         val subData = Regex("""["']([^"']+\.vtt[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
@@ -56,26 +57,26 @@ class Vimeos : ExtractorApi() {
         videoUrl?.let { m3u8 ->
             Log.i("LaMovie", "LOG: Generando enlaces fluidos para Vimeos...")
 
+            val headerMap = mapOf(
+                "Referer" to "$mainUrl/",
+                "Origin" to mainUrl.removeSuffix("/"),
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "es-ES,es;q=0.9"
+            )
+
+            val finalUrl = fixUrl(m3u8).replace("http://", "https://")
+
             val m3uLinks = try {
-                M3u8Helper.generateM3u8(
-                    this.name,
-                    fixUrl(m3u8),
-                    "$mainUrl/",
-                    headers = headerMap
-                )
+                M3u8Helper.generateM3u8(this.name, finalUrl, "$mainUrl/", headers = headerMap)
             } catch (e: Exception) {
                 emptyList()
             }
 
             if (m3uLinks.isEmpty()) {
-                Log.w("LaMovie", "LOG: M3u8Helper no encontró calidades, enviando link directo.")
+                Log.w("LaMovie", "LOG: M3u8Helper falló, enviando link directo.")
                 callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = this.name,
-                        url = fixUrl(m3u8),
-                        type = ExtractorLinkType.M3U8
-                    ) {
+                    newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
                         this.headers = headerMap
                         this.referer = "$mainUrl/"
@@ -84,12 +85,7 @@ class Vimeos : ExtractorApi() {
             } else {
                 m3uLinks.forEach { link ->
                     callback.invoke(
-                        newExtractorLink(
-                            source = this.name,
-                            name = this.name,
-                            url = link.url,
-                            type = ExtractorLinkType.M3U8
-                        ) {
+                        newExtractorLink(this.name, this.name, link.url, ExtractorLinkType.M3U8) {
                             this.quality = link.quality
                             this.headers = headerMap
                             this.referer = "$mainUrl/"
@@ -120,17 +116,16 @@ class GoodstreamExtractor : ExtractorApi() {
         m3u8?.let { link ->
             val headerMap = mapOf(
                 "Referer" to "$mainUrl/",
-                "Origin" to mainUrl,
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "Origin" to mainUrl.removeSuffix("/"),
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "es-ES,es;q=0.9"
             )
 
+            val finalUrl = fixUrl(link).replace("http://", "https://")
+
             val m3uLinks = try {
-                M3u8Helper.generateM3u8(
-                    this.name,
-                    fixUrl(link),
-                    url,
-                    headers = headerMap
-                )
+                M3u8Helper.generateM3u8(this.name, finalUrl, url, headers = headerMap)
             } catch (e: Exception) {
                 emptyList()
             }
@@ -138,12 +133,7 @@ class GoodstreamExtractor : ExtractorApi() {
             if (m3uLinks.isEmpty()) {
                 Log.w("LaMovie", "LOG: Goodstream Helper falló, enviando link directo.")
                 callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = this.name,
-                        url = fixUrl(link),
-                        type = ExtractorLinkType.M3U8
-                    ) {
+                    newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
                         this.headers = headerMap
                         this.referer = url
@@ -152,12 +142,7 @@ class GoodstreamExtractor : ExtractorApi() {
             } else {
                 m3uLinks.forEach { m3uLink ->
                     callback.invoke(
-                        newExtractorLink(
-                            source = this.name,
-                            name = this.name,
-                            url = m3uLink.url,
-                            type = ExtractorLinkType.M3U8
-                        ) {
+                        newExtractorLink(this.name, this.name, m3uLink.url, ExtractorLinkType.M3U8) {
                             this.quality = m3uLink.quality
                             this.headers = headerMap
                             this.referer = url
