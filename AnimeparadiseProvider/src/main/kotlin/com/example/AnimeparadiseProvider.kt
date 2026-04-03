@@ -242,10 +242,14 @@ class AnimeParadiseProvider : MainAPI() {
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text.replace("\\/", "/")
 
-            Log.d(TAG, "Logs: resText[0..500]: ${resText.take(500)}")
+            Log.d(TAG, "Logs: resText[0..5000]: ${resText.take(5000)}")
 
             val videoUrl = Regex(""""streamLink"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
+                ?: Regex(""""url"\s*:\s*"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
+                    .find(resText)?.groupValues?.getOrNull(1)
+                ?: Regex(""""sources"\s*:\s*\[.*?"(https?://[^"]+)""", RegexOption.DOT_MATCHES_ALL)
+                    .find(resText)?.groupValues?.getOrNull(1)
 
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
