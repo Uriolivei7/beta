@@ -15,61 +15,46 @@ class Vimeos : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val embedUrl =
-            if (!url.contains("/embed-")) "$mainUrl/embed-${url.substringAfterLast("/")}" else url
+        val embedUrl = if (!url.contains("/embed-")) "$mainUrl/embed-${url.substringAfterLast("/")}" else url
 
-        val response = app.get(embedUrl, referer = "https://la.movie/")
-        val res = response.text
-
-        val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-
-        val pcHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-            "Referer" to embedUrl,
-            "Accept-Language" to "es-ES,es;q=0.7",
-            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
-            "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
-            "Cookie" to cookieString
+        val basicHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to "https://la.movie/",
+            "Origin" to mainUrl,
+            "Accept-Language" to "es-MX,es;q=0.9"
         )
 
-        val tracksMatch = Regex("""tracks\s*:\s*\[([\s\S]*?)\]""").find(res)
-        tracksMatch?.groupValues?.get(1)?.let { rawTracks ->
-            val trackRegex =
-                Regex("""\{[^}]*file\s*:\s*["']([^"']+)["'][^}]*label\s*:\s*["']([^"']+)["'][^}]*\}""")
-            trackRegex.findAll(rawTracks).forEach { match ->
-                val subUrl = fixUrl(match.groupValues[1])
-                val subLabel = match.groupValues[2]
+        val response = app.get(embedUrl, headers = basicHeaders)
+        val res = response.text
 
-                if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
-                    Log.d("LaMovie", "LOG: Subtítulo encontrado -> $subLabel en $subUrl")
-
-                    subtitleCallback.invoke(
-                        newSubtitleFile(subLabel, subUrl) {
-                            this.headers = pcHeaders
-                        }
-                    )
-                }
+        val vttRegex = Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""")
+        vttRegex.findAll(res).forEach { match ->
+            val subUrl = fixUrl(match.groupValues[1])
+            val label = when {
+                subUrl.contains("spa", true) || subUrl.contains("_es") -> "Español"
+                subUrl.contains("eng", true) || subUrl.contains("_en") -> "English"
+                else -> "Subtítulo"
             }
+
+            Log.d("LaMovie", "LOG: SUB ENCONTRADO -> $subUrl")
+
+            subtitleCallback.invoke(
+                newSubtitleFile(label, subUrl) {
+                    this.headers = basicHeaders
+                }
+            )
         }
 
         val unpackedJs = JsUnpacker(res).unpack() ?: res
-        val videoUrl =
-            Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(
-                1
-            )
+        val videoUrl = Regex("""file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
         videoUrl?.let { m3u8 ->
             val finalUrl = fixUrl(m3u8).replace("http://", "https://")
-            val videoHeaders = pcHeaders.toMutableMap()
-            videoHeaders["Referer"] = "$mainUrl/"
-            videoHeaders["Sec-Fetch-Site"] =
-                if (finalUrl.contains("vimeos.net")) "same-site" else "cross-site"
 
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = videoHeaders
+                    this.headers = basicHeaders + mapOf("Referer" to "$mainUrl/")
                 }
             )
         }
@@ -87,38 +72,25 @@ class GoodstreamExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val response = app.get(url, referer = "https://la.movie/")
-        val res = response.text
-        val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-
-        val pcHeaders = mapOf(
-            "Accept" to "*/*",
-            "Origin" to mainUrl,
-            "Referer" to "$mainUrl/",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-            "Cookie" to cookieString
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to "https://la.movie/"
         )
 
-        val tracksRaw = Regex("""tracks:\s*(\[[\s\S]*?\])""").find(res)?.groupValues?.get(1)
-        tracksRaw?.let { raw ->
-            Regex("""file:\s*["']([^"']+)["']\s*,\s*label:\s*["']([^"']+)["']""").findAll(raw).forEach { match ->
-                val subUrl = fixUrl(match.groupValues[1])
-                val subLabel = match.groupValues[2]
-                subtitleCallback.invoke(
-                    newSubtitleFile(subLabel, subUrl) {
-                        this.headers = pcHeaders
-                    }
-                )
-            }
+        val res = app.get(url, headers = headers).text
+
+        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(res).forEach {
+            subtitleCallback.invoke(newSubtitleFile("Subtítulo", fixUrl(it.groupValues[1])) {
+                this.headers = headers
+            })
         }
 
-        val m3u8 = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(res)?.groupValues?.get(1)
-
+        val m3u8 = Regex("""file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""").find(res)?.groupValues?.get(1)
         m3u8?.let { link ->
             callback.invoke(
                 newExtractorLink(this.name, this.name, fixUrl(link).replace("http://", "https://"), ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = pcHeaders
+                    this.headers = headers + mapOf("Referer" to "$mainUrl/")
                 }
             )
         }
