@@ -75,53 +75,11 @@ class GoodstreamExtractor : ExtractorApi() {
         val response = app.get(url)
         val res = response.text
 
-        extractSubs(res, url, subtitleCallback, isVimeos = false)
-
         Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").find(res)?.groupValues?.get(1)?.let { link ->
             val cleanLink = link.replace("\\/", "/")
             val finalLink = if (cleanLink.startsWith("http")) cleanLink else "https:$cleanLink"
 
             M3u8Helper.generateM3u8(this.name, finalLink, "$mainUrl/").forEach(callback)
-        }
-    }
-}
-
-private suspend fun extractSubs(
-    html: String,
-    refererUrl: String,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    isVimeos: Boolean = false
-) {
-    if (html.trim().startsWith("WEBVTT")) return
-
-    val trackRegex = Regex("""["']?file["']?\s*[:=]\s*["']([^"']+\.vtt[^"']*)["'](?:[^}]*["']?label["']?\s*[:=]\s*["']([^"']+)["'])?""")
-    val matches = trackRegex.findAll(html).toList()
-
-    suspend fun processSub(rawUrl: String, label: String) {
-        var subUrl = rawUrl.replace("\\/", "/").trim()
-        if (!subUrl.startsWith("http")) subUrl = "https:$subUrl"
-
-        Log.d("LaMovie", "Logs: URL Detectada en HTML -> $subUrl")
-
-        if (isVimeos) {
-            if (subUrl.contains("goodstream.one") || subUrl.contains("vimeos.net")) {
-                val fileName = subUrl.substringAfterLast("/")
-                subUrl = "https://s13.vimeos.net/vtt/02/00008/$fileName"
-                Log.d("LaMovie", "Logs: URL FORZADA a Vimeos S13 -> $subUrl")
-            }
-        }
-
-        invokeSubtitle(label, subUrl, subtitleCallback)
-    }
-
-    if (matches.isEmpty()) {
-        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(html).forEach { match ->
-            processSub(match.groupValues[1], "Spanish (Vimeos)")
-        }
-    } else {
-        matches.forEach { match ->
-            val label = match.groupValues[2].takeIf { !it.isNullOrBlank() } ?: "Spanish"
-            processSub(match.groupValues[1], "$label (Vimeos)")
         }
     }
 }
