@@ -27,8 +27,16 @@ class AnimeParadiseProvider : MainAPI() {
 
     private val apiHeaders = mapOf(
         "accept" to "*/*",
+        "accept-language" to "es-ES,es;q=0.9,en;q=0.8",
         "origin" to mainUrl,
         "referer" to "$mainUrl/",
+        "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "same-site",
+        "sec-gpc" to "1",
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
@@ -249,45 +257,18 @@ class AnimeParadiseProvider : MainAPI() {
 
             Log.d(TAG, "Logs: streamLink: $streamLink")
 
-            var videoUrl: String? = null
-
             if (streamLink != null) {
-                val streamRes = app.get(
-                    "$apiUrl/stream/$streamLink",
-                    headers = apiHeaders + mapOf("cookie" to sessionCookie)
-                )
-                Log.d(TAG, "Logs: streamRes: ${streamRes.code} - ${streamRes.text.take(500)}")
-                
-                videoUrl = Regex(""""url"\s*:\s*"(https?://[^"]+)""")
-                    .find(streamRes.text)?.groupValues?.getOrNull(1)
-                    ?: Regex(""""m3u8"\s*:\s*"(https?://[^"]+)""")
-                        .find(streamRes.text)?.groupValues?.getOrNull(1)
-            }
-
-            if (videoUrl == null) {
-                videoUrl = Regex(""""url"\s*:\s*"(https?://[^"]+)""")
-                    .find(resText)?.groupValues?.getOrNull(1)
-            }
-
-            Log.d(TAG, "Logs: videoUrl: $videoUrl")
-
-            if (videoUrl != null) {
-                val finalUrl = when {
-                    videoUrl.contains(".m3u8") -> videoUrl
-                    videoUrl.contains(".mp4") -> videoUrl
-                    else -> "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}"
-                }
-                
-                val linkType = if (finalUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${streamLink.encodeUri()}"
                 
                 callback.invoke(
                     newExtractorLink(
                         this.name, "AnimeParadise",
-                        finalUrl,
-                        linkType
+                        proxyUrl,
+                        ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$mainUrl/"
                         this.quality = Qualities.Unknown.value
+                        this.headers = apiHeaders
                     }
                 )
             }
@@ -316,7 +297,7 @@ class AnimeParadiseProvider : MainAPI() {
                 }
             }
 
-            videoUrl != null
+            streamLink != null
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en loadLinks: ${e.message}")
             false
