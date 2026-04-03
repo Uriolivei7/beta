@@ -250,11 +250,19 @@ class AnimeParadiseProvider : MainAPI() {
             Log.d(TAG, "Logs: videoUrl: $videoUrl")
 
             if (videoUrl != null) {
+                val finalUrl = when {
+                    videoUrl.contains(".m3u8") -> videoUrl
+                    videoUrl.contains(".mp4") -> videoUrl
+                    else -> "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}"
+                }
+                
+                val linkType = if (finalUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                
                 callback.invoke(
                     newExtractorLink(
                         this.name, "AnimeParadise",
-                        "https://stream.animeparadise.moe/m3u8?url=${videoUrl.encodeUri()}",
-                        ExtractorLinkType.M3U8
+                        finalUrl,
+                        linkType
                     ) {
                         this.referer = "$mainUrl/"
                         this.quality = Qualities.Unknown.value
