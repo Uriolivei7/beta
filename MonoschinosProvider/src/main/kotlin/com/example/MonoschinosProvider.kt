@@ -168,7 +168,7 @@ class MonoschinosProvider : MainAPI() {
             val thumbUrl = if (!ep.thumb.isNullOrBlank()) {
                 if (ep.thumb.startsWith("http")) ep.thumb else "$mainUrl${ep.thumb}"
             } else {
-                backimage 
+                backimage
             }
 
             newEpisode(epUrl) {
