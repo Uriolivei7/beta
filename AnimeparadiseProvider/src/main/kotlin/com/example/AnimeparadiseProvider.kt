@@ -172,6 +172,7 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val detailRes = app.get("$apiUrl/anime/$slug?v=1", headers = apiHeaders).text
+            Log.d(TAG, "Logs: detailRes: ${detailRes.take(2000)}")
             val animeData: AnimeDetailResponse = mapper.readValue(detailRes)
             val data = animeData.data ?: throw Exception("Data de anime nula")
             val internalId = data._id ?: data.id ?: throw Exception("ID interno no encontrado")
