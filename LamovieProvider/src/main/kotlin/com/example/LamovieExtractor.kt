@@ -69,24 +69,43 @@ class GoodstreamExtractor : ExtractorApi() {
     ) {
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language" to "es-MX,es;q=0.9,en;q=0.8",
             "Referer" to "https://la.movie/",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            "Sec-Fetch-Dest" to "document",
+            "Sec-Fetch-Mode" to "navigate",
+            "Sec-Fetch-Site" to "cross-site"
         )
 
         val res = app.get(url, headers = headers).text
 
-        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(res).forEach {
-            val subUrl = fixUrl(it.groupValues[1])
-            Log.d("LaMovie", "LOG: SUB GOODSTREAM -> $subUrl")
-            subtitleCallback.invoke(newSubtitleFile("Subtítulo", subUrl) { this.headers = headers })
+        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(res).forEach { match ->
+            val subUrl = fixUrl(match.groupValues[1])
+
+            val label = when {
+                subUrl.contains("_spa", ignoreCase = true) -> "Español"
+                subUrl.contains("_sli", ignoreCase = true) -> "Español (Latino)"
+                subUrl.contains("_eng", ignoreCase = true) || subUrl.contains("_en", ignoreCase = true) -> "English"
+                else -> "Subtítulo"
+            }
+
+            Log.d("LaMovie", "LOG: SUB GOODSTREAM -> $label: $subUrl")
+
+            subtitleCallback.invoke(
+                newSubtitleFile(lang = label, url = subUrl) {
+                    this.headers = headers + ("Referer" to url)
+                }
+            )
         }
 
         val m3u8 = Regex("""file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""").find(res)?.groupValues?.get(1)
         m3u8?.let { link ->
+            val videoUrl = fixUrl(link).replace("http://", "https://")
+
             callback.invoke(
-                newExtractorLink(this.name, this.name, fixUrl(link).replace("http://", "https://"), ExtractorLinkType.M3U8) {
+                newExtractorLink(this.name, this.name, videoUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = headers + ("Referer" to "$mainUrl/")
+                    this.headers = headers + ("Referer" to "$url/")
                 }
             )
         }
