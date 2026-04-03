@@ -23,13 +23,13 @@ class Vimeos : ExtractorApi() {
         val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
         val standardHeaders = mapOf(
-            "Referer" to "$embedUrl/",
-            "Origin" to mainUrl,
+            "Referer" to "$mainUrl/",
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
             "Cookie" to cookieString,
-            "Sec-Fetch-Dest" to "empty",
+            "Accept" to "*/*",
             "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site"
+            "Sec-Fetch-Site" to "cross-site",
+            "Sec-Fetch-Dest" to "video"
         )
 
         val unpackedJs = JsUnpacker(res).unpack() ?: res
@@ -69,18 +69,18 @@ class GoodstreamExtractor : ExtractorApi() {
         val m3u8 = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(res)?.groupValues?.get(1)
 
         val standardHeaders = mapOf(
-            "Referer" to "$url/",
-            "Origin" to mainUrl,
+            "Referer" to "$mainUrl/",
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
             "Cookie" to cookieString,
-            "Sec-Fetch-Dest" to "empty",
+            "Accept" to "*/*",
             "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site"
+            "Sec-Fetch-Site" to "cross-site",
+            "Sec-Fetch-Dest" to "video"
         )
 
         m3u8?.let { link ->
             val finalUrl = fixUrl(link).replace("http://", "https://")
-            Log.w("LaMovie", "LOG: Enviando enlace Goodstream con protección CORS.")
+            Log.w("LaMovie", "LOG: Enviando enlace Goodstream con headers de video.")
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
