@@ -56,24 +56,46 @@ class Vimeos : ExtractorApi() {
         videoUrl?.let { m3u8 ->
             Log.i("LaMovie", "LOG: Generando enlaces fluidos para Vimeos...")
 
-            M3u8Helper.generateM3u8(
-                this.name,
-                fixUrl(m3u8),
-                "$mainUrl/",
-                headers = headerMap
-            ).forEach { link ->
+            val m3uLinks = try {
+                M3u8Helper.generateM3u8(
+                    this.name,
+                    fixUrl(m3u8),
+                    "$mainUrl/",
+                    headers = headerMap
+                )
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            if (m3uLinks.isEmpty()) {
+                Log.w("LaMovie", "LOG: M3u8Helper no encontró calidades, enviando link directo.")
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = this.name,
-                        url = link.url,
+                        url = fixUrl(m3u8),
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.quality = link.quality
-                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.P1080.value 
                         this.headers = headerMap
+                        this.referer = "$mainUrl/"
                     }
                 )
+            } else {
+                m3uLinks.forEach { link ->
+                    callback.invoke(
+                        newExtractorLink(
+                            source = this.name,
+                            name = this.name,
+                            url = link.url,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.quality = link.quality
+                            this.headers = headerMap
+                            this.referer = "$mainUrl/"
+                        }
+                    )
+                }
             }
         }
     }
