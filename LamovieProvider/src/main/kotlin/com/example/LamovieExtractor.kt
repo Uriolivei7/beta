@@ -81,11 +81,9 @@ class GoodstreamExtractor : ExtractorApi() {
 
         Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(res).forEach { match ->
             val subUrl = fixUrl(match.groupValues[1])
-
             val label = when {
-                subUrl.contains("_spa", ignoreCase = true) -> "Español"
-                subUrl.contains("_sli", ignoreCase = true) -> "Español (Latino)"
-                subUrl.contains("_eng", ignoreCase = true) || subUrl.contains("_en", ignoreCase = true) -> "English"
+                subUrl.contains("_sli") -> "Español (Latino)"
+                subUrl.contains("_spa") -> "Español"
                 else -> "Subtítulo"
             }
 
@@ -93,7 +91,12 @@ class GoodstreamExtractor : ExtractorApi() {
 
             subtitleCallback.invoke(
                 newSubtitleFile(lang = label, url = subUrl) {
-                    this.headers = headers + ("Referer" to url)
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                        "Referer" to url,
+                        "Origin" to "https://goodstream.one",
+                        "Accept" to "*/*"
+                    )
                 }
             )
         }
