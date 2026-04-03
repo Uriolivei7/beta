@@ -20,26 +20,38 @@ class Vimeos : ExtractorApi() {
         val res = response.text
         val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-        val pcHeaders = mutableMapOf(
-            "Accept" to "*/*",
-            "Accept-Language" to "es-ES,es;q=0.7",
-            "Connection" to "keep-alive",
-            "Origin" to mainUrl,
-            "Referer" to "$mainUrl/",
+        val pcHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Referer" to "$mainUrl/",
+            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Windows\"",
             "Cookie" to cookieString
         )
 
-        // --- EXTRACCIÓN DE SUBTÍTULOS ---
-        // Buscamos líneas tipo: tracks: [{file: "...", label: "Spanish", kind: "captions"}]
-        val tracksRaw = Regex("""tracks:\s*(\[[\s\S]*?\])""").find(res)?.groupValues?.get(1)
-        if (tracksRaw != null) {
-            val subRegex = Regex("""file:\s*["']([^"']+)["']\s*,\s*label:\s*["']([^"']+)["']""")
-            subRegex.findAll(tracksRaw).forEach { match ->
+        val tracksRaw = Regex("""tracks\s*:\s*\[([\s\S]*?)\]""").find(res)?.groupValues?.get(1)
+
+        tracksRaw?.let { raw ->
+            val subRegex = Regex("""file\s*:\s*["']([^"']+)["']\s*,\s*label\s*:\s*["']([^"']+)["']""")
+            subRegex.findAll(raw).forEach { match ->
                 val subUrl = fixUrl(match.groupValues[1])
                 val subLabel = match.groupValues[2]
-                Log.d("LaMovie", "Subtítulo encontrado: $subLabel -> $subUrl")
-                subtitleCallback.invoke(SubtitleFile(subLabel, subUrl))
+
+                if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
+                    Log.d("LaMovie", "SUB DETECTADO: $subLabel -> $subUrl")
+
+                    val subFile = newSubtitleFile(subLabel, subUrl) {
+                        this.headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                            "Referer" to "$mainUrl/",
+                            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+                            "sec-ch-ua-mobile" to "?0",
+                            "sec-ch-ua-platform" to "\"Windows\"",
+                            "Cookie" to cookieString
+                        )
+                    }
+                    subtitleCallback.invoke(subFile)
+                }
             }
         }
 
@@ -48,12 +60,17 @@ class Vimeos : ExtractorApi() {
 
         videoUrl?.let { m3u8 ->
             val finalUrl = fixUrl(m3u8).replace("http://", "https://")
-            pcHeaders["Sec-Fetch-Site"] = if (finalUrl.contains("vimeos.net")) "same-site" else "cross-site"
+
+            val videoHeaders = pcHeaders.toMutableMap()
+            videoHeaders["Accept"] = "*/*"
+            videoHeaders["Sec-Fetch-Dest"] = "empty"
+            videoHeaders["Sec-Fetch-Mode"] = "cors"
+            videoHeaders["Sec-Fetch-Site"] = if (finalUrl.contains("vimeos.net")) "same-site" else "cross-site"
 
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = pcHeaders
+                    this.headers = videoHeaders
                 }
             )
         }
@@ -83,7 +100,6 @@ class GoodstreamExtractor : ExtractorApi() {
             "Cookie" to cookieString
         )
 
-        // --- EXTRACCIÓN DE SUBTÍTULOS PARA GOODSTREAM ---
         val tracksRaw = Regex("""tracks:\s*(\[[\s\S]*?\])""").find(res)?.groupValues?.get(1)
         tracksRaw?.let { raw ->
             Regex("""file:\s*["']([^"']+)["']\s*,\s*label:\s*["']([^"']+)["']""").findAll(raw).forEach { match ->
