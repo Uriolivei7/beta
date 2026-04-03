@@ -16,33 +16,38 @@ class Vimeos : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val embedUrl = if (!url.contains("/embed-")) "$mainUrl/embed-${url.substringAfterLast("/")}" else url
-        Log.i("LaMovie", "LOG: Cargando Vimeos -> $embedUrl")
+        Log.i("LaMovie", "LOG: Cargando Vimeos con Headers de PC -> $embedUrl")
 
         val response = app.get(embedUrl, referer = "https://la.movie/")
         val res = response.text
-        val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-        val standardHeaders = mapOf(
-            "Referer" to "$mainUrl/",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-            "Cookie" to cookieString,
+        val pcHeaders = mapOf(
             "Accept" to "*/*",
+            "Accept-Language" to "es-ES,es;q=0.7",
+            "Connection" to "keep-alive",
+            "Origin" to mainUrl,
+            "Referer" to "$mainUrl/",
+            "Sec-Fetch-Dest" to "empty",
             "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site",
-            "Sec-Fetch-Dest" to "video"
+            "Sec-Fetch-Site" to if (url.contains(".zip")) "cross-site" else "same-site",
+            "Sec-GPC" to "1",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Windows\""
         )
 
         val unpackedJs = JsUnpacker(res).unpack() ?: res
-        val videoUrl = Regex("""["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
+        val videoUrl = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
 
         videoUrl?.let { m3u8 ->
             val finalUrl = fixUrl(m3u8).replace("http://", "https://")
-            Log.i("LaMovie", "LOG: URL Vimeos Final: $finalUrl")
+            Log.d("LaMovie", "LOG: Enviando link compatible: $finalUrl")
 
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = standardHeaders
+                    this.headers = pcHeaders
                 }
             )
         }
@@ -60,31 +65,30 @@ class GoodstreamExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.i("LaMovie", "LOG: Iniciando Goodstream -> $url")
+        Log.i("LaMovie", "LOG: Cargando Goodstream con Headers de PC -> $url")
 
         val response = app.get(url, referer = "https://la.movie/")
         val res = response.text
-        val cookieString = response.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+
+        val pcHeaders = mapOf(
+            "Accept" to "*/*",
+            "Origin" to mainUrl,
+            "Referer" to "$mainUrl/",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "sec-ch-ua-platform" to "\"Windows\""
+        )
 
         val m3u8 = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(res)?.groupValues?.get(1)
 
-        val standardHeaders = mapOf(
-            "Referer" to "$mainUrl/",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-            "Cookie" to cookieString,
-            "Accept" to "*/*",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site",
-            "Sec-Fetch-Dest" to "video"
-        )
-
         m3u8?.let { link ->
             val finalUrl = fixUrl(link).replace("http://", "https://")
-            Log.w("LaMovie", "LOG: Enviando enlace Goodstream con headers de video.")
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = standardHeaders
+                    this.headers = pcHeaders
                 }
             )
         }
