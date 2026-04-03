@@ -33,35 +33,17 @@ class Vimeos : ExtractorApi() {
             "Cookie" to cookieString
         )
 
-        val allSubs = Regex("""["'](https?://[^"']+\.(?:vtt|srt)[^"']*)["']""").findAll(res)
-
-        var foundAny = false
-        allSubs.forEach { match ->
-            val subUrl = fixUrl(match.groupValues[1])
-
-            val label = when {
-                subUrl.contains("spa", ignoreCase = true) || subUrl.contains("_es") -> "Español"
-                subUrl.contains("eng", ignoreCase = true) || subUrl.contains("_en") -> "English"
-                else -> "Subtítulo"
-            }
-
-            Log.d("LaMovie", "LOG: Subtítulo detectado -> $label en $subUrl")
-            foundAny = true
-
-            subtitleCallback.invoke(
-                newSubtitleFile(label, subUrl) {
-                    this.headers = pcHeaders
-                }
-            )
-        }
-
-        if (!foundAny) {
-            Regex("""file\s*:\s*["']([^"']+)["']\s*,\s*label\s*:\s*["']([^"']+)["']""").findAll(res).forEach { match ->
+        val tracksMatch = Regex("""tracks\s*:\s*\[([\s\S]*?)\]""").find(res)
+        tracksMatch?.groupValues?.get(1)?.let { rawTracks ->
+            val trackRegex =
+                Regex("""\{[^}]*file\s*:\s*["']([^"']+)["'][^}]*label\s*:\s*["']([^"']+)["'][^}]*\}""")
+            trackRegex.findAll(rawTracks).forEach { match ->
                 val subUrl = fixUrl(match.groupValues[1])
                 val subLabel = match.groupValues[2]
 
                 if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
-                    Log.d("LaMovie", "LOG: Subtítulo detectado (vía tracks) -> $subLabel")
+                    Log.d("LaMovie", "LOG: Subtítulo encontrado -> $subLabel en $subUrl")
+
                     subtitleCallback.invoke(
                         newSubtitleFile(subLabel, subUrl) {
                             this.headers = pcHeaders
@@ -72,16 +54,22 @@ class Vimeos : ExtractorApi() {
         }
 
         val unpackedJs = JsUnpacker(res).unpack() ?: res
-        val videoUrl = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(1)
+        val videoUrl =
+            Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""").find(unpackedJs)?.groupValues?.get(
+                1
+            )
 
         videoUrl?.let { m3u8 ->
             val finalUrl = fixUrl(m3u8).replace("http://", "https://")
+            val videoHeaders = pcHeaders.toMutableMap()
+            videoHeaders["Referer"] = "$mainUrl/"
+            videoHeaders["Sec-Fetch-Site"] =
+                if (finalUrl.contains("vimeos.net")) "same-site" else "cross-site"
+
             callback.invoke(
                 newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
                     this.quality = Qualities.P1080.value
-                    this.headers = pcHeaders.toMutableMap().apply {
-                        put("Referer", "$mainUrl/")
-                    }
+                    this.headers = videoHeaders
                 }
             )
         }
