@@ -24,7 +24,10 @@ class Vimeos : ExtractorApi() {
 
         val unpackedJs = unpackJs(response.document) ?: res
         Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").find(unpackedJs)?.groupValues?.get(1)?.let { link ->
-            M3u8Helper.generateM3u8(this.name, fixUrl(link), "$mainUrl/").forEach(callback)
+            val cleanLink = link.replace("\\/", "/")
+            val finalLink = if (cleanLink.startsWith("http")) cleanLink else "https:$cleanLink"
+
+            M3u8Helper.generateM3u8(this.name, finalLink, "$mainUrl/").forEach(callback)
         }
     }
 
@@ -55,49 +58,53 @@ class GoodstreamExtractor : ExtractorApi() {
         extractSubs(res, url, subtitleCallback)
 
         Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""").find(res)?.groupValues?.get(1)?.let { link ->
-            M3u8Helper.generateM3u8(this.name, fixUrl(link), "$mainUrl/").forEach(callback)
+            val cleanLink = link.replace("\\/", "/")
+            val finalLink = if (cleanLink.startsWith("http")) cleanLink else "https:$cleanLink"
+
+            M3u8Helper.generateM3u8(this.name, finalLink, "$mainUrl/").forEach(callback)
         }
     }
 }
 
 private suspend fun extractSubs(html: String, refererUrl: String, subtitleCallback: (SubtitleFile) -> Unit) {
-    val tracksMatch = Regex("""tracks\s*:\s*\[([\s\S]*?)\]""").find(html)
-    tracksMatch?.groupValues?.get(1)?.let { rawTracks ->
-        val trackRegex = Regex("""\{[^}]*file\s*:\s*["']([^"']+)["'][^}]*label\s*:\s*["']([^"']+)["'][^}]*\}""")
+    if (html.trim().startsWith("WEBVTT")) return
 
-        trackRegex.findAll(rawTracks).forEach { match ->
-            val rawUrl = match.groupValues[1]
-            val subUrl = if (rawUrl.startsWith("http")) rawUrl
-            else if (rawUrl.startsWith("//")) "https:$rawUrl"
-            else "https://$rawUrl"
+    val trackRegex = Regex("""\{[^}]*file\s*[:=]\s*["']([^"']+\.vtt[^"']*)["'][^}]*label\s*[:=]\s*["']([^"']+)["'][^}]*\}""")
+    val matches = trackRegex.findAll(html)
 
-            val isVimeos = subUrl.contains("vimeos")
-            val sourceName = if (isVimeos) "Vimeos" else "Good"
-            val subLabel = "${match.groupValues[2]} ($sourceName)"
-
-            if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
-                Log.d("LaMovie", "LOG: Registrando Sub de $sourceName -> $subLabel: $subUrl")
-
-                subtitleCallback.invoke(
-                    newSubtitleFile(subLabel, subUrl) {
-                        val finalReferer = if (isVimeos) "https://vimeos.net/" else "https://goodstream.one/"
-                        val finalOrigin = if (isVimeos) "https://vimeos.net" else "https://goodstream.one"
-
-                        this.headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                            "Referer" to finalReferer,
-                            "Origin" to finalOrigin,
-                            "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
-                            "sec-ch-ua-mobile" to "?0",
-                            "sec-ch-ua-platform" to "\"Windows\"",
-                            "Accept" to "*/*",
-                            "Sec-Fetch-Dest" to "empty",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "cross-site"
-                        )
-                    }
-                )
+    if (matches.none()) {
+        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(html).forEach { match ->
+            val subUrl = match.groupValues[1].replace("\\/", "/")
+            val label = when {
+                subUrl.contains("_spa") -> "Spanish (Vimeos)"
+                subUrl.contains("_eng") -> "English (Vimeos)"
+                else -> "Sub (Vimeos)"
             }
+            invokeSubtitle(label, subUrl, subtitleCallback)
+        }
+    } else {
+        matches.forEach { match ->
+            val rawUrl = match.groupValues[1].replace("\\/", "/")
+            val subUrl = if (rawUrl.startsWith("http")) rawUrl else "https:$rawUrl"
+            val subLabel = "${match.groupValues[2]} (Vimeos)"
+            invokeSubtitle(subLabel, subUrl, subtitleCallback)
         }
     }
+}
+
+private suspend fun invokeSubtitle(label: String, url: String, callback: (SubtitleFile) -> Unit) {
+    Log.d("LaMovie", "LOG: Registrando Sub -> $label: $url")
+
+    callback.invoke(
+        newSubtitleFile(label, url) {
+            this.headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Referer" to "https://vimeos.net/",
+                "Origin" to "https://vimeos.net",
+                "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+                "sec-ch-ua-mobile" to "?0",
+                "sec-ch-ua-platform" to "\"Windows\""
+            )
+        }
+    )
 }
