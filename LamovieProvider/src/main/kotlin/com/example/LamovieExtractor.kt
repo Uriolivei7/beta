@@ -76,7 +76,7 @@ class Vimeos : ExtractorApi() {
                         url = fixUrl(m3u8),
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.quality = Qualities.P1080.value 
+                        this.quality = Qualities.P1080.value
                         this.headers = headerMap
                         this.referer = "$mainUrl/"
                     }
@@ -124,24 +124,46 @@ class GoodstreamExtractor : ExtractorApi() {
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
 
-            M3u8Helper.generateM3u8(
-                this.name,
-                fixUrl(link),
-                url,
-                headers = headerMap
-            ).forEach { m3uLink ->
+            val m3uLinks = try {
+                M3u8Helper.generateM3u8(
+                    this.name,
+                    fixUrl(link),
+                    url,
+                    headers = headerMap
+                )
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            if (m3uLinks.isEmpty()) {
+                Log.w("LaMovie", "LOG: Goodstream Helper falló, enviando link directo.")
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = this.name,
-                        url = m3uLink.url,
+                        url = fixUrl(link),
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.quality = m3uLink.quality
-                        this.referer = url
+                        this.quality = Qualities.P1080.value
                         this.headers = headerMap
+                        this.referer = url
                     }
                 )
+            } else {
+                m3uLinks.forEach { m3uLink ->
+                    callback.invoke(
+                        newExtractorLink(
+                            source = this.name,
+                            name = this.name,
+                            url = m3uLink.url,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.quality = m3uLink.quality
+                            this.headers = headerMap
+                            this.referer = url
+                        }
+                    )
+                }
             }
         }
     }
