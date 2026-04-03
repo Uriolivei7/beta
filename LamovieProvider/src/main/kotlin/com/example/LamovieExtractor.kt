@@ -74,12 +74,20 @@ class Vimeos : ExtractorApi() {
             }
 
             if (m3uLinks.isEmpty()) {
-                Log.w("LaMovie", "LOG: M3u8Helper falló, enviando link directo.")
+                Log.w("LaMovie", "LOG: M3u8Helper falló, enviando link directo para ${this.name}")
                 callback.invoke(
-                    newExtractorLink(this.name, this.name, finalUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(
+                        this.name,
+                        this.name,
+                        finalUrl,
+                        ExtractorLinkType.M3U8
+                    ) {
                         this.quality = Qualities.P1080.value
-                        this.headers = headerMap
-                        this.referer = "$mainUrl/"
+                        this.headers = mapOf(
+                            "Referer" to "$mainUrl/",
+                            "Origin" to mainUrl.removeSuffix("/"),
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                        )
                     }
                 )
             } else {
