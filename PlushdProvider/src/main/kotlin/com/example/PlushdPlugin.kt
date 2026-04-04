@@ -12,9 +12,5 @@ class PlushdPlugin: Plugin() {
         registerExtractorAPI(PelisplusUpnsPro2())
         registerExtractorAPI(PelisplusUpnsPro3())
         registerExtractorAPI(EmturbovidCom())
-        registerExtractorAPI(StreamWishTo())
-        registerExtractorAPI(VidHidePro())
-        registerExtractorAPI(VoeExtractor())
-        registerExtractorAPI(MixDropExtractor())
     }
 }

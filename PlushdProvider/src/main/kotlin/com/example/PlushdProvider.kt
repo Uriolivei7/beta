@@ -218,31 +218,6 @@ class PlushdProvider : MainAPI() {
             .replaceFirst("https://streamtape.com", "https://streamtape.cc")
     }
 
-    private fun extractStreamUrl(text: String): String? {
-        val patterns = listOf(
-            Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]"""),
-            Regex("""source:\s*['"]([^'"]+)['"]"""),
-            Regex("""file:\s*['"]([^'"]+\.(mp4|m3u8|webm))['"]""", RegexOption.IGNORE_CASE),
-            Regex("""url:\s*['"]([^'"]+)['"]"""),
-            Regex("""src:\s*['"]([^'"]+)['"]"""),
-            Regex("""video.*?src\s*[=:]\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE),
-            Regex("""https?://[^\s'"]+\.(mp4|m3u8|webm)[^\s'"]*""", RegexOption.IGNORE_CASE),
-            Regex("""player\.src\s*\(\s*['"]([^'"]+)['"]"""),
-            Regex("""['"](https?://[^\s'"]+)['"].*?type.*?['"]application/vnd\.apple\.mpegurl['"]"""),
-        )
-
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                val url = match.groupValues.getOrNull(1)
-                if (!url.isNullOrBlank() && (url.startsWith("http") || url.contains("/"))) {
-                    return url
-                }
-            }
-        }
-        return null
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -260,6 +235,7 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data, headers = headers).document
 
         val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
+            Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
             subtitleCallback.invoke(file)
         }
 
@@ -268,73 +244,21 @@ class PlushdProvider : MainAPI() {
                 val serverData = serverLi.attr("data-server")
                 if (serverData.isNullOrEmpty()) return@forEach
 
-                val playerUrl = "$mainUrl/player/$serverData"
+                val encodedOne = serverData.toByteArray()
+                val encodedTwo = base64Encode(encodedOne)
+                val playerUrl = "$mainUrl/player/$encodedTwo"
 
                 val text = app.get(playerUrl, headers = headers).text
-
-                Log.d("PlushdProvider", "Player URL: $playerUrl")
-                Log.d("PlushdProvider", "Player response (first 500 chars): ${text.take(500)}")
 
                 if (text.contains("bloqueo temporal")) {
                     Log.w("PlushdProvider", "ADVERTENCIA: Bloqueo temporal detectado. Saltando servidor.")
                     return@forEach
                 }
 
-                if (text.contains("PLAYERHD")) {
-                    Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Buscando iframe o URL en el HTML.")
-                    
-                    val iframeMatch = Regex("""iframe[^>]+src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(text)
-                    if (iframeMatch != null) {
-                        val iframeSrc = iframeMatch.groupValues.getOrNull(1)
-                        Log.d("PlushdProvider", "Found iframe in player: $iframeSrc")
-                        if (!iframeSrc.isNullOrBlank()) {
-                            loadExtractor(
-                                url = iframeSrc,
-                                referer = mainUrl,
-                                subtitleCallback = loggingSubtitleCallback,
-                                callback = callback
-                            )
-                            linksFound = true
-                            return@forEach
-                        }
-                    }
-                    
-                    val scriptUrlMatch = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""").find(text)
-                    val rawJsUrl = scriptUrlMatch?.groupValues?.getOrNull(1)
-                    Log.d("PlushdProvider", "JS URL raw: $rawJsUrl")
-                    
-                    if (!rawJsUrl.isNullOrBlank() && rawJsUrl.length > 3) {
-                        try {
-                            val decodedUrl = java.net.URLDecoder.decode(rawJsUrl, "UTF-8")
-                            Log.d("PlushdProvider", "Decoded URL: $decodedUrl")
-                            
-                            if (decodedUrl.startsWith("http")) {
-                                loadExtractor(
-                                    url = decodedUrl,
-                                    referer = mainUrl,
-                                    subtitleCallback = loggingSubtitleCallback,
-                                    callback = callback
-                                )
-                                linksFound = true
-                            }
-                        } catch (e: Exception) {
-                            Log.e("PlushdProvider", "Error decoding URL: ${e.message}")
-                        }
-                    }
-                    
-                    return@forEach
-                }
-
                 val link = linkRegex.find(text)?.destructured?.component1()
 
-                val streamUrl = if (link.isNullOrBlank()) {
-                    extractStreamUrl(text)
-                } else {
-                    link
-                }
-
-                if (!streamUrl.isNullOrBlank()) {
-                    val fixedLink = fixPelisplusHostsLinks(streamUrl)
+                if (!link.isNullOrBlank()) {
+                    val fixedLink = fixPelisplusHostsLinks(link)
 
                     val extractorReferer = try {
                         val urlObject = URL(fixedLink)
