@@ -283,24 +283,25 @@ class PlushdProvider : MainAPI() {
 
                 if (text.contains("PLAYERHD")) {
                     Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Intentando extraer URL del HTML original.")
-                    val episodeDoc = app.get(data, headers = headers).document
-                    val dataTr = episodeDoc.selectFirst("#player-tr")?.attr("data-tr")
+                    
+                    val playerDoc = app.get(playerUrl, headers = headers).document
+                    Log.d("PlushdProvider", "Player HTML sample: ${playerDoc.html().take(2000)}")
+                    
+                    val dataTr = playerDoc.selectFirst("[data-tr]")?.attr("data-tr")
+                        ?: playerDoc.selectFirst("#player-tr")?.attr("data-tr")
+                        ?: playerDoc.selectFirst(".video-html")?.attr("data-tr")
+                    
                     if (!dataTr.isNullOrBlank()) {
                         val trDecoded = String(Base64.decode(dataTr, Base64.NO_WRAP))
-                        Log.d("PlushdProvider", "data-tr decoded: $trDecoded")
-                        
-                        val streamwishId = trDecoded.trimEnd('=')
-                        val finalUrl = "https://streamwish.to/e/$streamwishId"
-                        Log.d("PlushdProvider", "Final URL: $finalUrl")
-                        
-                        loadExtractor(
-                            url = finalUrl,
-                            referer = "https://streamwish.to/",
-                            subtitleCallback = loggingSubtitleCallback,
-                            callback = callback
-                        )
-                        linksFound = true
+                        Log.d("PlushdProvider", "data-tr from player page: $dataTr -> decoded: $trDecoded")
+                    } else {
+                        Log.w("PlushdProvider", "No data-tr found in player page either")
                     }
+                    
+                    val episodeDoc = app.get(data, headers = headers).document
+                    val dataTr2 = episodeDoc.selectFirst("#player-tr")?.attr("data-tr")
+                    Log.d("PlushdProvider", "data-tr from episode page: $dataTr2")
+                    
                     return@forEach
                 }
 
