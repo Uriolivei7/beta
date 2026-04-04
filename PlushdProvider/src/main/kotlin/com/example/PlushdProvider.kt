@@ -301,15 +301,17 @@ class PlushdProvider : MainAPI() {
                             
                             val iframes = redirectedDoc.select("iframe[src]")
                             if (iframes.isNotEmpty()) {
-                                val iframeSrc = iframes.first().attr("src")
-                                Log.d("PlushdProvider", "Found iframe: $iframeSrc")
-                                loadExtractor(
-                                    url = iframeSrc,
-                                    referer = mainUrl,
-                                    subtitleCallback = loggingSubtitleCallback,
-                                    callback = callback
-                                )
-                                linksFound = true
+                                val iframeSrc = iframes.firstOrNull()?.attr("src")
+                                if (!iframeSrc.isNullOrBlank()) {
+                                    Log.d("PlushdProvider", "Found iframe: $iframeSrc")
+                                    loadExtractor(
+                                        url = iframeSrc,
+                                        referer = mainUrl,
+                                        subtitleCallback = loggingSubtitleCallback,
+                                        callback = callback
+                                    )
+                                    linksFound = true
+                                }
                             }
                         } catch (e: Exception) {
                             Log.e("PlushdProvider", "Error following redirect: ${e.message}")
