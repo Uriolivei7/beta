@@ -5,8 +5,6 @@ package com.example
     Empresa: RANITA TECH
     Versión software: 1.0     fecha: 09/08/2025
 */
-import com.lagradost.cloudstream3.extractors.DoodStreamExtractor
-import com.lagradost.cloudstream3.extractors.FileMoon
 import com.lagradost.cloudstream3.extractors.Filesim
 import com.lagradost.cloudstream3.extractors.MixDrop
 import com.lagradost.cloudstream3.extractors.StreamWishExtractor
@@ -40,14 +38,6 @@ class VidHidePro : StreamWishExtractor() {
 class VoeExtractor : Voe() {
     override var mainUrl = "https://voe.sx"
     override var name = "Voe"
-}
-class DoodStream : DoodStreamExtractor() {
-    override var mainUrl = "https://dood.la"
-    override var name = "DoodStream"
-}
-class FilemoonHD : FileMoon() {
-    override var mainUrl = "https://filemoon.sx"
-    override var name = "FileMoon"
 }
 class MixDropExtractor : MixDrop() {
     override var mainUrl = "https://mixdrop.co"
