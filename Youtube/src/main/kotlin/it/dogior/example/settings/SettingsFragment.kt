@@ -16,8 +16,9 @@ import android.widget.TextView
 import androidx.annotation.RequiresApi
 import androidx.core.content.res.ResourcesCompat
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import it.dogior.example.BuildConfig
 import it.dogior.example.YouTubePlugin
+
+private const val LIBRARY_PACKAGE_NAME = "it.dogior.example"
 
 /**
  * A simple [Fragment] subclass.
@@ -31,7 +32,7 @@ class SettingsFragment(
     private val res = plugin.resources ?: throw Exception("Unable to read resources")
 
     private fun <T : View> View.findView(name: String): T {
-        val id = res.getIdentifier(name, "id", BuildConfig.LIBRARY_PACKAGE_NAME)
+        val id = res.getIdentifier(name, "id", LIBRARY_PACKAGE_NAME)
         return this.findViewById(id)
     }
 
@@ -47,13 +48,13 @@ class SettingsFragment(
 
     private fun getDrawable(name: String): Drawable? {
         val id =
-            res.getIdentifier(name, "drawable", BuildConfig.LIBRARY_PACKAGE_NAME)
+            res.getIdentifier(name, "drawable", LIBRARY_PACKAGE_NAME)
         return ResourcesCompat.getDrawable(res, id, null)
     }
 
     private fun getString(name: String): String? {
         val id =
-            res.getIdentifier(name, "string", BuildConfig.LIBRARY_PACKAGE_NAME)
+            res.getIdentifier(name, "string", LIBRARY_PACKAGE_NAME)
         return res.getString(id)
     }
 
@@ -64,7 +65,7 @@ class SettingsFragment(
         val id = res.getIdentifier(
             "settings_fragment",
             "layout",
-            BuildConfig.LIBRARY_PACKAGE_NAME
+            LIBRARY_PACKAGE_NAME
         )
         val layout = res.getLayout(id)
         return inflater.inflate(layout, container, false)

@@ -23,7 +23,6 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import it.dogior.example.BuildConfig
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -33,6 +32,8 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
+
+private const val LIBRARY_PACKAGE_NAME = "it.dogior.example"
 
 /**
  * A simple [Fragment] subclass.
@@ -46,7 +47,7 @@ class HomepageSettings(
     BottomSheetDialogFragment() {
 
     private fun <T : View> View.findView(name: String): T {
-        val id = plugin.resources!!.getIdentifier(name, "id", BuildConfig.LIBRARY_PACKAGE_NAME)
+        val id = plugin.resources!!.getIdentifier(name, "id", LIBRARY_PACKAGE_NAME)
         return this.findViewById(id)
     }
 
@@ -57,13 +58,13 @@ class HomepageSettings(
 
     private fun getDrawable(name: String): Drawable? {
         val id =
-            plugin.resources!!.getIdentifier(name, "drawable", BuildConfig.LIBRARY_PACKAGE_NAME)
+            plugin.resources!!.getIdentifier(name, "drawable", LIBRARY_PACKAGE_NAME)
         return ResourcesCompat.getDrawable(plugin.resources!!, id, null)
     }
 
     private fun getString(name: String): String? {
         val id =
-            plugin.resources!!.getIdentifier(name, "string", BuildConfig.LIBRARY_PACKAGE_NAME)
+            plugin.resources!!.getIdentifier(name, "string", LIBRARY_PACKAGE_NAME)
         return plugin.resources!!.getString(id)
     }
 
@@ -74,7 +75,7 @@ class HomepageSettings(
         val id = plugin.resources!!.getIdentifier(
             "homepage_settings",
             "layout",
-            BuildConfig.LIBRARY_PACKAGE_NAME
+            LIBRARY_PACKAGE_NAME
         )
         val layout = plugin.resources!!.getLayout(id)
         return inflater.inflate(layout, container, false)
