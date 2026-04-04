@@ -289,13 +289,8 @@ class PlushdProvider : MainAPI() {
                         val trDecoded = String(Base64.decode(dataTr, Base64.NO_WRAP))
                         Log.d("PlushdProvider", "data-tr decoded: $trDecoded")
                         
-                        val finalUrl = if (trDecoded.startsWith("http")) {
-                            trDecoded
-                        } else if (trDecoded.contains("/e/")) {
-                            "https://streamwish.to${trDecoded.substringAfter("/e/").let { "/e/$it" }}"
-                        } else {
-                            "https://streamwish.to/e/$trDecoded"
-                        }
+                        val streamwishId = trDecoded.trimEnd('=')
+                        val finalUrl = "https://streamwish.to/e/$streamwishId"
                         Log.d("PlushdProvider", "Final URL: $finalUrl")
                         
                         loadExtractor(
