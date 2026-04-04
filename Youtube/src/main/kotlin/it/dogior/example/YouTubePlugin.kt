@@ -15,11 +15,11 @@ class YouTubePlugin : Plugin() {
     private val sharedPref = activity?.getSharedPreferences("Youtube", Context.MODE_PRIVATE)
 
     override fun load(context: Context) {
-        var language = sharedPref?.getString("language", "it")
-        var country = sharedPref?.getString("country", "IT")
+        var language = sharedPref?.getString("language", "mx")
+        var country = sharedPref?.getString("country", "MX")
 
-        if (language.isNullOrEmpty()) {language = "it"}
-        if (country.isNullOrEmpty()) {country = "IT"}
+        if (language.isNullOrEmpty()) {language = "mx"}
+        if (country.isNullOrEmpty()) {country = "MX"}
         NewPipe.setupLocalization(Localization(language), ContentCountry(country))
 
         registerMainAPI(YouTubeProvider(language, sharedPref))
