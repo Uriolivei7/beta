@@ -12,15 +12,16 @@ import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.SubtitleFile
+
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
-import com.lagradost.cloudstream3.utils.loadExtractor
 import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.InfoItem.InfoType
 import org.schabi.newpipe.extractor.Page
@@ -34,6 +35,8 @@ import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.services.youtube.YoutubeService
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.VideoStream
 
 open class YouTubeProvider(language: String, private val sharedPrefs: SharedPreferences?) : MainAPI() {
     override var mainUrl = MAIN_URL
@@ -86,7 +89,7 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
             }
         }
         return HomePageList(
-            name = "Trending",
+            name = "En Tendencia",
             list = searchResponses,
             isHorizontalImages = true
         )
@@ -291,6 +294,50 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        return loadExtractor(data, null, subtitleCallback, callback)
+        try {
+            val extractor = service.getStreamExtractor(data)
+            extractor.fetchPage()
+            val videoInfo = StreamInfo.getInfo(extractor)
+
+            val videoStreams = videoInfo.videoStreams.filter { it.resolution != null && it.url != null }
+            
+            val vp9Streams = videoStreams.filter { it.format?.name?.contains("VP9", ignoreCase = true) == true }
+                .sortedByDescending { extractHeight(it.resolution) }
+            
+            val h264Streams = videoStreams.filter { it.format?.name?.contains("H264", ignoreCase = true) == true }
+                .sortedByDescending { extractHeight(it.resolution) }
+
+            val sortedStreams = vp9Streams + h264Streams
+
+            sortedStreams.forEach { stream ->
+                val streamUrl = stream.url ?: return@forEach
+                val formatType = when {
+                    streamUrl.contains(".m3u8") -> ExtractorLinkType.M3U8
+                    streamUrl.contains(".mpd") -> ExtractorLinkType.DASH
+                    else -> ExtractorLinkType.VIDEO
+                }
+                callback(
+                    ExtractorLink(
+                        source = "YouTube",
+                        name = "YouTube ${stream.format?.name ?: "Unknown"} ${stream.resolution ?: ""}",
+                        url = streamUrl,
+                        referer = "https://www.youtube.com/",
+                        type = formatType,
+                        quality = extractHeight(stream.resolution)
+                    )
+                )
+            }
+
+            return sortedStreams.isNotEmpty()
+        } catch (e: Exception) {
+            Log.e("YouTubeProvider", "Error loading links: ${e.message}")
+            return false
+        }
+    }
+
+    private fun extractHeight(resolution: String?): Int {
+        if (resolution == null) return 0
+        val heightRegex = Regex("(\\d+)p")
+        return heightRegex.find(resolution)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 }
