@@ -84,10 +84,67 @@ class Do7GoExtractor : ExtractorApi() {
                     }
                 )
             } else {
-                Log.e("Do7Go", "No se encontró video URL")
+                Log.e("Do7Go", "No se encontró video URL - intentando con PlayMogo")
+                loadExtractor("https://playmogo.com${url.substringAfter("/e")}", url, subtitleCallback, callback)
             }
         } catch (e: Exception) {
             Log.e("Do7Go", "Error: ${e.message}")
+        }
+    }
+}
+
+class PlayMogoExtractor : ExtractorApi() {
+    override val name = "PlayMogo"
+    override val mainUrl = "https://playmogo.com"
+    override val requiresReferer = true
+
+    private val extractorHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Accept" to "*/*",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Brave\";v=\"146\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "same-origin",
+        "sec-gpc" to "1"
+    )
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("PlayMogo", "Iniciando extracción de: $url")
+        try {
+            val pageRes = app.get(url, headers = extractorHeaders, referer = "$mainUrl/")
+            val pageText = pageRes.text
+            
+            val hashMatch = Regex("""/pass_md5/([^"']+)""").find(pageText)
+            val hash = hashMatch?.groupValues?.getOrNull(1)
+            
+            if (hash != null) {
+                Log.d("PlayMogo", "Hash encontrado: ${hash.take(50)}...")
+                
+                val passMd5Url = "$mainUrl/pass_md5/$hash"
+                val passRes = app.post(passMd5Url, headers = extractorHeaders, referer = url)
+                
+                val m3u8Url = passRes.text.trim()
+                Log.d("PlayMogo", "M3U8 URL: ${m3u8Url.take(100)}")
+                
+                if (m3u8Url.startsWith("http") && (m3u8Url.contains(".m3u8") || m3u8Url.contains("mp4"))) {
+                    callback.invoke(
+                        newExtractorLink(this.name, this.name, m3u8Url, ExtractorLinkType.M3U8) {
+                            this.referer = "$mainUrl/"
+                            this.quality = Qualities.Unknown.value
+                            this.headers = extractorHeaders
+                        }
+                    )
+                } else {
+                    Log.e("PlayMogo", "URL no válida: $m3u8Url")
+                }
+            } else {
+                Log.e("PlayMogo", "No se encontró hash en la página")
+            }
+        } catch (e: Exception) {
+            Log.e("PlayMogo", "Error: ${e.message}")
         }
     }
 }

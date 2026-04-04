@@ -10,5 +10,6 @@ class DoramasflixPlugin: Plugin() {
         registerMainAPI(DoramasflixProvider())
         registerExtractorAPI(OkRuExtractor())
         registerExtractorAPI(Do7GoExtractor())
+        registerExtractorAPI(PlayMogoExtractor())
     }
 }
