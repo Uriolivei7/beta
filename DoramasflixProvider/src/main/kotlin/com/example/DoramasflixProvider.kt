@@ -143,7 +143,7 @@ class DoramasflixProvider:MainAPI() {
             }
             link.startsWith("/") -> {
                 val url = "https://image.tmdb.org/t/p/w1280$link" // Sin / extra
-                Log.d("DoramasflixProvider", "getImageUrl: Path con /: $link -> $url")
+                //Log.d("DoramasflixProvider", "getImageUrl: Path con /: $link -> $url")
                 url
             }
             else -> {
