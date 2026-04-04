@@ -51,7 +51,7 @@
     "authors": ["Ranita"],
     "description": "Plugin para series",
     "tvTypes": ["TvSeries", "Movie", "Cartoon"],
-    "iconUrl": "https://sololatino.net/wp-content/uploads/2022/11/logo-final.png",
+    "iconUrl": "https://sololatino.net/images/logo.png",
     "language": "mx",
     "fileSize": 31000
   },
