@@ -60,33 +60,29 @@ class Do7GoExtractor : ExtractorApi() {
     override val mainUrl = "https://do7go.com"
     override val requiresReferer = true
 
+    private val extractorHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
+    )
+
     override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         Log.d("Do7Go", "Iniciando extracción de: $url")
         try {
-            val response = app.get(url, referer = "$mainUrl/")
+            val response = app.get(url, headers = extractorHeaders, referer = "https://doramasflix.co/")
+            val pageText = response.text
             val doc = response.document
 
-            val scriptData = doc.select("script").find { it.data().contains("sources") }
-                ?.data()
+            Log.d("Do7Go", "Buscando playmogo URL en la página...")
+
+            val playmogoUrl = Regex("""https?://playmogo\.com/e/[^"'\s<]+""").find(pageText)?.value
+                ?: Regex("""/e/[a-z0-9]+""").find(pageText)?.value?.let { "https://playmogo.com$it" }
             
-            Log.d("Do7Go", "Script data: ${scriptData?.take(300)}")
-
-            val videoUrl = scriptData?.let {
-                Regex("""sources\s*:\s*\[\{file:\s*"([^"]+)"""").find(it)?.groupValues?.get(1)
-                    ?: Regex("""file:\s*"(https?://[^"]+\.m3u8[^"]*)"""").find(it)?.groupValues?.get(1)
-            }
-
-            if (videoUrl != null) {
-                Log.d("Do7Go", "Video URL encontrado: ${videoUrl.take(100)}")
-                callback.invoke(
-                    newExtractorLink(this.name, this.name, videoUrl, ExtractorLinkType.M3U8) {
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
+            if (playmogoUrl != null) {
+                Log.d("Do7Go", "PlayMogo URL encontrada: $playmogoUrl")
+                loadExtractor(playmogoUrl, url, subtitleCallback, callback)
             } else {
-                Log.e("Do7Go", "No se encontró video URL - intentando con PlayMogo")
-                loadExtractor("https://playmogo.com${url.substringAfter("/e")}", url, subtitleCallback, callback)
+                Log.e("Do7Go", "No se encontró URL de playmogo en la página")
             }
         } catch (e: Exception) {
             Log.e("Do7Go", "Error: ${e.message}")
@@ -146,6 +142,175 @@ class PlayMogoExtractor : ExtractorApi() {
             }
         } catch (e: Exception) {
             Log.e("PlayMogo", "Error: ${e.message}")
+        }
+    }
+}
+
+class StreamwishExtractor : ExtractorApi() {
+    override val name = "Streamwish"
+    override val mainUrl = "https://streamwish.to"
+    override val requiresReferer = false
+
+    private val extractorHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
+    )
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("Streamwish", "Extrayendo de: $url")
+        try {
+            val response = app.get(url, headers = extractorHeaders)
+            val pageText = response.text
+            
+            val encryptedData = Regex("""eval\(function\(w,i,s,e\).*?</script>""").find(pageText)?.value
+            
+            if (encryptedData != null) {
+                Log.d("Streamwish", "Datos encriptados encontrados")
+            }
+            
+            val videoUrl = Regex("""sources:\s*\[\{file:\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
+                ?: Regex("""file:\s*"(https?://[^"]+)"""").find(pageText)?.groupValues?.get(1)
+            
+            if (videoUrl != null && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl, ExtractorLinkType.M3U8) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            } else {
+                Log.e("Streamwish", "No se encontró URL de video")
+            }
+        } catch (e: Exception) {
+            Log.e("Streamwish", "Error: ${e.message}")
+        }
+    }
+}
+
+class FilemoonExtractor : ExtractorApi() {
+    override val name = "Filemoon"
+    override val mainUrl = "https://filemoon.to"
+    override val requiresReferer = true
+
+    private val extractorHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "sec-ch-ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\""
+    )
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("Filemoon", "Extrayendo de: $url")
+        try {
+            val response = app.get(url, headers = extractorHeaders, referer = "$mainUrl/")
+            val pageText = response.text
+            
+            val sourcesMatch = Regex("""sources:\s*\[\{file:\s*"([^"]+)"""").find(pageText)
+            val videoUrl = sourcesMatch?.groupValues?.get(1)
+            
+            if (videoUrl != null && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl, if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            } else {
+                Log.e("Filemoon", "No se encontró URL de video")
+            }
+        } catch (e: Exception) {
+            Log.e("Filemoon", "Error: ${e.message}")
+        }
+    }
+}
+
+class VoeExtractor : ExtractorApi() {
+    override val name = "Voe"
+    override val mainUrl = "https://voe.sx"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("Voe", "Extrayendo de: $url")
+        try {
+            val response = app.get(url)
+            val pageText = response.text
+            
+            val videoUrl = Regex("""<video[^>]*src=["']([^"']+)["']""").find(pageText)?.groupValues?.get(1)
+                ?: Regex("""sources:\s*\[\{file:\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
+            
+            if (videoUrl != null && videoUrl.startsWith("http")) {
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl, ExtractorLinkType.VIDEO) {
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            } else {
+                Log.e("Voe", "No se encontró URL de video")
+            }
+        } catch (e: Exception) {
+            Log.e("Voe", "Error: ${e.message}")
+        }
+    }
+}
+
+class UqloadExtractor : ExtractorApi() {
+    override val name = "Uqload"
+    override val mainUrl = "https://uqload.co"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("Uqload", "Extrayendo de: $url")
+        try {
+            val response = app.get(url)
+            val pageText = response.text
+            
+            val videoUrl = Regex("""sources:\s*\[\{file:\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
+                ?: Regex("""<video[^>]*src=["']([^"']+)["']""").find(pageText)?.groupValues?.get(1)
+            
+            if (videoUrl != null && videoUrl.startsWith("http")) {
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl, ExtractorLinkType.VIDEO) {
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            } else {
+                Log.e("Uqload", "No se encontró URL de video")
+            }
+        } catch (e: Exception) {
+            Log.e("Uqload", "Error: ${e.message}")
+        }
+    }
+}
+
+class FPlayerExtractor : ExtractorApi() {
+    override val name = "FPlayer"
+    override val mainUrl = "https://fplayer.me"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("FPlayer", "Extrayendo de: $url")
+        try {
+            val response = app.get(url, referer = "$mainUrl/")
+            val pageText = response.text
+            
+            val videoUrl = Regex("""sources:\s*\[\{file:\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
+                ?: Regex("""file:\s*"(https?://[^"]+)"""").find(pageText)?.groupValues?.get(1)
+            
+            if (videoUrl != null && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl, if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            } else {
+                Log.e("FPlayer", "No se encontró URL de video")
+            }
+        } catch (e: Exception) {
+            Log.e("FPlayer", "Error: ${e.message}")
         }
     }
 }

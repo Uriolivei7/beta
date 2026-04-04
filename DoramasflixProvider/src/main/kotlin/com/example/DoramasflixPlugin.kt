@@ -11,5 +11,10 @@ class DoramasflixPlugin: Plugin() {
         registerExtractorAPI(OkRuExtractor())
         registerExtractorAPI(Do7GoExtractor())
         registerExtractorAPI(PlayMogoExtractor())
+        registerExtractorAPI(StreamwishExtractor())
+        registerExtractorAPI(FilemoonExtractor())
+        registerExtractorAPI(VoeExtractor())
+        registerExtractorAPI(UqloadExtractor())
+        registerExtractorAPI(FPlayerExtractor())
     }
 }
