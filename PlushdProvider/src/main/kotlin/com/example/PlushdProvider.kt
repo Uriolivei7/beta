@@ -260,7 +260,6 @@ class PlushdProvider : MainAPI() {
         val doc = app.get(data, headers = headers).document
 
         val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
-            Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
             subtitleCallback.invoke(file)
         }
 
@@ -282,39 +281,44 @@ class PlushdProvider : MainAPI() {
                 }
 
                 if (text.contains("PLAYERHD")) {
-                    Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Intentando ejecutar JavaScript.")
+                    Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Buscando iframe o URL en el HTML.")
                     
-                    val jsRegex = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""")
-                    val jsMatch = jsRegex.find(text)
-                    val jsUrl = jsMatch?.groupValues?.getOrNull(1)
+                    val iframeMatch = Regex("""iframe[^>]+src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(text)
+                    if (iframeMatch != null) {
+                        val iframeSrc = iframeMatch.groupValues.getOrNull(1)
+                        Log.d("PlushdProvider", "Found iframe in player: $iframeSrc")
+                        if (!iframeSrc.isNullOrBlank()) {
+                            loadExtractor(
+                                url = iframeSrc,
+                                referer = mainUrl,
+                                subtitleCallback = loggingSubtitleCallback,
+                                callback = callback
+                            )
+                            linksFound = true
+                            return@forEach
+                        }
+                    }
                     
-                    Log.d("PlushdProvider", "JS redirect URL raw: $jsUrl")
+                    val scriptUrlMatch = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""").find(text)
+                    val rawJsUrl = scriptUrlMatch?.groupValues?.getOrNull(1)
+                    Log.d("PlushdProvider", "JS URL raw: $rawJsUrl")
                     
-                    if (!jsUrl.isNullOrBlank()) {
-                        val cleanUrl = jsUrl.replace(Regex("[^a-zA-Z0-9./:]"), "")
-                        Log.d("PlushdProvider", "Cleaned URL: $cleanUrl")
-                        
+                    if (!rawJsUrl.isNullOrBlank() && rawJsUrl.length > 3) {
                         try {
-                            val redirectedDoc = app.get(cleanUrl, headers = headers).document
-                            val htmlContent = redirectedDoc.html()
-                            Log.d("PlushdProvider", "Redirected page length: ${htmlContent.length}")
+                            val decodedUrl = java.net.URLDecoder.decode(rawJsUrl, "UTF-8")
+                            Log.d("PlushdProvider", "Decoded URL: $decodedUrl")
                             
-                            val iframes = redirectedDoc.select("iframe[src]")
-                            if (iframes.isNotEmpty()) {
-                                val iframeSrc = iframes.firstOrNull()?.attr("src")
-                                if (!iframeSrc.isNullOrBlank()) {
-                                    Log.d("PlushdProvider", "Found iframe: $iframeSrc")
-                                    loadExtractor(
-                                        url = iframeSrc,
-                                        referer = mainUrl,
-                                        subtitleCallback = loggingSubtitleCallback,
-                                        callback = callback
-                                    )
-                                    linksFound = true
-                                }
+                            if (decodedUrl.startsWith("http")) {
+                                loadExtractor(
+                                    url = decodedUrl,
+                                    referer = mainUrl,
+                                    subtitleCallback = loggingSubtitleCallback,
+                                    callback = callback
+                                )
+                                linksFound = true
                             }
                         } catch (e: Exception) {
-                            Log.e("PlushdProvider", "Error following redirect: ${e.message}")
+                            Log.e("PlushdProvider", "Error decoding URL: ${e.message}")
                         }
                     }
                     

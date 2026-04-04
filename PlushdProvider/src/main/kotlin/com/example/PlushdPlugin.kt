@@ -15,5 +15,8 @@ class PlushdPlugin: Plugin() {
         registerExtractorAPI(StreamWishTo())
         registerExtractorAPI(VidHidePro())
         registerExtractorAPI(VoeExtractor())
+        registerExtractorAPI(DoodStream())
+        registerExtractorAPI(FilemoonHD())
+        registerExtractorAPI(MixDropExtractor())
     }
 }
