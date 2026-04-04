@@ -284,22 +284,23 @@ class PlushdProvider : MainAPI() {
                 if (text.contains("PLAYERHD")) {
                     Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Intentando extraer URL del HTML original.")
                     val episodeDoc = app.get(data, headers = headers).document
-                    val dataTr = episodeDoc.selectFirst("#video [data-tr]")?.attr("data-tr")
+                    val dataTr = episodeDoc.selectFirst("#player-tr")?.attr("data-tr")
                     if (!dataTr.isNullOrBlank()) {
                         val trDecoded = String(Base64.decode(dataTr, Base64.NO_WRAP))
-                        Log.d("PlushdProvider", "data-tr decoded (first layer): $trDecoded")
+                        Log.d("PlushdProvider", "data-tr decoded: $trDecoded")
                         
-                        val finalUrl = try {
-                            val secondDecode = String(Base64.decode(trDecoded, Base64.NO_WRAP))
-                            Log.d("PlushdProvider", "data-tr decoded (second layer): $secondDecode")
-                            secondDecode
-                        } catch (e: Exception) {
+                        val finalUrl = if (trDecoded.startsWith("http")) {
                             trDecoded
+                        } else if (trDecoded.contains("/e/")) {
+                            "https://streamwish.to${trDecoded.substringAfter("/e/").let { "/e/$it" }}"
+                        } else {
+                            "https://streamwish.to/e/$trDecoded"
                         }
+                        Log.d("PlushdProvider", "Final URL: $finalUrl")
                         
                         loadExtractor(
                             url = finalUrl,
-                            referer = mainUrl,
+                            referer = "https://streamwish.to/",
                             subtitleCallback = loggingSubtitleCallback,
                             callback = callback
                         )
