@@ -235,13 +235,13 @@ class LamovieProvider : MainAPI() {
 
                     if (realUrl.isNotBlank()) {
                         Log.d(TAG, "Logs: Iframe interno encontrado: $realUrl")
-                        loadExtractor(realUrl, embedUrl, subtitleCallback, callback)
+                        loadExtractor(realUrl, "$mainUrl/", subtitleCallback, callback)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Logs Error: Fallo en el iframe -> ${e.message}")
                 }
             } else {
-                loadExtractor(embedUrl, embedUrl, subtitleCallback, callback)
+                loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
             }
         }
         return true
