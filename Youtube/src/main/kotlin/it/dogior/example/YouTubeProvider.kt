@@ -206,7 +206,7 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
         if (sections.isEmpty()) {
             sections.add(
                 HomePageList(
-                    "All sections are disabled. Go to the settings to enable them",
+                    "Todas las secciones están desactivadas. Ve a la configuración para activarlas.",
                     emptyList()
                 )
             )
