@@ -15,13 +15,14 @@ import com.lagradost.cloudstream3.SubtitleFile
 
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.InfoItem.InfoType
 import org.schabi.newpipe.extractor.Page
@@ -317,14 +318,15 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
                     else -> ExtractorLinkType.VIDEO
                 }
                 callback(
-                    ExtractorLink(
+                    newExtractorLink(
                         source = "YouTube",
                         name = "YouTube ${stream.format?.name ?: "Unknown"} ${stream.resolution ?: ""}",
                         url = streamUrl,
-                        referer = "https://www.youtube.com/",
-                        type = formatType,
-                        quality = extractHeight(stream.resolution)
-                    )
+                        type = formatType
+                    ) {
+                        referer = "https://www.youtube.com/"
+                        this.quality = extractHeight(stream.resolution)
+                    }
                 )
             }
 
