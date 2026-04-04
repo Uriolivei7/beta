@@ -229,7 +229,7 @@ class SoloLatinoProvider : MainAPI() {
                 val epPoster = element.selectFirst("img.ep-thumb")?.attr("src") ?: ""
                 val epDesc = element.selectFirst("p.line-clamp-2")?.text() ?: ""
                 val epDate = element.select("p.text-xs").lastOrNull()?.text() ?: ""
-                Log.d("SoloLatino", "load - EP S${seasonNumber}E${episodeNumber}: $epTitle | fecha=$epDate")
+                //Log.d("SoloLatino", "load - EP S${seasonNumber}E${episodeNumber}: $epTitle | fecha=$epDate")
                 if (epUrl.isNotBlank() && epTitle.isNotBlank()) {
                     newEpisode(epUrl) {
                         this.name = epTitle
@@ -301,15 +301,29 @@ class SoloLatinoProvider : MainAPI() {
         val html = safeAppGet(targetUrl) ?: return false
         val doc = Jsoup.parse(html)
 
-        val serverButtons = doc.select("button[data-server-url], .server-btn")
+        val serverUrls = mutableListOf<String>()
 
-        val serverUrls = serverButtons.mapNotNull { it.attr("data-server-url") }.toMutableList()
-
-        if (serverUrls.isEmpty()) {
-            doc.selectFirst("div#player-frame iframe, iframe")?.attr("src")?.let {
-                if (it.isNotBlank()) serverUrls.add(it)
-            }
+        doc.select("button[data-server-url], .server-btn, a[data-player], button[data-player], .player-btn").forEach { el ->
+            el.attr("data-server-url").takeIf { it.isNotBlank() }?.let { serverUrls.add(it) }
+            el.attr("data-player").takeIf { it.isNotBlank() }?.let { serverUrls.add(it) }
+            el.attr("data-url").takeIf { it.isNotBlank() }?.let { serverUrls.add(it) }
+            el.attr("href").takeIf { it.isNotBlank() && it.startsWith("http") }?.let { serverUrls.add(it) }
         }
+
+        val liServers = doc.select("li[data-id], div[data-id]").mapNotNull { el ->
+            el.attr("data-player-url").takeIf { it.isNotBlank() }
+                ?: el.attr("data-url").takeIf { it.isNotBlank() }
+                ?: el.selectFirst("a")?.attr("href")?.takeIf { it.contains("player") || it.contains("embed") || it.contains("filemoon") || it.contains("streamwish") }
+        }
+        serverUrls.addAll(liServers)
+
+        val iframeSrc = doc.selectFirst("div#player-frame iframe, iframe#player, iframe.player, div.embed-container iframe")?.attr("src")
+        if (iframeSrc?.isNotBlank() == true && iframeSrc.startsWith("http")) {
+            serverUrls.add(iframeSrc)
+        }
+
+        val scriptPlayers = Regex("""(?:player|embed|filemoon|streamwish)\s*[=:]\s*["']([^"']+)["']""").findAll(html).map { it.groupValues[1] }.filter { it.startsWith("http") }
+        serverUrls.addAll(scriptPlayers)
 
         if (serverUrls.isEmpty()) {
             Log.e("SoloLatino", "loadLinks - No se encontraron servidores en la página.")
@@ -317,6 +331,7 @@ class SoloLatinoProvider : MainAPI() {
         }
 
         Log.d("SoloLatino", "loadLinks - Total servidores detectados: ${serverUrls.size}")
+        Log.d("SoloLatino", "loadLinks - URLs: ${serverUrls.take(10).joinToString(" | ")}")
 
         serverUrls.distinct().forEach { rawUrl ->
             val fixedSrc = fixUrl(rawUrl)
