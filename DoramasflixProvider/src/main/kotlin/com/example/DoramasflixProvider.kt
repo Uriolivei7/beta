@@ -6,11 +6,10 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import android.util.Log
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.runBlocking
 
 class DoramasflixProvider:MainAPI() {
@@ -359,6 +358,7 @@ class DoramasflixProvider:MainAPI() {
                     link.contains("dood") -> "Doodstream"
                     link.contains("filemoon") -> "Filemoon"
                     link.contains("ok.ru") -> "Ok.ru"
+                    link.contains("do7go") -> "Do7Go"
                     link.contains("voe") -> "Voe"
                     link.contains("uqload") -> "Uqload"
                     link.contains("streamwish") -> "Streamwish"
