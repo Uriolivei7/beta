@@ -8,6 +8,7 @@ package com.example
 import com.lagradost.cloudstream3.extractors.Filesim
 import com.lagradost.cloudstream3.extractors.StreamWishExtractor
 import com.lagradost.cloudstream3.extractors.VidStack
+import com.lagradost.cloudstream3.extractors.Voe
 
 class PelisplusUpnsPro : VidStack() {
     override var mainUrl = "https://pelisplus.upns.pro"
@@ -28,4 +29,12 @@ class EmturbovidCom : Filesim() {
 class StreamWishTo : StreamWishExtractor() {
     override var mainUrl = "https://streamwish.to"
     override var name = "StreamWish"
+}
+class VidHidePro : StreamWishExtractor() {
+    override var mainUrl = "https://vidhidepro.com"
+    override var name = "VidHidePro"
+}
+class VoeExtractor : Voe() {
+    override var mainUrl = "https://voe.sx"
+    override var name = "Voe"
 }

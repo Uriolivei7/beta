@@ -282,25 +282,39 @@ class PlushdProvider : MainAPI() {
                 }
 
                 if (text.contains("PLAYERHD")) {
-                    Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Intentando extraer URL del HTML original.")
+                    Log.w("PlushdProvider", "Respuesta inválida: PLAYERHD. Intentando ejecutar JavaScript.")
                     
-                    val playerDoc = app.get(playerUrl, headers = headers).document
-                    Log.d("PlushdProvider", "Player HTML sample: ${playerDoc.html().take(2000)}")
+                    val jsRegex = Regex("""window\.location\.href\s*=\s*['"]([^'"]+)['"]""")
+                    val jsMatch = jsRegex.find(text)
+                    val jsUrl = jsMatch?.groupValues?.getOrNull(1)
                     
-                    val dataTr = playerDoc.selectFirst("[data-tr]")?.attr("data-tr")
-                        ?: playerDoc.selectFirst("#player-tr")?.attr("data-tr")
-                        ?: playerDoc.selectFirst(".video-html")?.attr("data-tr")
+                    Log.d("PlushdProvider", "JS redirect URL raw: $jsUrl")
                     
-                    if (!dataTr.isNullOrBlank()) {
-                        val trDecoded = String(Base64.decode(dataTr, Base64.NO_WRAP))
-                        Log.d("PlushdProvider", "data-tr from player page: $dataTr -> decoded: $trDecoded")
-                    } else {
-                        Log.w("PlushdProvider", "No data-tr found in player page either")
+                    if (!jsUrl.isNullOrBlank()) {
+                        val cleanUrl = jsUrl.replace(Regex("[^a-zA-Z0-9./:]"), "")
+                        Log.d("PlushdProvider", "Cleaned URL: $cleanUrl")
+                        
+                        try {
+                            val redirectedDoc = app.get(cleanUrl, headers = headers).document
+                            val htmlContent = redirectedDoc.html()
+                            Log.d("PlushdProvider", "Redirected page length: ${htmlContent.length}")
+                            
+                            val iframes = redirectedDoc.select("iframe[src]")
+                            if (iframes.isNotEmpty()) {
+                                val iframeSrc = iframes.first().attr("src")
+                                Log.d("PlushdProvider", "Found iframe: $iframeSrc")
+                                loadExtractor(
+                                    url = iframeSrc,
+                                    referer = mainUrl,
+                                    subtitleCallback = loggingSubtitleCallback,
+                                    callback = callback
+                                )
+                                linksFound = true
+                            }
+                        } catch (e: Exception) {
+                            Log.e("PlushdProvider", "Error following redirect: ${e.message}")
+                        }
                     }
-                    
-                    val episodeDoc = app.get(data, headers = headers).document
-                    val dataTr2 = episodeDoc.selectFirst("#player-tr")?.attr("data-tr")
-                    Log.d("PlushdProvider", "data-tr from episode page: $dataTr2")
                     
                     return@forEach
                 }
