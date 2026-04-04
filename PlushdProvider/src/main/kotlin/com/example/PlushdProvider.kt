@@ -287,9 +287,18 @@ class PlushdProvider : MainAPI() {
                     val dataTr = episodeDoc.selectFirst("#video [data-tr]")?.attr("data-tr")
                     if (!dataTr.isNullOrBlank()) {
                         val trDecoded = String(Base64.decode(dataTr, Base64.NO_WRAP))
-                        Log.d("PlushdProvider", "data-tr decoded: $trDecoded")
+                        Log.d("PlushdProvider", "data-tr decoded (first layer): $trDecoded")
+                        
+                        val finalUrl = try {
+                            val secondDecode = String(Base64.decode(trDecoded, Base64.NO_WRAP))
+                            Log.d("PlushdProvider", "data-tr decoded (second layer): $secondDecode")
+                            secondDecode
+                        } catch (e: Exception) {
+                            trDecoded
+                        }
+                        
                         loadExtractor(
-                            url = trDecoded,
+                            url = finalUrl,
                             referer = mainUrl,
                             subtitleCallback = loggingSubtitleCallback,
                             callback = callback
