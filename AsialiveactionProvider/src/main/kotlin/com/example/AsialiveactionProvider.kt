@@ -11,7 +11,7 @@ import java.util.Calendar
 class AsialiveactionProvider : MainAPI() {
 
     companion object {
-        private const val TAG = "AsiaLiveAction"
+        private const val TAG = "Asialiveaction"
     }
 
     override var mainUrl = "https://asialiveaction.com"
