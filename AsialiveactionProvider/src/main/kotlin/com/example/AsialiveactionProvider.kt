@@ -2,8 +2,13 @@ package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import android.util.Log
 import java.util.Calendar
@@ -69,12 +74,13 @@ class AsialiveactionProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "search: Buscando '$query'")
-        val response = app.get("$mainUrl/?s=$query")
+        val response = app.get("$mainUrl/search/$query")
         val document = Jsoup.parse(response.text)
         
-        val results = document.select(".search-result-item, article.post, .result-item").mapNotNull { element ->
-            val link = element.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val title = element.selectFirst("h2, h3, h4, .title")?.text() 
+        val results = document.select(".navegacion-grid .splide__slide a, .search-result-item, article.post").mapNotNull { element ->
+            val link = element.attr("href")?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val title = element.selectFirst("h5")?.text() 
+                ?: element.selectFirst("h2, h3, h4, .title")?.text()
                 ?: element.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
             val poster = element.selectFirst("img")?.attr("src")?.takeIf { it.isNotEmpty() }
                 ?: element.selectFirst("img")?.attr("data-src")
@@ -165,67 +171,82 @@ class AsialiveactionProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "loadLinks: Extrayendo de URL=$data")
         val response = app.get(data)
-        val document = Jsoup.parse(response.text)
+        val htmlContent = response.text
+        val document = Jsoup.parse(htmlContent)
         
-        val videoUrls = mutableListOf<String>()
+        val allVideosPattern = """allVideos\s*=\s*(\{.*?\});""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val allVideosMatch = allVideosPattern.find(htmlContent)
         
-        document.select("script").forEach { script ->
-            val scriptData = script.data()
-            if (scriptData.contains("var videos") || scriptData.contains("player")) {
-                val urls = fetchUrls(scriptData)
-                Log.d(TAG, "loadLinks: URLs encontradas en script: $urls")
-                videoUrls.addAll(urls)
-            }
-        }
-        
-        if (videoUrls.isEmpty()) {
-            Log.d(TAG, "loadLinks: Buscando iframes")
-            document.select("iframe[src*='player'], iframe[src*='embed'], iframe").forEach { iframe ->
-                val iframeUrl = iframe.attr("src")
-                if (iframeUrl.isNotEmpty() && iframeUrl.startsWith("http")) {
-                    Log.d(TAG, "loadLinks: Iframe encontrado: $iframeUrl")
-                    loadExtractor(iframeUrl, data, subtitleCallback, callback)
-                }
-            }
-        }
-        
-        videoUrls.forEach { videoUrl ->
-            Log.d(TAG, "loadLinks: Procesando URL=$videoUrl")
+        if (allVideosMatch != null) {
+            val allVideosJson = allVideosMatch.groupValues[1]
+            Log.d(TAG, "loadLinks: allVideos encontrado: ${allVideosJson.take(200)}")
             
-            val extractorName = when {
-                videoUrl.contains("vk", ignoreCase = true) -> "Vk"
-                videoUrl.contains("ok.ru", ignoreCase = true) || videoUrl.contains("okru", ignoreCase = true) -> "Ok.ru"
-                videoUrl.contains("wishembed", ignoreCase = true) || videoUrl.contains("streamwish", ignoreCase = true) -> "StreamWish"
-                videoUrl.contains("filemoon", ignoreCase = true) || videoUrl.contains("moonplayer", ignoreCase = true) -> "Filemoon"
-                videoUrl.contains("vembed", ignoreCase = true) || videoUrl.contains("guard", ignoreCase = true) -> "VidGuard"
-                videoUrl.contains("filelions", ignoreCase = true) || videoUrl.contains("lion", ignoreCase = true) -> "FileLions"
-                (videoUrl.contains("amazon", ignoreCase = true) || videoUrl.contains("amz", ignoreCase = true)) && 
-                !videoUrl.contains("disable") -> "Amazon"
-                else -> null
-            }
-            
-            if (extractorName != null) {
-                Log.d(TAG, "loadLinks: Usando extractor=$extractorName para URL=$videoUrl")
-                loadExtractor(videoUrl, data, subtitleCallback) { link ->
-                    callback.invoke(
-                        ExtractorLink(
-                            source = "$extractorName ${link.source}",
-                            name = "$extractorName ${link.name}",
-                            url = link.url,
-                            referer = link.referer,
-                            quality = link.quality,
-                            type = link.type,
-                            headers = link.headers,
-                            extractorData = link.extractorData
-                        )
-                    )
+            try {
+                val serverDataMap = parseJson<Map<String, List<List<String>>>>(allVideosJson)
+                serverDataMap.forEach { (langId, serverList) ->
+                    val langName = when {
+                        langId.contains("1388") -> "Latino"
+                        langId.contains("1385") -> "Subtitulado"
+                        else -> "Default"
+                    }
+                    
+                    serverList.forEach { serverData ->
+                        if (serverData.size >= 2) {
+                            val serverCode = serverData[0]
+                            val encodedUrl = serverData[1]
+                            val decodedUrl = encodedUrl
+                                .replace("\\/", "/")
+                                .replace("\\\\", "")
+                                .removeSurrounding("\"")
+                            
+                            Log.d(TAG, "loadLinks: [$langName] Server=$serverCode, URL=$decodedUrl")
+                            
+                            if (decodedUrl.startsWith("http")) {
+                                val serverName = when (serverCode) {
+                                    "YM" -> "Yui"
+                                    "MK" -> "Moa"
+                                    "MM" -> "Momo"
+                                    "FM" -> "Byse"
+                                    else -> serverCode
+                                }
+                                
+                                val fullName = "$serverName [$langName]"
+                                loadSourceNameExtractor(fullName, decodedUrl, data, subtitleCallback, callback)
+                            }
+                        }
+                    }
                 }
-            } else {
-                Log.d(TAG, "loadLinks: URL no reconocida, intentando loadExtractor genérico")
-                loadExtractor(videoUrl, data, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(TAG, "loadLinks: Error parseando allVideos: ${e.message}")
             }
         }
         
         return true
+    }
+}
+
+suspend fun loadSourceNameExtractor(
+    source: String,
+    url: String,
+    referer: String? = null,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit,
+) {
+    loadExtractor(url, referer, subtitleCallback) { link ->
+        CoroutineScope(Dispatchers.IO).launch {
+            callback.invoke(
+                newExtractorLink(
+                    "$source[${link.source}]",
+                    "$source[${link.source}]",
+                    link.url,
+                ) {
+                    this.quality = link.quality
+                    this.type = link.type
+                    this.referer = link.referer
+                    this.headers = link.headers
+                    this.extractorData = link.extractorData
+                }
+            )
+        }
     }
 }
