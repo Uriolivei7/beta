@@ -32,7 +32,7 @@ class RetrotveProvider : MainAPI() {
         val url = if (page == 1) {
             "$mainUrl${request.data}"
         } else {
-            "$mainUrl${request.data.replace("?", "/?")}page/$page/"
+            "$mainUrl${request.data.removeSuffix("/")}/page/$page/"
         }
         Log.d("RetrotveProvider", "getMainPage: URL = $url")
         
@@ -40,16 +40,16 @@ class RetrotveProvider : MainAPI() {
         val home = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
-        document.select(".MovieList li, .TPostMv").forEach { element ->
+        document.select(".TpRwCont .MovieList > li, .TpRwCont .MovieList .TPostMv, section .MovieList > li").forEach { element ->
             val linkElement = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")
             val link = linkElement?.attr("href") ?: return@forEach
             if (seenLinks.contains(link)) return@forEach
             seenLinks.add(link)
             
-            val title = element.selectFirst(".Title")?.text() ?: return@forEach
+            val title = element.selectFirst(".Title")?.text() ?: element.selectFirst("h3")?.text() ?: return@forEach
             val poster = element.selectFirst(".Image img")?.attr("src")
             
-            if (title.isNotEmpty()) {
+            if (title.isNotEmpty() && title.length > 2) {
                 val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
                 home.add(
                     newTvSeriesSearchResponse(title, link, tvType) {
@@ -58,6 +58,8 @@ class RetrotveProvider : MainAPI() {
                 )
             }
         }
+        
+        Log.d("RetrotveProvider", "getMainPage: found ${home.size} items")
         
         return newHomePageResponse(
             list = HomePageList(
@@ -72,20 +74,27 @@ class RetrotveProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("RetrotveProvider", "search: query = $query")
         val document = app.get("$mainUrl/?s=$query").document
-        val results = document.select(".MovieList li, .TPostMv, article.TPost").mapNotNull { element ->
-            val link = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.attr("href") ?: return@mapNotNull null
+        val results = ArrayList<SearchResponse>()
+        val seenLinks = mutableSetOf<String>()
+        
+        document.select("section .MovieList > li, section .TPostMv, .TpRwCont main .MovieList > li").forEach { element ->
+            val link = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.attr("href") ?: return@forEach
             
-            if (!link.contains("/serie/") && !link.contains("/pelicula/")) return@mapNotNull null
+            if (!link.contains("/serie/") && !link.contains("/pelicula/")) return@forEach
+            if (seenLinks.contains(link)) return@forEach
+            seenLinks.add(link)
             
-            val title = element.selectFirst(".Title, h2, h3")?.text() ?: return@mapNotNull null
+            val title = element.selectFirst(".Title")?.text() ?: element.selectFirst("h3")?.text() ?: return@forEach
             val poster = element.selectFirst(".Image img")?.attr("src")
             
-            if (title.isEmpty()) return@mapNotNull null
+            if (title.isEmpty() || title.length < 3) return@forEach
             
             val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-            newTvSeriesSearchResponse(title, link, tvType) {
-                this.posterUrl = poster
-            }
+            results.add(
+                newTvSeriesSearchResponse(title, link, tvType) {
+                    this.posterUrl = poster
+                }
+            )
         }
         Log.d("RetrotveProvider", "search: ${results.size} resultados")
         return results
@@ -140,7 +149,7 @@ class RetrotveProvider : MainAPI() {
             }
         }
         
-        val recommendations = document.select(".TpSbList li, .Relacionados li, .MovieList li").mapNotNull { element ->
+        val recommendations = document.select(".TpSbList li, .Relacionados li").mapNotNull { element ->
             val recUrl = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
             if (!recUrl.contains("/serie/") && !recUrl.contains("/pelicula/")) return@mapNotNull null
             val recTitle = element.selectFirst(".Title")?.text() ?: return@mapNotNull null
@@ -198,51 +207,27 @@ class RetrotveProvider : MainAPI() {
                             val link = fixHostsLinks(playerSrc)
                             Log.d("RetrotveProvider", "loadLinks: player iframe src = $link")
                             val success = loadExtractor(link, rawLink, subtitleCallback, callback)
-                            if (success) {
-                                linksFound = true
-                            } else {
-                                callback.invoke(
-                                    newExtractorLink(
-                                        source = getBaseName(link),
-                                        name = getBaseName(link),
-                                        url = link,
-                                        type = ExtractorLinkType.M3U8
-                                    ) {
-                                        referer = "$mainUrl/"
-                                        quality = Qualities.Unknown.value
-                                    }
-                                )
-                                linksFound = true
-                            }
+                            if (success) linksFound = true
                         }
                     }
                     
-                    val videoPatterns = listOf(
-                        Regex("""file\s*:\s*["']([^"']+\.(m3u8|mp4|webm)[^"']*)["']"""),
-                        Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
-                        Regex("""videoUrl\s*[:=]\s*["']([^"']+)["']"""),
-                        Regex("""["']([^"']+\.m3u8[^"']*)["']"""),
-                        Regex("""url\s*:\s*["']([^"']+\.(m3u8|mp4)[^"']*)["']""")
-                    )
-                    
-                    for (pattern in videoPatterns) {
-                        pattern.findAll(playerPage.html()).forEach { match ->
-                            val videoUrl = match.groupValues[1]
-                            if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4") || videoUrl.contains(".webm"))) {
-                                Log.d("RetrotveProvider", "loadLinks: direct video = $videoUrl")
-                                callback.invoke(
-                                    newExtractorLink(
-                                        source = "RetroTVE",
-                                        name = "RetroTVE Video",
-                                        url = videoUrl,
-                                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                    ) {
-                                        referer = rawLink
-                                        quality = Qualities.Unknown.value
-                                    }
-                                )
-                                linksFound = true
-                            }
+                    val m3u8Pattern = Regex("""["']([^"']+\.m3u8[^"']*)["']""")
+                    m3u8Pattern.findAll(playerPage.html()).forEach { match ->
+                        val videoUrl = match.groupValues[1]
+                        if (videoUrl.startsWith("http")) {
+                            Log.d("RetrotveProvider", "loadLinks: m3u8 found = $videoUrl")
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = "RetroTVE",
+                                    name = "RetroTVE Video",
+                                    url = videoUrl,
+                                    type = ExtractorLinkType.M3U8
+                                ) {
+                                    referer = rawLink
+                                    quality = Qualities.Unknown.value
+                                }
+                            )
+                            linksFound = true
                         }
                     }
                 } catch (e: Exception) {
@@ -250,6 +235,7 @@ class RetrotveProvider : MainAPI() {
                 }
             } else {
                 val link = fixHostsLinks(rawLink)
+                Log.d("RetrotveProvider", "loadLinks: direct link = $link")
                 val success = loadExtractor(link, data, subtitleCallback, callback)
                 if (success) {
                     linksFound = true
@@ -262,30 +248,6 @@ class RetrotveProvider : MainAPI() {
                             type = ExtractorLinkType.M3U8
                         ) {
                             referer = "$mainUrl/"
-                            quality = Qualities.Unknown.value
-                        }
-                    )
-                    linksFound = true
-                }
-            }
-        }
-
-        listOf(
-            Regex("""file\s*:\s*["']([^"']+)["']"""),
-            Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']""")
-        ).forEach { pattern ->
-            pattern.findAll(res.html()).forEach { match ->
-                val videoUrl = match.groupValues[1]
-                if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
-                    Log.d("RetrotveProvider", "loadLinks: video file = $videoUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = "RetroTVE",
-                            name = "RetroTVE",
-                            url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            referer = data
                             quality = Qualities.Unknown.value
                         }
                     )
