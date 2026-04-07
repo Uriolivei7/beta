@@ -355,6 +355,7 @@ class DoramasflixProvider:MainAPI() {
                 }
 
                 val serverName = when {
+                    link.contains("playmogo") -> "PlayMogo"
                     link.contains("dood") -> "Doodstream"
                     link.contains("filemoon") -> "Filemoon"
                     link.contains("ok.ru") -> "Ok.ru"
@@ -363,7 +364,7 @@ class DoramasflixProvider:MainAPI() {
                     link.contains("uqload") -> "Uqload"
                     link.contains("streamwish") -> "Streamwish"
                     link.contains("fplayer") || link.contains("fkplayer") -> "FPlayer"
-                    rawServer.matches(Regex("\\d+")) -> "Server"
+                    rawServer.matches(Regex("\\d+")) -> "PlayMogo"
                     else -> rawServer
                 }
 
@@ -375,8 +376,8 @@ class DoramasflixProvider:MainAPI() {
                     runBlocking {
                         callback.invoke(
                             newExtractorLink(
-                                source = finalServerName,
-                                name = finalServerName,
+                                source = extractorLink.name,
+                                name = extractorLink.name,
                                 url = extractorLink.url,
                                 type = extractorLink.type
                             ) {
