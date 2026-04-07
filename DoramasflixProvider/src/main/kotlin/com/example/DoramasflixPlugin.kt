@@ -8,14 +8,5 @@ import android.content.Context
 class DoramasflixPlugin: Plugin() {
     override fun load(context: Context) {
         registerMainAPI(DoramasflixProvider())
-        registerExtractorAPI(OkRuExtractor())
-        registerExtractorAPI(Do7GoExtractor())
-        registerExtractorAPI(PlayMogoExtractor())
-        registerExtractorAPI(StreamwishExtractor())
-        registerExtractorAPI(FilemoonExtractor())
-        registerExtractorAPI(VoeExtractor())
-        registerExtractorAPI(UqloadExtractor())
-        registerExtractorAPI(FPlayerExtractor())
-        registerExtractorAPI(SbbriskExtractor())
     }
 }
