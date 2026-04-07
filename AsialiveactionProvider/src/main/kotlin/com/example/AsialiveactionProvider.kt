@@ -42,30 +42,50 @@ class AsialiveactionProvider : MainAPI() {
         val response = app.get(mainUrl)
         val document = Jsoup.parse(response.text)
         
-        val homeItems = ArrayList<SearchResponse>()
+        val seriesItems = ArrayList<SearchResponse>()
+        val peliculasItems = ArrayList<SearchResponse>()
         
-        document.select(".splide__slide").forEach { slide ->
-            val link = slide.selectFirst("a")?.attr("href") ?: return@forEach
-            val title = slide.selectFirst("h5")?.text() ?: return@forEach
-            val poster = slide.selectFirst("img")?.attr("src")?.takeIf { it.isNotEmpty() } 
-                ?: slide.selectFirst("img")?.attr("data-src")
+        document.select(".navegacion-grid a[href*='/tv/']").forEach { element ->
+            val link = element.attr("href") ?: return@forEach
+            val title = element.selectFirst("h5")?.text() 
+                ?: element.selectFirst("h4")?.text()
+                ?: element.selectFirst("img")?.attr("alt") ?: return@forEach
+            val poster = element.selectFirst("img")?.attr("src")?.takeIf { it.isNotEmpty() && !it.contains("logo") }
+                ?: element.selectFirst("img")?.attr("data-src")
             
-            Log.d(TAG, "getMainPage: Title=$title, Poster=$poster, Link=$link")
-            
-            if (link.isNotEmpty() && title.isNotEmpty()) {
-                val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.AsianDrama
-                homeItems.add(
-                    newAnimeSearchResponse(title, link, tvType) {
+            if (link.isNotEmpty() && title.isNotEmpty() && poster != null) {
+                seriesItems.add(
+                    newAnimeSearchResponse(title, link, TvType.AsianDrama) {
                         this.posterUrl = poster
                     }
                 )
             }
         }
         
-        Log.d(TAG, "getMainPage: ${homeItems.size} items encontrados")
+        document.select(".navegacion-grid a[href*='/pelicula/']").forEach { element ->
+            val link = element.attr("href") ?: return@forEach
+            val title = element.selectFirst("h5")?.text() 
+                ?: element.selectFirst("h4")?.text()
+                ?: element.selectFirst("img")?.attr("alt") ?: return@forEach
+            val poster = element.selectFirst("img")?.attr("src")?.takeIf { it.isNotEmpty() && !it.contains("logo") }
+                ?: element.selectFirst("img")?.attr("data-src")
+            
+            if (link.isNotEmpty() && title.isNotEmpty() && poster != null) {
+                peliculasItems.add(
+                    newMovieSearchResponse(title, link) {
+                        this.posterUrl = poster
+                    }
+                )
+            }
+        }
         
-        if (homeItems.isNotEmpty()) {
-            items.add(HomePageList("Todos", homeItems))
+        Log.d(TAG, "getMainPage: Series=${seriesItems.size}, Peliculas=${peliculasItems.size}")
+        
+        if (seriesItems.isNotEmpty()) {
+            items.add(HomePageList("Series", seriesItems))
+        }
+        if (peliculasItems.isNotEmpty()) {
+            items.add(HomePageList("Películas", peliculasItems))
         }
         
         if (items.isEmpty()) throw ErrorLoadingException()
