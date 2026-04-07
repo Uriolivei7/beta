@@ -183,16 +183,45 @@ class AsialiveactionProvider : MainAPI() {
             Log.d(TAG, "load: ${episodes.size} episodios encontrados")
         }
         
+        val recommendations = ArrayList<SearchResponse>()
+        val seenRecs = mutableSetOf<String>()
+        
+        document.select("#carousel-recomendados .splide__slide a").forEach { element ->
+            val link = element.attr("href") ?: return@forEach
+            if (seenRecs.contains(link)) return@forEach
+            seenRecs.add(link)
+            
+            val recTitle = element.selectFirst("h5")?.text()?.trim() ?: return@forEach
+            val recPoster = element.selectFirst("img:not(.hover-img)")?.attr("src")
+            
+            if (recTitle.isNotEmpty() && recPoster != null) {
+                val recType = if (link.contains("/pelicula/")) TvType.Movie else TvType.AsianDrama
+                if (recType == TvType.Movie) {
+                    recommendations.add(newMovieSearchResponse(recTitle, link) {
+                        this.posterUrl = recPoster
+                    })
+                } else {
+                    recommendations.add(newAnimeSearchResponse(recTitle, link, recType) {
+                        this.posterUrl = recPoster
+                    })
+                }
+            }
+        }
+        
+        Log.d(TAG, "load: ${recommendations.size} recomendaciones encontradas")
+        
         return if (isMovie) {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.plot = description
+                this.recommendations = recommendations
             }
         } else {
             newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodes) {
                 this.posterUrl = poster
                 this.plot = description
                 this.showStatus = status
+                this.recommendations = recommendations
             }
         }
     }
