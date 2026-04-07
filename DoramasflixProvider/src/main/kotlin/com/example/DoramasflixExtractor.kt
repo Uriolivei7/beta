@@ -25,20 +25,50 @@ class OkRuExtractor : ExtractorApi() {
         Log.d("OkRu", "Iniciando extracción de: $url")
         try {
             val response = app.get(url, referer = "$mainUrl/")
-            val doc = response.document
+            val pageText = response.text
 
-            val scriptData = doc.select("script").find { it.data().contains("m3u8") || it.data().contains("flashvars") }
-                ?.data()
-            
-            Log.d("OkRu", "Script data: ${scriptData?.take(300)}")
-
-            val m3u8 = scriptData?.let {
-                Regex(""""md_preload":"([^"]+)"""").find(it)?.groupValues?.get(1)
-                    ?: Regex(""""hlsMasterUrl":"([^"]+)"""").find(it)?.groupValues?.get(1)
-                    ?: Regex("""file:\s*"(https?://[^"]+\.m3u8[^"]*)"""").find(it)?.groupValues?.get(1)
+            val dataOptionsMatch = Regex("""data-options="([^"]+)"[^>]*>""").find(pageText)
+            if (dataOptionsMatch == null) {
+                Log.e("OkRu", "No se encontró elemento data-options")
+                return
             }
 
-            if (m3u8 != null) {
+            val encodedJson = dataOptionsMatch.groupValues[1]
+            val jsonStr = java.net.URLDecoder.decode(encodedJson, "UTF-8")
+            Log.d("OkRu", "JSON data-options: ${jsonStr.take(200)}")
+
+            val flashvarsMatch = Regex(""""flashvars"\s*:\s*\{([^}]+)\}""").find(jsonStr)
+            if (flashvarsMatch == null) {
+                Log.e("OkRu", "No se encontró flashvars en data-options")
+                return
+            }
+
+            val flashvarsStr = "{${flashvarsMatch.value}}"
+
+            val metadataMatch = Regex(""""metadata"\s*:\s*"([^"]+)"""").find(flashvarsStr)
+            val metadataUrlMatch = Regex(""""metadataUrl"\s*:\s*"([^"]+)"""").find(flashvarsStr)
+
+            val metadataJson = when {
+                metadataMatch != null -> {
+                    val decoded = java.net.URLDecoder.decode(metadataMatch.groupValues[1], "UTF-8")
+                    Log.d("OkRu", "Metadata inline: ${decoded.take(100)}")
+                    decoded
+                }
+                metadataUrlMatch != null -> {
+                    val metadataUrl = java.net.URLDecoder.decode(metadataUrlMatch.groupValues[1], "UTF-8")
+                    Log.d("OkRu", "Metadata URL: $metadataUrl")
+                    app.get(metadataUrl, referer = url).text
+                }
+                else -> {
+                    Log.e("OkRu", "No se encontró metadata ni metadataUrl")
+                    return
+                }
+            }
+
+            val m3u8 = Regex(""""hlsManifestUrl"\s*:\s*"([^"]+)"""").find(metadataJson)?.groupValues?.get(1)
+                ?: Regex(""""hlsMasterPlaylistUrl"\s*:\s*"([^"]+)"""").find(metadataJson)?.groupValues?.get(1)
+
+            if (m3u8 != null && m3u8.startsWith("http")) {
                 Log.d("OkRu", "M3U8 encontrado: ${m3u8.take(100)}")
                 callback.invoke(
                     newExtractorLink(this.name, this.name, m3u8, ExtractorLinkType.M3U8) {
@@ -47,7 +77,7 @@ class OkRuExtractor : ExtractorApi() {
                     }
                 )
             } else {
-                Log.e("OkRu", "No se encontró M3U8 en la página")
+                Log.e("OkRu", "No se encontró M3U8 en metadata")
             }
         } catch (e: Exception) {
             Log.e("OkRu", "Error: ${e.message}")
@@ -61,28 +91,44 @@ class Do7GoExtractor : ExtractorApi() {
     override val requiresReferer = true
 
     private val extractorHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "Referer" to "https://doramasflix.co/"
     )
 
     override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         Log.d("Do7Go", "Iniciando extracción de: $url")
         try {
-            val response = app.get(url, headers = extractorHeaders, referer = "https://doramasflix.co/")
+            val response = app.get(url, headers = extractorHeaders)
             val pageText = response.text
-            val doc = response.document
+            Log.d("Do7Go", "Página recibida, buscando pass_md5...")
 
-            Log.d("Do7Go", "Buscando playmogo URL en la página...")
+            val passMd5Match = Regex("""/pass_md5/([^/"'<]+)""").find(pageText)
+            if (passMd5Match == null) {
+                Log.e("Do7Go", "No se encontró pass_md5 en la página")
+                return
+            }
 
-            val playmogoUrl = Regex("""https?://playmogo\.com/e/[^"'\s<]+""").find(pageText)?.value
-                ?: Regex("""/e/[a-z0-9]+""").find(pageText)?.value?.let { "https://playmogo.com$it" }
-            
-            if (playmogoUrl != null) {
-                Log.d("Do7Go", "PlayMogo URL encontrada: $playmogoUrl")
-                loadExtractor(playmogoUrl, url, subtitleCallback, callback)
+            val hash = passMd5Match.groupValues[1]
+            Log.d("Do7Go", "Hash encontrado: $hash")
+
+            val passMd5Url = "$mainUrl/pass_md5/$hash"
+            val passResponse = app.post(passMd5Url, headers = extractorHeaders, referer = url)
+            val videoUrl = passResponse.text.trim()
+
+            Log.d("Do7Go", "Video URL: ${videoUrl.take(100)}")
+
+            if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl, 
+                        if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
             } else {
-                Log.e("Do7Go", "No se encontró URL de playmogo en la página")
+                Log.e("Do7Go", "URL no válida: $videoUrl")
             }
         } catch (e: Exception) {
             Log.e("Do7Go", "Error: ${e.message}")

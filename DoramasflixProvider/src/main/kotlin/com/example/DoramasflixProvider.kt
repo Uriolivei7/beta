@@ -372,7 +372,6 @@ class DoramasflixProvider:MainAPI() {
                 Log.d(TAG, "Intentando extraer: $finalServerName URL: $link")
 
                 val success = loadExtractor(link, data, subtitleCallback) { extractorLink ->
-                    Log.i(TAG, "Éxito en extractor: ${extractorLink.name}")
                     runBlocking {
                         callback.invoke(
                             newExtractorLink(
@@ -390,7 +389,7 @@ class DoramasflixProvider:MainAPI() {
                     }
                 }
 
-                if (!success) Log.e(TAG, "El extractor falló para: $link")
+                if (!success) Log.e(TAG, "Extractor no encontró enlace para: $link")
             }
             true
         } catch (e: Exception) {
