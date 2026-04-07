@@ -24,28 +24,27 @@ class RetrotveProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "/series/" to "Series",
+        "/category/animacion/?tr_post_type=2" to "Series Animadas",
+        "/category/liveaction/" to "Series Live Action",
         "/peliculas/" to "Películas"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = "$mainUrl${request.data}?page=$page"
+        val url = "$mainUrl${request.data}&paged=$page"
         Log.d("RetrotveProvider", "getMainPage: URL = $url")
         
         val document = app.get(url).document
         val home = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
-        document.select(".MovieList li, .TpSbList li, .MovieListSldCn li, .TPTblCn tbody tr").forEach { element ->
-            val link = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.attr("href") ?: return@forEach
+        document.select(".MovieList li, .MovieList .TPostMv").forEach { element ->
+            val linkElement = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")
+            val link = linkElement?.attr("href") ?: return@forEach
             if (seenLinks.contains(link)) return@forEach
             seenLinks.add(link)
             
-            val title = element.selectFirst(".Title")?.text() 
-                ?: element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.text()
-                ?: return@forEach
-            
-            val poster = element.selectFirst("img")?.attr("src")
+            val title = element.selectFirst(".Title")?.text() ?: return@forEach
+            val poster = element.selectFirst(".Image img")?.attr("src")
             
             if (title.isNotEmpty()) {
                 val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
@@ -54,27 +53,6 @@ class RetrotveProvider : MainAPI() {
                         this.posterUrl = poster
                     }
                 )
-            }
-        }
-        
-        if (home.isEmpty()) {
-            document.select(".Wdgt .MovieList a, .TpSbList a").forEach { element ->
-                val link = element.attr("href") ?: return@forEach
-                if (!link.contains("/serie/") && !link.contains("/pelicula/")) return@forEach
-                if (seenLinks.contains(link)) return@forEach
-                seenLinks.add(link)
-                
-                val title = element.selectFirst(".Title")?.text() ?: element.text()
-                val poster = element.selectFirst("img")?.attr("src")
-                
-                if (title.isNotEmpty()) {
-                    val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-                    home.add(
-                        newTvSeriesSearchResponse(title, link, tvType) {
-                            this.posterUrl = poster
-                        }
-                    )
-                }
             }
         }
         
@@ -88,28 +66,13 @@ class RetrotveProvider : MainAPI() {
         )
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
-        val title = this.selectFirst(".Title")?.text() ?: return null
-        val href = this.selectFirst("a[href]")?.attr("href") ?: return null
-        val poster = this.selectFirst("img")?.attr("src")
-        
-        if (title.isEmpty() || href.isEmpty()) return null
-        
-        val tvType = if (href.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-        return newTvSeriesSearchResponse(title, href, tvType) {
-            this.posterUrl = poster
-        }
-    }
-
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("RetrotveProvider", "search: query = $query")
         val document = app.get("$mainUrl/?s=$query").document
-        val results = document.select(".MovieList li, .TPost, article.post, .search-results li").mapNotNull { element ->
+        val results = document.select(".MovieList li, .TPostMv, .search-results li").mapNotNull { element ->
             val link = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.attr("href") ?: return@mapNotNull null
-            val title = element.selectFirst("h2, h3, .Title")?.text() 
-                ?: element.selectFirst("img")?.attr("alt")
-                ?: return@mapNotNull null
-            val poster = element.selectFirst("img")?.attr("src")
+            val title = element.selectFirst(".Title, h2, h3")?.text() ?: return@mapNotNull null
+            val poster = element.selectFirst(".Image img")?.attr("src")
             
             if (title.isEmpty()) return@mapNotNull null
             
@@ -126,52 +89,74 @@ class RetrotveProvider : MainAPI() {
         Log.d("RetrotveProvider", "load: url = $url")
         val document = app.get(url).document
         
-        val title = document.selectFirst("h1.Title")?.text() 
-            ?: document.selectFirst("h1")?.text()
-            ?: return null
-        
-        val poster = document.selectFirst(".Image figure img")?.attr("src")
-            ?: document.selectFirst("article img")?.attr("src")
-        
+        val title = document.selectFirst("h1.Title, h1")?.text() ?: return null
+        val poster = document.selectFirst(".TPostBg .Image img, .poster img")?.attr("src")
         val description = document.selectFirst(".Description p")?.text()
         
-        val year = document.selectFirst(".Date")?.text()?.filter { it.isDigit() }?.take(4)?.toIntOrNull()
+        val year = document.selectFirst(".Year")?.text()?.filter { it.isDigit() }?.take(4)?.toIntOrNull()
         
         val isMovie = url.contains("/pelicula/")
         
         val episodes = ArrayList<Episode>()
         
         if (!isMovie) {
-            document.select(".TPTblCn tbody tr, .Wdgt.AABox tbody tr").forEach { row ->
-                val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
-                val episodeName = row.selectFirst(".MvTbTtl a")?.text() 
-                    ?: row.selectFirst("td:nth-child(3) a")?.text()
-                    ?: "Episodio"
-                val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
-                    ?: row.selectFirst("td:first-child span")?.text()?.toIntOrNull()
-                
-                val seasonMatch = Regex("""temporada(\d+)""").find(episodeUrl)
-                val season = seasonMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-                
-                episodes.add(newEpisode(episodeUrl) {
-                    this.name = episodeName
-                    this.episode = episodeNum ?: episodes.size + 1
-                    this.season = season
-                })
+            val seasonTabs = document.select(".MovieTabNav a.Lnk, .TPTabCn a")
+            if (seasonTabs.isNotEmpty()) {
+                seasonTabs.forEach { tab ->
+                    val seasonNum = tab.text().filter { it.isDigit() }.toIntOrNull() ?: 1
+                    val tabHref = tab.attr("href")
+                    
+                    if (tabHref.isNotEmpty()) {
+                        val seasonDoc = if (tabHref.startsWith("http")) {
+                            app.get(tabHref).document
+                        } else {
+                            app.get("$mainUrl$tabHref").document
+                        }
+                        
+                        seasonDoc.select(".TPTblCn tbody tr, .episode-list li").forEach { row ->
+                            val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
+                            val episodeName = row.selectFirst(".MvTbTtl a, td:nth-child(3) a")?.text() ?: "Episodio"
+                            val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
+                            
+                            episodes.add(newEpisode(episodeUrl) {
+                                this.name = episodeName
+                                this.episode = episodeNum ?: episodes.size + 1
+                                this.season = seasonNum
+                            })
+                        }
+                    }
+                }
+            } else {
+                document.select(".TPTblCn tbody tr, .Wdgt.AABox tbody tr, .episode-list li").forEach { row ->
+                    val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
+                    val episodeName = row.selectFirst(".MvTbTtl a, td:nth-child(3) a")?.text() ?: "Episodio"
+                    val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
+                    
+                    val seasonMatch = Regex("""temporada(\d+)""").find(episodeUrl)
+                    val season = seasonMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeName
+                        this.episode = episodeNum ?: episodes.size + 1
+                        this.season = season
+                    })
+                }
             }
             
             if (episodes.isEmpty()) {
-                document.select(".episode-list li a, .episodes a").forEach { element ->
+                document.select(".AA-Srlst li a, .ListAdrs li a").forEach { element ->
                     val episodeUrl = element.attr("href") ?: return@forEach
-                    val episodeName = element.text()
-                    episodes.add(newEpisode(episodeUrl) {
-                        this.name = episodeName
-                    })
+                    if (episodeUrl.contains("/seriestv/")) {
+                        val episodeName = element.text()
+                        episodes.add(newEpisode(episodeUrl) {
+                            this.name = episodeName
+                        })
+                    }
                 }
             }
         }
         
-        val recommendations = document.select(".TpSbList li, .Relacionados li").mapNotNull { element ->
+        val recommendations = document.select(".TpSbList li, .Relacionados li, .MovieList li").mapNotNull { element ->
             val recUrl = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
             val recTitle = element.selectFirst(".Title")?.text() ?: return@mapNotNull null
             val recPoster = element.selectFirst("img")?.attr("src")
@@ -211,7 +196,6 @@ class RetrotveProvider : MainAPI() {
         var linksFound = false
         val res = app.get(data).document
 
-        // Extract all iframe sources from TPlayerTb divs
         res.select(".TPlayerTb iframe, .TPlayer iframe, iframe[src*='trembed'], iframe[src*='retrotve']").forEach { element ->
             val rawLink = element.attr("src")
             if (rawLink.isNullOrBlank()) {
@@ -221,13 +205,10 @@ class RetrotveProvider : MainAPI() {
             
             Log.d("RetrotveProvider", "loadLinks: iframe src = $rawLink")
             
-            // If the iframe is a retrotve player URL, we need to extract the actual video
             if (rawLink.contains("trembed") && rawLink.contains("retrotve.com")) {
-                // This is an internal player URL - try to load it and extract video
                 try {
                     val playerPage = app.get(rawLink).document
                     
-                    // Look for video sources in the player page
                     playerPage.select("iframe[src]").forEach { playerIframe ->
                         val playerSrc = playerIframe.attr("src")
                         if (!playerSrc.isNullOrBlank() && !playerSrc.contains("retrotve.com")) {
@@ -236,29 +217,43 @@ class RetrotveProvider : MainAPI() {
                             val success = loadExtractor(link, rawLink, subtitleCallback, callback)
                             if (success) {
                                 linksFound = true
+                            } else {
+                                callback.invoke(
+                                    newExtractorLink(
+                                        source = getBaseName(link),
+                                        name = getBaseName(link),
+                                        url = link,
+                                        type = ExtractorLinkType.M3U8
+                                    ) {
+                                        referer = "$mainUrl/"
+                                        quality = Qualities.Unknown.value
+                                    }
+                                )
+                                linksFound = true
                             }
                         }
                     }
                     
-                    // Also check for direct video patterns
                     val videoPatterns = listOf(
                         Regex("""file\s*:\s*["']([^"']+\.(m3u8|mp4|webm)[^"']*)["']"""),
                         Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
                         Regex("""videoUrl\s*[:=]\s*["']([^"']+)["']"""),
-                        Regex("""video\s*:\s*["']([^"']+)["']""")
+                        Regex("""video\s*:\s*["']([^"']+)["']"""),
+                        Regex("""["']([^"']+\.m3u8[^"']*)["']"""),
+                        Regex("""url\s*:\s*["']([^"']+\.(m3u8|mp4)[^"']*)["']""")
                     )
                     
                     for (pattern in videoPatterns) {
                         pattern.findAll(playerPage.html()).forEach { match ->
                             val videoUrl = match.groupValues[1]
-                            if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                            if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4") || videoUrl.contains(".webm"))) {
                                 Log.d("RetrotveProvider", "loadLinks: direct video = $videoUrl")
                                 callback.invoke(
                                     newExtractorLink(
                                         source = "RetroTVE",
                                         name = "RetroTVE Video",
                                         url = videoUrl,
-                                        type = ExtractorLinkType.M3U8
+                                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                                     ) {
                                         referer = rawLink
                                         quality = Qualities.Unknown.value
@@ -272,58 +267,57 @@ class RetrotveProvider : MainAPI() {
                     Log.e("RetrotveProvider", "Error loading player page: ${e.message}")
                 }
             } else {
-                // External iframe - use standard extraction
                 val link = fixHostsLinks(rawLink)
                 val success = loadExtractor(link, data, subtitleCallback, callback)
                 if (success) {
+                    linksFound = true
+                } else {
+                    callback.invoke(
+                        newExtractorLink(
+                            source = getBaseName(link),
+                            name = getBaseName(link),
+                            url = link,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            referer = "$mainUrl/"
+                            quality = Qualities.Unknown.value
+                        }
+                    )
                     linksFound = true
                 }
             }
         }
 
-        // Fallback: look for video patterns directly on the page
-        val videoPattern = Regex("""file\s*:\s*["']([^"']+)["']""")
-        videoPattern.findAll(res.html()).forEach { match ->
-            val videoUrl = match.groupValues[1]
-            if (videoUrl.startsWith("http")) {
-                Log.d("RetrotveProvider", "loadLinks: video file = $videoUrl")
-                callback.invoke(
-                    newExtractorLink(
-                        source = "RetroTVE",
-                        name = "RetroTVE",
-                        url = videoUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        referer = data
-                        quality = Qualities.Unknown.value
-                    }
-                )
-                linksFound = true
-            }
-        }
-        
-        val jsPlayerPattern = Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']""")
-        jsPlayerPattern.findAll(res.html()).forEach { match ->
-            val videoUrl = match.groupValues[1]
-            if (videoUrl.startsWith("http")) {
-                Log.d("RetrotveProvider", "loadLinks: js player = $videoUrl")
-                callback.invoke(
-                    newExtractorLink(
-                        source = "RetroTVE",
-                        name = "RetroTVE",
-                        url = videoUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        referer = data
-                        quality = Qualities.Unknown.value
-                    }
-                )
-                linksFound = true
+        listOf(
+            Regex("""file\s*:\s*["']([^"']+)["']"""),
+            Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']""")
+        ).forEach { pattern ->
+            pattern.findAll(res.html()).forEach { match ->
+                val videoUrl = match.groupValues[1]
+                if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                    Log.d("RetrotveProvider", "loadLinks: video file = $videoUrl")
+                    callback.invoke(
+                        newExtractorLink(
+                            source = "RetroTVE",
+                            name = "RetroTVE",
+                            url = videoUrl,
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            referer = data
+                            quality = Qualities.Unknown.value
+                        }
+                    )
+                    linksFound = true
+                }
             }
         }
         
         return linksFound
     }
+}
+
+fun getBaseName(url: String): String {
+    return url.substringAfter("://").substringBefore("/").substringBefore(".")
 }
 
 fun fixHostsLinks(url: String): String {
