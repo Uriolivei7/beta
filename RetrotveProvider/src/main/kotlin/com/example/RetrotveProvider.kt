@@ -105,7 +105,8 @@ class RetrotveProvider : MainAPI() {
         val document = app.get(url).document
         
         val title = document.selectFirst("h1.Title, h1")?.text() ?: return null
-        val poster = document.selectFirst(".TPostBg .Image img, .poster img")?.attr("src")
+        val poster = document.selectFirst(".TPost.Single .Image img, .TPostBg img, .poster img, article img")?.attr("src")
+            ?: document.selectFirst("meta[property='og:image']")?.attr("content")
         val description = document.selectFirst(".Description p")?.text()
         
         val year = document.selectFirst(".Year")?.text()?.filter { it.isDigit() }?.take(4)?.toIntOrNull()
@@ -188,34 +189,66 @@ class RetrotveProvider : MainAPI() {
         var linksFound = false
         val res = app.get(data).document
 
-        res.select(".TPlayerTb iframe, .TPlayer iframe, iframe[src*='trembed'], iframe[src*='retrotve']").forEach { element ->
-            val rawLink = element.attr("src")
-            if (rawLink.isNullOrBlank()) {
-                Log.w("RetrotveProvider", "Empty iframe source found")
-                return@forEach
-            }
+        val trembedIframes = res.select("iframe[src*='trembed']")
+        Log.d("RetrotveProvider", "Found ${trembedIframes.size} trembed iframes")
+
+        trembedIframes.forEach { iframe ->
+            val rawLink = iframe.attr("src")
+            if (rawLink.isNullOrBlank()) return@forEach
             
-            Log.d("RetrotveProvider", "loadLinks: iframe src = $rawLink")
+            Log.d("RetrotveProvider", "loadLinks: trembed iframe = $rawLink")
             
-            if (rawLink.contains("trembed") && rawLink.contains("retrotve.com")) {
-                try {
-                    val playerPage = app.get(rawLink).document
+            try {
+                val playerPage = app.get(rawLink, referer = "$mainUrl/").document
+                
+                playerPage.select("script").forEach { script ->
+                    val scriptContent = script.html()
                     
-                    playerPage.select("iframe[src]").forEach { playerIframe ->
-                        val playerSrc = playerIframe.attr("src")
-                        if (!playerSrc.isNullOrBlank() && !playerSrc.contains("retrotve.com")) {
-                            val link = fixHostsLinks(playerSrc)
-                            Log.d("RetrotveProvider", "loadLinks: player iframe src = $link")
-                            val success = loadExtractor(link, rawLink, subtitleCallback, callback)
-                            if (success) linksFound = true
-                        }
+                    val oidPattern = Regex("""(?:owner_id|oid)\s*[=:]\s*["']?(-?\d+)["']?""")
+                    val vidPattern = Regex("""(?:video_id|vid)\s*[=:]\s*["']?(\d+)["']?""")
+                    
+                    val oidMatch = oidPattern.find(scriptContent)
+                    val vidMatch = vidPattern.find(scriptContent)
+                    
+                    if (oidMatch != null && vidMatch != null) {
+                        val oid = oidMatch.groupValues[1]
+                        val vid = vidMatch.groupValues[1]
+                        Log.d("RetrotveProvider", "Found VK: oid=$oid, video_id=$vid")
+                        val vkUrl = "https://vk.com/video_ext.php?oid=$oid&video_id=$vid"
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "VKVideo",
+                                name = "VKVideo",
+                                url = vkUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                referer = "$mainUrl/"
+                                quality = Qualities.Unknown.value
+                            }
+                        )
+                        linksFound = true
                     }
                     
-                    val m3u8Pattern = Regex("""["']([^"']+\.m3u8[^"']*)["']""")
-                    m3u8Pattern.findAll(playerPage.html()).forEach { match ->
-                        val videoUrl = match.groupValues[1]
+                    Regex("""vk\.com/video_ext\.php\?oid=-?\d+&video_id=\d+""").find(scriptContent)?.let { match ->
+                        Log.d("RetrotveProvider", "Found complete VK URL: ${match.value}")
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "VKVideo",
+                                name = "VKVideo",
+                                url = match.value,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                referer = "$mainUrl/"
+                                quality = Qualities.Unknown.value
+                            }
+                        )
+                        linksFound = true
+                    }
+                    
+                    Regex("""filemoon[^"']*?["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""").findAll(scriptContent).forEach { match ->
+                        var videoUrl = match.groupValues[1]
+                        Log.d("RetrotveProvider", "Found filemoon video: $videoUrl")
                         if (videoUrl.startsWith("http")) {
-                            Log.d("RetrotveProvider", "loadLinks: m3u8 found = $videoUrl")
                             callback.invoke(
                                 newExtractorLink(
                                     source = "RetroTVE",
@@ -223,20 +256,91 @@ class RetrotveProvider : MainAPI() {
                                     url = videoUrl,
                                     type = ExtractorLinkType.M3U8
                                 ) {
-                                    referer = rawLink
+                                    referer = "$mainUrl/"
                                     quality = Qualities.Unknown.value
                                 }
                             )
                             linksFound = true
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e("RetrotveProvider", "Error loading player page: ${e.message}")
+                    
+                    Regex("""file\s*:\s*["']([^"']+)["']""").findAll(scriptContent).forEach { match ->
+                        val videoUrl = match.groupValues[1]
+                        if (videoUrl.startsWith("http") && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
+                            Log.d("RetrotveProvider", "Found direct video: $videoUrl")
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = "RetroTVE",
+                                    name = "RetroTVE Video",
+                                    url = videoUrl,
+                                    type = ExtractorLinkType.M3U8
+                                ) {
+                                    referer = "$mainUrl/"
+                                    quality = Qualities.Unknown.value
+                                }
+                            )
+                            linksFound = true
+                        }
+                    }
                 }
+                
+                playerPage.select("iframe[src]").forEach { playerIframe ->
+                    val playerSrc = playerIframe.attr("src")
+                    if (playerSrc.isNullOrBlank() || playerSrc.contains("retrotve.com")) return@forEach
+                    
+                    Log.d("RetrotveProvider", "loadLinks: player iframe = $playerSrc")
+                    
+                    if (playerSrc.contains("vk.com") || playerSrc.contains("vkvideo")) {
+                        val vkUrl = playerSrc.ifEmpty { playerSrc }
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "VKVideo",
+                                name = "VKVideo",
+                                url = vkUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                referer = "$mainUrl/"
+                                quality = Qualities.Unknown.value
+                            }
+                        )
+                        linksFound = true
+                    } else if (playerSrc.contains("filemoon")) {
+                        val link = fixHostsLinks(playerSrc)
+                        val success = loadExtractor(link, "$mainUrl/", subtitleCallback, callback)
+                        if (success) linksFound = true
+                    } else {
+                        val success = loadExtractor(playerSrc, "$mainUrl/", subtitleCallback, callback)
+                        if (success) linksFound = true
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e("RetrotveProvider", "Error loading trembed player: ${e.message}")
+            }
+        }
+        
+        res.select(".TPlayerTb iframe, .TPlayer iframe, iframe[src*='retrotve']:not([src*='trembed'])").forEach { element ->
+            val rawLink = element.attr("src")
+            if (rawLink.isNullOrBlank()) return@forEach
+            
+            Log.d("RetrotveProvider", "loadLinks: direct iframe = $rawLink")
+            
+            if (rawLink.contains("vk.com") || rawLink.contains("vkvideo")) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = "VKVideo",
+                        name = "VKVideo",
+                        url = rawLink,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        referer = "$mainUrl/"
+                        quality = Qualities.Unknown.value
+                    }
+                )
+                linksFound = true
             } else {
                 val link = fixHostsLinks(rawLink)
-                Log.d("RetrotveProvider", "loadLinks: direct link = $link")
-                val success = loadExtractor(link, data, subtitleCallback, callback)
+                val success = loadExtractor(link, "$mainUrl/", subtitleCallback, callback)
                 if (success) {
                     linksFound = true
                 } else {
