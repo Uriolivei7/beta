@@ -360,3 +360,52 @@ class FPlayerExtractor : ExtractorApi() {
         }
     }
 }
+
+class SbbriskExtractor : ExtractorApi() {
+    override val name = "Sbbrisk"
+    override val mainUrl = "https://sbbrisk.com"
+    override val requiresReferer = true
+
+    private val extractorHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
+    )
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("Sbbrisk", "Iniciando extracción de: $url")
+        try {
+            val response = app.get(url, headers = extractorHeaders)
+            val pageText = response.text
+            
+            Log.d("Sbbrisk", "Página recibida, longitud: ${pageText.length}")
+            
+            val iframeMatch = Regex("""<iframe[^>]*src=["']([^"']+)["']""").find(pageText)
+            if (iframeMatch != null) {
+                val iframeSrc = iframeMatch.groupValues[1]
+                Log.d("Sbbrisk", "Iframe encontrado: $iframeSrc")
+                loadExtractor(iframeSrc, url, subtitleCallback, callback)
+                return
+            }
+
+            val videoUrl = Regex("""sources:\s*\[\{file:\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
+                ?: Regex("""file:\s*"(https?://[^"]+)"""").find(pageText)?.groupValues?.get(1)
+                ?: Regex("""player\.src\(["']([^"']+)["']""").find(pageText)?.groupValues?.get(1)
+            
+            if (videoUrl != null && videoUrl.startsWith("http")) {
+                Log.d("Sbbrisk", "Video URL: ${videoUrl.take(100)}")
+                callback.invoke(
+                    newExtractorLink(this.name, this.name, videoUrl,
+                        if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+            } else {
+                Log.e("Sbbrisk", "No se encontró URL de video")
+            }
+        } catch (e: Exception) {
+            Log.e("Sbbrisk", "Error: ${e.message}")
+        }
+    }
+}

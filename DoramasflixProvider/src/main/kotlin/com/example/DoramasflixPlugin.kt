@@ -16,5 +16,6 @@ class DoramasflixPlugin: Plugin() {
         registerExtractorAPI(VoeExtractor())
         registerExtractorAPI(UqloadExtractor())
         registerExtractorAPI(FPlayerExtractor())
+        registerExtractorAPI(SbbriskExtractor())
     }
 }

@@ -364,6 +364,7 @@ class DoramasflixProvider:MainAPI() {
                     link.contains("uqload") -> "Uqload"
                     link.contains("streamwish") -> "Streamwish"
                     link.contains("fplayer") || link.contains("fkplayer") -> "FPlayer"
+                    link.contains("sbbrisk") -> "Sbbrisk"
                     rawServer.matches(Regex("\\d+")) -> "PlayMogo"
                     else -> rawServer
                 }
