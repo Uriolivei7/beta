@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import java.util.Calendar
 
 class AsialiveactionProvider : MainAPI() {
@@ -18,14 +17,7 @@ class AsialiveactionProvider : MainAPI() {
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.AsianDrama)
 
-    private fun getHdImg(url: String?): String? {
-        if (url.isNullOrEmpty() || !url.contains("tmdb")) return url
-        return url.replace(Regex("""(https://image\.tmdb\.org/t/p/)[\w_]+(/[^\s]*)""")) { 
-            "${it.groupValues[1]}w500${it.groupValues[2]}" 
-        }
-    }
-
-    private fun getNumberFromEpsString(epsStr: String): String = epsStr.filter { it.isDigit() }
+    private fun getNumberFromEpsString(epsStr: String): String = epsStr.filter { it.isDigit() }.take(4)
 
     private fun fetchUrls(text: String?): List<String> {
         if (text.isNullOrEmpty()) return listOf()
@@ -36,51 +28,62 @@ class AsialiveactionProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
         
-        val response = app.get("$mainUrl/todos/page/$page")
+        val response = app.get(mainUrl)
         val document = Jsoup.parse(response.text)
         
-        val animes = document.select("div.TpRwCont main section ul.MovieList li.TPostMv article.TPost").map { element ->
-            val title = element.select("a h3.Title").text()
-            val url = element.select("a").attr("href")
-            val poster = element.select("a div.Image figure img").attr("src").trim().replace("//", "https://")
+        val homeItems = ArrayList<SearchResponse>()
+        
+        document.select(".splide__slide").forEach { slide ->
+            val link = slide.selectFirst("a")?.attr("href") ?: return@forEach
+            val title = slide.selectFirst("h5")?.text() ?: return@forEach
+            val poster = slide.selectFirst("img")?.attr("src") ?: slide.selectFirst("img")?.attr("data-src")
             
-            newAnimeSearchResponse(title, url) {
-                this.posterUrl = poster
+            if (link.isNotEmpty() && title.isNotEmpty()) {
+                val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.AsianDrama
+                homeItems.add(
+                    newAnimeSearchResponse(title, link, tvType) {
+                        this.posterUrl = poster
+                    }
+                )
             }
         }
         
-        items.add(HomePageList("Todos", animes))
+        if (homeItems.isNotEmpty()) {
+            items.add(HomePageList("Todos", homeItems))
+        }
         
         if (items.isEmpty()) throw ErrorLoadingException()
         return newHomePageResponse(items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val response = app.get("$mainUrl/page/1/?s=$query")
+        val response = app.get("$mainUrl/?s=$query")
         val document = Jsoup.parse(response.text)
         
-        return document.select("div.TpRwCont main section ul.MovieList li.TPostMv article.TPost").map { element ->
-            val title = element.select("a h3.Title").text()
-            val url = element.select("a").attr("href")
-            val poster = element.select("a div.Image figure img").attr("src").trim().replace("//", "https://")
+        return document.select("article.post, .search-result").map { element ->
+            val link = element.selectFirst("a")?.attr("href") ?: ""
+            val title = element.selectFirst("h2, h3, .title")?.text() ?: ""
+            val poster = element.selectFirst("img")?.attr("src")
+            val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.AsianDrama
             
-            newAnimeSearchResponse(title, url) {
+            newAnimeSearchResponse(title, link, tvType) {
                 this.posterUrl = poster
             }
-        }
+        }.filter { it.name.isNotEmpty() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
         val response = app.get(url)
         val document = Jsoup.parse(response.text)
         
-        val title = document.selectFirst("header div.asia-post-header h1.Title")?.text() ?: ""
-        val poster = document.selectFirst("header div.Image figure img")?.attr("abs:src")?.let { getHdImg(it) }
-        val description = document.selectFirst("header div.asia-post-main div.Description p:nth-child(2), header div.asia-post-main div.Description p")?.text()?.removeSurrounding("\"") ?: ""
-        val genre = document.select("div.asia-post-main p.Info span.tags a").joinToString { it.text() }
-        val yearText = document.select("header div.asia-post-main p.Info span.Date a").text()
-        val year = yearText.toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
+        val title = document.selectFirst("h2.Title, h1.Title")?.text() ?: ""
+        val poster = document.selectFirst(".Poster")?.attr("style")?.let {
+            Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1)
+        }
+        val description = document.selectFirst("article p")?.text() ?: ""
         
+        val yearText = document.selectFirst(".estreno")?.text() ?: ""
+        val year = yearText.filter { it.isDigit() }.take(4).toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         val status = when {
             year < currentYear -> ShowStatus.Completed
@@ -89,34 +92,34 @@ class AsialiveactionProvider : MainAPI() {
         }
         
         val episodes = ArrayList<Episode>()
+        val isMovie = url.contains("/pelicula/")
         
-        document.select("#ep-list div.TPTblCn span a, #ep-list div.TPTblCn .accordion").forEach { element ->
-            if (element.attr("class").contains("accordion")) {
-                val epName = element.select("label span").text().trim()
-                val epNum = getNumberFromEpsString(epName)
-                val epUrl = element.selectFirst("ul li a")?.attr("abs:href") ?: return@forEach
-                
-                episodes.add(newEpisode(epUrl) {
-                    this.name = epName
-                    this.episode = epNum.toIntOrNull() ?: 1
-                })
-            } else {
-                val epName = element.select("div.flex-grow-1 p").text().trim()
-                val epNum = getNumberFromEpsString(epName)
-                val epUrl = element.attr("abs:href")
-                
-                episodes.add(newEpisode(epUrl) {
-                    this.name = epName
-                    this.episode = epNum.toIntOrNull() ?: 1
-                })
+        if (!isMovie) {
+            document.select(".lista-episodios .episodio-unico a").forEach { element ->
+                val epUrl = element.attr("href")
+                if (epUrl.isNotEmpty()) {
+                    val epName = element.selectFirst(".numero-episodio")?.text() ?: element.text()
+                    val epNum = getNumberFromEpsString(epName)
+                    
+                    episodes.add(newEpisode(epUrl) {
+                        this.name = epName
+                        this.episode = epNum.toIntOrNull() ?: 1
+                    })
+                }
             }
         }
         
-        return newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodes.reversed()) {
-            this.posterUrl = poster
-            this.plot = description
-            this.tags = if (genre.isNotEmpty()) genre.split(", ").map { it.trim() } else emptyList()
-            this.showStatus = status
+        return if (isMovie) {
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster
+                this.plot = description
+            }
+        } else {
+            newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodes) {
+                this.posterUrl = poster
+                this.plot = description
+                this.showStatus = status
+            }
         }
     }
 
@@ -129,21 +132,32 @@ class AsialiveactionProvider : MainAPI() {
         val response = app.get(data)
         val document = Jsoup.parse(response.text)
         
-        val videoUrls = document.select("script:containsData(var videos)")
-            .flatMap { fetchUrls(it.data()) }
+        val videoUrls = mutableListOf<String>()
+        
+        document.select("script").forEach { script ->
+            val scriptData = script.data()
+            if (scriptData.contains("var videos") || scriptData.contains("player")) {
+                videoUrls.addAll(fetchUrls(scriptData))
+            }
+        }
+        
+        if (videoUrls.isEmpty()) {
+            document.select("iframe[src*='player'], iframe[src*='embed']").forEach { iframe ->
+                val iframeUrl = iframe.attr("src")
+                if (iframeUrl.isNotEmpty()) {
+                    loadExtractor(iframeUrl, data, subtitleCallback, callback)
+                }
+            }
+        }
         
         videoUrls.forEach { videoUrl ->
             val extractorName = when {
                 videoUrl.contains("vk", ignoreCase = true) -> "Vk"
                 videoUrl.contains("ok.ru", ignoreCase = true) || videoUrl.contains("okru", ignoreCase = true) -> "Ok.ru"
-                videoUrl.contains("wishembed", ignoreCase = true) || videoUrl.contains("streamwish", ignoreCase = true) || 
-                videoUrl.contains("strwish", ignoreCase = true) || videoUrl.contains("wish", ignoreCase = true) -> "StreamWish"
+                videoUrl.contains("wishembed", ignoreCase = true) || videoUrl.contains("streamwish", ignoreCase = true) -> "StreamWish"
                 videoUrl.contains("filemoon", ignoreCase = true) || videoUrl.contains("moonplayer", ignoreCase = true) -> "Filemoon"
-                videoUrl.contains("vembed", ignoreCase = true) || videoUrl.contains("guard", ignoreCase = true) || 
-                videoUrl.contains("listeamed", ignoreCase = true) || videoUrl.contains("bembed", ignoreCase = true) || 
-                videoUrl.contains("vgfplay", ignoreCase = true) -> "VidGuard"
-                videoUrl.contains("filelions", ignoreCase = true) || videoUrl.contains("lion", ignoreCase = true) || 
-                videoUrl.contains("fviplions", ignoreCase = true) -> "FileLions"
+                videoUrl.contains("vembed", ignoreCase = true) || videoUrl.contains("guard", ignoreCase = true) -> "VidGuard"
+                videoUrl.contains("filelions", ignoreCase = true) || videoUrl.contains("lion", ignoreCase = true) -> "FileLions"
                 (videoUrl.contains("amazon", ignoreCase = true) || videoUrl.contains("amz", ignoreCase = true)) && 
                 !videoUrl.contains("disable") -> "Amazon"
                 else -> null
