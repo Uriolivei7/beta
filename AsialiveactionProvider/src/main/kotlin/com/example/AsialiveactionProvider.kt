@@ -39,21 +39,27 @@ class AsialiveactionProvider : MainAPI() {
         val items = ArrayList<HomePageList>()
         
         Log.d(TAG, "getMainPage: Obteniendo página principal")
-        val response = app.get(mainUrl)
-        val document = Jsoup.parse(response.text)
         
         val seriesItems = ArrayList<SearchResponse>()
         val peliculasItems = ArrayList<SearchResponse>()
         
-        document.select(".navegacion-grid a[href*='/tv/']").forEach { element ->
+        val seenLinks = mutableSetOf<String>()
+        
+        val seriesResponse = app.get("$mainUrl/navegacion/?tipo%5B%5D=series")
+        val seriesDoc = Jsoup.parse(seriesResponse.text)
+        
+        seriesDoc.select(".navegacion-grid a[href*='/tv/'], #carousel-series .splide__slide a[href*='/tv/']").forEach { element ->
             val link = element.attr("href") ?: return@forEach
-            val title = element.selectFirst("h5")?.text() 
-                ?: element.selectFirst("h4")?.text()
-                ?: element.selectFirst("img")?.attr("alt") ?: return@forEach
-            val poster = element.selectFirst("img")?.attr("src")?.takeIf { it.isNotEmpty() && !it.contains("logo") }
-                ?: element.selectFirst("img")?.attr("data-src")
+            if (seenLinks.contains(link)) return@forEach
+            seenLinks.add(link)
             
-            if (link.isNotEmpty() && title.isNotEmpty() && poster != null) {
+            val title = element.selectFirst("h5")?.text()?.trim()
+                ?: element.selectFirst("h4")?.text()?.trim()
+                ?: return@forEach
+            
+            val poster = element.selectFirst("img:not(.hover-img)")?.attr("src")
+            
+            if (title.isNotEmpty() && poster != null && poster.contains("tmdb")) {
                 seriesItems.add(
                     newAnimeSearchResponse(title, link, TvType.AsianDrama) {
                         this.posterUrl = poster
@@ -62,15 +68,23 @@ class AsialiveactionProvider : MainAPI() {
             }
         }
         
-        document.select(".navegacion-grid a[href*='/pelicula/']").forEach { element ->
+        seenLinks.clear()
+        
+        val peliculasResponse = app.get("$mainUrl/navegacion/?tipo%5B%5D=peliculas")
+        val peliculasDoc = Jsoup.parse(peliculasResponse.text)
+        
+        peliculasDoc.select(".navegacion-grid a[href*='/pelicula/'], #carousel-peliculas .splide__slide a[href*='/pelicula/']").forEach { element ->
             val link = element.attr("href") ?: return@forEach
-            val title = element.selectFirst("h5")?.text() 
-                ?: element.selectFirst("h4")?.text()
-                ?: element.selectFirst("img")?.attr("alt") ?: return@forEach
-            val poster = element.selectFirst("img")?.attr("src")?.takeIf { it.isNotEmpty() && !it.contains("logo") }
-                ?: element.selectFirst("img")?.attr("data-src")
+            if (seenLinks.contains(link)) return@forEach
+            seenLinks.add(link)
             
-            if (link.isNotEmpty() && title.isNotEmpty() && poster != null) {
+            val title = element.selectFirst("h5")?.text()?.trim()
+                ?: element.selectFirst("h4")?.text()?.trim()
+                ?: return@forEach
+            
+            val poster = element.selectFirst("img:not(.hover-img)")?.attr("src")
+            
+            if (title.isNotEmpty() && poster != null && poster.contains("tmdb")) {
                 peliculasItems.add(
                     newMovieSearchResponse(title, link) {
                         this.posterUrl = poster
