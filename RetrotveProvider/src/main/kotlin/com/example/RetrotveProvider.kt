@@ -25,19 +25,22 @@ class RetrotveProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "/category/animacion/?tr_post_type=2" to "Series Animadas",
-        "/category/liveaction/" to "Series Live Action",
-        "/peliculas/" to "Películas"
+        "/category/animacion/?tr_post_type=1" to "Películas"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = "$mainUrl${request.data}&paged=$page"
+        val url = if (page == 1) {
+            "$mainUrl${request.data}"
+        } else {
+            "$mainUrl${request.data.replace("?", "/?")}page/$page/"
+        }
         Log.d("RetrotveProvider", "getMainPage: URL = $url")
         
         val document = app.get(url).document
         val home = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
-        document.select(".MovieList li, .MovieList .TPostMv").forEach { element ->
+        document.select(".MovieList li, .TPostMv").forEach { element ->
             val linkElement = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")
             val link = linkElement?.attr("href") ?: return@forEach
             if (seenLinks.contains(link)) return@forEach
@@ -69,8 +72,11 @@ class RetrotveProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("RetrotveProvider", "search: query = $query")
         val document = app.get("$mainUrl/?s=$query").document
-        val results = document.select(".MovieList li, .TPostMv, .search-results li").mapNotNull { element ->
+        val results = document.select(".MovieList li, .TPostMv, article.TPost").mapNotNull { element ->
             val link = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.attr("href") ?: return@mapNotNull null
+            
+            if (!link.contains("/serie/") && !link.contains("/pelicula/")) return@mapNotNull null
+            
             val title = element.selectFirst(".Title, h2, h3")?.text() ?: return@mapNotNull null
             val poster = element.selectFirst(".Image img")?.attr("src")
             
@@ -100,68 +106,45 @@ class RetrotveProvider : MainAPI() {
         val episodes = ArrayList<Episode>()
         
         if (!isMovie) {
-            val seasonTabs = document.select(".MovieTabNav a.Lnk, .TPTabCn a")
-            if (seasonTabs.isNotEmpty()) {
-                seasonTabs.forEach { tab ->
-                    val seasonNum = tab.text().filter { it.isDigit() }.toIntOrNull() ?: 1
-                    val tabHref = tab.attr("href")
-                    
-                    if (tabHref.isNotEmpty()) {
-                        val seasonDoc = if (tabHref.startsWith("http")) {
-                            app.get(tabHref).document
-                        } else {
-                            app.get("$mainUrl$tabHref").document
-                        }
-                        
-                        seasonDoc.select(".TPTblCn tbody tr, .episode-list li").forEach { row ->
-                            val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
-                            val episodeName = row.selectFirst(".MvTbTtl a, td:nth-child(3) a")?.text() ?: "Episodio"
-                            val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
-                            
-                            episodes.add(newEpisode(episodeUrl) {
-                                this.name = episodeName
-                                this.episode = episodeNum ?: episodes.size + 1
-                                this.season = seasonNum
-                            })
-                        }
-                    }
-                }
-            } else {
-                document.select(".TPTblCn tbody tr, .Wdgt.AABox tbody tr, .episode-list li").forEach { row ->
+            document.select(".Wdgt.AABox").forEach { seasonBox ->
+                val seasonTitle = seasonBox.selectFirst(".Title.AA-Season span")?.text()
+                    ?: seasonBox.selectFirst(".Title")?.text()
+                val seasonNum = seasonTitle?.filter { it.isDigit() }?.toIntOrNull() ?: 1
+                
+                Log.d("RetrotveProvider", "Found season: $seasonNum")
+                
+                seasonBox.select(".TPTblCn tbody tr").forEach { row ->
                     val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
-                    val episodeName = row.selectFirst(".MvTbTtl a, td:nth-child(3) a")?.text() ?: "Episodio"
+                    val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
                     val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
-                    
-                    val seasonMatch = Regex("""temporada(\d+)""").find(episodeUrl)
-                    val season = seasonMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
                     
                     episodes.add(newEpisode(episodeUrl) {
                         this.name = episodeName
                         this.episode = episodeNum ?: episodes.size + 1
-                        this.season = season
+                        this.season = seasonNum
                     })
                 }
             }
             
             if (episodes.isEmpty()) {
-                document.select(".AA-Srlst li a, .ListAdrs li a").forEach { element ->
-                    val episodeUrl = element.attr("href") ?: return@forEach
-                    if (episodeUrl.contains("/seriestv/")) {
-                        val episodeName = element.text()
-                        episodes.add(newEpisode(episodeUrl) {
-                            this.name = episodeName
-                        })
-                    }
+                document.select(".TPTblCn tbody tr").forEach { row ->
+                    val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
+                    val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
+                    val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeName
+                        this.episode = episodeNum ?: episodes.size + 1
+                    })
                 }
             }
         }
         
         val recommendations = document.select(".TpSbList li, .Relacionados li, .MovieList li").mapNotNull { element ->
             val recUrl = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+            if (!recUrl.contains("/serie/") && !recUrl.contains("/pelicula/")) return@mapNotNull null
             val recTitle = element.selectFirst(".Title")?.text() ?: return@mapNotNull null
             val recPoster = element.selectFirst("img")?.attr("src")
-            
-            if (recUrl.isEmpty() || recTitle.isEmpty()) return@mapNotNull null
             
             val recType = if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
             newTvSeriesSearchResponse(recTitle, recUrl, recType) {
@@ -238,7 +221,6 @@ class RetrotveProvider : MainAPI() {
                         Regex("""file\s*:\s*["']([^"']+\.(m3u8|mp4|webm)[^"']*)["']"""),
                         Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
                         Regex("""videoUrl\s*[:=]\s*["']([^"']+)["']"""),
-                        Regex("""video\s*:\s*["']([^"']+)["']"""),
                         Regex("""["']([^"']+\.m3u8[^"']*)["']"""),
                         Regex("""url\s*:\s*["']([^"']+\.(m3u8|mp4)[^"']*)["']""")
                     )
