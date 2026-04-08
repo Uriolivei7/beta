@@ -179,22 +179,74 @@ class RetrotveProvider : MainAPI() {
         }
     }
 
-    private suspend fun extractIframe(
-        src: String,
+    private suspend fun processPlayerPage(
+        playerUrl: String,
         referer: String,
         serverName: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-        
-        Log.d("RetrotveProvider", "extractIframe: $fixedSrc")
+        Log.d("RetrotveProvider", "processPlayerPage: $playerUrl")
         
         return try {
-            val success = loadExtractor(fixedSrc, referer, subtitleCallback, callback)
-            success
+            val playerDoc = app.get(playerUrl, referer = referer).document
+            var found = false
+            
+            playerDoc.select("iframe[src]").forEach { iframe ->
+                val src = iframe.attr("src") ?: return@forEach
+                if (src.isBlank()) return@forEach
+                
+                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+                Log.d("RetrotveProvider", "Found iframe in player: $fixedSrc")
+                
+                if (fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki")) {
+                    Log.d("RetrotveProvider", "-> Using OK.RU extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "OK.RU error: ${e.message}")
+                    }
+                } else if (fixedSrc.contains("yourupload.com")) {
+                    Log.d("RetrotveProvider", "-> Using YourUpload extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "YourUpload error: ${e.message}")
+                    }
+                } else if (fixedSrc.contains("mega.nz") || fixedSrc.contains("mega.")) {
+                    Log.d("RetrotveProvider", "-> Using Mega extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "Mega error: ${e.message}")
+                    }
+                } else if (fixedSrc.contains("uqload.com") || fixedSrc.contains("uqload.")) {
+                    Log.d("RetrotveProvider", "-> Using Uqload extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "Uqload error: ${e.message}")
+                    }
+                } else if (fixedSrc.contains("gdriveplayer")) {
+                    Log.d("RetrotveProvider", "-> Using GDrivePlayer extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "GDrivePlayer error: ${e.message}")
+                    }
+                } else {
+                    Log.d("RetrotveProvider", "-> Using generic extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "Generic extractor error: ${e.message}")
+                    }
+                }
+            }
+            
+            found
         } catch (e: Exception) {
-            Log.e("RetrotveProvider", "Error in extractIframe: ${e.message}")
+            Log.e("RetrotveProvider", "processPlayerPage error: ${e.message}")
             false
         }
     }
@@ -210,67 +262,60 @@ class RetrotveProvider : MainAPI() {
         
         val document = app.get(data).document
         
-        Log.d("RetrotveProvider", "Searching for iframes in episode page")
+        Log.d("RetrotveProvider", "Searching for player URLs in episode page")
         
-        val directIframes = document.select("iframe[src]").filter { iframe ->
-            val src = iframe.attr("src") ?: ""
-            !src.contains("google") && !src.contains("facebook") && !src.contains("twitter")
-        }
+        val trembedUrls = mutableListOf<Pair<String, String>>()
         
-        if (directIframes.isNotEmpty()) {
-            Log.d("RetrotveProvider", "Found ${directIframes.size} direct iframes")
-            directIframes.forEach { iframe ->
-                val src = iframe.attr("src") ?: return@forEach
-                if (src.isBlank()) return@forEach
-                val success = extractIframe(src, data, "Direct", subtitleCallback, callback)
-                if (success) linksFound = true
+        document.select("iframe[src]").forEach { iframe ->
+            val src = iframe.attr("src") ?: return@forEach
+            if (src.isBlank()) return@forEach
+            
+            if (src.contains("retrotve.com") && src.contains("trembed")) {
+                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+                trembedUrls.add(fixedSrc to "iframe")
+                Log.d("RetrotveProvider", "Found trembed iframe: $fixedSrc")
             }
         }
         
-        val playerTabs = document.select(".TPlayerTb[id], .TPlayer[id]")
-        Log.d("RetrotveProvider", "Found ${playerTabs.size} player tabs")
-        
-        playerTabs.forEachIndexed { index, tab ->
+        document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
             val tabId = tab.attr("id")
-            Log.d("RetrotveProvider", "Processing tab: $tabId")
             
             tab.select("iframe[src]").forEach { iframe ->
                 val src = iframe.attr("src") ?: return@forEach
                 if (src.isBlank()) return@forEach
                 
-                val success = extractIframe(src, data, tabId, subtitleCallback, callback)
-                if (success) linksFound = true
+                if (src.contains("retrotve.com") && src.contains("trembed")) {
+                    val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+                    trembedUrls.add(fixedSrc to tabId)
+                    Log.d("RetrotveProvider", "Found trembed iframe in $tabId: $fixedSrc")
+                }
             }
             
             tab.select("div[data-src]").forEach { div ->
                 val src = div.attr("data-src") ?: return@forEach
                 if (src.isBlank()) return@forEach
                 
-                Log.d("RetrotveProvider", "Found data-src in $tabId: $src")
-                
                 if (src.contains("trembed")) {
-                    try {
-                        val playerPage = app.get(src, referer = data).document
-                        playerPage.select("iframe[src]").forEach { iframe ->
-                            val iframeSrc = iframe.attr("src") ?: return@forEach
-                            val success = extractIframe(iframeSrc, src, tabId, subtitleCallback, callback)
-                            if (success) linksFound = true
-                        }
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "Error loading trembed page: ${e.message}")
-                    }
-                } else {
-                    val success = extractIframe(src, data, tabId, subtitleCallback, callback)
-                    if (success) linksFound = true
+                    trembedUrls.add(src to tabId)
+                    Log.d("RetrotveProvider", "Found trembed data-src in $tabId: $src")
                 }
             }
         }
         
+        val uniqueTrembedUrls = trembedUrls.distinctBy { it.first }
+        Log.d("RetrotveProvider", "Found ${uniqueTrembedUrls.size} unique trembed URLs to process")
+        
+        uniqueTrembedUrls.forEach { (playerUrl, serverName) ->
+            val found = processPlayerPage(playerUrl, data, serverName, subtitleCallback, callback)
+            if (found) linksFound = true
+        }
+        
         if (!linksFound) {
-            Log.d("RetrotveProvider", "No links found directly, trying alternative method")
+            Log.d("RetrotveProvider", "No links found, trying fallback method")
             
-            val trid = document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: 
-                       Regex("""trid[=&](\d+)""").find(data)?.groupValues?.get(1) ?: "0"
+            val tridMatch = Regex("""trembed=\d+&trid=(\d+)""").find(document.toString())
+            val trid = tridMatch?.groupValues?.get(1) ?: 
+                       document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: "0"
             val trtype = if (data.contains("/pelicula/")) "1" else "2"
             
             Log.d("RetrotveProvider", "Fallback: trid=$trid, trtype=$trtype")
@@ -279,17 +324,8 @@ class RetrotveProvider : MainAPI() {
                 val playerUrl = "$mainUrl/?trembed=$trembed&trid=$trid&trtype=$trtype"
                 Log.d("RetrotveProvider", "Trying trembed $trembed: $playerUrl")
                 
-                try {
-                    val playerDoc = app.get(playerUrl, referer = data).document
-                    playerDoc.select("iframe[src]").forEach { iframe ->
-                        val src = iframe.attr("src") ?: return@forEach
-                        if (src.isBlank()) return@forEach
-                        val success = extractIframe(src, playerUrl, "Server $trembed", subtitleCallback, callback)
-                        if (success) linksFound = true
-                    }
-                } catch (e: Exception) {
-                    Log.e("RetrotveProvider", "Error with trembed $trembed: ${e.message}")
-                }
+                val found = processPlayerPage(playerUrl, data, "Fallback $trembed", subtitleCallback, callback)
+                if (found) linksFound = true
             }
         }
         
