@@ -181,63 +181,22 @@ class RetrotveProvider : MainAPI() {
 
     private suspend fun extractSendvid(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         return try {
-            val page = app.get(url, referer = referer).text
-            val videoId = Regex("""video\s*:\s*["']([^"']+)["']""").find(page)?.groupValues?.get(1)
-                ?: Regex(""""video_url"\s*:\s*"([^"]+)"""").find(page)?.groupValues?.get(1)
-            
-            if (videoId != null) {
-                val videoUrl = if (videoId.startsWith("http")) videoId else "https://sendvid.com/$videoId"
-                callback(
-                    newExtractorLink(
-                        source = "Sendvid",
-                        name = "Sendvid",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "https://sendvid.com/"
-                    }
-                )
-                Log.d("RetrotveProvider", "Sendvid: Found video URL: $videoUrl")
-                return true
-            }
-            
-            Log.d("RetrotveProvider", "Sendvid: No video found in page, using generic extractor")
-            loadExtractor(url, referer, subtitleCallback, callback)
+            val embedUrl = if (url.contains("/embed/")) url else url.replace("/?", "/embed/?")
+            Log.d("RetrotveProvider", "Sendvid: Using embed URL: $embedUrl")
+            loadExtractor(embedUrl, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Sendvid error: ${e.message}")
-            loadExtractor(url, referer, subtitleCallback, callback)
+            false
         }
     }
 
     private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         return try {
-            val doc = app.get(url, referer = referer).document
-            val script = doc.select("script:containsData(sources:)").firstOrNull()?.html()
-                ?: doc.select("script").firstOrNull { it.html().contains("sources") }?.html()
-            
-            if (script != null) {
-                val srcMatch = Regex("""src\s*:\s*["']([^"']+)["']""").find(script)
-                val videoUrl = srcMatch?.groupValues?.get(1)
-                
-                if (videoUrl != null && (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8"))) {
-                    callback(
-                        newExtractorLink(
-                            source = "Filemoon",
-                            name = "Filemoon",
-                            url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        )
-                    )
-                    Log.d("RetrotveProvider", "Filemoon: Found video URL: $videoUrl")
-                    return true
-                }
-            }
-            
-            Log.d("RetrotveProvider", "Filemoon: No video found, using generic extractor")
+            Log.d("RetrotveProvider", "Filemoon: Trying direct loadExtractor")
             loadExtractor(url, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
-            loadExtractor(url, referer, subtitleCallback, callback)
+            false
         }
     }
 
