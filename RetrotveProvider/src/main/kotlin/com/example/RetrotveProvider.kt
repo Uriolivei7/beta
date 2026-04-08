@@ -186,88 +186,55 @@ class RetrotveProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("RetrotveProvider", "processPlayerPage: $playerUrl")
+        Log.d("RetrotveProvider", "processPlayerPage: $playerUrl (server: $serverName)")
         
         return try {
             val playerDoc = app.get(playerUrl, referer = referer).document
             var found = false
+            var linksExtracted = 0
             
             playerDoc.select("iframe[src]").forEach { iframe ->
                 val src = iframe.attr("src") ?: return@forEach
                 if (src.isBlank()) return@forEach
                 
                 val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                Log.d("RetrotveProvider", "Found iframe in player: $fixedSrc")
+                Log.d("RetrotveProvider", "Found iframe: $fixedSrc")
                 
-                if (fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki")) {
-                    Log.d("RetrotveProvider", "-> Using OK.RU extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "OK.RU error: ${e.message}")
+                val extractorName = when {
+                    fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> "OK.RU"
+                    fixedSrc.contains("yourupload.com") -> "YourUpload"
+                    fixedSrc.contains("mega.nz") || fixedSrc.contains("mega.") -> "Mega"
+                    fixedSrc.contains("uqload.com") || fixedSrc.contains("uqload.") -> "Uqload"
+                    fixedSrc.contains("gdriveplayer") -> "GDrivePlayer"
+                    fixedSrc.contains("sendvid.com") -> "Sendvid"
+                    fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> "Filemoon"
+                    fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> "VKVideo"
+                    fixedSrc.contains("mediafire") -> "Mediafire"
+                    fixedSrc.contains("drive.google") -> "GoogleDrive"
+                    else -> "Generic"
+                }
+                
+                Log.d("RetrotveProvider", "-> Using $extractorName extractor for: $fixedSrc")
+                
+                try {
+                    val initialFound = found
+                    if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) {
+                        found = true
+                        linksExtracted++
+                        Log.d("RetrotveProvider", "Extractor $extractorName returned success")
+                    } else {
+                        Log.d("RetrotveProvider", "Extractor $extractorName returned no links")
                     }
-                } else if (fixedSrc.contains("yourupload.com")) {
-                    Log.d("RetrotveProvider", "-> Using YourUpload extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "YourUpload error: ${e.message}")
-                    }
-                } else if (fixedSrc.contains("mega.nz") || fixedSrc.contains("mega.")) {
-                    Log.d("RetrotveProvider", "-> Using Mega extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "Mega error: ${e.message}")
-                    }
-                } else if (fixedSrc.contains("uqload.com") || fixedSrc.contains("uqload.")) {
-                    Log.d("RetrotveProvider", "-> Using Uqload extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "Uqload error: ${e.message}")
-                    }
-                } else if (fixedSrc.contains("gdriveplayer")) {
-                    Log.d("RetrotveProvider", "-> Using GDrivePlayer extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "GDrivePlayer error: ${e.message}")
-                    }
-                } else if (fixedSrc.contains("sendvid.com")) {
-                    Log.d("RetrotveProvider", "-> Using Sendvid extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "Sendvid error: ${e.message}")
-                    }
-                } else if (fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to")) {
-                    Log.d("RetrotveProvider", "-> Using Filemoon extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
-                    }
-                } else if (fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo")) {
-                    Log.d("RetrotveProvider", "-> Using VKVideo extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
-                    }
-                } else {
-                    Log.d("RetrotveProvider", "-> Using generic extractor")
-                    try {
-                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
-                    } catch (e: Exception) {
-                        Log.e("RetrotveProvider", "Generic extractor error: ${e.message}")
-                    }
+                } catch (e: Exception) {
+                    Log.e("RetrotveProvider", "$extractorName error: ${e.message}")
                 }
             }
             
+            Log.d("RetrotveProvider", "processPlayerPage result: found=$found, linksExtracted=$linksExtracted")
             found
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "processPlayerPage error: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -347,17 +314,13 @@ class RetrotveProvider : MainAPI() {
         }
         
         if (correctTrid != null) {
-            Log.d("RetrotveProvider", "Using correct trid: $correctTrid for all tabs")
+            Log.d("RetrotveProvider", "Using correct trid: $correctTrid, trying all trembed options")
             
-            val allTabIds = listOf("Opt1", "Opt2", "Opt3", "Opt4", "Opt5")
-            document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
-                val tabId = tab.attr("id")
-                allTabIds.indexOf(tabId).takeIf { it >= 0 }?.let { tabIndex ->
-                    val playerUrl = "$mainUrl/?trembed=$tabIndex&trid=$correctTrid&trtype=$trtype"
-                    if (!trembedUrls.any { it.first.contains("trembed=$tabIndex&") && it.first.contains("trid=$correctTrid") }) {
-                        trembedUrls.add(playerUrl to tabId)
-                        Log.d("RetrotveProvider", "Generated trembed $tabIndex for $tabId: $playerUrl")
-                    }
+            for (trembed in 0..5) {
+                val playerUrl = "$mainUrl/?trembed=$trembed&trid=$correctTrid&trtype=$trtype"
+                if (!trembedUrls.any { it.first.contains("trembed=$trembed&") && it.first.contains("trid=$correctTrid") }) {
+                    trembedUrls.add(playerUrl to "Opt${trembed + 1}")
+                    Log.d("RetrotveProvider", "Generated trembed $trembed: $playerUrl")
                 }
             }
         }
