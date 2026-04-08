@@ -201,45 +201,34 @@ class OKRuExtractor : ExtractorApi() {
             
             Log.d("RetrotveProvider", "OKRu: code=${response.code}, len=${pageHtml.length}")
             
-            val metadataMatch = Regex("""moviesJsonUrl\s*:\s*"([^"]+)""").find(pageHtml)
-            if (metadataMatch != null) {
-                val metadataUrl = metadataMatch.groupValues[1]
-                Log.d("RetrotveProvider", "OKRu: metadata=$metadataUrl")
-                
-                try {
-                    val metaResp = app.get(metadataUrl, headers = headers, timeout = 30L)
-                    val metaJson = metaResp.text
-                    
-                    val videoUrl = Regex("""hd\d*\s*:\s*"([^"]+)""").find(metaJson)?.groupValues?.get(1)
-                        ?: Regex("""sd\d*\s*:\s*"([^"]+)""").find(metaJson)?.groupValues?.get(1)
-                    
-                    if (videoUrl != null) {
-                        val cleanUrl = videoUrl.replace("\\", "")
-                        Log.d("RetrotveProvider", "OKRu: Found $cleanUrl")
-                        callback.invoke(
-                            newExtractorLink(name, name, cleanUrl) {
-                                this.referer = url
-                                this.type = ExtractorLinkType.VIDEO
-                            }
-                        )
-                        return
-                    }
-                } catch (e: Exception) {
-                    Log.e("RetrotveProvider", "OKRu: meta error ${e.message}")
-                }
-            }
+            val patterns = listOf(
+                Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*"""),
+                Pattern.compile("""https?://[^"'\\]+m3u8[^"'\\]*"""),
+                Pattern.compile(""""path"\s*:\s*"([^"]+)""""),
+                Pattern.compile("""metadataUrl\s*:\s*"([^"]+)"""),
+                Pattern.compile("""movieSWF\s*:\s*"([^"]+)""")
+            )
             
-            val mp4Matcher = Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*""").matcher(pageHtml)
-            if (mp4Matcher.find()) {
-                val videoUrl = mp4Matcher.group()
-                Log.d("RetrotveProvider", "OKRu: Found direct $videoUrl")
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.VIDEO
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(pageHtml)
+                if (matcher.find()) {
+                    var videoUrl = matcher.group().replace("\\", "").replace(""", "").replace(""", "")
+                    Log.d("RetrotveProvider", "OKRu: Trying URL: $videoUrl")
+                    
+                    if (videoUrl.contains("mp4") || videoUrl.contains("m3u8") || videoUrl.contains("ok.ru")) {
+                        if (videoUrl.startsWith("//")) videoUrl = "https:$videoUrl"
+                        if (videoUrl.contains("ok.ru")) {
+                            Log.d("RetrotveProvider", "OKRu: Found $videoUrl")
+                            callback.invoke(
+                                newExtractorLink(name, name, videoUrl) {
+                                    this.referer = url
+                                    this.type = if (videoUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                }
+                            )
+                            return
+                        }
                     }
-                )
-                return
+                }
             }
             
             Log.d("RetrotveProvider", "OKRu: No URL found")
