@@ -164,18 +164,21 @@ class AsialiveactionProvider : MainAPI() {
         
         val episodes = ArrayList<Episode>()
         val isMovie = url.contains("/pelicula/")
-        
+
         if (!isMovie) {
             document.select(".lista-episodios .episodio-unico a").forEach { element ->
                 val epUrl = element.attr("href")
                 if (epUrl.isNotEmpty()) {
-                    val epName = element.selectFirst(".numero-episodio")?.text()?.trim() ?: element.text().trim()
-                    val epNum = getNumberFromEpsString(epName)
-                    
-                    Log.d(TAG, "load: Episodio - Name=$epName, Num=$epNum, URL=$epUrl")
-                    
+                    val rawName = element.selectFirst(".numero-episodio")?.text()?.trim() ?: element.text().trim()
+
+                    val cleanName = rawName.replace(Regex("(?i)^(Episodio|Ep)\\s*\\d+\\s*[:\\-]\\s*"), "").trim()
+
+                    val epNum = getNumberFromEpsString(rawName)
+
+                    Log.d(TAG, "load: Episodio original=$rawName -> Limpio=$cleanName, Num=$epNum")
+
                     episodes.add(newEpisode(epUrl) {
-                        this.name = epName
+                        this.name = cleanName
                         this.episode = epNum.toIntOrNull() ?: 1
                     })
                 }
