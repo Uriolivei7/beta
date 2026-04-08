@@ -179,24 +179,49 @@ class RetrotveProvider : MainAPI() {
         }
     }
 
-    private suspend fun extractSendvid(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        return try {
+    private suspend fun extractSendvid(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
             val embedUrl = if (url.contains("/embed/")) url else url.replace("/?", "/embed/?")
-            Log.d("RetrotveProvider", "Sendvid: Using embed URL: $embedUrl")
-            loadExtractor(embedUrl, referer, subtitleCallback, callback)
+            Log.d("RetrotveProvider", "Sendvid: Using custom extractor for: $embedUrl")
+            SendvidExtractor().getUrl(embedUrl, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Sendvid error: ${e.message}")
-            false
         }
     }
 
-    private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        return try {
-            Log.d("RetrotveProvider", "Filemoon: Trying direct loadExtractor")
-            loadExtractor(url, referer, subtitleCallback, callback)
+    private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            Log.d("RetrotveProvider", "Filemoon: Using custom extractor for: $url")
+            FilemoonExtractor().getUrl(url, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
-            false
+        }
+    }
+
+    private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            Log.d("RetrotveProvider", "VKVideo: Using custom extractor for: $url")
+            VKVideoExtractor().getUrl(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
+        }
+    }
+
+    private suspend fun extractOKRu(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            Log.d("RetrotveProvider", "OK.RU: Using custom extractor for: $url")
+            OKRuExtractor().getUrl(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "OK.RU error: ${e.message}")
+        }
+    }
+
+    private suspend fun extractYourUpload(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            Log.d("RetrotveProvider", "YourUpload: Using custom extractor for: $url")
+            YourUploadExtractor().getUrl(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "YourUpload error: ${e.message}")
         }
     }
 
@@ -229,35 +254,33 @@ class RetrotveProvider : MainAPI() {
                 
                 when {
                     fixedSrc.contains("sendvid.com") -> {
-                        Log.d("RetrotveProvider", "-> Using Sendvid extractor for: $fixedSrc")
                         extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        Log.d("RetrotveProvider", "-> Using Filemoon extractor for: $fixedSrc")
                         extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
-                        Log.d("RetrotveProvider", "-> Using OK.RU extractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        extractOKRu(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
-                        Log.d("RetrotveProvider", "-> Using VKVideo extractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        extractVKVideo(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
-                        Log.d("RetrotveProvider", "-> Using Mega extractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
                     }
                     fixedSrc.contains("yourupload.com") || fixedSrc.contains("yourupload.") -> {
-                        Log.d("RetrotveProvider", "-> Using YourUpload extractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        extractYourUpload(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("uqload.") -> {
-                        Log.d("RetrotveProvider", "-> Using Uqload extractor for: $fixedSrc")
+                        Log.d("RetrotveProvider", "-> Uqload: using loadExtractor for: $fixedSrc")
                         loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("gdriveplayer") -> {
-                        Log.d("RetrotveProvider", "-> Using GDrivePlayer extractor for: $fixedSrc")
+                        Log.d("RetrotveProvider", "-> GDrivePlayer: using loadExtractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                    }
+                    fixedSrc.contains("mediafire") -> {
+                        Log.d("RetrotveProvider", "-> MediaFire: using loadExtractor for: $fixedSrc")
                         loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     else -> {
