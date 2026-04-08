@@ -95,7 +95,7 @@ class FilemoonExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-Filemoon", ">>> START Extracting: $url")
+        Log.d("RetrotveProvider", "Filemoon-START: Extracting: $url")
         
         try {
             val headers = mapOf(
@@ -188,7 +188,7 @@ class VKVideoExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-VKVideo", ">>> START Extracting: $url")
+        Log.d("RetrotveProvider", "VKVideo-START: Extracting: $url")
         
         try {
             val headers = mapOf(
@@ -249,7 +249,7 @@ class OKRuExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-OKRu", ">>> START Extracting: $url")
+        Log.d("RetrotveProvider", "OKRu-START: Extracting: $url")
         
         try {
             val headers = mapOf(
@@ -341,7 +341,7 @@ class YourUploadExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-YourUpload", "Extracting: $url")
+        Log.d("RetrotveProvider", "YourUpload-START: Extracting: $url")
         
         try {
             val headers = mapOf(
@@ -352,7 +352,7 @@ class YourUploadExtractor : ExtractorApi() {
             val response = app.get(url, headers = headers, timeout = 30L)
             val pageHtml = response.text
             
-            Log.d("Retrotve-YourUpload", "Response code: ${response.code}, HTML length: ${pageHtml.length}")
+            Log.d("RetrotveProvider", "YourUpload: Response code: ${response.code}, HTML length: ${pageHtml.length}")
             
             val patterns = listOf(
                 Pattern.compile("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
@@ -371,7 +371,7 @@ class YourUploadExtractor : ExtractorApi() {
                         }
                         
                         if (videoUrl.startsWith("http")) {
-                            Log.d("Retrotve-YourUpload", "Found: $videoUrl")
+                            Log.d("RetrotveProvider", "YourUpload: Found: $videoUrl")
                             callback.invoke(
                                 newExtractorLink(name, name, videoUrl) {
                                     this.referer = url
@@ -384,10 +384,10 @@ class YourUploadExtractor : ExtractorApi() {
                 }
             }
             
-            Log.d("Retrotve-YourUpload", "No direct video URL found")
+            Log.d("RetrotveProvider", "YourUpload: No direct video URL found")
             
         } catch (e: Exception) {
-            Log.e("Retrotve-YourUpload", "Error: ${e.message}")
+            Log.e("RetrotveProvider", "YourUpload: Error: ${e.message}")
             e.printStackTrace()
         }
     }
