@@ -179,48 +179,22 @@ class RetrotveProvider : MainAPI() {
         }
     }
 
-    private suspend fun extractFromPlayerPage(
-        playerUrl: String,
+    private suspend fun extractIframe(
+        src: String,
+        referer: String,
         serverName: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("RetrotveProvider", "extractFromPlayerPage: $playerUrl")
+        val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+        
+        Log.d("RetrotveProvider", "extractIframe: $fixedSrc")
         
         return try {
-            val playerDoc = app.get(playerUrl, referer = "$mainUrl/").document
-            var found = false
-            
-            playerDoc.select("iframe[src]").forEach { iframe ->
-                val src = iframe.attr("src") ?: return@forEach
-                if (src.isBlank()) return@forEach
-                
-                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                
-                Log.d("RetrotveProvider", "Player iframe found: $fixedSrc")
-                
-                val extractorName = when {
-                    fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> "OK.RU"
-                    fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> "VKVideo"
-                    fixedSrc.contains("yourupload.com") -> "YourUpload"
-                    fixedSrc.contains("mega.nz") || fixedSrc.contains("mega.") -> "Mega"
-                    fixedSrc.contains("uqload.com") || fixedSrc.contains("uqload.") -> "Uqload"
-                    fixedSrc.contains("streamtape") -> "StreamTape"
-                    fixedSrc.contains("dood") -> "Dood"
-                    fixedSrc.contains("filemoon") -> "Filemoon"
-                    fixedSrc.contains("streamwish") || fixedSrc.contains("vidhide") -> "StreamWish"
-                    else -> "Generic"
-                }
-                
-                Log.d("RetrotveProvider", "-> Using $extractorName extractor")
-                val success = loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                if (success) found = true
-            }
-            
-            found
+            val success = loadExtractor(fixedSrc, referer, subtitleCallback, callback)
+            success
         } catch (e: Exception) {
-            Log.e("RetrotveProvider", "Error extracting: ${e.message}")
-            e.printStackTrace()
+            Log.e("RetrotveProvider", "Error in extractIframe: ${e.message}")
             false
         }
     }
@@ -236,32 +210,87 @@ class RetrotveProvider : MainAPI() {
         
         val document = app.get(data).document
         
-        val trid = document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: 
-                   document.selectFirst("div[data-td-post-id]")?.attr("data-td-post-id") ?:
-                   Regex("""trid[=&](\d+)""").find(data)?.groupValues?.get(1) ?: "0"
-        val trtype = if (data.contains("/pelicula/")) "1" else "2"
+        Log.d("RetrotveProvider", "Searching for iframes in episode page")
         
-        Log.d("RetrotveProvider", "trid=$trid, trtype=$trtype, url=$data")
-        
-        val trembedUrls = mutableListOf<String>()
-        
-        document.select(".TPlayerTb, .TPlayer, .player-tab, [id^='Opt']").forEachIndexed { index, tab ->
-            val tabId = tab.attr("id").ifBlank { "tab$index" }
-            trembedUrls.add("$mainUrl/?trembed=$index&trid=$trid&trtype=$trtype")
-            Log.d("RetrotveProvider", "Found tab: $tabId -> trembed=$index")
+        val directIframes = document.select("iframe[src]").filter { iframe ->
+            val src = iframe.attr("src") ?: ""
+            !src.contains("google") && !src.contains("facebook") && !src.contains("twitter")
         }
         
-        if (trembedUrls.isEmpty()) {
-            Log.d("RetrotveProvider", "No tabs found, trying default trembed values")
-            for (trembed in 0..3) {
-                trembedUrls.add("$mainUrl/?trembed=$trembed&trid=$trid&trtype=$trtype")
+        if (directIframes.isNotEmpty()) {
+            Log.d("RetrotveProvider", "Found ${directIframes.size} direct iframes")
+            directIframes.forEach { iframe ->
+                val src = iframe.attr("src") ?: return@forEach
+                if (src.isBlank()) return@forEach
+                val success = extractIframe(src, data, "Direct", subtitleCallback, callback)
+                if (success) linksFound = true
             }
         }
         
-        trembedUrls.forEachIndexed { index, playerUrl ->
-            Log.d("RetrotveProvider", "Trying trembed $index: $playerUrl")
-            val found = extractFromPlayerPage(playerUrl, "Server ${index + 1}", subtitleCallback, callback)
-            if (found) linksFound = true
+        val playerTabs = document.select(".TPlayerTb[id], .TPlayer[id]")
+        Log.d("RetrotveProvider", "Found ${playerTabs.size} player tabs")
+        
+        playerTabs.forEachIndexed { index, tab ->
+            val tabId = tab.attr("id")
+            Log.d("RetrotveProvider", "Processing tab: $tabId")
+            
+            tab.select("iframe[src]").forEach { iframe ->
+                val src = iframe.attr("src") ?: return@forEach
+                if (src.isBlank()) return@forEach
+                
+                val success = extractIframe(src, data, tabId, subtitleCallback, callback)
+                if (success) linksFound = true
+            }
+            
+            tab.select("div[data-src]").forEach { div ->
+                val src = div.attr("data-src") ?: return@forEach
+                if (src.isBlank()) return@forEach
+                
+                Log.d("RetrotveProvider", "Found data-src in $tabId: $src")
+                
+                if (src.contains("trembed")) {
+                    try {
+                        val playerPage = app.get(src, referer = data).document
+                        playerPage.select("iframe[src]").forEach { iframe ->
+                            val iframeSrc = iframe.attr("src") ?: return@forEach
+                            val success = extractIframe(iframeSrc, src, tabId, subtitleCallback, callback)
+                            if (success) linksFound = true
+                        }
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "Error loading trembed page: ${e.message}")
+                    }
+                } else {
+                    val success = extractIframe(src, data, tabId, subtitleCallback, callback)
+                    if (success) linksFound = true
+                }
+            }
+        }
+        
+        if (!linksFound) {
+            Log.d("RetrotveProvider", "No links found directly, trying alternative method")
+            
+            val trid = document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: 
+                       Regex("""trid[=&](\d+)""").find(data)?.groupValues?.get(1) ?: "0"
+            val trtype = if (data.contains("/pelicula/")) "1" else "2"
+            
+            Log.d("RetrotveProvider", "Fallback: trid=$trid, trtype=$trtype")
+            
+            for (trembed in 0..3) {
+                val playerUrl = "$mainUrl/?trembed=$trembed&trid=$trid&trtype=$trtype"
+                Log.d("RetrotveProvider", "Trying trembed $trembed: $playerUrl")
+                
+                try {
+                    val playerDoc = app.get(playerUrl, referer = data).document
+                    playerDoc.select("iframe[src]").forEach { iframe ->
+                        val src = iframe.attr("src") ?: return@forEach
+                        if (src.isBlank()) return@forEach
+                        val success = extractIframe(src, playerUrl, "Server $trembed", subtitleCallback, callback)
+                        if (success) linksFound = true
+                    }
+                } catch (e: Exception) {
+                    Log.e("RetrotveProvider", "Error with trembed $trembed: ${e.message}")
+                }
+            }
         }
         
         Log.d("RetrotveProvider", "loadLinks result: linksFound=$linksFound")
