@@ -206,12 +206,19 @@ class RetrotveProvider : MainAPI() {
         serverName: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    ) {
         Log.d("RetrotveProvider", "processPlayerPage: $playerUrl (server: $serverName)")
         
-        return try {
+        try {
             val playerDoc = app.get(playerUrl, referer = referer).document
-            var found = false
+            val iframeCount = playerDoc.select("iframe[src]").size
+            Log.d("RetrotveProvider", "Found $iframeCount iframes in player page")
+            
+            if (iframeCount == 0) {
+                Log.d("RetrotveProvider", "No iframes found - checking for alternative content")
+                val scriptContent = playerDoc.html()
+                Log.d("RetrotveProvider", "Page has ${scriptContent.length} chars of HTML")
+            }
             
             playerDoc.select("iframe[src]").forEach { iframe ->
                 val src = iframe.attr("src") ?: return@forEach
@@ -220,45 +227,48 @@ class RetrotveProvider : MainAPI() {
                 val fixedSrc = if (src.startsWith("//")) "https:$src" else src
                 Log.d("RetrotveProvider", "Found iframe: $fixedSrc")
                 
-                var extractorFound = false
-                
                 when {
                     fixedSrc.contains("sendvid.com") -> {
-                        Log.d("RetrotveProvider", "-> Using custom Sendvid extractor")
-                        extractorFound = extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Using Sendvid extractor for: $fixedSrc")
+                        extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        Log.d("RetrotveProvider", "-> Using custom Filemoon extractor")
-                        extractorFound = extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Using Filemoon extractor for: $fixedSrc")
+                        extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
-                        Log.d("RetrotveProvider", "-> Using OK.RU extractor")
-                        extractorFound = loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Using OK.RU extractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
-                        Log.d("RetrotveProvider", "-> Using VKVideo extractor")
-                        extractorFound = loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Using VKVideo extractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                    }
+                    fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
+                        Log.d("RetrotveProvider", "-> Using Mega extractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                    }
+                    fixedSrc.contains("yourupload.com") || fixedSrc.contains("yourupload.") -> {
+                        Log.d("RetrotveProvider", "-> Using YourUpload extractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                    }
+                    fixedSrc.contains("uqload.") -> {
+                        Log.d("RetrotveProvider", "-> Using Uqload extractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                    }
+                    fixedSrc.contains("gdriveplayer") -> {
+                        Log.d("RetrotveProvider", "-> Using GDrivePlayer extractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     else -> {
                         Log.d("RetrotveProvider", "-> Using generic extractor for: $fixedSrc")
-                        extractorFound = loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                 }
-                
-                if (extractorFound) {
-                    found = true
-                    Log.d("RetrotveProvider", "Extractor returned links successfully")
-                } else {
-                    Log.d("RetrotveProvider", "Extractor returned no links")
-                }
             }
-            
-            Log.d("RetrotveProvider", "processPlayerPage result: found=$found")
-            found
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "processPlayerPage error: ${e.message}")
             e.printStackTrace()
-            false
         }
     }
 
@@ -269,7 +279,6 @@ class RetrotveProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("RetrotveProvider", "loadLinks: data = $data")
-        var linksFound = false
         
         val document = app.get(data).document
         val trtype = if (data.contains("/pelicula/")) "1" else "2"
@@ -277,7 +286,6 @@ class RetrotveProvider : MainAPI() {
         Log.d("RetrotveProvider", "Searching for player URLs in episode page")
         
         val trembedUrls = mutableListOf<Pair<String, String>>()
-        
         var correctTrid: String? = null
         
         document.select("iframe[src*='trembed']").forEach { iframe ->
@@ -352,12 +360,11 @@ class RetrotveProvider : MainAPI() {
         Log.d("RetrotveProvider", "Found ${uniqueTrembedUrls.size} unique trembed URLs to process")
         
         uniqueTrembedUrls.forEach { (playerUrl, serverName) ->
-            val found = processPlayerPage(playerUrl, data, serverName, subtitleCallback, callback)
-            if (found) linksFound = true
+            processPlayerPage(playerUrl, data, serverName, subtitleCallback, callback)
         }
         
-        Log.d("RetrotveProvider", "loadLinks result: linksFound=$linksFound")
-        return linksFound
+        Log.d("RetrotveProvider", "loadLinks completed, extractors should be processing")
+        return true
     }
 }
 
