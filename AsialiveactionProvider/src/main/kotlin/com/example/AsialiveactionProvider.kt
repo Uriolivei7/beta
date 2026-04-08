@@ -263,6 +263,7 @@ class AsialiveactionProvider : MainAPI() {
                             val decodedUrl = encodedUrl
                                 .replace("\\/", "/")
                                 .replace("\\\\", "")
+                                .replace("\\", "")
                                 .removeSurrounding("\"")
                             
                             Log.d(TAG, "loadLinks: [$langName] Server=$serverCode, URL=$decodedUrl")

@@ -178,7 +178,7 @@ class VKVideoExtractor : ExtractorApi() {
 }
 
 class OKRuExtractor : ExtractorApi() {
-    override val name = "OK.RU"
+    override val name = "OKRU"
     override val mainUrl = "https://ok.ru"
     override val requiresReferer = true
 
