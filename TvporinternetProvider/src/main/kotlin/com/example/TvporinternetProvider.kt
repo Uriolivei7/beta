@@ -114,11 +114,10 @@ class TvporinternetProvider : MainAPI() {
         val doc = Jsoup.parse(html)
         val categoryMap = mutableMapOf<String, MutableList<SearchResponse>>()
 
-        doc.select("div.p-2.rounded.bg-slate-200.border").forEach { channelDiv ->
-            val linkElement = channelDiv.selectFirst("a.channel-link")
-            val link = linkElement?.attr("href")
-            val imgElement = linkElement?.selectFirst("img")
-            val titleRaw = imgElement?.attr("alt") ?: linkElement?.selectFirst("p.des")?.text()
+        doc.select("div.channels-container a.channel-card").forEach { channelCard ->
+            val link = channelCard.attr("href")
+            val imgElement = channelCard.selectFirst("img")
+            val titleRaw = imgElement?.attr("alt") ?: channelCard.selectFirst("p")?.text()
 
             if (titleRaw != null && link != null) {
                 val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
@@ -152,15 +151,15 @@ class TvporinternetProvider : MainAPI() {
         val html = safeAppGet(mainUrl) ?: return emptyList()
         val doc = Jsoup.parse(html)
 
-        return doc.select("div.p-2.rounded.bg-slate-200.border").filterNot { element ->
-            val text = element.selectFirst("p.des")?.text() ?: ""
+        return doc.select("div.channels-container a.channel-card").filterNot { element ->
+            val text = element.selectFirst("p")?.text() ?: ""
             nowAllowed.any { text.contains(it, ignoreCase = true) } || text.isBlank()
         }.filter { element ->
-            element.selectFirst("p.des")?.text()?.contains(query, ignoreCase = true) ?: false
+            element.selectFirst("p")?.text()?.contains(query, ignoreCase = true) ?: false
         }.mapNotNull {
-            val titleRaw = it.selectFirst("p.des")?.text()
-            val linkRaw = it.selectFirst("a")?.attr("href")
-            val imgRaw = it.selectFirst("a img.w-28")?.attr("src")
+            val titleRaw = it.selectFirst("p")?.text()
+            val linkRaw = it.attr("href")
+            val imgRaw = it.selectFirst("img")?.attr("src")
 
             if (titleRaw != null && linkRaw != null && imgRaw != null) {
                 val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
