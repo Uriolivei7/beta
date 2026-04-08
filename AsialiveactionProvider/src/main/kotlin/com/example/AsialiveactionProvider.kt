@@ -266,7 +266,8 @@ class AsialiveactionProvider : MainAPI() {
                     val langName = when {
                         langId.contains("1388") -> "Español Latino"
                         langId.contains("1385") -> "Subtitulado"
-                        else -> "Default"
+                        langId.contains("1387") -> "Español de España"
+                        else -> "DEFAULT"
                     }
                     
                     serverList.forEach { serverData ->
