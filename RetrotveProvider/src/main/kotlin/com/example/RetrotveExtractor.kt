@@ -20,69 +20,45 @@ class SendvidExtractor : ExtractorApi() {
         Log.d("Retrotve-Sendvid", "Extracting: $url")
         
         try {
-            val doc = app.get(url, referer = referer).document
-            val pageHtml = doc.html()
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+                "Accept-Encoding" to "gzip, deflate, br",
+                "Connection" to "keep-alive",
+                "Upgrade-Insecure-Requests" to "1",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "none",
+                "Sec-Fetch-User" to "?1",
+                "Cache-Control" to "max-age=0"
+            )
             
-            Log.d("Retrotve-Sendvid", "Page HTML length: ${pageHtml.length}")
+            val response = app.get(url, headers = headers, timeout = 30L)
+            val pageHtml = response.text
             
-            val videoSrcRegex = Pattern.compile("""src\s*[=:]\s*["']([^"']+\.mp4[^"']*)["']""")
-            val matcher = videoSrcRegex.matcher(pageHtml)
+            Log.d("Retrotve-Sendvid", "Response code: ${response.code}, HTML length: ${pageHtml.length}")
             
-            if (matcher.find()) {
-                val videoUrl = matcher.group(1)?.replace("\\", "")
-                Log.d("Retrotve-Sendvid", "Found direct video URL: $videoUrl")
-                if (videoUrl != null && videoUrl.startsWith("http")) {
-                    callback.invoke(
-                        newExtractorLink(name, name, videoUrl) {
-                            this.referer = url
-                            this.type = ExtractorLinkType.VIDEO
-                        }
-                    )
-                    return
-                }
+            if (response.code != 200) {
+                Log.e("Retrotve-Sendvid", "Bad response code: ${response.code}")
+                return
             }
             
-            val sourcesRegex = Pattern.compile("""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["']([^"']+)["']""")
-            val sourcesMatcher = sourcesRegex.matcher(pageHtml)
-            if (sourcesMatcher.find()) {
-                val videoUrl = sourcesMatcher.group(1)?.replace("\\", "")
-                Log.d("Retrotve-Sendvid", "Found from sources: $videoUrl")
-                if (videoUrl != null && videoUrl.startsWith("http")) {
-                    callback.invoke(
-                        newExtractorLink(name, name, videoUrl) {
-                            this.referer = url
-                            this.type = ExtractorLinkType.VIDEO
-                        }
-                    )
-                    return
-                }
-            }
+            val patterns = listOf(
+                Pattern.compile("""video_url\s*:\s*["']([^"']+)["']"""),
+                Pattern.compile("""["']video_url["']\s*:\s*["']([^"']+)["']"""),
+                Pattern.compile("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
+                Pattern.compile("""file\s*:\s*["']([^"']+\.mp4[^"']*)["']"""),
+                Pattern.compile("""src\s*[=:]\s*["']([^"']+\.mp4[^"']*)["']"""),
+                Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*""")
+            )
             
-            val videoRegex = Pattern.compile("""["']video_url["']\s*:\s*["']([^"']+)["']""")
-            val videoMatcher = videoRegex.matcher(pageHtml)
-            if (videoMatcher.find()) {
-                val videoUrl = videoMatcher.group(1)?.replace("\\", "")
-                Log.d("Retrotve-Sendvid", "Found from video_url: $videoUrl")
-                if (videoUrl != null && videoUrl.startsWith("http")) {
-                    callback.invoke(
-                        newExtractorLink(name, name, videoUrl) {
-                            this.referer = url
-                            this.type = ExtractorLinkType.VIDEO
-                        }
-                    )
-                    return
-                }
-            }
-            
-            val scriptTags = doc.select("script")
-            for (script in scriptTags) {
-                val scriptContent = script.html()
-                if (scriptContent.contains("mp4") || scriptContent.contains("video")) {
-                    val mp4Regex = Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*""")
-                    val mp4Matcher = mp4Regex.matcher(scriptContent)
-                    if (mp4Matcher.find()) {
-                        val videoUrl = mp4Matcher.group()
-                        Log.d("Retrotve-Sendvid", "Found in script: $videoUrl")
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(pageHtml)
+                if (matcher.find()) {
+                    var videoUrl = matcher.group(1)?.replace("\\", "") ?: matcher.group()
+                    if (videoUrl != null && videoUrl.startsWith("http")) {
+                        Log.d("Retrotve-Sendvid", "Found URL with pattern ${pattern.pattern()}: $videoUrl")
                         callback.invoke(
                             newExtractorLink(name, name, videoUrl) {
                                 this.referer = url
@@ -92,6 +68,11 @@ class SendvidExtractor : ExtractorApi() {
                         return
                     }
                 }
+            }
+            
+            val scriptContent = Regex("""eval\s*\(\s*function\s*\(p,a,c,k,e,d\).*?\)""").find(pageHtml)
+            if (scriptContent != null) {
+                Log.d("Retrotve-Sendvid", "Found obfuscated JavaScript")
             }
             
             Log.d("Retrotve-Sendvid", "No direct video URL found")
@@ -117,73 +98,44 @@ class FilemoonExtractor : ExtractorApi() {
         Log.d("Retrotve-Filemoon", "Extracting: $url")
         
         try {
-            val doc = app.get(url, referer = referer ?: mainUrl).document
-            val pageHtml = doc.html()
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+                "Referer" to (referer ?: mainUrl)
+            )
             
-            Log.d("Retrotve-Filemoon", "Page HTML length: ${pageHtml.length}")
+            val response = app.get(url, headers = headers, timeout = 30L)
+            val pageHtml = response.text
             
-            val sourcesRegex = Pattern.compile("""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["']([^"']+)["']""")
-            val matcher = sourcesRegex.matcher(pageHtml)
+            Log.d("Retrotve-Filemoon", "Response code: ${response.code}, HTML length: ${pageHtml.length}")
             
-            if (matcher.find()) {
-                var videoUrl = matcher.group(1)?.replace("\\", "")
-                Log.d("Retrotve-Filemoon", "Found sources: $videoUrl")
-                
-                if (videoUrl != null && videoUrl.startsWith("http")) {
-                    callback.invoke(
-                        newExtractorLink(name, name, videoUrl) {
-                            this.referer = url
-                            this.type = ExtractorLinkType.M3U8
+            val patterns = listOf(
+                Pattern.compile("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
+                Pattern.compile("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']"""),
+                Pattern.compile("""["']file["']\s*:\s*["']([^"']+)["']"""),
+                Pattern.compile("""xstream\s*[=:]\s*["']([^"']+)["']"""),
+                Pattern.compile("""master\.m3u8[^"'\\]*"""),
+                Pattern.compile("""https?://[^"'\\]+m3u8[^"'\\]*""")
+            )
+            
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(pageHtml)
+                if (matcher.find()) {
+                    var videoUrl = matcher.group(1)?.replace("\\", "") ?: matcher.group()
+                    
+                    if (videoUrl != null) {
+                        if (videoUrl.startsWith("//")) {
+                            videoUrl = "https:$videoUrl"
                         }
-                    )
-                    return
-                }
-            }
-            
-            val xstreamRegex = Pattern.compile("""xstream\s*[=:]\s*["']([^"']+)["']""")
-            val xstreamMatcher = xstreamRegex.matcher(pageHtml)
-            if (xstreamMatcher.find()) {
-                var videoUrl = xstreamMatcher.group(1)?.replace("\\", "")
-                Log.d("Retrotve-Filemoon", "Found xstream: $videoUrl")
-                
-                if (videoUrl != null && videoUrl.startsWith("http")) {
-                    callback.invoke(
-                        newExtractorLink(name, name, videoUrl) {
-                            this.referer = url
-                            this.type = ExtractorLinkType.M3U8
+                        
+                        if (!videoUrl.startsWith("http")) {
+                            val baseUrl = url.substringBefore("/e/")
+                            videoUrl = "$baseUrl/$videoUrl"
                         }
-                    )
-                    return
-                }
-            }
-            
-            val masterRegex = Pattern.compile("""master\.m3u8[^"'\\]*""")
-            val masterMatcher = masterRegex.matcher(pageHtml)
-            if (masterMatcher.find()) {
-                val baseUrl = url.substringBefore("/e/")
-                val masterPath = masterMatcher.group()
-                val fullUrl = if (masterPath.startsWith("http")) masterPath else "$baseUrl/$masterPath"
-                Log.d("Retrotve-Filemoon", "Found master: $fullUrl")
-                
-                callback.invoke(
-                    newExtractorLink(name, name, fullUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.M3U8
-                    }
-                )
-                return
-            }
-            
-            val scriptTags = doc.select("script")
-            for (script in scriptTags) {
-                val scriptContent = script.html()
-                if (scriptContent.contains("sources") || scriptContent.contains("file:")) {
-                    val fileRegex = Pattern.compile("""file\s*:\s*["']([^"']+)["']""")
-                    val fileMatcher = fileRegex.matcher(scriptContent)
-                    if (fileMatcher.find()) {
-                        var videoUrl = fileMatcher.group(1)?.replace("\\", "")
-                        if (videoUrl != null && videoUrl.startsWith("http")) {
-                            Log.d("Retrotve-Filemoon", "Found in script: $videoUrl")
+                        
+                        if (videoUrl.contains("m3u8") || videoUrl.contains("mp4")) {
+                            Log.d("Retrotve-Filemoon", "Found URL: $videoUrl")
                             callback.invoke(
                                 newExtractorLink(name, name, videoUrl) {
                                     this.referer = url
@@ -192,6 +144,26 @@ class FilemoonExtractor : ExtractorApi() {
                             )
                             return
                         }
+                    }
+                }
+            }
+            
+            val doc = Jsoup.parse(pageHtml)
+            val scripts = doc.select("script")
+            for (script in scripts) {
+                val content = script.html()
+                if (content.contains("sources") || content.contains("file:")) {
+                    val fileMatch = Regex("""file\s*:\s*["']([^"']+)["']""").find(content)
+                    if (fileMatch != null) {
+                        var videoUrl = fileMatch.groupValues[1].replace("\\", "")
+                        Log.d("Retrotve-Filemoon", "Found in script: $videoUrl")
+                        callback.invoke(
+                            newExtractorLink(name, name, videoUrl) {
+                                this.referer = url
+                                this.type = ExtractorLinkType.M3U8
+                            }
+                        )
+                        return
                     }
                 }
             }
@@ -219,66 +191,42 @@ class VKVideoExtractor : ExtractorApi() {
         Log.d("Retrotve-VKVideo", "Extracting: $url")
         
         try {
-            val vkHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
                 "Referer" to "https://vk.com/"
             )
             
-            val doc = app.get(url, headers = vkHeaders).document
-            val pageHtml = doc.html()
+            val response = app.get(url, headers = headers, timeout = 30L)
+            val pageHtml = response.text
             
-            Log.d("Retrotve-VKVideo", "Page HTML length: ${pageHtml.length}")
+            Log.d("Retrotve-VKVideo", "Response code: ${response.code}, HTML length: ${pageHtml.length}")
             
-            for (quality in listOf("url720", "url480", "url360")) {
-                val pattern = Pattern.compile("""${quality}\s*[=:]\s*["']([^"']+)["']""")
-                val patternMatcher = pattern.matcher(pageHtml)
-                if (patternMatcher.find()) {
-                    val videoUrl = patternMatcher.group(1)?.replace("\\", "")
-                    Log.d("Retrotve-VKVideo", "Found $quality: $videoUrl")
-                    if (videoUrl != null && videoUrl.startsWith("http")) {
-                        val qualityValue = when (quality) {
-                            "url720" -> Qualities.P720.value
-                            "url480" -> Qualities.P480.value
-                            else -> Qualities.P360.value
-                        }
+            val patterns = listOf(
+                Pattern.compile("""url720\s*[=:]\s*["']([^"']+)["']"""),
+                Pattern.compile("""url480\s*[=:]\s*["']([^"']+)["']"""),
+                Pattern.compile("""url360\s*[=:]\s*["']([^"']+)["']"""),
+                Pattern.compile("""url240\s*[=:]\s*["']([^"']+)["']"""),
+                Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*"""),
+                Pattern.compile("""https?://[^"'\\]+m3u8[^"'\\]*""")
+            )
+            
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(pageHtml)
+                if (matcher.find()) {
+                    val videoUrl = matcher.group().replace("\\", "")
+                    if (videoUrl.startsWith("http")) {
+                        Log.d("Retrotve-VKVideo", "Found: $videoUrl")
                         callback.invoke(
-                            newExtractorLink(name, "$name $quality", videoUrl) {
+                            newExtractorLink(name, name, videoUrl) {
                                 this.referer = url
-                                this.type = ExtractorLinkType.VIDEO
-                                this.quality = qualityValue
+                                this.type = if (videoUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             }
                         )
                         return
                     }
                 }
-            }
-            
-            val mp4Direct = Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*""")
-            val mp4Matcher = mp4Direct.matcher(pageHtml)
-            if (mp4Matcher.find()) {
-                val videoUrl = mp4Matcher.group()
-                Log.d("Retrotve-VKVideo", "Found direct mp4: $videoUrl")
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.VIDEO
-                    }
-                )
-                return
-            }
-            
-            val m3u8Pattern = Pattern.compile("""https?://[^"'\\]+m3u8[^"'\\]*""")
-            val m3u8Matcher = m3u8Pattern.matcher(pageHtml)
-            if (m3u8Matcher.find()) {
-                val videoUrl = m3u8Matcher.group()
-                Log.d("Retrotve-VKVideo", "Found m3u8: $videoUrl")
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.M3U8
-                    }
-                )
-                return
             }
             
             Log.d("Retrotve-VKVideo", "No direct video URL found")
@@ -304,65 +252,73 @@ class OKRuExtractor : ExtractorApi() {
         Log.d("Retrotve-OKRu", "Extracting: $url")
         
         try {
-            val okHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
                 "Referer" to "https://ok.ru/"
             )
             
-            val doc = app.get(url, headers = okHeaders).document
-            val pageHtml = doc.html()
+            val response = app.get(url, headers = headers, timeout = 30L)
+            val pageHtml = response.text
             
-            Log.d("Retrotve-OKRu", "Page HTML length: ${pageHtml.length}")
+            Log.d("Retrotve-OKRu", "Response code: ${response.code}, HTML length: ${pageHtml.length}")
             
-            val moviePlayer = doc.selectFirst("div[data-module='HTML5Player']")?.attr("data-options")
-            if (moviePlayer != null) {
-                Log.d("Retrotve-OKRu", "Found movie player data")
-                val metadataUrl = Regex("""moviesJsonUrl\s*:\s*"([^"]+)""").find(moviePlayer)?.groupValues?.get(1)
-                if (metadataUrl != null) {
+            val moviePlayerMatch = Regex("""data-options\s*=\s*["']([^"']+)["']""").find(pageHtml)
+            if (moviePlayerMatch != null) {
+                val dataOptions = moviePlayerMatch.groupValues[1]
+                Log.d("Retrotve-OKRu", "Found data-options")
+                
+                val metadataMatch = Regex("""moviesJsonUrl\s*:\s*"([^"]+)""").find(dataOptions)
+                if (metadataMatch != null) {
+                    val metadataUrl = metadataMatch.groupValues[1]
                     Log.d("Retrotve-OKRu", "Metadata URL: $metadataUrl")
-                    val metadataJson = app.get(metadataUrl, headers = okHeaders).text
-                    val videoUrl = Regex("""hd\s*\d*\s*:\s*"([^"]+)""").find(metadataJson)?.groupValues?.get(1)
-                        ?: Regex("""sd\s*\d*\s*:\s*"([^"]+)""").find(metadataJson)?.groupValues?.get(1)
-                    if (videoUrl != null) {
-                        val cleanUrl = videoUrl.replace("\\", "")
-                        Log.d("Retrotve-OKRu", "Found video URL: $cleanUrl")
+                    
+                    try {
+                        val metadataResponse = app.get(metadataUrl, headers = headers, timeout = 30L)
+                        val metadataJson = metadataResponse.text
+                        
+                        val videoUrl = Regex("""hd\d*\s*:\s*"([^"]+)""").find(metadataJson)?.groupValues?.get(1)
+                            ?: Regex("""sd\d*\s*:\s*"([^"]+)""").find(metadataJson)?.groupValues?.get(1)
+                            ?: Regex("""url\d*\s*:\s*"([^"]+)""").find(metadataJson)?.groupValues?.get(1)
+                        
+                        if (videoUrl != null) {
+                            val cleanUrl = videoUrl.replace("\\", "")
+                            Log.d("Retrotve-OKRu", "Found video URL from metadata: $cleanUrl")
+                            callback.invoke(
+                                newExtractorLink(name, name, cleanUrl) {
+                                    this.referer = url
+                                    this.type = ExtractorLinkType.VIDEO
+                                }
+                            )
+                            return
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Retrotve-OKRu", "Error fetching metadata: ${e.message}")
+                    }
+                }
+            }
+            
+            val patterns = listOf(
+                Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*"""),
+                Pattern.compile("""https?://[^"'\\]+m3u8[^"'\\]*""")
+            )
+            
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(pageHtml)
+                if (matcher.find()) {
+                    val videoUrl = matcher.group().replace("\\", "")
+                    if (videoUrl.startsWith("http")) {
+                        Log.d("Retrotve-OKRu", "Found direct: $videoUrl")
                         callback.invoke(
-                            newExtractorLink(name, name, cleanUrl) {
+                            newExtractorLink(name, name, videoUrl) {
                                 this.referer = url
-                                this.type = ExtractorLinkType.VIDEO
+                                this.type = if (videoUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             }
                         )
                         return
                     }
                 }
-            }
-            
-            val mp4Regex = Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*""")
-            val matcher = mp4Regex.matcher(pageHtml)
-            if (matcher.find()) {
-                val videoUrl = matcher.group()
-                Log.d("Retrotve-OKRu", "Found direct mp4: $videoUrl")
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.VIDEO
-                    }
-                )
-                return
-            }
-            
-            val m3u8Regex = Pattern.compile("""https?://[^"'\\]+m3u8[^"'\\]*""")
-            val m3u8Matcher = m3u8Regex.matcher(pageHtml)
-            if (m3u8Matcher.find()) {
-                val videoUrl = m3u8Matcher.group()
-                Log.d("Retrotve-OKRu", "Found m3u8: $videoUrl")
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.M3U8
-                    }
-                )
-                return
             }
             
             Log.d("Retrotve-OKRu", "No direct video URL found")
@@ -388,41 +344,44 @@ class YourUploadExtractor : ExtractorApi() {
         Log.d("Retrotve-YourUpload", "Extracting: $url")
         
         try {
-            val doc = app.get(url, referer = referer ?: mainUrl).document
-            val pageHtml = doc.html()
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer" to (referer ?: mainUrl)
+            )
             
-            Log.d("Retrotve-YourUpload", "Page HTML length: ${pageHtml.length}")
+            val response = app.get(url, headers = headers, timeout = 30L)
+            val pageHtml = response.text
             
-            val sourcesRegex = Pattern.compile("""sources\s*:\s*\[\s*\{[^}]*file\s*:\s*["']([^"']+)["']""")
-            val matcher = sourcesRegex.matcher(pageHtml)
+            Log.d("Retrotve-YourUpload", "Response code: ${response.code}, HTML length: ${pageHtml.length}")
             
-            if (matcher.find()) {
-                var videoUrl = matcher.group(1)?.replace("\\", "")
-                Log.d("Retrotve-YourUpload", "Found sources: $videoUrl")
-                
-                if (videoUrl != null && videoUrl.startsWith("http")) {
-                    callback.invoke(
-                        newExtractorLink(name, name, videoUrl) {
-                            this.referer = url
-                            this.type = ExtractorLinkType.VIDEO
+            val patterns = listOf(
+                Pattern.compile("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
+                Pattern.compile("""file\s*:\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']"""),
+                Pattern.compile("""https?://[^"'\\]+\.(?:mp4|m3u8)[^"'\\]*""")
+            )
+            
+            for (pattern in patterns) {
+                val matcher = pattern.matcher(pageHtml)
+                if (matcher.find()) {
+                    var videoUrl = matcher.group(1)?.replace("\\", "") ?: matcher.group()
+                    
+                    if (videoUrl != null) {
+                        if (videoUrl.startsWith("//")) {
+                            videoUrl = "https:$videoUrl"
                         }
-                    )
-                    return
-                }
-            }
-            
-            val mp4Regex = Pattern.compile("""https?://[^"'\\]+\.mp4[^"'\\]*""")
-            val mp4Matcher = mp4Regex.matcher(pageHtml)
-            if (mp4Matcher.find()) {
-                val videoUrl = mp4Matcher.group()
-                Log.d("Retrotve-YourUpload", "Found direct mp4: $videoUrl")
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl) {
-                        this.referer = url
-                        this.type = ExtractorLinkType.VIDEO
+                        
+                        if (videoUrl.startsWith("http")) {
+                            Log.d("Retrotve-YourUpload", "Found: $videoUrl")
+                            callback.invoke(
+                                newExtractorLink(name, name, videoUrl) {
+                                    this.referer = url
+                                    this.type = if (videoUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                }
+                            )
+                            return
+                        }
                     }
-                )
-                return
+                }
             }
             
             Log.d("Retrotve-YourUpload", "No direct video URL found")
