@@ -95,7 +95,7 @@ class FilemoonExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-Filemoon", "Extracting: $url")
+        Log.d("Retrotve-Filemoon", ">>> START Extracting: $url")
         
         try {
             val headers = mapOf(
@@ -188,7 +188,7 @@ class VKVideoExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-VKVideo", "Extracting: $url")
+        Log.d("Retrotve-VKVideo", ">>> START Extracting: $url")
         
         try {
             val headers = mapOf(
@@ -249,7 +249,7 @@ class OKRuExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("Retrotve-OKRu", "Extracting: $url")
+        Log.d("Retrotve-OKRu", ">>> START Extracting: $url")
         
         try {
             val headers = mapOf(

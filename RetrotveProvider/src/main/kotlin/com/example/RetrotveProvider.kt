@@ -186,42 +186,51 @@ class RetrotveProvider : MainAPI() {
             SendvidExtractor().getUrl(embedUrl, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Sendvid error: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            Log.d("RetrotveProvider", "Filemoon: Using custom extractor for: $url")
+            Log.d("RetrotveProvider", "Filemoon: Calling extractor for: $url")
             FilemoonExtractor().getUrl(url, referer, subtitleCallback, callback)
+            Log.d("RetrotveProvider", "Filemoon: Extractor call completed")
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            Log.d("RetrotveProvider", "VKVideo: Using custom extractor for: $url")
+            Log.d("RetrotveProvider", "VKVideo: Calling extractor for: $url")
             VKVideoExtractor().getUrl(url, referer, subtitleCallback, callback)
+            Log.d("RetrotveProvider", "VKVideo: Extractor call completed")
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     private suspend fun extractOKRu(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            Log.d("RetrotveProvider", "OK.RU: Using custom extractor for: $url")
+            Log.d("RetrotveProvider", "OK.RU: Calling extractor for: $url")
             OKRuExtractor().getUrl(url, referer, subtitleCallback, callback)
+            Log.d("RetrotveProvider", "OK.RU: Extractor call completed")
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "OK.RU error: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     private suspend fun extractYourUpload(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            Log.d("RetrotveProvider", "YourUpload: Using custom extractor for: $url")
+            Log.d("RetrotveProvider", "YourUpload: Calling extractor for: $url")
             YourUploadExtractor().getUrl(url, referer, subtitleCallback, callback)
+            Log.d("RetrotveProvider", "YourUpload: Extractor call completed")
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "YourUpload error: ${e.message}")
+            e.printStackTrace()
         }
     }
 
