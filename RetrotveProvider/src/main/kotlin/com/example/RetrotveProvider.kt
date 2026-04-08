@@ -266,19 +266,17 @@ class RetrotveProvider : MainAPI() {
         
         val trembedUrls = mutableListOf<Pair<String, String>>()
         
-        document.select("iframe[src]").forEach { iframe ->
-            val src = iframe.attr("src") ?: return@forEach
-            if (src.isBlank()) return@forEach
-            
-            if (src.contains("retrotve.com") && src.contains("trembed")) {
-                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                trembedUrls.add(fixedSrc to "iframe")
-                Log.d("RetrotveProvider", "Found trembed iframe: $fixedSrc")
-            }
-        }
+        val trid = document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: 
+                   Regex("""trid[=&](\d+)""").find(data)?.groupValues?.get(1) ?: "0"
+        val trtype = if (data.contains("/pelicula/")) "1" else "2"
+        
+        Log.d("RetrotveProvider", "trid=$trid, trtype=$trtype")
+        
+        val tabIds = listOf("Opt1", "Opt2", "Opt3", "Opt4", "Opt5")
         
         document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
             val tabId = tab.attr("id")
+            Log.d("RetrotveProvider", "Found tab: $tabId")
             
             tab.select("iframe[src]").forEach { iframe ->
                 val src = iframe.attr("src") ?: return@forEach
@@ -302,31 +300,45 @@ class RetrotveProvider : MainAPI() {
             }
         }
         
+        val visibleIframes = document.select("iframe[src]").filter { iframe ->
+            val src = iframe.attr("src") ?: ""
+            !src.contains("google") && !src.contains("facebook") && !src.contains("twitter")
+        }
+        
+        visibleIframes.forEach { iframe ->
+            val src = iframe.attr("src") ?: return@forEach
+            if (src.isBlank()) return@forEach
+            
+            if (src.contains("retrotve.com") && src.contains("trembed")) {
+                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+                if (!trembedUrls.any { it.first == fixedSrc }) {
+                    trembedUrls.add(fixedSrc to "Visible")
+                    Log.d("RetrotveProvider", "Found visible trembed iframe: $fixedSrc")
+                }
+            }
+        }
+        
+        val tabIndex = tabIds.indexOfFirst { tabId -> 
+            document.selectFirst("#$tabId") != null 
+        }
+        
+        val missingTrembed = (0..3).filter { index ->
+            val trembedValue = if (tabIndex >= 0) tabIndex + index else index
+            !trembedUrls.any { it.first.contains("trembed=$index&") || it.first.contains("trembed=$trembedValue&") }
+        }
+        
+        missingTrembed.forEach { index ->
+            val playerUrl = "$mainUrl/?trembed=$index&trid=$trid&trtype=$trtype"
+            trembedUrls.add(playerUrl to "Generated")
+            Log.d("RetrotveProvider", "Generated trembed $index: $playerUrl")
+        }
+        
         val uniqueTrembedUrls = trembedUrls.distinctBy { it.first }
         Log.d("RetrotveProvider", "Found ${uniqueTrembedUrls.size} unique trembed URLs to process")
         
         uniqueTrembedUrls.forEach { (playerUrl, serverName) ->
             val found = processPlayerPage(playerUrl, data, serverName, subtitleCallback, callback)
             if (found) linksFound = true
-        }
-        
-        if (!linksFound) {
-            Log.d("RetrotveProvider", "No links found, trying fallback method")
-            
-            val tridMatch = Regex("""trembed=\d+&trid=(\d+)""").find(document.toString())
-            val trid = tridMatch?.groupValues?.get(1) ?: 
-                       document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: "0"
-            val trtype = if (data.contains("/pelicula/")) "1" else "2"
-            
-            Log.d("RetrotveProvider", "Fallback: trid=$trid, trtype=$trtype")
-            
-            for (trembed in 0..3) {
-                val playerUrl = "$mainUrl/?trembed=$trembed&trid=$trid&trtype=$trtype"
-                Log.d("RetrotveProvider", "Trying trembed $trembed: $playerUrl")
-                
-                val found = processPlayerPage(playerUrl, data, "Fallback $trembed", subtitleCallback, callback)
-                if (found) linksFound = true
-            }
         }
         
         Log.d("RetrotveProvider", "loadLinks result: linksFound=$linksFound")
