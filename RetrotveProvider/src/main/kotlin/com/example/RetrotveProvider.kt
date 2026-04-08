@@ -234,6 +234,27 @@ class RetrotveProvider : MainAPI() {
                     } catch (e: Exception) {
                         Log.e("RetrotveProvider", "GDrivePlayer error: ${e.message}")
                     }
+                } else if (fixedSrc.contains("sendvid.com")) {
+                    Log.d("RetrotveProvider", "-> Using Sendvid extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "Sendvid error: ${e.message}")
+                    }
+                } else if (fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to")) {
+                    Log.d("RetrotveProvider", "-> Using Filemoon extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
+                    }
+                } else if (fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo")) {
+                    Log.d("RetrotveProvider", "-> Using VKVideo extractor")
+                    try {
+                        if (loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)) found = true
+                    } catch (e: Exception) {
+                        Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
+                    }
                 } else {
                     Log.d("RetrotveProvider", "-> Using generic extractor")
                     try {
@@ -261,76 +282,84 @@ class RetrotveProvider : MainAPI() {
         var linksFound = false
         
         val document = app.get(data).document
+        val trtype = if (data.contains("/pelicula/")) "1" else "2"
         
         Log.d("RetrotveProvider", "Searching for player URLs in episode page")
         
         val trembedUrls = mutableListOf<Pair<String, String>>()
         
-        val trid = document.selectFirst("article[data-tr-post-id]")?.attr("data-tr-post-id") ?: 
-                   Regex("""trid[=&](\d+)""").find(data)?.groupValues?.get(1) ?: "0"
-        val trtype = if (data.contains("/pelicula/")) "1" else "2"
+        var correctTrid: String? = null
         
-        Log.d("RetrotveProvider", "trid=$trid, trtype=$trtype")
-        
-        val tabIds = listOf("Opt1", "Opt2", "Opt3", "Opt4", "Opt5")
+        document.select("iframe[src*='trembed']").forEach { iframe ->
+            val src = iframe.attr("src")
+            if (src.contains("trembed") && src.contains("trid")) {
+                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+                val tridMatch = Regex("""trid=(\d+)""").find(fixedSrc)
+                tridMatch?.groupValues?.get(1)?.let { trid ->
+                    if (correctTrid == null) {
+                        correctTrid = trid
+                        Log.d("RetrotveProvider", "Found correct trid from iframe: $trid")
+                    }
+                }
+                trembedUrls.add(fixedSrc to "Iframe")
+                Log.d("RetrotveProvider", "Found trembed iframe: $fixedSrc")
+            }
+        }
         
         document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
             val tabId = tab.attr("id")
-            Log.d("RetrotveProvider", "Found tab: $tabId")
             
             tab.select("iframe[src]").forEach { iframe ->
-                val src = iframe.attr("src") ?: return@forEach
-                if (src.isBlank()) return@forEach
-                
-                if (src.contains("retrotve.com") && src.contains("trembed")) {
+                val src = iframe.attr("src")
+                if (src.contains("retrotve.com") && src.contains("trembed") && src.contains("trid")) {
                     val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                    trembedUrls.add(fixedSrc to tabId)
-                    Log.d("RetrotveProvider", "Found trembed iframe in $tabId: $fixedSrc")
+                    val tridMatch = Regex("""trid=(\d+)""").find(fixedSrc)
+                    tridMatch?.groupValues?.get(1)?.let { trid ->
+                        if (correctTrid == null) {
+                            correctTrid = trid
+                            Log.d("RetrotveProvider", "Found correct trid from tab $tabId: $trid")
+                        }
+                    }
+                    if (!trembedUrls.any { it.first == fixedSrc }) {
+                        trembedUrls.add(fixedSrc to tabId)
+                        Log.d("RetrotveProvider", "Found trembed iframe in $tabId: $fixedSrc")
+                    }
                 }
             }
             
-            tab.select("div[data-src]").forEach { div ->
-                val src = div.attr("data-src") ?: return@forEach
-                if (src.isBlank()) return@forEach
-                
-                if (src.contains("trembed")) {
-                    trembedUrls.add(src to tabId)
-                    Log.d("RetrotveProvider", "Found trembed data-src in $tabId: $src")
+            tab.select("div[data-src*='trembed']").forEach { div ->
+                val src = div.attr("data-src")
+                if (src.contains("trembed") && src.contains("trid")) {
+                    val fixedSrc = if (src.startsWith("//")) "https:$src" else src
+                    val tridMatch = Regex("""trid=(\d+)""").find(fixedSrc)
+                    tridMatch?.groupValues?.get(1)?.let { trid ->
+                        if (correctTrid == null) {
+                            correctTrid = trid
+                            Log.d("RetrotveProvider", "Found correct trid from data-src: $trid")
+                        }
+                    }
+                    if (!trembedUrls.any { it.first == fixedSrc }) {
+                        trembedUrls.add(fixedSrc to tabId)
+                        Log.d("RetrotveProvider", "Found trembed data-src in $tabId: $fixedSrc")
+                    }
                 }
             }
         }
         
-        val visibleIframes = document.select("iframe[src]").filter { iframe ->
-            val src = iframe.attr("src") ?: ""
-            !src.contains("google") && !src.contains("facebook") && !src.contains("twitter")
-        }
-        
-        visibleIframes.forEach { iframe ->
-            val src = iframe.attr("src") ?: return@forEach
-            if (src.isBlank()) return@forEach
+        if (correctTrid != null) {
+            Log.d("RetrotveProvider", "Using correct trid: $correctTrid for all tabs")
             
-            if (src.contains("retrotve.com") && src.contains("trembed")) {
-                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                if (!trembedUrls.any { it.first == fixedSrc }) {
-                    trembedUrls.add(fixedSrc to "Visible")
-                    Log.d("RetrotveProvider", "Found visible trembed iframe: $fixedSrc")
+            val allTabIds = listOf("Opt1", "Opt2", "Opt3", "Opt4", "Opt5")
+            document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
+                val tabId = tab.attr("id")
+                allTabIds.indexOf(tabId).takeIf { it >= 0 }?.let { tabIndex ->
+                    val playerUrl = "$mainUrl/?trembed=$tabIndex&trid=$correctTrid&trtype=$trtype"
+                    if (!trembedUrls.any { it.first.contains("trembed=$tabIndex&") && it.first.contains("trid=$correctTrid") }) {
+                        trembedUrls.add(playerUrl to tabId)
+                        Log.d("RetrotveProvider", "Generated trembed $tabIndex for $tabId: $playerUrl")
+                    }
                 }
             }
-        }
-        
-        val tabIndex = tabIds.indexOfFirst { tabId -> 
-            document.selectFirst("#$tabId") != null 
-        }
-        
-        val missingTrembed = (0..3).filter { index ->
-            val trembedValue = if (tabIndex >= 0) tabIndex + index else index
-            !trembedUrls.any { it.first.contains("trembed=$index&") || it.first.contains("trembed=$trembedValue&") }
-        }
-        
-        missingTrembed.forEach { index ->
-            val playerUrl = "$mainUrl/?trembed=$index&trid=$trid&trtype=$trtype"
-            trembedUrls.add(playerUrl to "Generated")
-            Log.d("RetrotveProvider", "Generated trembed $index: $playerUrl")
         }
         
         val uniqueTrembedUrls = trembedUrls.distinctBy { it.first }
