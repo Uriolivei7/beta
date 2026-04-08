@@ -215,9 +215,9 @@ class OKRuExtractor : ExtractorApi() {
                     var videoUrl = matcher.group().replace("\\", "").replace(""", "").replace(""", "")
                     Log.d("RetrotveProvider", "OKRu: Trying URL: $videoUrl")
                     
-                    if (videoUrl.contains("mp4") || videoUrl.contains("m3u8") || videoUrl.contains("ok.ru")) {
+                    if (videoUrl.contains("mp4") || videoUrl.contains("m3u8") || videoUrl.contains("ok.ru") || videoUrl.contains("okcdn.ru")) {
                         if (videoUrl.startsWith("//")) videoUrl = "https:$videoUrl"
-                        if (videoUrl.contains("ok.ru")) {
+                        if (videoUrl.contains("okcdn.ru") || videoUrl.contains("ok.ru")) {
                             Log.d("RetrotveProvider", "OKRu: Found $videoUrl")
                             callback.invoke(
                                 newExtractorLink(name, name, videoUrl) {

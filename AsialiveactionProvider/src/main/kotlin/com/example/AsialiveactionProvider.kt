@@ -251,7 +251,7 @@ class AsialiveactionProvider : MainAPI() {
                 val serverDataMap = parseJson<Map<String, List<List<String>>>>(allVideosJson)
                 serverDataMap.forEach { (langId, serverList) ->
                     val langName = when {
-                        langId.contains("1388") -> "Latino"
+                        langId.contains("1388") -> "Español Latino"
                         langId.contains("1385") -> "Subtitulado"
                         else -> "Default"
                     }
