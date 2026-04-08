@@ -236,12 +236,25 @@ class AsialiveactionProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d(TAG, "loadLinks: Extrayendo de URL=$data")
+        var urlToProcess = data
+        
         val response = app.get(data)
         val htmlContent = response.text
-        val document = Jsoup.parse(htmlContent)
         
         val allVideosPattern = """allVideos\s*=\s*(\{.*?\});""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        val allVideosMatch = allVideosPattern.find(htmlContent)
+        var allVideosMatch = allVideosPattern.find(htmlContent)
+        
+        if (allVideosMatch == null) {
+            Log.d(TAG, "loadLinks: allVideos no encontrado en página actual, buscando enlace a episodio")
+            val episodeLink = Regex("""href="(https://asialiveaction\.com/f/[^"]+)"""").find(htmlContent)
+            if (episodeLink != null) {
+                val episodeUrl = episodeLink.groupValues[1]
+                Log.d(TAG, "loadLinks: Encontrado enlace a episodio: $episodeUrl")
+                urlToProcess = episodeUrl
+                val episodeResponse = app.get(episodeUrl)
+                allVideosMatch = allVideosPattern.find(episodeResponse.text)
+            }
+        }
         
         if (allVideosMatch != null) {
             val allVideosJson = allVideosMatch.groupValues[1]
@@ -278,7 +291,7 @@ class AsialiveactionProvider : MainAPI() {
                                 }
                                 
                                 val fullName = "$serverName [$langName]"
-                                loadSourceNameExtractor(fullName, decodedUrl, data, subtitleCallback, callback)
+                                loadSourceNameExtractor(fullName, decodedUrl, urlToProcess, subtitleCallback, callback)
                             }
                         }
                     }
@@ -286,6 +299,8 @@ class AsialiveactionProvider : MainAPI() {
             } catch (e: Exception) {
                 Log.e(TAG, "loadLinks: Error parseando allVideos: ${e.message}")
             }
+        } else {
+            Log.d(TAG, "loadLinks: No se encontró allVideos ni enlace a episodio")
         }
         
         return true
