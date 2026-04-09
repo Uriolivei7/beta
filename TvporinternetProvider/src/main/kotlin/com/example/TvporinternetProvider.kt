@@ -99,15 +99,16 @@ class TvporinternetProvider : MainAPI() {
 
     private fun getCategory(title: String): String {
         val normalizedTitle = title.uppercase().replace(" EN VIVO", "").trim()
+        
         return when {
-            deportesCat.any { normalizedTitle.contains(it.uppercase()) } -> "Deportes"
-            peliculasSeriesCat.any { normalizedTitle.contains(it.uppercase()) } -> "Películas y Series"
-            infantilCat.any { normalizedTitle.contains(it.uppercase()) } -> "Infantil"
-            educacionCat.any { normalizedTitle.contains(it.uppercase()) } -> "Documentales/Educación"
-            noticiasCat.any { normalizedTitle.contains(it.uppercase()) } -> "Noticias"
-            entretenimientoCat.any { normalizedTitle.contains(it.uppercase()) } -> "Entretenimiento"
-            localLatinoCat.any { normalizedTitle.contains(it.uppercase()) } -> "Latinoamérica"
-            else -> "Otros Canales"
+            deportesCat.any { normalizedTitle.contains(it) } -> "Deportes"
+            peliculasSeriesCat.any { normalizedTitle.contains(it) } -> "Peliculas"
+            infantilCat.any { normalizedTitle.contains(it) } -> "Infantil"
+            educacionCat.any { normalizedTitle.contains(it) } -> "Educacion"
+            noticiasCat.any { normalizedTitle.contains(it) } -> "Noticias"
+            entretenimientoCat.any { normalizedTitle.contains(it) } -> "Entretenimiento"
+            localLatinoCat.any { normalizedTitle.contains(it) } -> "Latino"
+            else -> "Otros"
         }
     }
 
@@ -168,25 +169,44 @@ class TvporinternetProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val html = safeAppGet(mainUrl) ?: return emptyList()
+        Log.d("TvporInternet", "Search: query='$query'")
+        val html = safeAppGet(mainUrl) ?: run {
+            Log.d("TvporInternet", "Search: failed to get HTML")
+            return emptyList()
+        }
+        
+        val channels = extractChannelsFromHtml(html)
+        Log.d("TvporInternet", "Search: found ${channels.size} channels")
+        
+        if (query.isBlank()) {
+            Log.d("TvporInternet", "Search: query is blank, returning empty")
+            return emptyList()
+        }
 
-        return extractChannelsFromHtml(html)
-            .filterNot { (titleRaw, _, _) ->
-                nowAllowed.any { titleRaw.contains(it, ignoreCase = true) } || titleRaw.isBlank()
+        val filtered = channels.filterNot { (titleRaw, _, _) ->
+            val shouldFilter = nowAllowed.any { titleRaw.contains(it, ignoreCase = true) } || titleRaw.isBlank()
+            if (shouldFilter) Log.d("TvporInternet", "Search: filtering out '$titleRaw'")
+            shouldFilter
+        }
+        
+        val matched = filtered.filter { (titleRaw, _, _) ->
+            val matches = titleRaw.contains(query, ignoreCase = true)
+            Log.d("TvporInternet", "Search: '$titleRaw' matches '$query' = $matches")
+            matches
+        }
+        
+        Log.d("TvporInternet", "Search: matched ${matched.size} channels")
+        
+        return matched.mapNotNull { (titleRaw, linkRaw, imgRaw) ->
+            val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
+            newLiveSearchResponse(
+                name = title,
+                url = fixUrl(linkRaw),
+                type = TvType.Live
+            ) {
+                this.posterUrl = fixUrl(imgRaw)
             }
-            .filter { (titleRaw, _, _) ->
-                titleRaw.contains(query, ignoreCase = true)
-            }
-            .mapNotNull { (titleRaw, linkRaw, imgRaw) ->
-                val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
-                newLiveSearchResponse(
-                    name = title,
-                    url = fixUrl(linkRaw),
-                    type = TvType.Live
-                ) {
-                    this.posterUrl = fixUrl(imgRaw)
-                }
-            }
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
