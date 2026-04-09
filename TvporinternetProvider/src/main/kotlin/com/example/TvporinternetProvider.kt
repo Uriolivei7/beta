@@ -111,31 +111,25 @@ class TvporinternetProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val html = safeAppGet(mainUrl) ?: return null
-        val doc = Jsoup.parse(html)
         val categoryMap = mutableMapOf<String, MutableList<SearchResponse>>()
 
-        doc.select("div.channels-container a.channel-card").forEach { channelCard ->
-            val link = channelCard.attr("href")
-            val imgElement = channelCard.selectFirst("img")
-            val titleRaw = imgElement?.attr("alt") ?: channelCard.selectFirst("p")?.text()
+        val channels = extractChannelsFromHtml(html)
 
-            if (titleRaw != null && link != null) {
-                val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
-                val img = fixUrl(imgElement?.attr("src") ?: "")
+        channels.forEach { (titleRaw, link, img) ->
+            val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
 
-                if (nowAllowed.any { title.contains(it, ignoreCase = true) }) return@forEach
+            if (nowAllowed.any { title.contains(it, ignoreCase = true) }) return@forEach
 
-                val channelResponse = newTvSeriesSearchResponse(
-                    name = title,
-                    url = fixUrl(link)
-                ) {
-                    this.type = TvType.Live
-                    this.posterUrl = img
-                }
-
-                val category = getCategory(title)
-                categoryMap.getOrPut(category) { ArrayList() }.add(channelResponse)
+            val channelResponse = newTvSeriesSearchResponse(
+                name = title,
+                url = fixUrl(link)
+            ) {
+                this.type = TvType.Live
+                this.posterUrl = fixUrl(img)
             }
+
+            val category = getCategory(title)
+            categoryMap.getOrPut(category) { ArrayList() }.add(channelResponse)
         }
 
         val homePageList = categoryMap.entries
@@ -147,21 +141,41 @@ class TvporinternetProvider : MainAPI() {
         return newHomePageResponse(homePageList, false)
     }
 
+    private fun extractChannelsFromHtml(html: String): List<Triple<String, String, String>> {
+        val channels = mutableListOf<Triple<String, String, String>>()
+
+        val homeChannelsMatch = Regex("""const\s+homeChannels\s*=\s*`([^`]*)`""", RegexOption.DOT_MATCHES_ALL).find(html)
+
+        if (homeChannelsMatch != null) {
+            val channelsHtml = homeChannelsMatch.groupValues[1]
+            val channelDoc = Jsoup.parse(channelsHtml)
+
+            channelDoc.select("a.channel-card").forEach { channelCard ->
+                val link = channelCard.attr("href")
+                val imgElement = channelCard.selectFirst("img")
+                val titleRaw = imgElement?.attr("alt") ?: channelCard.selectFirst("p")?.text()
+                val img = imgElement?.attr("src") ?: ""
+
+                if (titleRaw != null && link.isNotBlank()) {
+                    channels.add(Triple(titleRaw, link, img))
+                }
+            }
+        }
+
+        return channels
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         val html = safeAppGet(mainUrl) ?: return emptyList()
-        val doc = Jsoup.parse(html)
 
-        return doc.select("div.channels-container a.channel-card").filterNot { element ->
-            val text = element.selectFirst("p")?.text() ?: ""
-            nowAllowed.any { text.contains(it, ignoreCase = true) } || text.isBlank()
-        }.filter { element ->
-            element.selectFirst("p")?.text()?.contains(query, ignoreCase = true) ?: false
-        }.mapNotNull {
-            val titleRaw = it.selectFirst("p")?.text()
-            val linkRaw = it.attr("href")
-            val imgRaw = it.selectFirst("img")?.attr("src")
-
-            if (titleRaw != null && linkRaw != null && imgRaw != null) {
+        return extractChannelsFromHtml(html)
+            .filterNot { (titleRaw, _, _) ->
+                nowAllowed.any { titleRaw.contains(it, ignoreCase = true) } || titleRaw.isBlank()
+            }
+            .filter { (titleRaw, _, _) ->
+                titleRaw.contains(query, ignoreCase = true)
+            }
+            .mapNotNull { (titleRaw, linkRaw, imgRaw) ->
                 val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
                 newLiveSearchResponse(
                     name = title,
@@ -170,10 +184,7 @@ class TvporinternetProvider : MainAPI() {
                 ) {
                     this.posterUrl = fixUrl(imgRaw)
                 }
-            } else {
-                null
             }
-        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
