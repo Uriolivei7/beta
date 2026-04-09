@@ -27,17 +27,19 @@ class TvporinternetProvider : MainAPI() {
     override val hasDownloadSupport = true
 
     private val cfKiller = CloudflareKiller()
-    private val nowAllowed = listOf("Red Social", "Donacion")
+    private val nowAllowed = listOf("Red Social", "Donacion", "Mundo Latam")
 
     private val deportesCat = setOf(
-        "TUDN", "WWE", "Afizzionados", "Gol Perú", "Gol TV", "TNT SPORTS", "Fox Sports Premium",
-        "TYC Sports", "Movistar Deportes", "Dazn F1", "Bein", "Directv Sports", "Espn", "Fox Sports"
+        "TUDN", "WWE", "Afizzionados", "Gol Peru", "Gol TV", "TNT Sports", "Fox Sports",
+        "TyC Sports", "Movistar", "Dazn", "Bein", "Directv Sports", "ESPN", "Win Sports",
+        "Azteca Deportes", "Liga 1"
     )
 
     private val entretenimientoCat = setOf(
-        "Telefe", "El Trece", "Televisión Pública", "Telemundo", "Univisión", "Pasiones", "Caracol",
-        "RCN", "Latina", "America TV", "Willax TV", "ATV", "Las Estrellas", "Tl Novelas", "Galavision",
-        "Azteca", "Canal 5", "Distrito Comedia", "MTV", "E!"
+        "Telefe", "El Trece", "Television Publica", "Telemundo", "Univision", "Pasiones", "Caracol",
+        "RCN", "Latina", "America TV", "Willax TV", "ATV", "Las Estrellas", "Tlnovelas", "Galavision",
+        "Azteca", "Canal 5", "Distrito Comedia", "MTV", "E!", "Unicable", "Imagen TV", "Azteca 7",
+        "Azteca Uno", "Antena 3", "DW"
     )
 
     private val noticiasCat = setOf(
@@ -45,22 +47,22 @@ class TvporinternetProvider : MainAPI() {
     )
 
     private val peliculasSeriesCat = setOf(
-        "Movistar Accion", "Movistar Drama", "Universal Channel", "TNT", "TNT Series", "Star Channel",
-        "Star Action", "Star Series", "Cinemax", "Space", "Syfy", "Warner Channel", "Cinecanal", "FX",
-        "AXN", "AMC", "Studio Universal", "Multipremier", "Golden", "Sony", "DHE", "NEXT HD", "HBO"
+        "Universal Channel", "Universal Premiere", "Universal Cinema", "TNT", "TNT Series", "TNT Novelas",
+        "Star Channel", "Cinemax", "Space", "Syfy", "Warner Channel", "Cinecanal", "FX",
+        "AXN", "AMC", "Studio Universal", "Multipremier", "Golden", "Sony", "Panico", "Extrema"
     )
 
     private val infantilCat = setOf(
-        "Cartoon Network", "Tooncast", "Cartoonito", "Disney Channel", "Disney JR", "Nick", "Discovery Kids"
+        "Cartoon Network", "Tooncast", "Disney Channel", "Nick"
     )
 
     private val educacionCat = setOf(
         "Discovery Channel", "Discovery World", "Discovery Theater", "Discovery Science", "Discovery Familia",
-        "History", "History 2", "Animal Planet", "Nat Geo", "Nat Geo Mundo"
+        "History", "History 2", "Animal Planet", "Nat Geo", "ID Investigation"
     )
 
     private val localLatinoCat = setOf(
-        "Canal", "Televisa", "TV Azteca", "TV Publica", "TV Perú"
+        "Canal", "Televisa", "TV Azteca", "TV Publica", "TV Peru"
     )
 
     private suspend fun safeAppGet(
