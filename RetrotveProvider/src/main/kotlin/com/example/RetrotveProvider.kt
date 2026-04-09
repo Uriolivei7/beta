@@ -297,41 +297,6 @@ class RetrotveProvider : MainAPI() {
                         loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                 }
-                    fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
-                        Log.d("RetrotveProvider", "-> OK.RU: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
-                        Log.d("RetrotveProvider", "-> VKVideo: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
-                        Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
-                    }
-                    fixedSrc.contains("yourupload.com") || fixedSrc.contains("yourupload.") -> {
-                        Log.d("RetrotveProvider", "-> YourUpload: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("uqload.") -> {
-                        Log.d("RetrotveProvider", "-> Uqload: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("gdriveplayer") -> {
-                        Log.d("RetrotveProvider", "-> GDrivePlayer: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("mediafire") -> {
-                        Log.d("RetrotveProvider", "-> MediaFire: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    else -> {
-                        Log.d("RetrotveProvider", "-> Using generic extractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                }
             }
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "processPlayerPage error: ${e.message}")
