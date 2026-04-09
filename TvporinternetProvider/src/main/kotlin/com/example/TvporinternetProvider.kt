@@ -108,7 +108,7 @@ class TvporinternetProvider : MainAPI() {
             noticiasCat.any { normalizedTitle.contains(it) } -> "Noticias"
             entretenimientoCat.any { normalizedTitle.contains(it) } -> "Entretenimiento"
             localLatinoCat.any { normalizedTitle.contains(it) } -> "Latino"
-            else -> "Otros"
+            else -> "Canales"
         }
     }
 
@@ -156,10 +156,19 @@ class TvporinternetProvider : MainAPI() {
             channelDoc.select("a.channel-card").forEach { channelCard ->
                 val link = channelCard.attr("href")
                 val imgElement = channelCard.selectFirst("img")
-                val titleRaw = imgElement?.attr("alt") ?: channelCard.selectFirst("p")?.text()
+                val pElement = channelCard.selectFirst("p")
+                val titleRaw = if (imgElement?.attr("alt")?.isNotBlank() == true) {
+                    imgElement.attr("alt")
+                } else if (pElement?.text()?.isNotBlank() == true) {
+                    pElement.text()
+                } else {
+                    ""
+                }
                 val img = imgElement?.attr("src") ?: ""
 
-                if (titleRaw != null && link.isNotBlank()) {
+                Log.d("TvporInternet", "Extract: link=$link, title='$titleRaw', img='$img'")
+                
+                if (titleRaw.isNotBlank() && link.isNotBlank()) {
                     channels.add(Triple(titleRaw, link, img))
                 }
             }
