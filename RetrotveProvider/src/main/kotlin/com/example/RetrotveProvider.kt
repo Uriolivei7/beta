@@ -263,22 +263,26 @@ class RetrotveProvider : MainAPI() {
                 
                 when {
                     fixedSrc.contains("sendvid.com") -> {
-                        extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Sendvid: using loadExtractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
                         extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
-                        extractOKRu(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> OK.RU: using loadExtractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
-                        extractVKVideo(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> VKVideo: using loadExtractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
                         Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
                     }
                     fixedSrc.contains("yourupload.com") || fixedSrc.contains("yourupload.") -> {
-                        extractYourUpload(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> YourUpload: using loadExtractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("uqload.") -> {
                         Log.d("RetrotveProvider", "-> Uqload: using loadExtractor for: $fixedSrc")
