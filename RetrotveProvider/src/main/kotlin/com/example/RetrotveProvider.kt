@@ -181,7 +181,7 @@ class RetrotveProvider : MainAPI() {
 
     private suspend fun extractSendvid(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            val embedUrl = if (url.contains("/embed/")) url else url.replace("/?", "/embed/?")
+            val embedUrl = if (url.contains("/embed/") || url.contains("/embed?")) url else url.substringBefore("?").let { "$it/embed" } + "?" + url.substringAfter("?")
             Log.d("RetrotveProvider", "Sendvid: Using custom extractor for: $embedUrl")
             SendvidExtractor().getUrl(embedUrl, referer, subtitleCallback, callback)
         } catch (e: Exception) {
