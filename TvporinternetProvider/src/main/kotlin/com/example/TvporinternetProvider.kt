@@ -27,38 +27,40 @@ class TvporinternetProvider : MainAPI() {
     override val hasDownloadSupport = true
 
     private val cfKiller = CloudflareKiller()
-    private val nowAllowed = listOf("Red Social", "Donacion", "Mundo Latam")
+    private val nowAllowed = listOf("Red Social", "Donacion", "Donar con Paypal", "Mundo Latam")
 
-    private val deportesCat = setOf(
-        "TUDN", "WWE", "Afizzionados", "Gol Peru", "Gol TV", "TNT Sports", "Fox Sports",
-        "TyC Sports", "Movistar", "Dazn", "Bein", "Directv Sports", "ESPN", "Win Sports",
-        "Azteca Deportes", "Liga 1"
+    private val infantilCat = setOf(
+        "Cartoon Network", "Tooncast", "Disney Channel", "Nick", "Nickelodeon", "FM Hot Kids"
+    )
+
+    private val peliculasSeriesCat = setOf(
+        "Universal Channel", "Universal Premiere", "Universal Cinema", "TNT", "TNT Series", "TNT Novelas",
+        "Star Channel", "Cinemax", "Space", "Syfy", "Warner Channel", "Cinecanal", "FX",
+        "AXN", "AMC", "Studio Universal", "Multipremier", "Golden", "Sony", "Panico", "Extrema",
+        "USA", "Canal Sony"
+    )
+
+    private val educacionCat = setOf(
+        "Discovery Channel", "Discovery World", "Discovery Theater", "Discovery Science", "Discovery Familia",
+        "Discovery H&H", "Discovery A&E", "ID Investigation",
+        "History", "History 2", "Animal Planet", "Nat Geo"
     )
 
     private val entretenimientoCat = setOf(
         "Telefe", "El Trece", "Television Publica", "Telemundo", "Univision", "Pasiones", "Caracol",
         "RCN", "Latina", "America TV", "Willax TV", "ATV", "Las Estrellas", "Tlnovelas", "Galavision",
         "Azteca", "Canal 5", "Distrito Comedia", "MTV", "E!", "Unicable", "Imagen TV", "Azteca 7",
-        "Azteca Uno", "Antena 3", "DW"
+        "Azteca Uno", "Antena 3", "DW", "FM Hot Movies"
+    )
+
+    private val deportesCat = setOf(
+        "TUDN", "WWE", "Afizzionados", "Gol Peru", "Gol TV", "TNT Sports", "Fox Sports",
+        "TyC Sports", "Movistar", "Dazn", "Bein", "Directv Sports", "ESPN", "Win Sports",
+        "Azteca Deportes", "Liga 1", "Sky Sports", "VIX TUDN"
     )
 
     private val noticiasCat = setOf(
         "Telemundo 51", "CNN", "Noticias", "RTVE"
-    )
-
-    private val peliculasSeriesCat = setOf(
-        "Universal Channel", "Universal Premiere", "Universal Cinema", "TNT", "TNT Series", "TNT Novelas",
-        "Star Channel", "Cinemax", "Space", "Syfy", "Warner Channel", "Cinecanal", "FX",
-        "AXN", "AMC", "Studio Universal", "Multipremier", "Golden", "Sony", "Panico", "Extrema"
-    )
-
-    private val infantilCat = setOf(
-        "Cartoon Network", "Tooncast", "Disney Channel", "Nick"
-    )
-
-    private val educacionCat = setOf(
-        "Discovery Channel", "Discovery World", "Discovery Theater", "Discovery Science", "Discovery Familia",
-        "History", "History 2", "Animal Planet", "Nat Geo", "ID Investigation"
     )
 
     private val localLatinoCat = setOf(
@@ -101,12 +103,12 @@ class TvporinternetProvider : MainAPI() {
         val normalizedTitle = title.uppercase().replace(" EN VIVO", "").trim()
         
         return when {
-            deportesCat.any { normalizedTitle.contains(it) } -> "Deportes"
-            peliculasSeriesCat.any { normalizedTitle.contains(it) } -> "Peliculas"
             infantilCat.any { normalizedTitle.contains(it) } -> "Infantil"
             educacionCat.any { normalizedTitle.contains(it) } -> "Educacion"
             noticiasCat.any { normalizedTitle.contains(it) } -> "Noticias"
             entretenimientoCat.any { normalizedTitle.contains(it) } -> "Entretenimiento"
+            peliculasSeriesCat.any { normalizedTitle.contains(it) } -> "Peliculas"
+            deportesCat.any { normalizedTitle.contains(it) } -> "Deportes"
             localLatinoCat.any { normalizedTitle.contains(it) } -> "Latino"
             else -> "Canales"
         }
