@@ -88,8 +88,12 @@ class NetflixProvider : MainAPI() {
     }
 
     private fun Element.toHomePageList(): HomePageList? {
-        val name = select("h2 > span > div").text().ifBlank { return null }
-        val items = select("img.lazy").mapNotNull { img ->
+        val name = selectFirst(".row-header-title")?.text()
+            ?: selectFirst("h2.rowHeader")?.text()
+            ?: select("h2, span").firstOrNull()?.text()
+        if (name.isNullOrBlank()) return null
+        
+        val items = select(".boxart-image, img.lazy").mapNotNull { img ->
             img.toSearchResult()
         }
         if (items.isEmpty()) return null
@@ -97,7 +101,9 @@ class NetflixProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val id = attr("data-src").substringAfterLast("/").substringBefore(".")
+        val src = attr("data-src")
+        if (src.isBlank()) return null
+        val id = src.substringAfterLast("/").substringBefore(".")
         if (id.isBlank()) return null
         return newAnimeSearchResponse("", Id(id).toJson()) {
             this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
