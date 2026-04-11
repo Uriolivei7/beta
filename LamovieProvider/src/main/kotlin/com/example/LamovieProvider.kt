@@ -21,6 +21,40 @@ class LamovieProvider : MainAPI() {
     private val TAG = "LaMovie"
     private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+    private fun isCloudflareProtected(html: String): Boolean {
+        val lower = html.lowercase()
+        return lower.contains("cloudflare") || lower.contains("challenge") || 
+               lower.contains("captcha") || lower.contains("checking your browser") ||
+               lower.contains("one.minute") || lower.contains("jschl")
+    }
+
+    private suspend fun apiGet(url: String, retries: Int = 2): String? {
+        for (attempt in 1..retries) {
+            try {
+                val res = app.get(url, headers = mapOf("User-Agent" to USER_AGENT), timeout = 30L).text
+                
+                if (isCloudflareProtected(res)) {
+                    Log.w(TAG, "Cloudflare detectado en intento $attempt, esperando...")
+                    kotlinx.coroutines.delay(3000L * attempt)
+                    if (attempt < retries) continue
+                    Log.e(TAG, "Cloudflare protegió la página después de $retries intentos")
+                    return null
+                }
+                
+                if (res.startsWith("{") || res.startsWith("[")) {
+                    return res
+                }
+                
+                Log.w(TAG, "Respuesta no es JSON válido: ${res.take(100)}")
+                return null
+            } catch (e: Exception) {
+                Log.e(TAG, "API error intento $attempt: ${e.message}")
+                if (attempt < retries) kotlinx.coroutines.delay(2000L)
+            }
+        }
+        return null
+    }
+
     private fun fixImg(url: String?): String? {
         if (url.isNullOrBlank()) return null
         val cleanUrl = url.replace("&quot;", "").replace("\"", "").replace("'", "").trim()
@@ -48,7 +82,7 @@ class LamovieProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}&page=$page&postsPerPage=12&orderBy=latest&order=DESC"
-        val res = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
+        val res = apiGet(url) ?: return newHomePageResponse(HomePageList(request.name, emptyList()), false)
         val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) { null }
         val home = json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
         return newHomePageResponse(HomePageList(request.name, home), home.isNotEmpty())
@@ -56,7 +90,7 @@ class LamovieProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$apiBase/search?postType=any&q=${query.replace(" ", "+")}&postsPerPage=26"
-        val res = app.get(url, headers = mapOf("User-Agent" to USER_AGENT)).text
+        val res = apiGet(url) ?: return emptyList()
         val json = try { parseJson<ApiResponse>(res) } catch (e: Exception) { null }
         return json?.data?.posts?.map { it.toSearchResult() } ?: emptyList()
     }
@@ -90,7 +124,10 @@ class LamovieProvider : MainAPI() {
 
         Log.d(TAG, "Logs: Iniciando carga de $type con slug: $slug")
 
-        val apiRes = app.get("$apiBase/single/$type?slug=$slug&postType=$type", headers = mapOf("User-Agent" to USER_AGENT)).text
+        val apiRes = apiGet("$apiBase/single/$type?slug=$slug&postType=$type") ?: run {
+            Log.e(TAG, "Logs: Error - No se pudo obtener datos (posible Cloudflare)")
+            return null
+        }
         val responseObj = try { parseJson<SinglePostResponse>(apiRes) } catch (e: Exception) { null }
 
         val postData = responseObj?.data ?: return null
