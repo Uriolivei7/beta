@@ -582,17 +582,75 @@ override suspend fun loadLinks(
             }
             
             // Fallback: try HTML parsing
+            Log.d(TAG, "loadLinks: trying HTML parsing for: $data")
             val html = app.get(data).text
             val bootstrap = parseBootstrapData(html)
+            
+            Log.d(TAG, "loadLinks: bootstrap null=${bootstrap == null}")
+            Log.d(TAG, "loadLinks: loaders null=${bootstrap?.loaders == null}")
+            Log.d(TAG, "loadLinks: episodePage null=${bootstrap?.loaders?.episodePage == null}")
+            Log.d(TAG, "loadLinks: titlePage null=${bootstrap?.loaders?.titlePage == null}")
+            
+            // Try to get episode from episodePage
+            var episodeData = bootstrap?.loaders?.episodePage?.episode
+            
+            Log.d(TAG, "loadLinks: episodeData from episodePage=${episodeData?.name}, videos=${episodeData?.videos?.size}")
+            
+            // If no episodePage, try to get from title page episodes
+            if (episodeData == null) {
+                val titleIdFromUrl = data.substringAfter("/titulo/").substringBefore("/").toIntOrNull()
+                if (titleIdFromUrl != null) {
+                    val titlePageUrl = "$mainUrl/titulo/$titleIdFromUrl"
+                    Log.d(TAG, "loadLinks: trying to get episode from title page: $titlePageUrl")
+                    try {
+                        val titleHtml = app.get(titlePageUrl).text
+                        val titleBootstrap = parseBootstrapData(titleHtml)
+                        val episodes = titleBootstrap?.loaders?.titlePage?.episodes?.data
+                        val seasonNum = data.substringAfter("/temporada/").substringBefore("/").toIntOrNull() ?: 1
+                        val episodeIdFromUrl = data.substringAfterLast("/episodio/").toIntOrNull()
+                        
+                        if (episodeIdFromUrl != null && !episodes.isNullOrEmpty()) {
+                            val episode = episodes.find { it.id == episodeIdFromUrl }
+                            if (episode != null) {
+                                Log.d(TAG, "loadLinks: found episode in title page, primaryVideo=${episode.primaryVideo != null}")
+                                episode.primaryVideo?.let { primaryVid ->
+                                    val videoId = primaryVid.id
+                                    if (videoId != null) {
+                                        Log.d(TAG, "loadLinks: loading video from primaryVideo id: $videoId")
+                                        loadExtractor("$mainUrl/api/videos/$videoId", data, subtitleCallback, callback)
+                                        return true
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.d(TAG, "loadLinks: title page fallback error: ${e.message}")
+                    }
+                }
+            }
             
             if (bootstrap == null) {
                 Log.d(TAG, "loadLinks: bootstrap is null, returning false")
                 return false
             }
             
-            val episodeData = bootstrap.loaders?.episodePage?.episode
-            
-            Log.d(TAG, "loadLinks: episodeData=${episodeData?.name}, videos=${episodeData?.videos?.size}")
+            if (episodeData == null) {
+                // Try to find videos in title info
+                val titleInfo = bootstrap.loaders?.titlePage?.title
+                Log.d(TAG, "loadLinks: titleInfo videos=${titleInfo?.videos?.size}")
+                
+                titleInfo?.videos?.forEach { video ->
+                    if (video.category == "full" || video.category == "trailer") {
+                        if (video.src?.contains("youtube") == true || video.src?.contains("embed") == true) {
+                            loadExtractor(video.src!!, data, subtitleCallback, callback)
+                            return true
+                        }
+                    }
+                }
+                
+                Log.d(TAG, "loadLinks: no episode data found, returning false")
+                return false
+            }
             
             if (episodeData != null) {
                 val videos = episodeData.videos ?: emptyList()
