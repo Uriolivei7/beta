@@ -584,6 +584,17 @@ override suspend fun loadLinks(
             // Fallback: try HTML parsing
             Log.d(TAG, "loadLinks: trying HTML parsing for: $data")
             val html = app.get(data).text
+            
+            // Debug: print first 500 chars of JSON
+            val jsonStart = html.indexOf("window.bootstrapData")
+            if (jsonStart != -1) {
+                val scriptStart = html.lastIndexOf("<script>", jsonStart)
+                val scriptEnd = html.indexOf("</script>", scriptStart)
+                val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
+                val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
+                Log.d(TAG, "loadLinks: JSON sample: ${jsonContent.take(500)}")
+            }
+            
             val bootstrap = parseBootstrapData(html)
             
             Log.d(TAG, "loadLinks: bootstrap null=${bootstrap == null}")
@@ -638,6 +649,12 @@ override suspend fun loadLinks(
                 // Try to find videos in title info
                 val titleInfo = bootstrap.loaders?.titlePage?.title
                 Log.d(TAG, "loadLinks: titleInfo videos=${titleInfo?.videos?.size}")
+                
+                // Debug: also check what's in settings, themes, etc
+                Log.d(TAG, "loadLinks: bootstrap settings=${bootstrap.settings != null}")
+                Log.d(TAG, "loadLinks: bootstrap themes=${bootstrap.themes != null}")
+                
+                titleInfo?.videos?.forEach { video ->
                 
                 titleInfo?.videos?.forEach { video ->
                     if (video.category == "full" || video.category == "trailer") {
