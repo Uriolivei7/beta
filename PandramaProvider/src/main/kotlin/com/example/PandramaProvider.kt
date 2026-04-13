@@ -191,7 +191,10 @@ class PandramaProvider:MainAPI() {
             
             Log.d(TAG, "parseBootstrapData: JSON length=${jsonContent.length}")
             
-            return parseJson<BootstrapData>(jsonContent)
+            val bootstrap = parseJson<BootstrapData>(jsonContent)
+            Log.d(TAG, "parseBootstrapData: success, loaders=${bootstrap.loaders != null}")
+            
+            return bootstrap
         } catch (e: Exception) {
             Log.d(TAG, "parseBootstrapData error: ${e.message}")
             return null
