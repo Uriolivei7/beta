@@ -471,18 +471,29 @@ override suspend fun loadLinks(
             
             Log.d(TAG, "loadLinks: titleId=$titleId, seasonNum=$seasonNum, episodeId=$episodeId")
             
-            // Try to get episode data from API
+            // Try different API formats
+            val apiUrls = mutableListOf<String>()
+            
             if (episodeId != null) {
-                val apiUrl = if (titleId != null && seasonNum != null) {
-                    "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeId?loader=episodePage"
-                } else {
-                    "$mainUrl/api/v1/episodes/$episodeId?loader=episodePage"
+                // Try various API endpoint formats
+                if (titleId != null && seasonNum != null) {
+                    apiUrls.add("$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeId")
+                    apiUrls.add("$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeId?loader=episodePage")
+                    apiUrls.add("$mainUrl/api/episodes/$episodeId")
+                    apiUrls.add("$mainUrl/episodio/$episodeId")
                 }
-                
+                apiUrls.add("$mainUrl/api/v1/episodes/$episodeId")
+                apiUrls.add("$mainUrl/api/v1/episodes/$episodeId?loader=episodePage")
+            }
+            
+            for (apiUrl in apiUrls) {
                 Log.d(TAG, "loadLinks: trying API: $apiUrl")
-                
                 try {
                     val jsonResponse = app.get(apiUrl).text
+                    if (jsonResponse.startsWith("<")) {
+                        Log.d(TAG, "loadLinks: got HTML response, not JSON")
+                        continue
+                    }
                     val episodeResponse = parseJson<EpisodeApiResponse>(jsonResponse)
                     Log.d(TAG, "loadLinks: got API response, episode=${episodeResponse.episode?.name}")
                     
@@ -561,6 +572,9 @@ override suspend fun loadLinks(
                                 }
                             }
                         }
+                        
+                        // If we got a valid response (even with no videos), don't try more APIs
+                        return true
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "loadLinks: API error: ${e.message}")
