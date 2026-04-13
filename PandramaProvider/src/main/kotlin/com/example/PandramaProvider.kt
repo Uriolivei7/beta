@@ -50,6 +50,7 @@ class PandramaProvider:MainAPI() {
         @JsonProperty("id") var id: Int? = null,
         @JsonProperty("name") var name: String? = null,
         @JsonProperty("slug") var slug: String? = null,
+        @JsonProperty("poster") var poster: String? = null,
         @JsonProperty("content") var content: ChannelContentData? = null
     )
 
@@ -216,7 +217,7 @@ class PandramaProvider:MainAPI() {
                                         id = item.id,
                                         name = item.name,
                                         slug = item.slug,
-                                        poster = null,
+                                        poster = item.poster,
                                         isSeries = null,
                                         primaryVideo = null
                                     )
