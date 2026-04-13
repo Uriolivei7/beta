@@ -167,6 +167,39 @@ class PandramaProvider:MainAPI() {
         @JsonProperty("primary_video") var primaryVideo: PrimaryVideoApiData? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class EpisodeApiResponse(
+        @JsonProperty("title") var title: TitleDetailData? = null,
+        @JsonProperty("episode") var episode: ApiEpisodeData? = null,
+        @JsonProperty("loader") var loader: String? = null,
+        @JsonProperty("current_video") var currentVideo: ApiVideoData? = null,
+        @JsonProperty("alternative_videos") var alternativeVideos: List<ApiVideoData>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ApiEpisodeData(
+        @JsonProperty("id") var id: Int? = null,
+        @JsonProperty("name") var name: String? = null,
+        @JsonProperty("description") var description: String? = null,
+        @JsonProperty("poster") var poster: String? = null,
+        @JsonProperty("episode_number") var episodeNumber: Int? = null,
+        @JsonProperty("season_number") var seasonNumber: Int? = null,
+        @JsonProperty("videos") var videos: List<ApiVideoData>? = null,
+        @JsonProperty("primary_video") var primaryVideo: PrimaryVideoApiData? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ApiVideoData(
+        @JsonProperty("id") var id: Int? = null,
+        @JsonProperty("name") var name: String? = null,
+        @JsonProperty("src") var src: String? = null,
+        @JsonProperty("category") var category: String? = null,
+        @JsonProperty("type") var type: String? = null,
+        @JsonProperty("clearkey") var clearKey: String? = null,
+        @JsonProperty("quality") var quality: String? = null,
+        @JsonProperty("captions") var captions: List<CaptionData>? = null
+    )
+
     private fun getImageUrl(link: String?): String? {
         if (link.isNullOrEmpty()) return null
         return when {
@@ -407,17 +440,189 @@ override suspend fun loadLinks(
         return try {
             Log.d(TAG, "loadLinks: data=$data")
             
-            var html: String
-            var bootstrap: BootstrapData?
+            val titleId: Int?
+            val seasonNum: Int?
+            val episodeId: Int?
             
-            // Handle different URL formats
+            // Parse URL to get title/season/episode IDs
             when {
-                data.contains("/episodio/") -> {
-                    Log.d(TAG, "loadLinks: handling /episodio/ URL")
-                    html = app.get(data).text
-                    bootstrap = parseBootstrapData(html)
-                    Log.d(TAG, "loadLinks: parsed bootstrap, loaders present=${bootstrap?.loaders != null}")
+                data.contains("/titulo/") && data.contains("/temporada/") && data.contains("/episodio/") -> {
+                    val parts = data.split("/")
+                    titleId = parts.getOrNull(parts.indexOf("titulo") + 1)?.toIntOrNull()
+                    seasonNum = parts.getOrNull(parts.indexOf("temporada") + 1)?.toIntOrNull()
+                    episodeId = parts.getOrNull(parts.indexOf("episodio") + 1)?.toIntOrNull()
                 }
+                data.contains("/episodio/") -> {
+                    episodeId = data.substringAfterLast("/episodio/").trim().toIntOrNull()
+                    titleId = null
+                    seasonNum = null
+                }
+                data.substringAfterLast("/").trim().all { it.isDigit() } -> {
+                    episodeId = data.substringAfterLast("/").trim().toIntOrNull()
+                    titleId = null
+                    seasonNum = null
+                }
+                else -> {
+                    episodeId = null
+                    titleId = null
+                    seasonNum = null
+                }
+            }
+            
+            Log.d(TAG, "loadLinks: titleId=$titleId, seasonNum=$seasonNum, episodeId=$episodeId")
+            
+            // Try to get episode data from API
+            if (episodeId != null) {
+                val apiUrl = if (titleId != null && seasonNum != null) {
+                    "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeId?loader=episodePage"
+                } else {
+                    "$mainUrl/api/v1/episodes/$episodeId?loader=episodePage"
+                }
+                
+                Log.d(TAG, "loadLinks: trying API: $apiUrl")
+                
+                try {
+                    val jsonResponse = app.get(apiUrl).text
+                    val episodeResponse = parseJson<EpisodeApiResponse>(jsonResponse)
+                    Log.d(TAG, "loadLinks: got API response, episode=${episodeResponse.episode?.name}")
+                    
+                    val episode = episodeResponse.episode
+                    if (episode != null) {
+                        // Process subtitles from current_video
+                        episodeResponse.currentVideo?.captions?.forEach { caption ->
+                            val subUrl = caption.url
+                            if (!subUrl.isNullOrEmpty()) {
+                                val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                                val lang = caption.language ?: "unknown"
+                                val name = caption.name ?: lang
+                                Log.d(TAG, "loadLinks: adding subtitle $name from $fullSubUrl")
+                                subtitleCallback(SubtitleFile(name, fullSubUrl))
+                            }
+                        }
+                        
+                        // Get videos
+                        val videos = episode.videos ?: emptyList()
+                        Log.d(TAG, "loadLinks: videos count=${videos.size}")
+                        
+                        for (video in videos) {
+                            val videoSrc = video.src
+                            if (videoSrc.isNullOrEmpty()) continue
+                            
+                            Log.d(TAG, "loadLinks: video src=$videoSrc, type=${video.type}, quality=${video.quality}")
+                            
+                            when {
+                                videoSrc.contains(".mpd") || video.type == "shaka" -> {
+                                    val clearKey = video.clearKey
+                                    if (clearKey != null) {
+                                        // Try to extract key and pass to extractor
+                                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                                    } else {
+                                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                                    }
+                                    return true
+                                }
+                                videoSrc.contains("youtube.com") || videoSrc.contains("youtu.be") -> {
+                                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                                    return true
+                                }
+                                videoSrc.startsWith("http") -> {
+                                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                                    return true
+                                }
+                            }
+                        }
+                        
+                        // Try alternative videos
+                        episodeResponse.alternativeVideos?.forEach { altVideo ->
+                            val videoSrc = altVideo.src
+                            if (videoSrc.isNullOrEmpty()) return@forEach
+                            
+                            Log.d(TAG, "loadLinks: alt video src=$videoSrc, type=${altVideo.type}")
+                            
+                            // Add subtitles from alternative videos
+                            altVideo.captions?.forEach { caption ->
+                                val subUrl = caption.url
+                                if (!subUrl.isNullOrEmpty()) {
+                                    val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                                    val lang = caption.language ?: "unknown"
+                                    val name = caption.name ?: lang
+                                    subtitleCallback(SubtitleFile(name, fullSubUrl))
+                                }
+                            }
+                            
+                            when {
+                                videoSrc.contains("youtube.com") || videoSrc.contains("youtu.be") -> {
+                                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                                    return true
+                                }
+                                videoSrc.startsWith("http") && !videoSrc.contains(".mpd") -> {
+                                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "loadLinks: API error: ${e.message}")
+                }
+            }
+            
+            // Fallback: try HTML parsing
+            val html = app.get(data).text
+            val bootstrap = parseBootstrapData(html)
+            
+            if (bootstrap == null) {
+                Log.d(TAG, "loadLinks: bootstrap is null, returning false")
+                return false
+            }
+            
+            val episodeData = bootstrap.loaders?.episodePage?.episode
+            
+            Log.d(TAG, "loadLinks: episodeData=${episodeData?.name}, videos=${episodeData?.videos?.size}")
+            
+            if (episodeData != null) {
+                val videos = episodeData.videos ?: emptyList()
+                
+                for (video in videos) {
+                    val videoSrc = video.src
+                    if (videoSrc.isNullOrEmpty()) continue
+                    
+                    Log.d(TAG, "loadLinks: video src=$videoSrc, type=${video.type}")
+                    
+                    video.captions?.forEach { caption ->
+                        val subUrl = caption.url
+                        if (!subUrl.isNullOrEmpty()) {
+                            val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                            val lang = caption.language ?: "unknown"
+                            val name = caption.name ?: lang
+                            Log.d(TAG, "loadLinks: adding subtitle $name from $fullSubUrl")
+                            subtitleCallback(SubtitleFile(name, fullSubUrl))
+                        }
+                    }
+                    
+                    when {
+                        videoSrc.contains(".mpd") || video.type == "shaka" -> {
+                            loadExtractor(videoSrc, data, subtitleCallback, callback)
+                            return true
+                        }
+                        videoSrc.contains("youtube.com") || videoSrc.contains("youtu.be") -> {
+                            loadExtractor(videoSrc, data, subtitleCallback, callback)
+                            return true
+                        }
+                        videoSrc.startsWith("http") -> {
+                            loadExtractor(videoSrc, data, subtitleCallback, callback)
+                            return true
+                        }
+                    }
+                }
+            }
+            
+            true
+        } catch (e: Exception) {
+            Log.d(TAG, "loadLinks error: ${e.message}")
+            false
+        }
+    }
                 data.contains("/titulo/") || data.contains("/temporada/") -> {
                     html = app.get(data).text
                     bootstrap = parseBootstrapData(html)
