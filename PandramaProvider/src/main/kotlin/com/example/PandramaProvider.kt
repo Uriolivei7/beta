@@ -155,11 +155,16 @@ class PandramaProvider:MainAPI() {
         try {
             val html = app.get(mainUrl).text
 
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*});""").find(html)
+            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
                 ?: return null
 
-            val jsonStr = bootstrapMatch.groupValues[1]
-            val bootstrap = parseJson<BootstrapData>(jsonStr)
+            val jsonStr = scriptMatch.groupValues[1]
+            val bootstrap = try {
+                parseJson<BootstrapData>(jsonStr)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                return null
+            }
 
             val channelData = bootstrap.loaders?.channelPage?.channel?.content?.data
             if (channelData != null) {
@@ -225,10 +230,15 @@ val titleItems = channelContent.take(15).map { info ->
             val searchUrl = "$mainUrl/search/$query"
             val html = app.get(searchUrl).text
             
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*});""").find(html)
-            if (bootstrapMatch != null) {
-                val jsonStr = bootstrapMatch.groupValues[1]
-                val bootstrap = parseJson<BootstrapData>(jsonStr)
+            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
+            if (scriptMatch != null) {
+                val jsonStr = scriptMatch.groupValues[1]
+                val bootstrap = try {
+                    parseJson<BootstrapData>(jsonStr)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    return search
+                }
                 
                 val results = bootstrap.loaders?.searchPage?.results
                 results?.forEach { title ->
@@ -266,11 +276,16 @@ val titleItems = channelContent.take(15).map { info ->
         try {
             val html = app.get(url).text
             
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*});""").find(html)
+            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
                 ?: return null
 
-            val jsonStr = bootstrapMatch.groupValues[1]
-            val bootstrap = parseJson<BootstrapData>(jsonStr)
+            val jsonStr = scriptMatch.groupValues[1]
+            val bootstrap = try {
+                parseJson<BootstrapData>(jsonStr)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                return null
+            }
 
             val titleInfo = bootstrap.loaders?.titlePage?.title
             if (titleInfo == null) return null
@@ -333,11 +348,15 @@ val titleItems = channelContent.take(15).map { info ->
         return try {
             val html = app.get(data).text
             
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)
+            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
                 ?: return false
 
-            val jsonStr = bootstrapMatch.groupValues[1]
-            val bootstrap = parseJson<BootstrapData>(jsonStr)
+            val jsonStr = scriptMatch.groupValues[1]
+            val bootstrap = try {
+                parseJson<BootstrapData>(jsonStr)
+            } catch (e: Exception) {
+                return false
+            }
 
             val titleInfo = bootstrap.loaders?.titlePage?.title
             val episodes = bootstrap.loaders?.titlePage?.episodes?.data ?: return false
