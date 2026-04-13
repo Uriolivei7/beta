@@ -603,7 +603,7 @@ override suspend fun loadLinks(
             Log.d(TAG, "loadLinks: titlePage null=${bootstrap?.loaders?.titlePage == null}")
             
             // Try to get episode from episodePage
-            var episodeData = bootstrap?.loaders?.episodePage?.episode
+            val episodeData = bootstrap?.loaders?.episodePage?.episode
             
             Log.d(TAG, "loadLinks: episodeData from episodePage=${episodeData?.name}, videos=${episodeData?.videos?.size}")
             
@@ -650,11 +650,8 @@ override suspend fun loadLinks(
                 val titleInfo = bootstrap.loaders?.titlePage?.title
                 Log.d(TAG, "loadLinks: titleInfo videos=${titleInfo?.videos?.size}")
                 
-                // Debug: also check what's in settings, themes, etc
                 Log.d(TAG, "loadLinks: bootstrap settings=${bootstrap.settings != null}")
                 Log.d(TAG, "loadLinks: bootstrap themes=${bootstrap.themes != null}")
-                
-                titleInfo?.videos?.forEach { video ->
                 
                 titleInfo?.videos?.forEach { video ->
                     if (video.category == "full" || video.category == "trailer") {
@@ -685,7 +682,7 @@ override suspend fun loadLinks(
                             val lang = caption.language ?: "unknown"
                             val name = caption.name ?: lang
                             Log.d(TAG, "loadLinks: adding subtitle $name from $fullSubUrl")
-                            subtitleCallback(SubtitleFile(name, fullSubUrl))
+                            subtitleCallback(newSubtitleFile(name, fullSubUrl))
                         }
                     }
                     
