@@ -22,8 +22,20 @@ class PandramaProvider:MainAPI() {
     )
 
     data class ApiResponse(
-        @JsonProperty("titles") var titles: ArrayList<TitleApiData>? = null,
+        @JsonProperty("titles") var titles: List<TitleApiData>? = null,
         @JsonProperty("status") var status: String? = null
+    )
+
+    data class SearchPageData(
+        @JsonProperty("loaders") var loaders: SearchLoaders? = null
+    )
+
+    data class SearchLoaders(
+        @JsonProperty("searchPage") var searchPage: SearchPageResults? = null
+    )
+
+    data class SearchPageResults(
+        @JsonProperty("results") var results: List<TitleApiData>? = null
     )
 
     data class TitleApiData(
@@ -118,8 +130,8 @@ class PandramaProvider:MainAPI() {
 
         try {
             val sections = listOf(
-                "Dramas" to "dramas",
-                "Películas" to "peliculas"
+                "Dramas" to "tv",
+                "Películas" to "movie"
             )
 
             for ((displayName, type) in sections) {
@@ -131,7 +143,7 @@ class PandramaProvider:MainAPI() {
                     if (titles != null && titles.isNotEmpty()) {
                         val titleItems = titles.map { info ->
                             val titleId = info.id
-                            val titleSlug = info.name?.lowercase()?.replace(" ", "-") ?: "unknown"
+                            val titleSlug = info.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: "unknown"
                             if (titleId != null) {
                                 newTvSeriesSearchResponse(info.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
                                     this.posterUrl = getImageUrl(info.poster)
@@ -167,16 +179,29 @@ class PandramaProvider:MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val search = ArrayList<SearchResponse>()
         try {
-            val response = app.get("$mainUrl/api/v1/titles?search=$query&perPage=20").text
-            val apiResponse = parseJson<ApiResponse>(response)
-
-            apiResponse.titles?.forEach { title ->
-                val titleId = title.id
-                val titleSlug = title.name?.lowercase()?.replace(" ", "-") ?: "unknown"
-                if (titleId != null) {
-                    search.add(newTvSeriesSearchResponse(title.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
-                        this.posterUrl = getImageUrl(title.poster)
-                    })
+            val searchUrl = "$mainUrl/search/$query"
+            val html = app.get(searchUrl).text
+            
+            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(\{.+?});\s*</script>""").find(html)
+            if (scriptMatch != null) {
+                val jsonStr = "{${scriptMatch.groupValues[1]}"
+                
+                val data = try {
+                    parseJson<SearchPageData>(jsonStr)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    return search
+                }
+                
+                val results = data.loaders?.searchPage?.results
+                results?.forEach { title: TitleApiData ->
+                    val titleId = title.id
+                    val titleSlug = title.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: "unknown"
+                    if (titleId != null) {
+                        search.add(newTvSeriesSearchResponse(title.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
+                            this.posterUrl = getImageUrl(title.poster)
+                        })
+                    }
                 }
             }
         } catch (e: Exception) {
