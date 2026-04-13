@@ -35,6 +35,7 @@ class PandramaProvider:MainAPI() {
         @JsonProperty("csrf_token") var csrfToken: String? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class LoadersData(
         @JsonProperty("channelPage") var channelPage: ChannelPageData? = null,
         @JsonProperty("titlePage") var titlePage: TitlePageData? = null,
@@ -42,14 +43,17 @@ class PandramaProvider:MainAPI() {
         @JsonProperty("episodePage") var episodePage: EpisodePageData? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class ChannelPageData(
         @JsonProperty("channel") var channel: ChannelData? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class ChannelData(
         @JsonProperty("content") var content: ContentData? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class ContentData(
         @JsonProperty("data") var data: List<ChannelItemData>? = null
     )
@@ -94,12 +98,14 @@ class PandramaProvider:MainAPI() {
         @JsonProperty("available_seasons") var availableSeasons: List<Int>? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodePageData(
         @JsonProperty("title") var title: TitleDetailData? = null,
         @JsonProperty("episode") var episode: EpisodeWithVideos? = null,
         @JsonProperty("loader") var loader: String? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodeWithVideos(
         @JsonProperty("id") var id: Int? = null,
         @JsonProperty("name") var name: String? = null,
