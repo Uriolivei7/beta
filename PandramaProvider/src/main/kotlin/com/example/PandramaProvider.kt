@@ -3,15 +3,8 @@ package com.example
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 
 class PandramaProvider:MainAPI() {
     companion object {
@@ -28,68 +21,53 @@ class PandramaProvider:MainAPI() {
         TvType.AsianDrama,
     )
 
-    data class BootstrapData(
-        @JsonProperty("loaders") var loaders: LoadersData? = null
+    data class ApiResponse(
+        @JsonProperty("titles") var titles: ArrayList<TitleApiData>? = null,
+        @JsonProperty("status") var status: String? = null
     )
 
-    data class LoadersData(
-        @JsonProperty("channelPage") var channelPage: ChannelPageData? = null,
-        @JsonProperty("titlePage") var titlePage: TitlePageData? = null,
-        @JsonProperty("searchPage") var searchPage: SearchPageData? = null
-    )
-
-    data class ChannelPageData(
-        @JsonProperty("channel") var channel: ChannelData? = null
-    )
-
-    data class ChannelData(
-        @JsonProperty("content") var content: ContentData? = null
-    )
-
-    data class ContentData(
-        @JsonProperty("data") var data: ArrayList<ChannelItemData>? = null
-    )
-
-    data class ChannelItemData(
+    data class TitleApiData(
         @JsonProperty("id") var id: Int? = null,
         @JsonProperty("name") var name: String? = null,
-        @JsonProperty("slug") var slug: String? = null,
-        @JsonProperty("content") var content: ChannelContentData? = null
-    )
-
-    data class ChannelContentData(
-        @JsonProperty("data") var data: ArrayList<TitleData>? = null
-    )
-
-    data class TitleData(
-        @JsonProperty("id") var id: Int? = null,
-        @JsonProperty("name") var name: String? = null,
-        @JsonProperty("slug") var slug: String? = null,
+        @JsonProperty("type") var type: String? = null,
         @JsonProperty("release_date") var releaseDate: String? = null,
+        @JsonProperty("description") var description: String? = null,
         @JsonProperty("poster") var poster: String? = null,
         @JsonProperty("backdrop") var backdrop: String? = null,
-        @JsonProperty("is_series") var isSeries: Boolean? = null,
-        @JsonProperty("model_type") var modelType: String? = null,
+        @JsonProperty("runtime") var runtime: Int? = null,
+        @JsonProperty("year") var year: Int? = null,
         @JsonProperty("rating") var rating: Double? = null,
-        @JsonProperty("primary_video") var primaryVideo: PrimaryVideoData? = null
+        @JsonProperty("genres") var genres: List<GenreData>? = null,
+        @JsonProperty("status") var status: String? = null,
+        @JsonProperty("is_series") var isSeries: Boolean? = null,
+        @JsonProperty("primary_video") var primaryVideo: PrimaryVideoApiData? = null,
+        @JsonProperty("videos") var videos: List<VideoApiData>? = null
     )
 
-    data class PrimaryVideoData(
+    data class GenreData(
+        @JsonProperty("name") var name: String? = null
+    )
+
+    data class PrimaryVideoApiData(
         @JsonProperty("id") var id: Int? = null,
         @JsonProperty("name") var name: String? = null
     )
 
-    data class TitlePageData(
-        @JsonProperty("title") var title: TitleInfo? = null,
-        @JsonProperty("episodes") var episodes: EpisodesData? = null
+    data class VideoApiData(
+        @JsonProperty("id") var id: Int? = null,
+        @JsonProperty("name") var name: String? = null,
+        @JsonProperty("src") var src: String? = null,
+        @JsonProperty("category") var category: String? = null,
+        @JsonProperty("type") var type: String? = null
     )
 
-    data class SearchPageData(
-        @JsonProperty("results") var results: ArrayList<TitleData>? = null,
-        @JsonProperty("trendingTitles") var trendingTitles: ArrayList<TitleData>? = null
+    data class TitlePageResponse(
+        @JsonProperty("title") var title: TitleDetailData? = null,
+        @JsonProperty("episodes") var episodes: EpisodesApiData? = null,
+        @JsonProperty("available_seasons") var availableSeasons: List<Int>? = null
     )
 
-    data class TitleInfo(
+    data class TitleDetailData(
         @JsonProperty("id") var id: Int? = null,
         @JsonProperty("name") var name: String? = null,
         @JsonProperty("description") var description: String? = null,
@@ -101,34 +79,20 @@ class PandramaProvider:MainAPI() {
         @JsonProperty("genres") var genres: List<GenreData>? = null,
         @JsonProperty("status") var status: String? = null,
         @JsonProperty("is_series") var isSeries: Boolean? = null,
-        @JsonProperty("available_seasons") var availableSeasons: List<Int>? = null,
-        @JsonProperty("videos") var videos: List<VideoData>? = null
+        @JsonProperty("videos") var videos: List<VideoApiData>? = null
     )
 
-    data class GenreData(
-        @JsonProperty("name") var name: String? = null
+    data class EpisodesApiData(
+        @JsonProperty("data") var data: List<EpisodeApiData>? = null
     )
 
-    data class VideoData(
-        @JsonProperty("id") var id: Int? = null,
-        @JsonProperty("name") var name: String? = null,
-        @JsonProperty("src") var src: String? = null,
-        @JsonProperty("category") var category: String? = null,
-        @JsonProperty("quality") var quality: String? = null,
-        @JsonProperty("language") var language: String? = null
-    )
-
-    data class EpisodesData(
-        @JsonProperty("data") var data: List<EpisodeInfo>? = null
-    )
-
-    data class EpisodeInfo(
+    data class EpisodeApiData(
         @JsonProperty("id") var id: Int? = null,
         @JsonProperty("name") var name: String? = null,
         @JsonProperty("episode_number") var episodeNumber: Int? = null,
         @JsonProperty("season_number") var seasonNumber: Int? = null,
         @JsonProperty("poster") var poster: String? = null,
-        @JsonProperty("primary_video") var primaryVideo: PrimaryVideoData? = null
+        @JsonProperty("primary_video") var primaryVideo: PrimaryVideoApiData? = null
     )
 
     private fun getImageUrl(link: String?): String? {
@@ -154,31 +118,21 @@ class PandramaProvider:MainAPI() {
 
         try {
             val sections = listOf(
-                "Dramas" to "/dramas",
-                "Películas" to "/peliculas"
+                "Dramas" to "dramas",
+                "Películas" to "peliculas"
             )
 
-            for ((displayName, endpoint) in sections) {
+            for ((displayName, type) in sections) {
                 try {
-                    val html = app.get("$mainUrl$endpoint").text
+                    val response = app.get("$mainUrl/api/v1/titles?type=$type&perPage=15&page=1").text
+                    val apiResponse = parseJson<ApiResponse>(response)
 
-                    val scriptMatch = Regex(
-                        """<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""",
-                        RegexOption.DOT_MATCHES_ALL
-                    ).find(html)
-                        ?: continue
-
-                    val jsonStr = scriptMatch.groupValues[1]
-                    val bootstrap = parseJson<BootstrapData>(jsonStr)
-
-                    val channelContent = bootstrap.loaders?.channelPage?.channel?.content?.data
-
-                    if (channelContent != null && channelContent.isNotEmpty()) {
-                        val allTitles = channelContent.mapNotNull { it.content?.data }.flatten()
-                        val titleItems = allTitles.take(15).map { info ->
+                    val titles = apiResponse.titles
+                    if (titles != null && titles.isNotEmpty()) {
+                        val titleItems = titles.map { info ->
                             val titleId = info.id
-                            val titleSlug = info.slug
-                            if (titleId != null && titleSlug != null) {
+                            val titleSlug = info.name?.lowercase()?.replace(" ", "-") ?: "unknown"
+                            if (titleId != null) {
                                 newTvSeriesSearchResponse(info.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
                                     this.posterUrl = getImageUrl(info.poster)
                                 }
@@ -188,9 +142,7 @@ class PandramaProvider:MainAPI() {
                                 }
                             }
                         }
-                        if (titleItems.isNotEmpty()) {
-                            items.add(HomePageList(displayName, titleItems))
-                        }
+                        items.add(HomePageList(displayName, titleItems))
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -215,43 +167,16 @@ class PandramaProvider:MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val search = ArrayList<SearchResponse>()
         try {
-            val searchUrl = "$mainUrl/search/$query"
-            val html = app.get(searchUrl).text
-            
-            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
-            if (scriptMatch != null) {
-                val jsonStr = scriptMatch.groupValues[1]
-                val bootstrap = try {
-                    parseJson<BootstrapData>(jsonStr)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    return search
-                }
-                
-                val results = bootstrap.loaders?.searchPage?.results
-                results?.forEach { title ->
-                    val titleId = title.id
-                    val titleSlug = title.slug
-                    if (titleId != null && titleSlug != null) {
-                        search.add(newTvSeriesSearchResponse(title.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
-                            this.posterUrl = getImageUrl(title.poster)
-                        })
-                    } else {
-                        search.add(newTvSeriesSearchResponse(title.name ?: "Unknown", mainUrl) {
-                            this.posterUrl = getImageUrl(title.poster)
-                        })
-                    }
-                }
-                
-                val trending = bootstrap.loaders?.searchPage?.trendingTitles
-                trending?.forEach { title ->
-                    val titleId = title.id
-                    val titleSlug = title.slug
-                    if (titleId != null && titleSlug != null && !search.any { it.url == "$mainUrl/titulo/$titleId/$titleSlug" }) {
-                        search.add(newTvSeriesSearchResponse(title.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
-                            this.posterUrl = getImageUrl(title.poster)
-                        })
-                    }
+            val response = app.get("$mainUrl/api/v1/titles?search=$query&perPage=20").text
+            val apiResponse = parseJson<ApiResponse>(response)
+
+            apiResponse.titles?.forEach { title ->
+                val titleId = title.id
+                val titleSlug = title.name?.lowercase()?.replace(" ", "-") ?: "unknown"
+                if (titleId != null) {
+                    search.add(newTvSeriesSearchResponse(title.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
+                        this.posterUrl = getImageUrl(title.poster)
+                    })
                 }
             }
         } catch (e: Exception) {
@@ -262,23 +187,12 @@ class PandramaProvider:MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val html = app.get(url).text
-            
-            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
-                ?: return null
+            val titleId = url.substringAfter("/titulo/").substringBefore("/").toIntOrNull() ?: return null
 
-            val jsonStr = scriptMatch.groupValues[1]
-            val bootstrap = try {
-                parseJson<BootstrapData>(jsonStr)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                return null
-            }
+            val response = app.get("$mainUrl/api/v1/titles/$titleId?loader=titlePage").text
+            val titlePage = parseJson<TitlePageResponse>(response)
 
-            val titleInfo = bootstrap.loaders?.titlePage?.title
-            if (titleInfo == null) return null
-            
-            val episodes = bootstrap.loaders?.titlePage?.episodes?.data ?: emptyList()
+            val titleInfo = titlePage.title ?: return null
 
             val title = titleInfo.name ?: ""
             val description = titleInfo.description
@@ -286,12 +200,13 @@ class PandramaProvider:MainAPI() {
             val backdrop = getImageUrl(titleInfo.backdrop)
             val year = titleInfo.year
             val rating = titleInfo.rating
-            val isSeries = titleInfo.isSeries == true || titleInfo.availableSeasons?.isNotEmpty() == true
+            val isSeries = titleInfo.isSeries == true || titlePage.availableSeasons?.isNotEmpty() == true
 
             val genres = titleInfo.genres?.mapNotNull { it.name } ?: emptyList()
             val status = getStatus(titleInfo.status)
 
             if (isSeries) {
+                val episodes = titlePage.episodes?.data ?: emptyList()
                 val episodeList = episodes.map { episode ->
                     newEpisode(episode.id.toString()) {
                         this.name = episode.name
@@ -320,7 +235,6 @@ class PandramaProvider:MainAPI() {
                     this.score = rating?.let { Score.from10(it) }
                 }
             }
-
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -334,25 +248,18 @@ class PandramaProvider:MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val html = app.get(data).text
-            
-            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
-                ?: return false
+            val titleId = data.substringAfter("/titulo/").substringBefore("/").toIntOrNull() ?: return false
 
-            val jsonStr = scriptMatch.groupValues[1]
-            val bootstrap = try {
-                parseJson<BootstrapData>(jsonStr)
-            } catch (e: Exception) {
-                return false
-            }
+            val response = app.get("$mainUrl/api/v1/titles/$titleId?loader=titlePage").text
+            val titlePage = parseJson<TitlePageResponse>(response)
 
-            val titleInfo = bootstrap.loaders?.titlePage?.title
-            val episodes = bootstrap.loaders?.titlePage?.episodes?.data ?: return false
+            val titleInfo = titlePage.title
+            val episodes = titlePage.episodes?.data
 
-            if (episodes.isNotEmpty()) {
+            if (!episodes.isNullOrEmpty()) {
                 val firstEpisode = episodes.firstOrNull { it.primaryVideo != null } ?: episodes.firstOrNull()
                 val videoId = firstEpisode?.primaryVideo?.id
-                
+
                 if (videoId != null) {
                     loadExtractor("$mainUrl/api/videos/$videoId", data, subtitleCallback, callback)
                     return true
