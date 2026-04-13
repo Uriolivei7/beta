@@ -71,7 +71,8 @@ class PandramaProvider:MainAPI() {
 
     data class PrimaryVideoApiData(
         @JsonProperty("id") var id: Int? = null,
-        @JsonProperty("name") var name: String? = null
+        @JsonProperty("name") var name: String? = null,
+        @JsonProperty("videos") var videos: List<VideoApiData>? = null
     )
 
     data class SearchPageData(
@@ -376,23 +377,45 @@ override suspend fun loadLinks(
         return try {
             Log.d(TAG, "loadLinks: data=$data")
             
-            val html = app.get(data).text
-            val bootstrap = parseBootstrapData(html) ?: return false
+            var html = app.get(data).text
+            var bootstrap = parseBootstrapData(html)
+            
+            if (bootstrap == null) {
+                // Maybe data is just an episode ID, try to construct URL
+                val episodeId = data.substringAfterLast("/").trim()
+                if (episodeId.all { it.isDigit() }) {
+                    Log.d(TAG, "loadLinks: trying episode ID $episodeId")
+                    html = app.get("$mainUrl/episodio/$episodeId").text
+                    bootstrap = parseBootstrapData(html)
+                }
+            }
+            
+            if (bootstrap == null) return false
             
             // Check if it's an episode page
             val episodeData = bootstrap.loaders?.episodePage?.episode
             
+            Log.d(TAG, "loadLinks: episodeData=${episodeData?.name}, videos=${episodeData?.videos?.size}")
+            
             if (episodeData != null) {
-                Log.d(TAG, "loadLinks: episode page, videos=${episodeData.videos?.size}")
-                
                 // Get first video with src
                 val video = episodeData.videos?.firstOrNull { !it.src.isNullOrEmpty() }
                 if (video != null) {
                     val videoSrc = video.src
                     if (videoSrc != null) {
+                        Log.d(TAG, "loadLinks: found video src=$videoSrc")
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
                         return true
                     }
+                }
+                
+                // Try primary_video
+                val primaryVideoId = episodeData.primaryVideo?.id
+                if (primaryVideoId != null) {
+                    val videoApiUrl = "$mainUrl/api/videos/$primaryVideoId"
+                    Log.d(TAG, "loadLinks: trying primary video API: $videoApiUrl")
+                    loadExtractor(videoApiUrl, data, subtitleCallback, callback)
+                    return true
                 }
             }
             
