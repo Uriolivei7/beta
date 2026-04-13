@@ -345,7 +345,7 @@ class PandramaProvider:MainAPI() {
                 Log.d(TAG, "load: episodes=${episodes.size}")
                 
                 val episodeList = episodes.map { episode ->
-                    newEpisode(episode.id.toString()) {
+                    newEpisode("$mainUrl/episodio/${episode.id}") {
                         this.name = episode.name
                         this.episode = episode.episodeNumber
                         this.season = episode.seasonNumber ?: 1
