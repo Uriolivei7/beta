@@ -1,6 +1,7 @@
 package com.example
 
 import android.util.Log
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -23,8 +24,15 @@ class PandramaProvider:MainAPI() {
         TvType.AsianDrama,
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class BootstrapData(
-        @JsonProperty("loaders") var loaders: LoadersData? = null
+        @JsonProperty("loaders") var loaders: LoadersData? = null,
+        @JsonProperty("settings") var settings: Any? = null,
+        @JsonProperty("i18n") var i18n: Any? = null,
+        @JsonProperty("themes") var themes: Any? = null,
+        @JsonProperty("language") var language: String? = null,
+        @JsonProperty("user") var user: Any? = null,
+        @JsonProperty("csrf_token") var csrfToken: String? = null
     )
 
     data class LoadersData(
