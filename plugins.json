@@ -502,5 +502,19 @@
     "iconUrl": "https://retrotve.com/wp-content/uploads/2024/11/cropped-android-chrome-512x512-1-32x32.png",
     "language": "mx",
     "fileSize": 26000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PandramaProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "Pandrama",
+    "internalName": "PandramaProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para doramas",
+    "tvTypes": ["AsianDrama"],
+    "iconUrl": "https://www.pandrama.tv/favicon/icon-144x144.png",
+    "language": "mx",
+    "fileSize": 26000
   }
 ]
