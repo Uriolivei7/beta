@@ -189,6 +189,8 @@ class PandramaProvider:MainAPI() {
             val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
             val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
             
+            Log.d(TAG, "parseBootstrapData: JSON length=${jsonContent.length}")
+            
             return parseJson<BootstrapData>(jsonContent)
         } catch (e: Exception) {
             Log.d(TAG, "parseBootstrapData error: ${e.message}")
@@ -345,10 +347,11 @@ class PandramaProvider:MainAPI() {
                 Log.d(TAG, "load: episodes=${episodes.size}")
                 
                 val episodeList = episodes.map { episode ->
-                    newEpisode("$mainUrl/episodio/${episode.id}") {
+                    val seasonNum = episode.seasonNumber ?: 1
+                    newEpisode("$mainUrl/titulo/${titleInfo.id}/temporada/$seasonNum/episodio/${episode.id}") {
                         this.name = episode.name
                         this.episode = episode.episodeNumber
-                        this.season = episode.seasonNumber ?: 1
+                        this.season = seasonNum
                         this.posterUrl = getImageUrl(episode.poster)
                     }
                 }
@@ -393,8 +396,10 @@ override suspend fun loadLinks(
             // Handle different URL formats
             when {
                 data.contains("/episodio/") -> {
+                    Log.d(TAG, "loadLinks: handling /episodio/ URL")
                     html = app.get(data).text
                     bootstrap = parseBootstrapData(html)
+                    Log.d(TAG, "loadLinks: parsed bootstrap, loaders present=${bootstrap?.loaders != null}")
                 }
                 data.contains("/titulo/") || data.contains("/temporada/") -> {
                     html = app.get(data).text
@@ -422,9 +427,14 @@ override suspend fun loadLinks(
                 }
             }
             
-            if (bootstrap == null) return false
+            if (bootstrap == null) {
+                Log.d(TAG, "loadLinks: bootstrap is null, returning false")
+                return false
+            }
             
             val episodeData = bootstrap.loaders?.episodePage?.episode
+            
+            Log.d(TAG, "loadLinks: episodePage=${bootstrap.loaders?.episodePage != null}, episodeData=$episodeData")
             
             Log.d(TAG, "loadLinks: episodeData=${episodeData?.name}, videos=${episodeData?.videos?.size}")
             
