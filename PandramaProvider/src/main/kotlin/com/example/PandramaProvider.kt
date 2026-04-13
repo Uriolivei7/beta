@@ -142,22 +142,27 @@ class PandramaProvider:MainAPI() {
     }
 
     private fun parseBootstrapData(html: String): BootstrapData? {
-        val scriptMatch = Regex(
-            """<script>\s*window\.bootstrapData\s*=\s*(\{.+?});\s*</script>""",
-            RegexOption.DOT_MATCHES_ALL
-        ).find(html)
-        
-        if (scriptMatch == null) {
-            Log.d(TAG, "No bootstrapData found in HTML")
-            return null
-        }
-        
-        val jsonStr = scriptMatch.groupValues[1]
-        return try {
-            parseJson<BootstrapData>(jsonStr)
+        try {
+            val startIdx = html.indexOf("window.bootstrapData")
+            if (startIdx == -1) {
+                Log.d(TAG, "No bootstrapData found in HTML")
+                return null
+            }
+            
+            val scriptStart = html.lastIndexOf("<script>", startIdx)
+            val scriptEnd = html.indexOf("</script>", scriptStart)
+            if (scriptStart == -1 || scriptEnd == -1) {
+                Log.d(TAG, "No script tags found")
+                return null
+            }
+            
+            val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
+            val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
+            
+            return parseJson<BootstrapData>(jsonContent)
         } catch (e: Exception) {
-            Log.d(TAG, "Failed to parse bootstrapData: ${e.message}")
-            null
+            Log.d(TAG, "parseBootstrapData error: ${e.message}")
+            return null
         }
     }
 
