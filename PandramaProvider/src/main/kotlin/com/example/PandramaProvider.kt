@@ -155,7 +155,7 @@ class PandramaProvider:MainAPI() {
         try {
             val html = app.get(mainUrl).text
 
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)
+            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*});""").find(html)
                 ?: return null
 
             val jsonStr = bootstrapMatch.groupValues[1]
@@ -171,15 +171,10 @@ class PandramaProvider:MainAPI() {
                     val displayName = when {
                         channelName.contains("Destacados") -> "Destacados"
                         channelName.contains("Popular") -> "Popular"
-                        channelName.contains("En emisi") -> "En Emisión"
-                        channelName.contains("Últimos") -> "Últimos Episodios"
-                        channelName.contains("Próxim") -> "Próximamente"
                         channelName.contains("Ranking") -> "Ranking"
                         channelName.contains("Agregado") -> "Agregado Reciente"
                         channelName.contains("Netflix") -> "De Netflix"
-                        channelName.contains("Actores") -> "Actores"
                         channelName.contains("Trending") -> "Dramas en Tendencia"
-                        channelName.contains("Temát") -> "Temáticas"
                         channelName.contains("Romance") -> "Dramas de Romance"
                         channelName.contains("BL") || channelName.contains("Boys") -> "BL"
                         channelName.contains("GL") || channelName.contains("Girls") -> "GL"
@@ -230,10 +225,9 @@ val titleItems = channelContent.take(15).map { info ->
             val searchUrl = "$mainUrl/search/$query"
             val html = app.get(searchUrl).text
             
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)
+            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*});""").find(html)
             if (bootstrapMatch != null) {
-                var jsonStr = bootstrapMatch.groupValues[1]
-                jsonStr = jsonStr.replace(Regex(""""loaders":\s*\{[^}]*\}[^}]*\},"""), "\"loaders\":{},")
+                val jsonStr = bootstrapMatch.groupValues[1]
                 val bootstrap = parseJson<BootstrapData>(jsonStr)
                 
                 val results = bootstrap.loaders?.searchPage?.results
@@ -272,13 +266,15 @@ val titleItems = channelContent.take(15).map { info ->
         try {
             val html = app.get(url).text
             
-            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)
+            val bootstrapMatch = Regex("""window\.bootstrapData\s*=\s*(\{.*});""").find(html)
                 ?: return null
 
             val jsonStr = bootstrapMatch.groupValues[1]
             val bootstrap = parseJson<BootstrapData>(jsonStr)
 
-            val titleInfo = bootstrap.loaders?.titlePage?.title ?: return null
+            val titleInfo = bootstrap.loaders?.titlePage?.title
+            if (titleInfo == null) return null
+            
             val episodes = bootstrap.loaders?.titlePage?.episodes?.data ?: emptyList()
 
             val title = titleInfo.name ?: ""
