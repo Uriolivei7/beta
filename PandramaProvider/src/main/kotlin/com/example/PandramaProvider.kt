@@ -153,69 +153,57 @@ class PandramaProvider:MainAPI() {
         val items = ArrayList<HomePageList>()
 
         try {
-            val html = app.get(mainUrl).text
+            val sections = listOf(
+                "Dramas" to "/dramas",
+                "Películas" to "/peliculas"
+            )
 
-            val scriptMatch = Regex("""<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
-                ?: return null
+            for ((displayName, endpoint) in sections) {
+                try {
+                    val html = app.get("$mainUrl$endpoint").text
 
-            val jsonStr = scriptMatch.groupValues[1]
-            val bootstrap = try {
-                parseJson<BootstrapData>(jsonStr)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                return null
-            }
+                    val scriptMatch = Regex(
+                        """<script>\s*window\.bootstrapData\s*=\s*(.+?);\s*</script>""",
+                        RegexOption.DOT_MATCHES_ALL
+                    ).find(html)
+                        ?: continue
 
-            val channelData = bootstrap.loaders?.channelPage?.channel?.content?.data
-            if (channelData != null) {
-                for (channel in channelData) {
-                    val channelName = channel.name ?: continue
-                    val channelContent = channel.content?.data ?: continue
-                    if (channelContent.isEmpty()) continue
+                    val jsonStr = scriptMatch.groupValues[1]
+                    val bootstrap = parseJson<BootstrapData>(jsonStr)
 
-                    val displayName = when {
-                        channelName.contains("Destacados") -> "Destacados"
-                        channelName.contains("Popular") -> "Popular"
-                        channelName.contains("Ranking") -> "Ranking"
-                        channelName.contains("Agregado") -> "Agregado Reciente"
-                        channelName.contains("Netflix") -> "De Netflix"
-                        channelName.contains("Trending") -> "Dramas en Tendencia"
-                        channelName.contains("Romance") -> "Dramas de Romance"
-                        channelName.contains("BL") || channelName.contains("Boys") -> "BL"
-                        channelName.contains("GL") || channelName.contains("Girls") -> "GL"
-                        channelName.contains("Vertical") -> "Dramas Verticales"
-                        channelName.contains("Película") || channelName.contains("Movie") -> "Películas"
-                        else -> channelName
-                    }
+                    val channelContent = bootstrap.loaders?.channelPage?.channel?.content?.data
 
-val titleItems = channelContent.take(15).map { info ->
-                    val titleId = info.id
-                    val titleSlug = info.slug
-                    if (titleId != null && titleSlug != null) {
-                        newTvSeriesSearchResponse(info.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
-                            this.posterUrl = getImageUrl(info.poster)
+                    if (channelContent != null && channelContent.isNotEmpty()) {
+                        val allTitles = channelContent.mapNotNull { it.content?.data }.flatten()
+                        val titleItems = allTitles.take(15).map { info ->
+                            val titleId = info.id
+                            val titleSlug = info.slug
+                            if (titleId != null && titleSlug != null) {
+                                newTvSeriesSearchResponse(info.name ?: "Unknown", "$mainUrl/titulo/$titleId/$titleSlug") {
+                                    this.posterUrl = getImageUrl(info.poster)
+                                }
+                            } else {
+                                newTvSeriesSearchResponse(info.name ?: "Unknown", mainUrl) {
+                                    this.posterUrl = getImageUrl(info.poster)
+                                }
+                            }
                         }
-                    } else {
-                        newTvSeriesSearchResponse(info.name ?: "Unknown", mainUrl) {
-                            this.posterUrl = getImageUrl(info.poster)
+                        if (titleItems.isNotEmpty()) {
+                            items.add(HomePageList(displayName, titleItems))
                         }
                     }
-                }
-
-                    if (titleItems.isNotEmpty()) {
-                        items.add(HomePageList(displayName, titleItems))
-                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
 
             if (items.isEmpty()) {
-                items.add(HomePageList("Tendencias", listOf(
-                    newTvSeriesSearchResponse("Cargando contenido...", mainUrl) {
+                items.add(HomePageList("Contenido", listOf(
+                    newTvSeriesSearchResponse("Cargando...", mainUrl) {
                         this.posterUrl = null
                     }
                 )))
             }
-
         } catch (e: Exception) {
             e.printStackTrace()
         }
