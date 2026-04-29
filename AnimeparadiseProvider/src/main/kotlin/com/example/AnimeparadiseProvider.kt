@@ -40,7 +40,18 @@ class AnimeParadiseProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
-    private suspend fun getSessionCookie(path: String): String {
+    private data class PageSession(val cookie: String, val actionHash: String?)
+
+    // Chunks comunes que siempre se cargan (no contienen server actions específicos)
+    private val commonChunks = setOf(
+        "0fidx7r5b2", "0vx0tn0xqiaif", "11pkc~rruvs-w", "0f4c1sxcdfj-k",
+        "turbopack-0gwoay64w8x0b", "0hal-jc_~is0~", "0qj4frgu.v00l",
+        "05t1azjn4ma.k", "07u3quyoyz.a0", "0-8htruw664dz",
+        "08h6kvvy6v4e0", "0ljhlsfermh9m", "08dq0~r_e5n_r",
+        "0kx~3bbn-v69y", "03~yq9q893hmn"
+    )
+
+    private suspend fun getPageSession(path: String): PageSession {
         return try {
             val res = app.get(
                 "$mainUrl/$path",
@@ -55,10 +66,42 @@ class AnimeParadiseProvider : MainAPI() {
                 ?.firstOrNull { it.trimStart().startsWith("anp_session") }
                 ?.trim() ?: ""
             Log.d(TAG, "Logs: Cookie: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
-            cookie
+
+            // Extraer todos los chunks async del HTML
+            val allChunks = Regex("""src="(/_next/static/chunks/[^"]+)""""")
+                .findAll(res.text)
+                .map { it.groupValues[1] }
+                .toList()
+
+            // Filtrar chunks específicos de la página (excluyendo los comunes)
+            val pageSpecificChunks = allChunks.filter { chunk ->
+                val baseName = chunk.substringAfterLast("/").substringBefore(".")
+                commonChunks.none { baseName.startsWith(it.take(10)) }
+            }
+
+            Log.d(TAG, "Logs: Chunks específicos encontrados: ${pageSpecificChunks.size}")
+
+            // Buscar hash de server action en los chunks específicos
+            val hashRegex = Regex("""["']([a-f0-9]{40})["']""")
+            for (chunkUrl in pageSpecificChunks) {
+                try {
+                    val chunkText = app.get("$mainUrl$chunkUrl", headers = apiHeaders).text
+                    val match = hashRegex.find(chunkText)
+                    if (match != null) {
+                        val hash = match.groupValues[1]
+                        Log.d(TAG, "Logs: Hash encontrado en $chunkUrl: ${hash.take(15)}...")
+                        return PageSession(cookie, hash)
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Logs: Error en chunk $chunkUrl: ${e.message}")
+                }
+            }
+
+            Log.d(TAG, "Logs: No se encontró hash en chunks específicos")
+            PageSession(cookie, null)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error obteniendo cookie: ${e.message}")
-            ""
+            Log.e(TAG, "Logs: Error getPageSession: ${e.message}")
+            PageSession("", null)
         }
     }
 
@@ -89,24 +132,25 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
         return try {
-            val sessionCookie = getSessionCookie("search?q=${query.encodeUri()}&page=1")
+            val searchPath = "search?q=${query.encodeUri()}&page=1"
+            val session = getPageSession(searchPath)
+            val actionHash = session.actionHash ?: "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
 
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9",
+                "next-action" to actionHash,
                 "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
                 "origin" to mainUrl,
-                "referer" to "$mainUrl/search?q=${query.encodeUri()}&page=1",
+                "referer" to "$mainUrl/$searchPath",
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "cookie" to sessionCookie
+                "cookie" to session.cookie
             )
 
-            // Usamos string normal (no triple-quote) para poder escapar $ correctamente
             val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
 
             val response = app.post(
-                "$mainUrl/search?q=${query.encodeUri()}&page=1",
+                "$mainUrl/$searchPath",
                 headers = searchHeaders,
                 requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
@@ -233,23 +277,25 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: uid: $uid | origin: $origin")
 
         return try {
-            val sessionCookie = getSessionCookie("watch/$uid?origin=$origin")
+            val watchPath = "watch/$uid?origin=$origin"
+            val session = getPageSession(watchPath)
+            val actionHash = session.actionHash ?: "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
 
             val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "600dc21e94ea824156f9863dfc1bd5118623ebe0a0",
+                "next-action" to actionHash,
                 "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
-                "referer" to "$mainUrl/watch/$uid?origin=$origin",
+                "referer" to "$mainUrl/$watchPath",
                 "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "cookie" to sessionCookie
+                "cookie" to session.cookie
             )
 
             val resText = app.post(
-                "$mainUrl/watch/$uid?origin=$origin",
+                "$mainUrl/$watchPath",
                 headers = actionHeaders,
                 requestBody = "[\"$uid\",\"$origin\"]"
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
@@ -264,7 +310,7 @@ class AnimeParadiseProvider : MainAPI() {
 
             if (streamLink != null) {
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${streamLink.encodeUri()}"
-                
+
                 callback.invoke(
                     newExtractorLink(
                         this.name, "AnimeParadise",
