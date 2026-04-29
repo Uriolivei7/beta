@@ -94,7 +94,7 @@ class AnimeParadiseProvider : MainAPI() {
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "70bb5dc82858424fa4bc2324f41b75ee1e0677e006",
+                "next-action" to "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9",
                 "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/search?q=${query.encodeUri()}&page=1",
@@ -240,7 +240,7 @@ class AnimeParadiseProvider : MainAPI() {
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to "60b3f46488dfd22923bda168ef78cd866882713cca",
+                "next-action" to "600dc21e94ea824156f9863dfc1bd5118623ebe0a0",
                 "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/watch/$uid?origin=$origin",
