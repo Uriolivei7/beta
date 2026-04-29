@@ -40,7 +40,10 @@ class AnimeParadiseProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
-    private data class PageSession(val cookie: String, val actionHash: String?)
+    private data class PageSession(val cookie: String, val actionHash: String)
+
+    private val searchActionHash = "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
+    private val watchActionHash = "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
 
     private suspend fun getPageSession(path: String): PageSession {
         return try {
@@ -57,38 +60,10 @@ class AnimeParadiseProvider : MainAPI() {
                 ?.firstOrNull { it.trimStart().startsWith("anp_session") }
                 ?.trim() ?: ""
             Log.d(TAG, "Logs: Cookie: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
-            Log.d(TAG, "Logs: HTML preview: ${res.text.take(500)}")
-
-            val allChunks = Regex("""/_next/static/chunks/[^"']+\.js""")
-                .findAll(res.text)
-                .map { it.value }
-                .distinct()
-                .toList()
-
-            Log.d(TAG, "Logs: Total chunks encontrados: ${allChunks.size}")
-            allChunks.forEach { Log.d(TAG, "Logs: Chunk: $it") }
-
-            // Buscar hash de server action (40 chars hex) en todos los chunks
-            val hashRegex = Regex("""["']([a-f0-9]{40})["']""")
-            for (chunkUrl in allChunks) {
-                try {
-                    val chunkText = app.get("$mainUrl$chunkUrl", headers = apiHeaders).text
-                    val match = hashRegex.find(chunkText)
-                    if (match != null) {
-                        val hash = match.groupValues[1]
-                        Log.d(TAG, "Logs: Hash encontrado en ${chunkUrl}: ${hash.take(15)}...")
-                        return PageSession(cookie, hash)
-                    }
-                } catch (e: Exception) {
-                    // Continuar con el siguiente chunk
-                }
-            }
-
-            Log.d(TAG, "Logs: No se encontró hash en ningún chunk")
-            PageSession(cookie, null)
+            PageSession(cookie, if (path.startsWith("search")) searchActionHash else watchActionHash)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error getPageSession: ${e.message}")
-            PageSession("", null)
+            PageSession("", searchActionHash)
         }
     }
 
@@ -121,12 +96,11 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val searchPath = "search?q=${query.encodeUri()}&page=1"
             val session = getPageSession(searchPath)
-            val actionHash = session.actionHash ?: "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
 
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to actionHash,
+                "next-action" to session.actionHash,
                 "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/$searchPath",
@@ -266,14 +240,13 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val watchPath = "watch/$uid?origin=$origin"
             val session = getPageSession(watchPath)
-            val actionHash = session.actionHash ?: "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
 
             val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
 
             val actionHeaders = mapOf(
                 "accept" to "text/x-component",
                 "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to actionHash,
+                "next-action" to session.actionHash,
                 "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/$watchPath",

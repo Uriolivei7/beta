@@ -329,10 +329,14 @@ class AnizoneProvider : MainAPI() {
 
         Log.d("AniZoneSub", "-> Iniciando loadLinks para: $episodeUrl")
 
-        val web = app.get(episodeUrl).document
+        val webReq = app.get(episodeUrl)
+        val web = webReq.document
+        val cookie = webReq.cookies
         val sourceName = web.selectFirst("span.truncate")?.text() ?: ""
         val mediaPlayer = web.selectFirst("media-player")
         val m3U8 = mediaPlayer?.attr("src") ?: ""
+
+        Log.d("AniZoneSub", "-> Source: $sourceName, M3U8: $m3U8")
 
         mediaPlayer?.select("track")?.forEach {
             Log.d("AniZoneSub", "-> [AniZone] Subtítulo encontrado: ${it.attr("label")}")
@@ -350,7 +354,14 @@ class AnizoneProvider : MainAPI() {
                 name,
                 m3U8,
                 type = ExtractorLinkType.M3U8
-            )
+            ) {
+                this.referer = "$mainUrl/"
+                this.quality = 0
+                this.headers = mapOf(
+                    "Origin" to mainUrl,
+                    "Cookie" to cookie.map { "${it.key}=${it.value}" }.joinToString("; ")
+                )
+            }
         )
         return true
     }
