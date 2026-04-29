@@ -57,15 +57,16 @@ class AnimeParadiseProvider : MainAPI() {
                 ?.firstOrNull { it.trimStart().startsWith("anp_session") }
                 ?.trim() ?: ""
             Log.d(TAG, "Logs: Cookie: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
+            Log.d(TAG, "Logs: HTML preview: ${res.text.take(500)}")
 
-            // Extraer todos los chunks del HTML
-            val allChunks = Regex("""src="(/_next/static/chunks/[^"]+)""""")
+            val allChunks = Regex("""/_next/static/chunks/[^"']+\.js""")
                 .findAll(res.text)
-                .map { it.groupValues[1] }
+                .map { it.value }
                 .distinct()
                 .toList()
 
             Log.d(TAG, "Logs: Total chunks encontrados: ${allChunks.size}")
+            allChunks.forEach { Log.d(TAG, "Logs: Chunk: $it") }
 
             // Buscar hash de server action (40 chars hex) en todos los chunks
             val hashRegex = Regex("""["']([a-f0-9]{40})["']""")
