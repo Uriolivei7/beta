@@ -25,8 +25,8 @@ class JioHotstarProvider : MainAPI() {
         val imgReferer = response.img_referer ?: apiBase
         val items = response.post.orEmpty().map { category ->
             val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            val useHorizontal = category.row == "h"
-            val template = (if (useHorizontal) response.imgcdn_h else response.imgcdn_v) ?: response.imgcdn_v ?: response.imgcdn_h
+            val useHorizontal = false
+            val template = response.imgcdn_v
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
                     posterUrl = buildPosterUrl(template, id)
