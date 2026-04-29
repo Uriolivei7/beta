@@ -25,15 +25,14 @@ class PrimevideoProvider : MainAPI() {
         val imgReferer = response.img_referer ?: apiBase
         val items = response.post.orEmpty().map { category ->
             val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            val useHorizontal = false
-            val template = response.imgcdn_v
+            val template = response.imgcdn_v.takeUnless { it.isNullOrBlank() } ?: response.imgcdn_h
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
-                    posterUrl = buildPosterUrl(template, id)
+                    posterUrl = buildPosterUrl(template, id) ?: buildVerticalPosterUrl(id, ott)
                     posterHeaders = mapOf("Referer" to imgReferer)
                 }
             }
-            HomePageList(category.cate.orEmpty(), results, isHorizontalImages = useHorizontal)
+            HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
         }
 
         return newHomePageResponse(items, hasNext = items.isNotEmpty())
@@ -51,7 +50,7 @@ class PrimevideoProvider : MainAPI() {
 
         return data.searchResult.orEmpty().map { item ->
             newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
-                posterUrl = buildPosterUrl(template, item.id)
+                posterUrl = buildPosterUrl(template, item.id) ?: buildVerticalPosterUrl(item.id, ott)
                 posterHeaders = mapOf("Referer" to imgReferer)
             }
         }
@@ -75,15 +74,15 @@ class PrimevideoProvider : MainAPI() {
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
-                posterUrl = buildPosterUrl(data.morelike_poster, it.id)
+                posterUrl = buildVerticalPosterUrl(it.id, ott)
                 posterHeaders = mapOf("Referer" to apiBase)
             }
         }
 
         if (!isSeries) {
             return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, playbackId).toJson()) {
-                posterUrl = buildPosterUrl(data.main_poster, id)
-                backgroundPosterUrl = buildPosterUrl(data.main_poster, id)
+                posterUrl = buildPosterUrl(data.main_poster, id) ?: buildVerticalPosterUrl(id, ott)
+                backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
                 posterHeaders = mapOf("Referer" to apiBase)
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
@@ -105,7 +104,7 @@ class PrimevideoProvider : MainAPI() {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
-                    posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty())
+                    posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
                 }
@@ -128,8 +127,8 @@ class PrimevideoProvider : MainAPI() {
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-            posterUrl = buildPosterUrl(data.main_poster, id)
-            backgroundPosterUrl = buildPosterUrl(data.main_poster, id)
+            posterUrl = buildPosterUrl(data.main_poster, id) ?: buildVerticalPosterUrl(id, ott)
+            backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
             posterHeaders = mapOf("Referer" to apiBase)
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
@@ -156,7 +155,7 @@ class PrimevideoProvider : MainAPI() {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
-                    posterUrl = buildPosterUrl(epPoster, it.id.orEmpty())
+                    posterUrl = buildPosterUrl(epPoster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
                 }

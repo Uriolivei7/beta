@@ -121,6 +121,22 @@ suspend fun resolveApiUrl(): String {
     throw Exception("Failed to resolve NewTV API base URL")
 }
 
+fun buildVerticalPosterUrl(id: String, ott: String = "nf"): String {
+    return when (ott) {
+        "pv" -> "https://imgcdn.kim/pv/v/$id.jpg"
+        "hs" -> "https://imgcdn.kim/hs/v/$id.jpg"
+        else -> "https://imgcdn.kim/poster/v/$id.jpg"
+    }
+}
+
+fun buildBackgroundPosterUrl(id: String, ott: String = "nf"): String {
+    return when (ott) {
+        "pv" -> "https://imgcdn.kim/pv/h/$id.jpg"
+        "hs" -> "https://imgcdn.kim/hs/h/$id.jpg"
+        else -> "https://imgcdn.kim/poster/h/$id.jpg"
+    }
+}
+
 fun buildNewTvHeaders(ott: String, extra: Map<String, String> = emptyMap()): Map<String, String> {
     val headers = newTvBaseHeaders.toMutableMap()
     headers["Ott"] = ott
