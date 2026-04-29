@@ -5,7 +5,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove any of them.
 
     description = "Watch livestreams from Twitch"
-    authors = listOf("CranberrySoup")
+    authors = listOf("Ranita")
 
     /**
     * Status int as one of the following:
@@ -17,7 +17,7 @@ cloudstream {
     status = 1 // Will be 3 if unspecified
 
     tvTypes = listOf("Live")
-    iconUrl = "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%"
+    //iconUrl = "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%"
 
-    isCrossPlatform = true
+    isCrossPlatform = false
 }
