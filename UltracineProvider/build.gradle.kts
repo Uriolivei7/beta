@@ -7,5 +7,5 @@ cloudstream {
     status = 1
     tvTypes = listOf("Movie", "TvSeries")
     iconUrl = "https://ultracine.org/wp-content/uploads/2024/07/cropped-favicon-300x300.png"
-    isCrossPlatform = true
+    isCrossPlatform = false
 }
