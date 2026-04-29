@@ -47,7 +47,7 @@ class PrimevideoProvider : MainAPI() {
         ).parsed<NewTvSearchResponse>()
 
         val imgReferer = data.img_referer ?: apiBase
-        val template = data.detailsimgcdn ?: data.imgcdn
+        val template = data.imgcdn ?: data.detailsimgcdn
 
         return data.searchResult.orEmpty().map { item ->
             newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
