@@ -42,15 +42,6 @@ class AnimeParadiseProvider : MainAPI() {
 
     private data class PageSession(val cookie: String, val actionHash: String?)
 
-    // Chunks comunes que siempre se cargan (no contienen server actions específicos)
-    private val commonChunks = setOf(
-        "0fidx7r5b2", "0vx0tn0xqiaif", "11pkc~rruvs-w", "0f4c1sxcdfj-k",
-        "turbopack-0gwoay64w8x0b", "0hal-jc_~is0~", "0qj4frgu.v00l",
-        "05t1azjn4ma.k", "07u3quyoyz.a0", "0-8htruw664dz",
-        "08h6kvvy6v4e0", "0ljhlsfermh9m", "08dq0~r_e5n_r",
-        "0kx~3bbn-v69y", "03~yq9q893hmn"
-    )
-
     private suspend fun getPageSession(path: String): PageSession {
         return try {
             val res = app.get(
@@ -67,37 +58,32 @@ class AnimeParadiseProvider : MainAPI() {
                 ?.trim() ?: ""
             Log.d(TAG, "Logs: Cookie: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
 
-            // Extraer todos los chunks async del HTML
+            // Extraer todos los chunks del HTML
             val allChunks = Regex("""src="(/_next/static/chunks/[^"]+)""""")
                 .findAll(res.text)
                 .map { it.groupValues[1] }
+                .distinct()
                 .toList()
 
-            // Filtrar chunks específicos de la página (excluyendo los comunes)
-            val pageSpecificChunks = allChunks.filter { chunk ->
-                val baseName = chunk.substringAfterLast("/").substringBefore(".")
-                commonChunks.none { baseName.startsWith(it.take(10)) }
-            }
+            Log.d(TAG, "Logs: Total chunks encontrados: ${allChunks.size}")
 
-            Log.d(TAG, "Logs: Chunks específicos encontrados: ${pageSpecificChunks.size}")
-
-            // Buscar hash de server action en los chunks específicos
+            // Buscar hash de server action (40 chars hex) en todos los chunks
             val hashRegex = Regex("""["']([a-f0-9]{40})["']""")
-            for (chunkUrl in pageSpecificChunks) {
+            for (chunkUrl in allChunks) {
                 try {
                     val chunkText = app.get("$mainUrl$chunkUrl", headers = apiHeaders).text
                     val match = hashRegex.find(chunkText)
                     if (match != null) {
                         val hash = match.groupValues[1]
-                        Log.d(TAG, "Logs: Hash encontrado en $chunkUrl: ${hash.take(15)}...")
+                        Log.d(TAG, "Logs: Hash encontrado en ${chunkUrl}: ${hash.take(15)}...")
                         return PageSession(cookie, hash)
                     }
                 } catch (e: Exception) {
-                    Log.d(TAG, "Logs: Error en chunk $chunkUrl: ${e.message}")
+                    // Continuar con el siguiente chunk
                 }
             }
 
-            Log.d(TAG, "Logs: No se encontró hash en chunks específicos")
+            Log.d(TAG, "Logs: No se encontró hash en ningún chunk")
             PageSession(cookie, null)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error getPageSession: ${e.message}")
