@@ -80,10 +80,8 @@ fun convertRuntimeToMinutes(runtime: String): Int {
 }
 
 suspend fun bypass(mainUrl: String): String {
-    // Check persistent storage first
     val (savedCookie, savedTimestamp) = NetflixmirrorStorage.getCookie()
 
-    // Return cached cookie if valid (≤15 hours old)
     if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
         return savedCookie
     }
@@ -93,21 +91,33 @@ suspend fun bypass(mainUrl: String): String {
         var verifyResponse: NiceResponse
         var count = 0
         do {
-            verifyResponse = app.post("$mainUrl/tv/p.php")
+            verifyResponse = app.post(
+                "$mainUrl/tv/p.php",
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "Accept" to "*/*",
+                    "Accept-Language" to "en-US,en;q=0.9",
+                    "Referer" to "$mainUrl/",
+                    "Origin" to mainUrl,
+                    "Content-Type" to "application/x-www-form-urlencoded"
+                )
+            )
             verifyCheck = verifyResponse.text
+            Log.d("Bypass", "Intento $count - Status: ${verifyResponse.code}, Response: ${verifyCheck.take(100)}")
             count++
             if (count > 5) {
-                throw Exception("Failed to verify cookie")
+                throw Exception("Failed to verify cookie after $count attempts. Last response: $verifyCheck")
             }
+            delay(1000)
         } while (!verifyCheck.contains("\"r\":\"n\""))
-        verifyResponse.cookies["t_hash_t"].orEmpty()
+        val cookie = verifyResponse.cookies["t_hash_t"].orEmpty()
+        Log.d("Bypass", "Cookie obtenida: ${if (cookie.isNotEmpty()) cookie.take(20) + "..." else "VACÍA"}")
+        cookie
     } catch (e: Exception) {
-        // Clear invalid cookie on failure
         NetflixmirrorStorage.clearCookie()
         throw e
     }
 
-    // Persist the new cookie
     if (newCookie.isNotEmpty()) {
         NetflixmirrorStorage.saveCookie(newCookie)
     }
