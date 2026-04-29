@@ -14,6 +14,10 @@ class PrimevideoProvider : MainAPI() {
 
     private val ott = "pv"
 
+    private fun pvPoster(id: String): String = "https://imgcdn.kim/pv/v/$id.jpg"
+    private fun pvBg(id: String): String = "https://imgcdn.kim/pv/h/$id.jpg"
+    private fun pvEpPoster(id: String): String = "https://imgcdn.kim/pvepimg/150/$id.jpg"
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val apiBase = resolveApiUrl()
 
@@ -25,10 +29,9 @@ class PrimevideoProvider : MainAPI() {
         val imgReferer = response.img_referer ?: apiBase
         val items = response.post.orEmpty().map { category ->
             val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            val template = response.imgcdn_v.takeUnless { it.isNullOrBlank() } ?: response.imgcdn_h
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
-                    posterUrl = buildPosterUrl(template, id) ?: buildVerticalPosterUrl(id, ott)
+                    posterUrl = pvPoster(id)
                     posterHeaders = mapOf("Referer" to imgReferer)
                 }
             }
@@ -46,11 +49,10 @@ class PrimevideoProvider : MainAPI() {
         ).parsed<NewTvSearchResponse>()
 
         val imgReferer = data.img_referer ?: apiBase
-        val template = data.imgcdn ?: data.detailsimgcdn
 
         return data.searchResult.orEmpty().map { item ->
             newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
-                posterUrl = buildPosterUrl(template, item.id) ?: buildVerticalPosterUrl(item.id, ott)
+                posterUrl = pvPoster(item.id)
                 posterHeaders = mapOf("Referer" to imgReferer)
             }
         }
@@ -74,15 +76,15 @@ class PrimevideoProvider : MainAPI() {
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
-                posterUrl = buildVerticalPosterUrl(it.id, ott)
+                posterUrl = pvPoster(it.id)
                 posterHeaders = mapOf("Referer" to apiBase)
             }
         }
 
         if (!isSeries) {
             return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, playbackId).toJson()) {
-                posterUrl = buildPosterUrl(data.main_poster, id) ?: buildVerticalPosterUrl(id, ott)
-                backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
+                posterUrl = pvPoster(id)
+                backgroundPosterUrl = pvBg(id)
                 posterHeaders = mapOf("Referer" to apiBase)
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
@@ -104,31 +106,31 @@ class PrimevideoProvider : MainAPI() {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
-                    posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
+                    posterUrl = pvEpPoster(it.id.orEmpty())
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
                 }
             }
 
             if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank())
-                episodes.addAll(getEpisodes(title, selectedSeasonId, 2, data.ep_poster, selectedSeasonNumber))
+                episodes.addAll(getEpisodes(title, selectedSeasonId, 2, selectedSeasonNumber))
 
             data.season?.forEachIndexed { index, season ->
                 if (season.id != selectedSeasonId && !season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, index + 1))
+                    episodes.addAll(getEpisodes(title, season.id, 1, index + 1))
             }
         }
 
         if (data.type == "t" && episodes.isEmpty() && !data.season.isNullOrEmpty()) {
             data.season.forEachIndexed { index, season ->
                 if (!season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, index + 1))
+                    episodes.addAll(getEpisodes(title, season.id, 1, index + 1))
             }
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-            posterUrl = buildPosterUrl(data.main_poster, id) ?: buildVerticalPosterUrl(id, ott)
-            backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
+            posterUrl = pvPoster(id)
+            backgroundPosterUrl = pvBg(id)
             posterHeaders = mapOf("Referer" to apiBase)
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
@@ -138,7 +140,7 @@ class PrimevideoProvider : MainAPI() {
 
     private suspend fun getEpisodes(
         title: String, sid: String, page: Int,
-        epPoster: String? = null, seasonNumber: Int? = null
+        seasonNumber: Int? = null
     ): List<Episode> {
         val apiBase = resolveApiUrl()
         val episodes = arrayListOf<Episode>()
@@ -155,7 +157,7 @@ class PrimevideoProvider : MainAPI() {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
-                    posterUrl = buildPosterUrl(epPoster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
+                    posterUrl = pvEpPoster(it.id.orEmpty())
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
                 }
