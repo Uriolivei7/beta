@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import java.net.URI
 
 class PlayhubProvider : MainAPI() {
     override var mainUrl = "https://www.playhubmax.com"
@@ -409,16 +410,19 @@ class PlayhubProvider : MainAPI() {
             Log.d("PlayHub", "Decoded length: ${decoded.length}")
             Log.d("PlayHub", "Decoded first 3000: ${decoded.take(3000)}")
 
-            val sourceRegex = Regex("""file["\s]*[:=]["\s]*(https?://[^"'\s]+)""")
-            val sourceMatch = sourceRegex.find(decoded)?.groupValues?.getOrNull(1)
-            if (sourceMatch != null) {
-                Log.d("PlayHub", "Found source: $sourceMatch")
+            // Look for master.m3u8 or master.txt URLs (skip .vtt subtitles)
+            val streamRegex = Regex("""(https?://[^"'\s]+/master\.(?:m3u8|txt)[^"'\s]*)""")
+            val streamMatch = streamRegex.find(decoded)
+            if (streamMatch != null) {
+                val streamUrl = streamMatch.groupValues[1]
+                Log.d("PlayHub", "Found stream: $streamUrl")
+                val isTxt = streamUrl.endsWith(".txt") || streamUrl.contains("/master.txt")
                 callback.invoke(
                     newExtractorLink(
                         hostName ?: "PlayHub",
                         hostName ?: "PlayHub",
-                        sourceMatch,
-                        type = ExtractorLinkType.M3U8
+                        streamUrl,
+                        type = if (isTxt) ExtractorLinkType.VIDEO else ExtractorLinkType.M3U8
                     ) {
                         this.referer = url
                     }
@@ -426,15 +430,20 @@ class PlayhubProvider : MainAPI() {
                 return
             }
 
-            val urlRegex = Regex("""(https?://[^"'\s]+\.(?:m3u8|txt|mp4))""")
-            val urlMatch = urlRegex.find(decoded)?.groupValues?.getOrNull(1)
-            if (urlMatch != null) {
-                Log.d("PlayHub", "Found URL: $urlMatch")
+            // Fallback: look for /stream/.../master.m3u8 pattern (relative URL)
+            val streamPathRegex = Regex("""(/stream/[^"'\s]+/master\.(?:m3u8|txt))""")
+            val streamPathMatch = streamPathRegex.find(decoded)
+            if (streamPathMatch != null) {
+                val streamPath = streamPathMatch.groupValues[1]
+                val uri = URI(url)
+                val baseUrl = "${uri.scheme}://${uri.host}"
+                val streamUrl = "$baseUrl$streamPath"
+                Log.d("PlayHub", "Found relative stream: $streamUrl")
                 callback.invoke(
                     newExtractorLink(
                         hostName ?: "PlayHub",
                         hostName ?: "PlayHub",
-                        urlMatch,
+                        streamUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = url
