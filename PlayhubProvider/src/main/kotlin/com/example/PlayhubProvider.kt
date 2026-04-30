@@ -290,13 +290,13 @@ class PlayhubProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val splitIndex = data.indexOf(':')
-        val type = if (splitIndex > 0) data.substring(0, splitIndex) else "content"
-        val uuid = if (splitIndex > 0) data.substring(splitIndex + 1) else data
+        val splitIndex = data.lastIndexOf(':')
+        val type = if (splitIndex > 0 && data.substringBeforeLast(':').contains("/episode")) "episode" else "content"
+        val uuid = data.substring(splitIndex + 1)
         val url = "$apiUrl/$type/$uuid/sources"
-        Log.d("PlayHub", "Fetching sources: $url")
+        Log.d("PlayHub", "loadLinks data: $data -> type=$type uuid=$uuid url=$url")
         val sourceRes = app.get(url, headers = headers)
-        Log.d("PlayHub", "Response status: ${sourceRes.code}, body: ${sourceRes.text.take(100)}")
+        Log.d("PlayHub", "Response status: ${sourceRes.code}")
         val sourceParsed = tryParseJson<SourceResponse>(sourceRes.text)
         if (sourceParsed == null || sourceParsed.data.isEmpty()) {
             Log.e("PlayHub", "Failed to parse source response or empty data")
