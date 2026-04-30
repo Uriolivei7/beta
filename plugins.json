@@ -387,7 +387,7 @@
     "authors": ["Ranita"],
     "description": "Plugin para Animes",
     "tvTypes": ["Anime"],
-    "iconUrl": "https://latanime.org/public/favicon.ico",
+    "iconUrl": "https://latanime.org/favicon.ico",
     "language": "mx",
     "fileSize": 20000
   },
