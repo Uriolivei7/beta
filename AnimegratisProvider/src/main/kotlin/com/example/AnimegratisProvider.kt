@@ -43,6 +43,7 @@ class AnimeGratisProvider : MainAPI() {
         "$mainUrl/directorio" to "Anime",
         "$mainUrl/directorio?order=emision" to "En Emisión",
         "$mainUrl/directorio?order=recientes" to "Recientes",
+        "$mainUrl/donghua" to "Donghua",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -50,14 +51,31 @@ class AnimeGratisProvider : MainAPI() {
         Log.d("AnimeGratis", "getMainPage URL: $url")
         val document = app.get(url).document
 
-        val ssrScript = document.selectFirst("script#ssr-init")
-        Log.d("AnimeGratis", "ssr-script found: ${ssrScript != null}")
+        if (request.data.contains("/donghua")) {
+            val items = document.select("a[href^='/donghua/']").mapNotNull { a ->
+                val href = fixUrl(a.attr("href"))
+                val img = a.selectFirst("img")
+                val poster = img?.run {
+                    attr("data-src").ifEmpty { attr("src") }
+                }
+                val title = img?.attr("alt")?.replace("Portada de ", "")?.trim()
+                    ?: a.selectFirst("h3, h4, p, span")?.text()?.trim()
+                    ?: ""
+                if (title.isNotBlank()) {
+                    newTvSeriesSearchResponse(title, href, TvType.Anime) {
+                        this.posterUrl = fixUrlNull(poster)
+                    }
+                } else null
+            }
+            return newHomePageResponse(
+                list = HomePageList(name = request.name, list = items, isHorizontalImages = false),
+                hasNext = true
+            )
+        }
 
+        val ssrScript = document.selectFirst("script#ssr-init")
         if (ssrScript != null) {
-            val json = ssrScript.data()
-            Log.d("AnimeGratis", "SSR JSON (first 300): ${json.take(300)}")
-            val items = parseSsrJson(json)
-            Log.d("AnimeGratis", "SSR items parsed: ${items.size}")
+            val items = parseSsrJson(ssrScript.data())
             if (items.isNotEmpty()) {
                 return newHomePageResponse(
                     list = HomePageList(
@@ -70,18 +88,7 @@ class AnimeGratisProvider : MainAPI() {
             }
         }
 
-        val fallback = document.select("a.block, a.inline-block").mapNotNull { el ->
-            val img = el.selectFirst("img") ?: return@mapNotNull null
-            val title = el.selectFirst("p, h3, span.font-semibold, span.text-sm")?.text()?.trim()
-                ?: img.attr("alt")?.trim()
-            val href = el.attr("href")
-            val poster = img.attr("src").ifEmpty { img.attr("data-src") }
-            if (title.isNullOrBlank() || href.isBlank()) null
-            else newTvSeriesSearchResponse(title, fixUrl(href), TvType.Anime) {
-                this.posterUrl = fixUrlNull(poster)
-            }
-        }
-        Log.d("AnimeGratis", "Fallback HTML items: ${fallback.size}")
+        val fallback = document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name,
@@ -96,49 +103,48 @@ class AnimeGratisProvider : MainAPI() {
         val results = mutableListOf<SearchResponse>()
         return try {
             val root = JSONObject(json)
-            Log.d("AnimeGratis", "Root keys: ${root.keys().asSequence().toList()}")
+            val animesArray = root.optJSONArray("animes") ?: return results
+            Log.d("AnimeGratis", "SSR animes count: ${animesArray.length()}")
 
-            val itemsArray = run {
-                root.optJSONArray("items")
-                    ?: root.optJSONObject("data")?.optJSONArray("items")
-                    ?: root.optJSONObject("data")?.optJSONArray("results")
-                    ?: root.optJSONArray("results")
-            }
+            for (i in 0 until animesArray.length()) {
+                val item = animesArray.getJSONObject(i)
+                val title = item.optString("t", "")
+                val slug = item.optString("sl", "")
+                val poster = item.optString("fb", "").ifEmpty {
+                    item.optString("im", "")
+                }
 
-            if (itemsArray != null) {
-                Log.d("AnimeGratis", "itemsArray length: ${itemsArray.length()}")
-                for (i in 0 until itemsArray.length()) {
-                    val item = itemsArray.getJSONObject(i)
-                    Log.d("AnimeGratis", "Item[$i] keys: ${item.keys().asSequence().toList()}")
-
-                    val title = item.optString("t", "").ifEmpty {
-                        item.optString("title", "").ifEmpty {
-                            item.optString("name", "")
+                val href = if (slug.isNotBlank()) "$mainUrl/anime/$slug-anime" else ""
+                if (title.isNotBlank() && href.isNotBlank()) {
+                    val ty = item.optString("ty", "")
+                    val tvType = if (ty == "movie") TvType.AnimeMovie else TvType.Anime
+                    results.add(
+                        newTvSeriesSearchResponse(title, href, tvType) {
+                            this.posterUrl = fixUrlNull(poster)
                         }
-                    }
-                    val slug = item.optString("sl", "").ifEmpty {
-                        item.optString("slug", "")
-                    }
-                    val image = item.optString("im", "").ifEmpty {
-                        item.optString("image", "").ifEmpty {
-                            item.optString("poster", "")
-                        }
-                    }
-
-                    val href = if (slug.isNotBlank()) "$mainUrl/anime/$slug-anime" else ""
-                    if (title.isNotBlank() && href.isNotBlank()) {
-                        results.add(
-                            newTvSeriesSearchResponse(title, href, TvType.Anime) {
-                                this.posterUrl = fixUrlNull(image)
-                            }
-                        )
-                    }
+                    )
                 }
             }
             results
         } catch (e: Exception) {
             Log.e("AnimeGratis", "Error parsing SSR JSON: ${e.message}")
             results
+        }
+    }
+
+    private fun Element.toAnimeCardResult(): SearchResponse {
+        val link = this.selectFirst("a") ?: this
+        val href = fixUrl(link.attr("href"))
+        val img = this.selectFirst("img")
+        val poster = img?.run {
+            attr("data-fallback").ifEmpty {
+                attr("src").ifEmpty { attr("data-src") }
+            }
+        }
+        val title = this.selectFirst("h3, h4, p.font-semibold")?.text()?.trim()
+            ?: img?.attr("alt")?.replace("Portada de ", "")?.trim() ?: ""
+        return newTvSeriesSearchResponse(title, href, TvType.Anime) {
+            this.posterUrl = fixUrlNull(poster)
         }
     }
 
@@ -155,16 +161,32 @@ class AnimeGratisProvider : MainAPI() {
             if (items.isNotEmpty()) return items
         }
 
-        return document.select("a.block, a.inline-block").mapNotNull { el ->
-            val img = el.selectFirst("img") ?: return@mapNotNull null
-            val title = el.selectFirst("p, h3, span.font-semibold, span.text-sm")?.text()?.trim()
-                ?: img.attr("alt")?.trim()
-            val href = el.attr("href")
-            val poster = img.attr("src").ifEmpty { img.attr("data-src") }
-            if (title.isNullOrBlank() || href.isBlank()) null
-            else newTvSeriesSearchResponse(title, fixUrl(href), TvType.Anime) {
-                this.posterUrl = fixUrlNull(poster)
+        val animeCards = document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
+        if (animeCards.isNotEmpty()) return animeCards
+
+        Log.d("AnimeGratis", "No results from directorio, trying donghua search")
+        return searchDonghua(query)
+    }
+
+    private suspend fun searchDonghua(query: String): List<SearchResponse> {
+        val url = "$mainUrl/donghua?q=$query&status=&genre=&year=&sort=year"
+        Log.d("AnimeGratis", "searchDonghua URL: $url")
+        val document = app.get(url).document
+
+        return document.select("a[href^='/donghua/']").mapNotNull { a ->
+            val href = fixUrl(a.attr("href"))
+            val img = a.selectFirst("img")
+            val poster = img?.run {
+                attr("data-src").ifEmpty { attr("src") }
             }
+            val title = img?.attr("alt")?.replace("Portada de ", "")?.trim()
+                ?: a.selectFirst("h3, h4, p, span")?.text()?.trim()
+                ?: ""
+            if (title.isNotBlank()) {
+                newTvSeriesSearchResponse(title, href, TvType.Anime) {
+                    this.posterUrl = fixUrlNull(poster)
+                }
+            } else null
         }
     }
 
@@ -175,77 +197,52 @@ class AnimeGratisProvider : MainAPI() {
         val title = document.selectFirst("h1")?.ownText()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim()
             ?: "Unknown"
-        Log.d("AnimeGratis", "title: $title")
 
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: document.selectFirst("img[alt*='Poster']")?.attr("src")
-            ?: document.selectFirst("img.rounded-lg")?.attr("src")
+            ?: document.selectFirst("div.relative.rounded-xl.overflow-hidden img[src*='cdn.animegratis.net']")?.attr("src")
+            ?: document.selectFirst("div.rounded-xl.overflow-hidden > img[src*='cdn.animegratis.net']")?.attr("src")
+            ?: run {
+                val blurDiv = document.selectFirst("div.absolute.inset-0.bg-cover[style*='background-image']")
+                blurDiv?.attr("style")?.let { style ->
+                    Regex("url\\(([^)]+)\\)").find(style)?.groupValues?.get(1)
+                }
+            }
             ?: ""
-        Log.d("AnimeGratis", "poster: $poster")
+        Log.d("AnimeGratis", "load poster: $poster")
 
-        val description = document.select("div.mx-3.mt-4 p, p.text-white\\/80").firstOrNull()?.text()
-            ?: document.selectFirst("meta[name='description']")?.attr("content")
+        val description = document.select("div.space-y-3 > p.text-white\\/90").firstOrNull()?.text()
+            ?: document.selectFirst("p.text-white\\/90.leading-relaxed")?.text()
             ?: ""
 
-        val tags = document.select("a[href*='/directorio/genero/']").map { it.text() }
+        val tags = document.select("div.space-y-3 a[href*='/directorio/genero/']").map { it.text() }
 
-        val statusText = document.select("header div.flex span").firstOrNull()?.text()
-        val showStatus = when (statusText?.lowercase()) {
-            "en emisión", "emitiendo", "ongoing" -> ShowStatus.Ongoing
-            "finalizado", "completo", "completed" -> ShowStatus.Completed
+        val allSpans = document.select("div.flex.flex-wrap.gap-3 span.text-white\\/90")
+        val statusText = allSpans.find { it.text().contains("Finalizado", ignoreCase = true) || it.text().contains("Emisión", ignoreCase = true) }?.text()
+        val showStatus = when {
+            statusText?.contains("Emisión", ignoreCase = true) == true -> ShowStatus.Ongoing
+            statusText?.contains("Finalizado", ignoreCase = true) == true -> ShowStatus.Completed
             else -> null
         }
 
-        val epInfo = document.selectFirst("header div.flex span.text-white\\/70")?.text()
-        val year = Regex("(\\d{4})").find(epInfo ?: "")?.groupValues?.get(1)?.toIntOrNull()
+        val yearSpan = allSpans.find { it.text().contains("📅") }?.text()
+        val year = Regex("(\\d{4})").find(yearSpan ?: "")?.groupValues?.get(1)?.toIntOrNull()
 
         val episodes = mutableListOf<Episode>()
 
-        document.select("#episode-select option").forEach { opt ->
-            val epHref = fixUrl(opt.attr("value"))
-            val epText = opt.text().trim()
-            val epNum = Regex("(\\d+)").find(epText)?.groupValues?.get(1)?.toIntOrNull()
-            if (epHref.isNotBlank() && !epHref.endsWith("-anime")) {
-                episodes.add(
-                    newEpisode(epHref) {
-                        this.name = epText
-                        this.episode = epNum
-                    }
-                )
+        document.select("#episodes-grid > a").forEach { card ->
+            val epHref = fixUrl(card.attr("href"))
+            val epNum = card.attr("data-episode").toIntOrNull()
+            val epImg = card.selectFirst("img")
+            val epPoster = epImg?.run {
+                attr("src").ifEmpty { attr("data-src") }
             }
-        }
-
-        if (episodes.isEmpty()) {
-            document.select("a.episode-chip").forEach { chip ->
-                val epHref = fixUrl(chip.attr("href"))
-                val epText = chip.attr("title").ifEmpty { "Episodio ${chip.text().trim()}" }
-                val epNum = Regex("(\\d+)").find(chip.text())?.groupValues?.get(1)?.toIntOrNull()
-                if (epHref.isNotBlank()) {
-                    episodes.add(
-                        newEpisode(epHref) {
-                            this.name = epText
-                            this.episode = epNum
-                        }
-                    )
+            episodes.add(
+                newEpisode(epHref) {
+                    this.name = "Episodio $epNum"
+                    this.episode = epNum
+                    this.posterUrl = fixUrlNull(epPoster)
                 }
-            }
-        }
-
-        if (episodes.isEmpty()) {
-            document.select("a[href*='/episodio-']").forEach { a ->
-                val epHref = fixUrl(a.attr("href"))
-                val epText = a.attr("title").ifEmpty { a.text().trim() }
-                val epNum = Regex("episodio-(\\d+)").find(epHref)?.groupValues?.get(1)?.toIntOrNull()
-                    ?: Regex("(\\d+)").find(epText)?.groupValues?.get(1)?.toIntOrNull()
-                if (epHref.isNotBlank() && !epHref.contains("-anime")) {
-                    episodes.add(
-                        newEpisode(epHref) {
-                            this.name = epText.ifEmpty { "Episodio $epNum" }
-                            this.episode = epNum
-                        }
-                    )
-                }
-            }
+            )
         }
 
         Log.d("AnimeGratis", "Episodes found: ${episodes.size}")
