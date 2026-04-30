@@ -331,80 +331,33 @@ class PlayhubProvider : MainAPI() {
             val res = app.get(url, headers = headers)
             val body = res.text
 
-            val evalPattern = Regex("""eval\(function\(p,a,c,k,e,d\)\{(.*)\}\)""", RegexOption.DOT_MATCHES_ALL)
-            val evalMatch = evalPattern.find(body)
-            if (evalMatch != null) {
-                try {
-                    val evalBody = evalMatch.groupValues[1]
-                    val pMatch = Regex("""p=["'](.+?)["']""").find(evalBody)
-                    val aMatch = Regex("""a=(\d+)""").find(evalBody)
-                    val cMatch = Regex("""c=(\d+)""").find(evalBody)
-                    val kMatch = Regex("""k=\[(.+?)\]""").find(evalBody)
+            Log.d("PlayHub", "Page body length: ${body.length}")
+            val evalIdx = body.indexOf("eval(")
+            Log.d("PlayHub", "eval( found at index: $evalIdx")
 
-                    if (pMatch != null && aMatch != null && cMatch != null && kMatch != null) {
-                        val p = pMatch.groupValues[1].replace("\\'", "'").replace("\\\\", "\\")
-                        val a = aMatch.groupValues[1].toInt()
-                        val c = cMatch.groupValues[1].toInt()
-                        val kList = kMatch.groupValues[1].split(",").map {
-                            it.trim().removeSurrounding("'").removeSurrounding("\"")
-                        }
-                        val decoded = decodeEval(p, a, c, kList)
-                        Log.d("PlayHub", "Eval decoded (first 2000): ${decoded.take(2000)}")
+            val allEvalRegex = Regex("""eval\(function\(p,a,c,k,e,d\)""", RegexOption.DOT_MATCHES_ALL)
+            val evalMatches = allEvalRegex.findAll(body).toList()
+            Log.d("PlayHub", "eval(function(p,a,c,k,e,d) matches: ${evalMatches.size}")
 
-                        val streamRegex = Regex("""(https?://[^"'\s]+/(?:stream|hls|playlist|master|index)[^"'\s]+\.(?:m3u8|txt))""")
-                        val streamUrl = streamRegex.find(decoded)?.groupValues?.getOrNull(1)
-                        if (streamUrl != null) {
-                            Log.d("PlayHub", "Found stream in eval: $streamUrl")
-                            callback.invoke(
-                                newExtractorLink(
-                                    hostName ?: "PlayHub",
-                                    hostName ?: "PlayHub",
-                                    streamUrl,
-                                    type = ExtractorLinkType.M3U8
-                                ) {
-                                    this.referer = url
-                                }
-                            )
-                            return
-                        }
-
-                        val fileRegex = Regex("""file["\s]*[:=]["\s]*(https?://[^"'\s]+)""")
-                        val fileMatch = fileRegex.find(decoded)?.groupValues?.getOrNull(1)
-                        if (fileMatch != null) {
-                            Log.d("PlayHub", "Found file in eval: $fileMatch")
-                            callback.invoke(
-                                newExtractorLink(
-                                    hostName ?: "PlayHub",
-                                    hostName ?: "PlayHub",
-                                    fileMatch,
-                                    type = ExtractorLinkType.M3U8
-                                ) {
-                                    this.referer = url
-                                }
-                            )
-                            return
+            if (evalMatches.isNotEmpty()) {
+                for ((index, match) in evalMatches.withIndex()) {
+                    val start = match.range.first
+                    var depth = 0
+                    var end = start
+                    for (i in start until body.length) {
+                        if (body[i] == '{') depth++
+                        if (body[i] == '}') {
+                            depth--
+                            if (depth == 0) {
+                                end = i
+                                break
+                            }
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e("PlayHub", "Eval decode failed: ${e.message}")
+                    val evalContent = body.substring(start, end + 1)
+                    Log.d("PlayHub", "Eval block $index length: ${evalContent.length}")
+                    Log.d("PlayHub", "Eval block $index first 500: ${evalContent.take(500)}")
                 }
-            }
-
-            val streamRegex = Regex("""(https?://[^"'\s]+/(?:stream|hls|playlist|master|index)[^"'\s]+\.(?:m3u8|txt))""")
-            val streamUrl = streamRegex.find(body)?.groupValues?.getOrNull(1)
-            if (streamUrl != null) {
-                Log.d("PlayHub", "Found stream directly in body: $streamUrl")
-                callback.invoke(
-                    newExtractorLink(
-                        hostName ?: "PlayHub",
-                        hostName ?: "PlayHub",
-                        streamUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                    }
-                )
-                return
             }
 
             Log.e("PlayHub", "Could not find video URL in $url")
