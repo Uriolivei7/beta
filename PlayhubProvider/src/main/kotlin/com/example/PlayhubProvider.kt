@@ -5,12 +5,11 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class PlayhubProvider : MainAPI() {
     override var mainUrl = "https://www.playhubmax.com"
-    override var name = "PlayHub"
+    override var name = "PlayHUB"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
     override var lang = "mx"
     override val hasMainPage = true
@@ -318,8 +317,7 @@ class PlayhubProvider : MainAPI() {
                     newExtractorLink(
                         source.hostName ?: "PlayHub",
                         source.hostName ?: "PlayHub",
-                        source.url,
-                        type = ExtractorLinkType.M3U8
+                        source.url
                     ) {
                         this.referer = mainUrl
                     }
