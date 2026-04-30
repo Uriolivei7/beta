@@ -8,5 +8,7 @@ import com.lagradost.cloudstream3.plugins.Plugin
 class PlayhubPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(PlayhubProvider())
+        registerExtractorAPI(PlayhubStreamWish())
+        registerExtractorAPI(PlayhubVidHide())
     }
 }
