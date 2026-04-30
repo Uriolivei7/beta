@@ -332,32 +332,31 @@ class PlayhubProvider : MainAPI() {
             val body = res.text
 
             Log.d("PlayHub", "Page body length: ${body.length}")
-            val evalIdx = body.indexOf("eval(")
-            Log.d("PlayHub", "eval( found at index: $evalIdx")
 
-            val allEvalRegex = Regex("""eval\(function\(p,a,c,k,e,d\)""", RegexOption.DOT_MATCHES_ALL)
-            val evalMatches = allEvalRegex.findAll(body).toList()
-            Log.d("PlayHub", "eval(function(p,a,c,k,e,d) matches: ${evalMatches.size}")
+            val evalStartMarker = "eval(function(p,a,c,k,e,d){"
+            val evalStart = body.indexOf(evalStartMarker)
+            Log.d("PlayHub", "eval start index: $evalStart")
 
-            if (evalMatches.isNotEmpty()) {
-                for ((index, match) in evalMatches.withIndex()) {
-                    val start = match.range.first
-                    var depth = 0
-                    var end = start
-                    for (i in start until body.length) {
-                        if (body[i] == '{') depth++
-                        if (body[i] == '}') {
-                            depth--
-                            if (depth == 0) {
-                                end = i
-                                break
-                            }
+            if (evalStart >= 0) {
+                var parenDepth = 1
+                var callEnd = -1
+                var i = evalStart + evalStartMarker.length
+                while (i < body.length) {
+                    val ch = body[i]
+                    if (ch == '(') parenDepth++
+                    else if (ch == ')') {
+                        parenDepth--
+                        if (parenDepth == 0) {
+                            callEnd = i
+                            break
                         }
                     }
-                    val evalContent = body.substring(start, end + 1)
-                    Log.d("PlayHub", "Eval block $index length: ${evalContent.length}")
-                    Log.d("PlayHub", "Eval block $index first 500: ${evalContent.take(500)}")
+                    i++
                 }
+                val fullEval = body.substring(evalStart, callEnd + 1)
+                Log.d("PlayHub", "Full eval length: ${fullEval.length}")
+                Log.d("PlayHub", "Full eval first 1000: ${fullEval.take(1000)}")
+                Log.d("PlayHub", "Full eval last 500: ${fullEval.takeLast(500)}")
             }
 
             Log.e("PlayHub", "Could not find video URL in $url")
