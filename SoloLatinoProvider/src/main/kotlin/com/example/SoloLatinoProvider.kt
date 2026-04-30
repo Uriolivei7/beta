@@ -236,13 +236,13 @@ class SoloLatinoProvider : MainAPI() {
                 } else null
                 //Log.d("SoloLatino", "load - EP S${seasonNumber}E${episodeNumber}: $epTitle | fecha=$epDate")
                 if (epUrl.isNotBlank() && epTitle.isNotBlank()) {
+                    val displayName = if (epDate.isNotBlank()) "$epTitle — $epDate" else epTitle
                     newEpisode(epUrl) {
-                        this.name = epTitle
+                        this.name = displayName
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = epPoster
                         this.description = epDesc.ifBlank { null }
-                        this.date = epReleaseDate
                     }
                 } else null
             }
