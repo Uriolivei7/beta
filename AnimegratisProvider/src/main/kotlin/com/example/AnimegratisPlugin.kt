@@ -8,6 +8,6 @@ import android.content.Context
 class AnimegratisPlugin: Plugin() {
     override fun load(context: Context) {
         registerMainAPI(AnimeGratisProvider())
-        registerMainAPI(DonghuagratisProvider())
+        registerMainAPI(DonghuaGratisProvider())
     }
 }

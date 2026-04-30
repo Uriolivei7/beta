@@ -25,6 +25,7 @@ import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.addEpisodes
 import com.lagradost.cloudstream3.newAnimeLoadResponse
 import org.json.JSONObject
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class AnimeGratisProvider : MainAPI() {
@@ -135,15 +136,21 @@ class AnimeGratisProvider : MainAPI() {
         if (ssrScript != null) {
             val allItems = parseSsrJson(ssrScript.data())
             if (allItems.isNotEmpty()) {
+                Log.d("AnimeGratis", "SSR search items before filter: ${allItems.size}")
                 val q = query.lowercase()
-                val filtered = allItems.filter {
-                    it.name.lowercase().contains(q) ||
-                    (it.posterUrl?.lowercase()?.contains(q) == true)
+                val filtered = allItems.filter { item ->
+                    val name = item.name.lowercase()
+                    val urlPart = item.url.lowercase()
+                    val posterPart = (item.posterUrl ?: "").lowercase()
+                    name.contains(q) || urlPart.contains(q) || posterPart.contains(q) ||
+                    name.contains(query, ignoreCase = true) || urlPart.contains(query, ignoreCase = true)
                 }
+                Log.d("AnimeGratis", "SSR search items after filter: ${filtered.size}")
                 if (filtered.isNotEmpty()) return filtered
             }
         }
 
+        Log.d("AnimeGratis", "Falling back to HTML card scraping for search")
         return document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
     }
 
@@ -155,16 +162,7 @@ class AnimeGratisProvider : MainAPI() {
             ?: document.selectFirst("h1")?.text()?.trim()
             ?: "Unknown"
 
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: document.selectFirst("div.relative.rounded-xl.overflow-hidden img[src*='cdn.animegratis.net']")?.attr("src")
-            ?: document.selectFirst("div.rounded-xl.overflow-hidden > img[src*='cdn.animegratis.net']")?.attr("src")
-            ?: run {
-                val blurDiv = document.selectFirst("div.absolute.inset-0.bg-cover[style*='background-image']")
-                blurDiv?.attr("style")?.let { style ->
-                    Regex("url\\(([^)]+)\\)").find(style)?.groupValues?.get(1)
-                }
-            }
-            ?: ""
+        val poster = extractPoster(document)
         Log.d("AnimeGratis", "load poster: $poster")
 
         val description = document.select("div.space-y-3 > p.text-white\\/90").firstOrNull()?.text()
@@ -186,7 +184,7 @@ class AnimeGratisProvider : MainAPI() {
 
         val episodes = mutableListOf<Episode>()
 
-        document.select("#episodes-grid a").forEach { card ->
+        document.select("#episodes-grid a[data-episode]").forEach { card ->
             val epHref = fixUrl(card.attr("href"))
             val epNum = card.attr("data-episode").toIntOrNull()
             val epImg = card.selectFirst("img")
@@ -198,7 +196,7 @@ class AnimeGratisProvider : MainAPI() {
                     newEpisode(epHref) {
                         this.name = "Episodio $epNum"
                         this.episode = epNum
-                        this.posterUrl = fixUrlNull(epPoster)
+                        this.posterUrl = fixPosterUrl(epPoster ?: "")
                     }
                 )
             }
@@ -223,6 +221,35 @@ class AnimeGratisProvider : MainAPI() {
                 this.year = year
             }
         }
+    }
+
+    private fun extractPoster(document: Document): String {
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        if (!ogImage.isNullOrBlank() && ogImage.contains("cdn.animegratis.net")) {
+            return if (ogImage.startsWith("http")) ogImage else "$mainUrl$ogImage"
+        }
+
+        val canonicalUrl = document.selectFirst("link[rel='canonical']")?.attr("href") ?: ""
+        val slug = Regex("/anime/([^/]+)").find(canonicalUrl)?.groupValues?.get(1)
+            ?: Regex("/donghua/([^/]+)").find(canonicalUrl)?.groupValues?.get(1)
+
+        if (!slug.isNullOrBlank()) {
+            return "https://cdn.animegratis.net/anime/$slug/images/cover.webp"
+        }
+
+        val img = document.selectFirst("div.rounded-xl.overflow-hidden img[src]")
+            ?: document.selectFirst("img[src*='cdn.animegratis.net']")
+        if (img != null) {
+            val src = img.attr("src")
+            if (src.isNotBlank()) return src
+        }
+
+        return ""
+    }
+
+    private fun fixPosterUrl(raw: String): String {
+        if (raw.isBlank()) return ""
+        return if (raw.startsWith("http")) raw else "$mainUrl$raw"
     }
 
     override suspend fun loadLinks(

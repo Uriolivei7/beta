@@ -24,9 +24,10 @@ import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.addEpisodes
 import com.lagradost.cloudstream3.newAnimeLoadResponse
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class DonghuagratisProvider : MainAPI() {
+class DonghuaGratisProvider : MainAPI() {
     override var mainUrl = "https://animegratis.net"
     override var name = "DonghuaGratis"
     override val hasMainPage = true
@@ -39,7 +40,7 @@ class DonghuagratisProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/donghuas" to "Donghua",
+        "$mainUrl/donghua" to "Donghua",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -47,8 +48,19 @@ class DonghuagratisProvider : MainAPI() {
         Log.d("DonghuaGratis", "getMainPage URL: $url")
         val document = app.get(url).document
 
-        val items = document.select("a[href*='/donghua/']").distinctBy { it.attr("href") }.mapNotNull { el ->
-            el.takeIf { !it.attr("href").contains("/episodio") }?.toDonghuaCard()
+        val items = document.select("div.grid > a.group[href*='/donghua/']")
+            .filter { !it.attr("href").contains("/episodio") }
+            .mapNotNull { it.toDonghuaCard() }
+
+        if (items.isEmpty()) {
+            val fallback = document.select("a.group[href*='/donghua/']")
+                .filter { !it.attr("href").contains("/episodio") }
+                .distinctBy { it.attr("href") }
+                .mapNotNull { it.toDonghuaCard() }
+            return newHomePageResponse(
+                list = HomePageList(name = request.name, list = fallback, isHorizontalImages = false),
+                hasNext = true
+            )
         }
 
         return newHomePageResponse(
@@ -64,11 +76,10 @@ class DonghuagratisProvider : MainAPI() {
     private fun Element.toDonghuaCard(): SearchResponse {
         val href = fixUrl(attr("href"))
         val img = selectFirst("img")
-        val poster = img?.run {
-            attr("src").ifEmpty { attr("data-src") }
-        }
+        val poster = img?.attr("src")?.takeIf { it.isNotBlank() }
+            ?: img?.attr("data-src")
         val title = selectFirst("h3")?.text()?.trim()
-            ?: img?.attr("alt")?.trim()
+            ?: img?.attr("alt")?.replace("Portada de ", "")?.trim()
             ?: text().trim()
         return newTvSeriesSearchResponse(title, href, TvType.Anime) {
             this.posterUrl = fixUrlNull(poster)
@@ -82,9 +93,18 @@ class DonghuagratisProvider : MainAPI() {
         Log.d("DonghuaGratis", "search URL: $url")
         val document = app.get(url).document
 
-        return document.select("a[href*='/donghua/']").distinctBy { it.attr("href") }
+        val items = document.select("div.grid > a.group[href*='/donghua/']")
             .filter { !it.attr("href").contains("/episodio") }
             .mapNotNull { it.toDonghuaCard() }
+
+        if (items.isEmpty()) {
+            return document.select("a.group[href*='/donghua/']")
+                .filter { !it.attr("href").contains("/episodio") }
+                .distinctBy { it.attr("href") }
+                .mapNotNull { it.toDonghuaCard() }
+        }
+
+        return items
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -95,11 +115,7 @@ class DonghuagratisProvider : MainAPI() {
             ?: document.selectFirst("h1")?.text()?.trim()
             ?: "Unknown"
 
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: document.selectFirst("a[href*='/donghua/'] img")?.run {
-                attr("src").ifEmpty { attr("data-fallback") }
-            }
-            ?: ""
+        val poster = extractPoster(document)
 
         val description = document.selectFirst("p.text-white\\/90.leading-relaxed")?.text()
             ?: document.select("p.text-white\\/90").firstOrNull()?.text()
@@ -129,7 +145,7 @@ class DonghuagratisProvider : MainAPI() {
                     newEpisode(epHref) {
                         this.name = "Episodio $epNum"
                         this.episode = epNum
-                        this.posterUrl = poster.ifBlank { null }
+                        this.posterUrl = poster
                     }
                 )
             }
@@ -154,6 +170,24 @@ class DonghuagratisProvider : MainAPI() {
                 this.year = year
             }
         }
+    }
+
+    private fun extractPoster(document: Document): String {
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        if (!ogImage.isNullOrBlank() && ogImage.contains("cdn.animegratis.net")) {
+            return ogImage
+        }
+
+        val slug = document.selectFirst("link[rel='canonical']")?.attr("href")
+            ?.let { url ->
+                Regex("/donghua/([^/]+)").find(url)?.groupValues?.get(1)
+            }
+
+        if (!slug.isNullOrBlank()) {
+            return "https://cdn.animegratis.net/donghua/$slug/images/cover.webp"
+        }
+
+        return ""
     }
 
     override suspend fun loadLinks(
