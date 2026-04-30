@@ -410,12 +410,34 @@ class PlayhubProvider : MainAPI() {
             Log.d("PlayHub", "Decoded length: ${decoded.length}")
             Log.d("PlayHub", "Decoded first 3000: ${decoded.take(3000)}")
 
-            // Look for master.m3u8 URLs first (preferred over .txt)
+            // Prefer /stream/.../master.m3u8 path (goes through embed server proxy, more reliable)
+            val streamPathRegex = Regex("""(/stream/[^"'\s]+/master\.(?:m3u8|txt))""")
+            val streamPathMatch = streamPathRegex.find(decoded)
+            if (streamPathMatch != null) {
+                val streamPath = streamPathMatch.groupValues[1]
+                val uri = URI(url)
+                val baseUrl = "${uri.scheme}://${uri.host}"
+                val streamUrl = "$baseUrl$streamPath"
+                Log.d("PlayHub", "Found relative stream (preferred): $streamUrl")
+                callback.invoke(
+                    newExtractorLink(
+                        hostName ?: "PlayHub",
+                        hostName ?: "PlayHub",
+                        streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = url
+                    }
+                )
+                return
+            }
+
+            // Fallback: direct m3u8 CDN URLs (may have token expiration issues)
             val m3u8Regex = Regex("""(https?://[^"'\s]+/master\.m3u8[^"'\s]*)""")
             val m3u8Match = m3u8Regex.find(decoded)
             if (m3u8Match != null) {
                 val streamUrl = m3u8Match.groupValues[1]
-                Log.d("PlayHub", "Found m3u8 stream: $streamUrl")
+                Log.d("PlayHub", "Found direct m3u8: $streamUrl")
                 callback.invoke(
                     newExtractorLink(
                         hostName ?: "PlayHub",
@@ -439,8 +461,6 @@ class PlayhubProvider : MainAPI() {
                     val txtRes = app.get(txtUrl, headers = mapOf("Referer" to url))
                     val txtBody = txtRes.text
                     Log.d("PlayHub", "master.txt content (first 2000): ${txtBody.take(2000)}")
-
-                    // Look for m3u8 URLs inside the txt response
                     val innerM3u8Regex = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
                     val innerMatch = innerM3u8Regex.find(txtBody)
                     if (innerMatch != null) {
@@ -461,28 +481,6 @@ class PlayhubProvider : MainAPI() {
                 } catch (e: Exception) {
                     Log.e("PlayHub", "Failed to fetch master.txt: ${e.message}")
                 }
-            }
-
-            // Fallback: relative /stream/.../master.m3u8
-            val streamPathRegex = Regex("""(/stream/[^"'\s]+/master\.(?:m3u8|txt))""")
-            val streamPathMatch = streamPathRegex.find(decoded)
-            if (streamPathMatch != null) {
-                val streamPath = streamPathMatch.groupValues[1]
-                val uri = URI(url)
-                val baseUrl = "${uri.scheme}://${uri.host}"
-                val streamUrl = "$baseUrl$streamPath"
-                Log.d("PlayHub", "Found relative stream: $streamUrl")
-                callback.invoke(
-                    newExtractorLink(
-                        hostName ?: "PlayHub",
-                        hostName ?: "PlayHub",
-                        streamUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                    }
-                )
-                return
             }
 
             Log.e("PlayHub", "No video URL found in decoded eval")
