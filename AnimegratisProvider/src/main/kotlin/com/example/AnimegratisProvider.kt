@@ -40,38 +40,14 @@ class AnimeGratisProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/directorio" to "Anime",
-        "$mainUrl/directorio?order=emision" to "En Emisión",
-        "$mainUrl/directorio?order=recientes" to "Recientes",
-        "$mainUrl/donghua" to "Donghua",
+        "$mainUrl/directorio" to "Animes",
+        "$mainUrl/directorio/doblado" to "Doblados"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (request.data.contains('?')) "${request.data}&page=$page" else "${request.data}?page=$page"
         Log.d("AnimeGratis", "getMainPage URL: $url")
         val document = app.get(url).document
-
-        if (request.data.contains("/donghua")) {
-            val items = document.select("a[href^='/donghua/']").mapNotNull { a ->
-                val href = fixUrl(a.attr("href"))
-                val img = a.selectFirst("img")
-                val poster = img?.run {
-                    attr("data-src").ifEmpty { attr("src") }
-                }
-                val title = img?.attr("alt")?.replace("Portada de ", "")?.trim()
-                    ?: a.selectFirst("h3, h4, p, span")?.text()?.trim()
-                    ?: ""
-                if (title.isNotBlank()) {
-                    newTvSeriesSearchResponse(title, href, TvType.Anime) {
-                        this.posterUrl = fixUrlNull(poster)
-                    }
-                } else null
-            }
-            return newHomePageResponse(
-                list = HomePageList(name = request.name, list = items, isHorizontalImages = false),
-                hasNext = true
-            )
-        }
 
         val ssrScript = document.selectFirst("script#ssr-init")
         if (ssrScript != null) {
@@ -157,37 +133,18 @@ class AnimeGratisProvider : MainAPI() {
 
         val ssrScript = document.selectFirst("script#ssr-init")
         if (ssrScript != null) {
-            val items = parseSsrJson(ssrScript.data())
-            if (items.isNotEmpty()) return items
-        }
-
-        val animeCards = document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
-        if (animeCards.isNotEmpty()) return animeCards
-
-        Log.d("AnimeGratis", "No results from directorio, trying donghua search")
-        return searchDonghua(query)
-    }
-
-    private suspend fun searchDonghua(query: String): List<SearchResponse> {
-        val url = "$mainUrl/donghua?q=$query&status=&genre=&year=&sort=year"
-        Log.d("AnimeGratis", "searchDonghua URL: $url")
-        val document = app.get(url).document
-
-        return document.select("a[href^='/donghua/']").mapNotNull { a ->
-            val href = fixUrl(a.attr("href"))
-            val img = a.selectFirst("img")
-            val poster = img?.run {
-                attr("data-src").ifEmpty { attr("src") }
-            }
-            val title = img?.attr("alt")?.replace("Portada de ", "")?.trim()
-                ?: a.selectFirst("h3, h4, p, span")?.text()?.trim()
-                ?: ""
-            if (title.isNotBlank()) {
-                newTvSeriesSearchResponse(title, href, TvType.Anime) {
-                    this.posterUrl = fixUrlNull(poster)
+            val allItems = parseSsrJson(ssrScript.data())
+            if (allItems.isNotEmpty()) {
+                val q = query.lowercase()
+                val filtered = allItems.filter {
+                    it.name.lowercase().contains(q) ||
+                    (it.posterUrl?.lowercase()?.contains(q) == true)
                 }
-            } else null
+                if (filtered.isNotEmpty()) return filtered
+            }
         }
+
+        return document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -229,20 +186,22 @@ class AnimeGratisProvider : MainAPI() {
 
         val episodes = mutableListOf<Episode>()
 
-        document.select("#episodes-grid > a").forEach { card ->
+        document.select("#episodes-grid a").forEach { card ->
             val epHref = fixUrl(card.attr("href"))
             val epNum = card.attr("data-episode").toIntOrNull()
             val epImg = card.selectFirst("img")
             val epPoster = epImg?.run {
                 attr("src").ifEmpty { attr("data-src") }
             }
-            episodes.add(
-                newEpisode(epHref) {
-                    this.name = "Episodio $epNum"
-                    this.episode = epNum
-                    this.posterUrl = fixUrlNull(epPoster)
-                }
-            )
+            if (epHref.isNotBlank()) {
+                episodes.add(
+                    newEpisode(epHref) {
+                        this.name = "Episodio $epNum"
+                        this.episode = epNum
+                        this.posterUrl = fixUrlNull(epPoster)
+                    }
+                )
+            }
         }
 
         Log.d("AnimeGratis", "Episodes found: ${episodes.size}")
