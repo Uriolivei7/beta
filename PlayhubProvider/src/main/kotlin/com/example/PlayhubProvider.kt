@@ -321,6 +321,20 @@ class PlayhubProvider : MainAPI() {
         return true
     }
 
+    private fun decodeEvalPacker(p: String, a: Int, c: Int, k: List<String>): String {
+        var result = p
+        var i = c - 1
+        while (i >= 0) {
+            val key = k.getOrNull(i) ?: ""
+            if (key.isNotEmpty()) {
+                val pattern = "\\b" + i.toString(a) + "\\b"
+                result = result.replace(Regex(pattern), key)
+            }
+            i--
+        }
+        return result
+    }
+
     private suspend fun resolveEmbed(
         url: String,
         hostName: String?,
@@ -331,54 +345,108 @@ class PlayhubProvider : MainAPI() {
             val res = app.get(url, headers = headers)
             val body = res.text
 
-            Log.d("PlayHub", "Page body length: ${body.length}")
-
             val evalStartMarker = "eval(function(p,a,c,k,e,d){"
             val evalStart = body.indexOf(evalStartMarker)
-            Log.d("PlayHub", "eval start index: $evalStart")
-
-            if (evalStart >= 0) {
-                var parenDepth = 1
-                var callEnd = -1
-                var i = evalStart + evalStartMarker.length
-                while (i < body.length) {
-                    val ch = body[i]
-                    if (ch == '(') parenDepth++
-                    else if (ch == ')') {
-                        parenDepth--
-                        if (parenDepth == 0) {
-                            callEnd = i
-                            break
-                        }
-                    }
-                    i++
-                }
-                val fullEval = body.substring(evalStart, callEnd + 1)
-                Log.d("PlayHub", "Full eval length: ${fullEval.length}")
-                Log.d("PlayHub", "Full eval first 1000: ${fullEval.take(1000)}")
-                Log.d("PlayHub", "Full eval last 500: ${fullEval.takeLast(500)}")
+            if (evalStart < 0) {
+                Log.e("PlayHub", "No eval found in $url")
+                return
             }
 
-            Log.e("PlayHub", "Could not find video URL in $url")
+            var parenDepth = 1
+            var callEnd = -1
+            var i = evalStart + evalStartMarker.length
+            while (i < body.length) {
+                val ch = body[i]
+                if (ch == '(') parenDepth++
+                else if (ch == ')') {
+                    parenDepth--
+                    if (parenDepth == 0) {
+                        callEnd = i
+                        break
+                    }
+                }
+                i++
+            }
+            if (callEnd <= 0) {
+                Log.e("PlayHub", "Could not find eval closing paren")
+                return
+            }
+
+            val fullEval = body.substring(evalStart, callEnd + 1)
+
+            val argPatterns = listOf(
+                Regex("""\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)"""),
+                Regex("""\}\('([^']*)',(\d+),(\d+),'(.+?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL),
+                Regex("""\}\((.+?),(\d+),(\d+),'(.+?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
+            )
+
+            var argMatch: MatchResult? = null
+            for (pattern in argPatterns) {
+                argMatch = pattern.find(fullEval)
+                if (argMatch != null) {
+                    Log.d("PlayHub", "Matched with pattern: $pattern")
+                    break
+                }
+            }
+
+            if (argMatch == null) {
+                Log.e("PlayHub", "Could not parse eval args")
+                Log.d("PlayHub", "Eval last 300: ${fullEval.takeLast(300)}")
+                return
+            }
+
+            val p = argMatch.groupValues[1]
+            val a = argMatch.groupValues[2].toInt()
+            val c = argMatch.groupValues[3].toInt()
+            val kRaw = argMatch.groupValues[4]
+            val k = kRaw.split("|")
+
+            Log.d("PlayHub", "Parsed: p length=${p.length}, a=$a, c=$c, k size=${k.size}")
+            Log.d("PlayHub", "k first 20: ${k.take(20)}")
+            Log.d("PlayHub", "k last 20: ${k.takeLast(20)}")
+
+            val decoded = decodeEvalPacker(p, a, c, k)
+            Log.d("PlayHub", "Decoded length: ${decoded.length}")
+            Log.d("PlayHub", "Decoded first 3000: ${decoded.take(3000)}")
+
+            val sourceRegex = Regex("""file["\s]*[:=]["\s]*(https?://[^"'\s]+)""")
+            val sourceMatch = sourceRegex.find(decoded)?.groupValues?.getOrNull(1)
+            if (sourceMatch != null) {
+                Log.d("PlayHub", "Found source: $sourceMatch")
+                callback.invoke(
+                    newExtractorLink(
+                        hostName ?: "PlayHub",
+                        hostName ?: "PlayHub",
+                        sourceMatch,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = url
+                    }
+                )
+                return
+            }
+
+            val urlRegex = Regex("""(https?://[^"'\s]+\.(?:m3u8|txt|mp4))""")
+            val urlMatch = urlRegex.find(decoded)?.groupValues?.getOrNull(1)
+            if (urlMatch != null) {
+                Log.d("PlayHub", "Found URL: $urlMatch")
+                callback.invoke(
+                    newExtractorLink(
+                        hostName ?: "PlayHub",
+                        hostName ?: "PlayHub",
+                        urlMatch,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = url
+                    }
+                )
+                return
+            }
+
+            Log.e("PlayHub", "No video URL found in decoded eval")
         } catch (e: Exception) {
             Log.e("PlayHub", "resolveEmbed failed: ${e.message}")
         }
-    }
-
-    private fun decodeEval(p: String, a: Int, c: Int, k: List<String>): String {
-        var decoded = p
-        if (c == 0) return decoded
-        for (i in (0 until c).reversed()) {
-            if (k[i].isBlank()) continue
-            val baseStr = i.toString(a)
-            if (baseStr.length == 1) {
-                val regex = Regex("\\b$baseStr\\b")
-                decoded = regex.replace(decoded, k[i])
-            } else {
-                decoded = decoded.replace(baseStr, k[i])
-            }
-        }
-        return decoded
     }
 
     private val sha256Hash = sha256("Dx5VYERoLOVevR9C")
