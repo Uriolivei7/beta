@@ -12,7 +12,7 @@ class PlayhubProvider : MainAPI() {
     override var mainUrl = "https://www.playhubmax.com"
     override var name = "PlayHub"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
@@ -163,7 +163,7 @@ class PlayhubProvider : MainAPI() {
     data class DecryptedSource(
         val url: String,
         @JsonProperty("hostName") val hostName: String?,
-        val language: String?,
+        val languages: List<String>?,
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -293,18 +293,27 @@ class PlayhubProvider : MainAPI() {
         val splitIndex = data.indexOf(':')
         val type = if (splitIndex > 0) data.substring(0, splitIndex) else "content"
         val uuid = if (splitIndex > 0) data.substring(splitIndex + 1) else data
-        val sourceRes = app.get(
-            "$apiUrl/$type/$uuid/sources",
-            headers = headers
-        )
+        val url = "$apiUrl/$type/$uuid/sources"
+        Log.d("PlayHub", "Fetching sources: $url")
+        val sourceRes = app.get(url, headers = headers)
+        Log.d("PlayHub", "Response status: ${sourceRes.code}, body: ${sourceRes.text.take(100)}")
         val sourceParsed = tryParseJson<SourceResponse>(sourceRes.text)
-        if (sourceParsed == null || sourceParsed.data.isEmpty()) return false
+        if (sourceParsed == null || sourceParsed.data.isEmpty()) {
+            Log.e("PlayHub", "Failed to parse source response or empty data")
+            return false
+        }
 
-        val decrypted = tryParseJson<List<DecryptedSource>>(decryptData(sourceParsed.data))
-        if (decrypted.isNullOrEmpty()) return false
+        val decrypted = decryptData(sourceParsed.data)
+        Log.d("PlayHub", "Decrypted: $decrypted")
+        val sources = tryParseJson<List<DecryptedSource>>(decrypted)
+        if (sources.isNullOrEmpty()) {
+            Log.e("PlayHub", "Failed to parse decrypted sources or empty list")
+            return false
+        }
 
-        decrypted.forEach { source ->
+        sources.forEach { source ->
             if (source.url.isNotBlank()) {
+                Log.d("PlayHub", "Found link: ${source.hostName} -> ${source.url}")
                 callback.invoke(
                     newExtractorLink(
                         source.hostName ?: "PlayHub",

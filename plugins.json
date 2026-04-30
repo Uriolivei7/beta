@@ -527,7 +527,8 @@
     "authors": ["Ranita"],
     "description": "Contenido en Latino",
     "tvTypes": ["Movie", "TvSeries", "Cartoon", "Anime"],
-    "language": "es",
+    "iconUrl": "https://www.playhubmax.com/favicon.svg",
+    "language": "mx",
     "fileSize": 65000
   }
 ]
