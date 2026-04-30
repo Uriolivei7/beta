@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
 
 class PlayhubProvider : MainAPI() {
     override var mainUrl = "https://www.playhubmax.com"
@@ -313,14 +313,11 @@ class PlayhubProvider : MainAPI() {
         sources.forEach { source ->
             if (source.url.isNotBlank()) {
                 Log.d("PlayHub", "Found link: ${source.hostName} -> ${source.url}")
-                callback.invoke(
-                    newExtractorLink(
-                        source.hostName ?: "PlayHub",
-                        source.hostName ?: "PlayHub",
-                        source.url
-                    ) {
-                        this.referer = mainUrl
-                    }
+                loadExtractor(
+                    source.url,
+                    "$mainUrl/",
+                    subtitleCallback,
+                    callback
                 )
             }
         }
