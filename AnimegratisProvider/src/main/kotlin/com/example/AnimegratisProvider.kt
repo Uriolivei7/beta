@@ -20,6 +20,7 @@ import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
+import androidx.room.util.copy
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.addEpisodes
@@ -330,6 +331,7 @@ class AnimeGratisProvider : MainAPI() {
         return ""
     }
 
+    @Suppress("DEPRECATION", "DEPRECATION_ERROR")
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -348,10 +350,21 @@ class AnimeGratisProvider : MainAPI() {
             val langLabel = langMap[langGroup] ?: "SUB"
 
             if (serverUrl.isNotBlank()) {
-                val displayName = "[$langLabel] $serverName"
-                Log.d("AnimeGratis", "Server: $displayName -> $serverUrl")
+                val wrappedCallback: (ExtractorLink) -> Unit = { link ->
+                    callback(
+                        ExtractorLink(
+                            source = "[$langLabel] ${link.source}",
+                            name = "[$langLabel] ${link.name}",
+                            url = link.url,
+                            referer = link.referer,
+                            quality = link.quality,
+                            isM3u8 = link.isM3u8,
+                        )
+                    )
+                }
+                Log.d("AnimeGratis", "Server: [$langLabel] $serverName -> $serverUrl")
                 try {
-                    loadExtractor(serverUrl, mainUrl, subtitleCallback, callback)
+                    loadExtractor(serverUrl, mainUrl, subtitleCallback, wrappedCallback)
                 } catch (e: Exception) {
                     Log.e("AnimeGratis", "Error extractor $serverName: ${e.message}")
                 }

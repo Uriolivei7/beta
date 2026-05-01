@@ -1,5 +1,8 @@
 // use an integer for version numbers
 version = 1
+dependencies {
+    implementation("androidx.room:room-ktx:2.8.4")
+}
 
 
 cloudstream {
