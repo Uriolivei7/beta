@@ -246,12 +246,9 @@ class AnimeGratisProvider : MainAPI() {
         val slug = Regex("/anime/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: return extractEpisodesFromHtml(document, animeUrl, posterUrl)
 
-        val numEpisodes = extractEpisodeCount(document)
-        if (numEpisodes <= 0) return extractEpisodesFromHtml(document, animeUrl, posterUrl)
-
         try {
-            val apiUrl = "$mainUrl/api/episodes-range?slug=$slug&start=1&end=$numEpisodes"
-            Log.d("AnimeGratis", "API URL: $apiUrl (total: $numEpisodes)")
+            val apiUrl = "$mainUrl/api/episodes-range?slug=$slug&start=1&end=2000"
+            Log.d("AnimeGratis", "API URL: $apiUrl")
             val response = app.get(apiUrl).text
             val json = JSONObject(response)
             val episodesArray = json.optJSONArray("episodes")
