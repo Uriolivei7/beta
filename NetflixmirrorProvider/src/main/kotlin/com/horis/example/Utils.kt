@@ -193,6 +193,12 @@ data class NewTvSearchResult(
     val t: String
 )
 
+data class NewTvOttLogo(
+    val logo: String? = null,
+    val maxh: Int? = null,
+    val maxw: Int? = null
+)
+
 data class NewTvPostResponse(
     val status: String? = null,
     val title: String? = null,
@@ -209,7 +215,7 @@ data class NewTvPostResponse(
     val ua: String? = null,
     val hdsd: String? = null,
     val d_lang: String? = null,
-    val ott_logo: String? = null,
+    val ott_logo: NewTvOttLogo? = null,
     val title_name: String? = null,
     val row: String? = null,
     val moredetails: String? = null,
