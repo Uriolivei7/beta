@@ -319,10 +319,11 @@ class SoloLatinoProvider : MainAPI() {
         }
 
         Log.d("SoloLatino", "loadLinks - Total servidores detectados: ${serverUrls.size}")
+        Log.d("SoloLatino", "loadLinks - Lista de servidores: ${serverUrls.distinct()}")
 
         serverUrls.distinct().forEach { rawUrl ->
             val fixedSrc = fixUrl(rawUrl)
-            Log.d("SoloLatino", "loadLinks - Procesando: $fixedSrc")
+            Log.d("SoloLatino", "[loadLinks] Procesando servidor: raw=$rawUrl -> fixed=$fixedSrc")
 
             when {
                 fixedSrc.contains("embed69.org") -> {
@@ -333,28 +334,41 @@ class SoloLatinoProvider : MainAPI() {
                         "Referer" to fixedSrc,
                     )
                     val embedDoc = app.get(fixedSrc, headers = embed69Headers, timeout = 30000L).document
-                    embedDoc.select("script")
+                    val scriptContent = embedDoc.select("script")
                         .firstOrNull { it.html().contains("dataLink = [") }?.html()
-                        ?.substringAfter("dataLink = ")
-                        ?.substringBefore(";")?.let { dataLinkJson ->
-                            tryParseJson<List<ServersByLang>>(dataLinkJson)?.amap { lang ->
-                                val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
-                                if (encryptedLinks.isEmpty()) return@amap
-                                val body = LinksRequest(encryptedLinks).toJson()
-                                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                                val decryptedRes = app.post(
-                                    "https://embed69.org/api/decrypt",
-                                    requestBody = body,
-                                    headers = embed69Headers
-                                )
-                                val decrypted = tryParseJson<Loadlinks>(decryptedRes.text)
-                                if (decrypted?.success == true && decrypted.links.isNotEmpty()) {
-                                    decrypted.links.amap { link ->
-                                        loadSourceNameExtractor(lang.videoLanguage ?: "Latino", fixHostsLinks(link.link), fixedSrc, subtitleCallback, callback)
-                                    }
+                        ?: run {
+                            Log.e("SoloLatino", "[embed69] No se encontró script con dataLink")
+                            null
+                        }
+                    scriptContent?.substringAfter("dataLink = ")?.substringBefore(";")?.let { dataLinkJson ->
+                        Log.d("SoloLatino", "[embed69] dataLink JSON: $dataLinkJson")
+                        tryParseJson<List<ServersByLang>>(dataLinkJson)?.forEach { lang ->
+                            Log.d("SoloLatino", "[embed69] Idioma: ${lang.videoLanguage}, Embeds: ${lang.sortedEmbeds.size}")
+                            val encryptedLinks = lang.sortedEmbeds.mapNotNull {
+                                Log.d("SoloLatino", "[embed69] Embed: server=${it.servername}, link=${it.link}")
+                                it.link
+                            }
+                            if (encryptedLinks.isEmpty()) return@forEach
+                            val body = LinksRequest(encryptedLinks).toJson()
+                                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                            val decryptedRes = app.post(
+                                "https://embed69.org/api/decrypt",
+                                requestBody = body,
+                                headers = embed69Headers
+                            )
+                            Log.d("SoloLatino", "[embed69] Decrypt response: ${decryptedRes.text}")
+                            val decrypted = tryParseJson<Loadlinks>(decryptedRes.text)
+                            if (decrypted?.success == true && decrypted.links.isNotEmpty()) {
+                                decrypted.links.forEach { link ->
+                                    val finalLink = fixHostsLinks(link.link)
+                                    Log.d("SoloLatino", "[embed69] Link desencriptado: original=${link.link} -> final=$finalLink")
+                                    loadSourceNameExtractor(lang.videoLanguage ?: "Latino", finalLink, fixedSrc, subtitleCallback, callback)
                                 }
+                            } else {
+                                Log.e("SoloLatino", "[embed69] Decrypt falló o links vacíos")
                             }
                         }
+                    }
                 }
 
                 fixedSrc.contains("xupalace.org") -> {
@@ -363,23 +377,35 @@ class SoloLatinoProvider : MainAPI() {
                     val regex = Regex("""go_to_playerVast\s*\(\s*'([^']+)'""")
                     val foundLinks = regex.findAll(xupalaceHtml).map { it.groupValues[1] }.distinct().toList()
 
+                    Log.d("SoloLatino", "[xupalace] Links encontrados via regex: $foundLinks")
+
                     if (foundLinks.isNotEmpty()) {
-                        foundLinks.amap { link ->
-                            loadExtractor(fixHostsLinks(fixUrl(link)), fixedSrc, subtitleCallback, callback)
+                        foundLinks.forEach { link ->
+                            val finalLink = fixHostsLinks(fixUrl(link))
+                            Log.d("SoloLatino", "[xupalace] Cargando extractor: $finalLink")
+                            loadExtractor(finalLink, fixedSrc, subtitleCallback, callback)
                         }
                     } else {
                         val docX = Jsoup.parse(xupalaceHtml)
                         val liLinks = docX.select("li[onclick*='http']").mapNotNull {
                             val clickAttr = it.attr("onclick")
-                            Regex("'([^']+)'").find(clickAttr)?.groupValues?.get(1)
+                            val extracted = Regex("'([^']+)'").find(clickAttr)?.groupValues?.get(1)
+                            Log.d("SoloLatino", "[xupalace] Link en <li>: $extracted")
+                            extracted
                         }
-                        liLinks.amap { loadExtractor(fixHostsLinks(fixUrl(it)), fixedSrc, subtitleCallback, callback) }
+                        liLinks.forEach {
+                            val finalLink = fixHostsLinks(fixUrl(it))
+                            Log.d("SoloLatino", "[xupalace] Cargando extractor desde <li>: $finalLink")
+                            loadExtractor(finalLink, fixedSrc, subtitleCallback, callback)
+                        }
                     }
                 }
 
                 else -> {
-                    Log.d("SoloLatino", "BRANCH: Direct/Generic: $fixedSrc")
+                    Log.d("SoloLatino", "BRANCH: Direct/Generic")
                     val cleanUrl = fixHostsLinks(fixedSrc)
+                    Log.d("SoloLatino", "[Direct] URL original: $fixedSrc -> URL limpia: $cleanUrl")
+                    Log.d("SoloLatino", "[Direct] Intentando loadExtractor con referer: $targetUrl")
                     loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
                 }
             }
@@ -415,14 +441,16 @@ fun fixHostsLinks(url: String): String {
     return url
         .replaceFirst("https://hglink.to", "https://streamwish.to")
         .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
-        .replaceFirst("https://hglink.to", "https://streamwish.to")
+        .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+        .replaceFirst("https://filemoon.to", "https://filemoon.sx")
         .replaceFirst("https://swdyu.com", "https://streamwish.to")
         .replaceFirst("https://cybervynx.com", "https://streamwish.to")
         .replaceFirst("https://dumbalag.com", "https://streamwish.to")
         .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
         .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
         .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
-        .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+        .replaceFirst("https://vidhide.com", "https://vidhidepro.com")
+        .replaceFirst("https://vidhidevip.com", "https://vidhidepro.com")
         .replaceFirst("https://sblona.com", "https://watchsb.com")
         .replaceFirst("https://lulu.st", "https://lulustream.com")
         .replaceFirst("https://uqload.io", "https://uqload.com")
