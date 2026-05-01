@@ -217,7 +217,7 @@ class AnimeGratisProvider : MainAPI() {
         val yearSpan = allSpans.find { it.text().contains("📅") }?.text()
         val year = Regex("(\\d{4})").find(yearSpan ?: "")?.groupValues?.get(1)?.toIntOrNull()
 
-        val episodes = extractEpisodes(document, url)
+        val episodes = extractEpisodes(document, url, poster)
         Log.d("AnimeGratis", "Episodes found: ${episodes.size}")
 
         return if (episodes.isNotEmpty()) {
@@ -239,8 +239,30 @@ class AnimeGratisProvider : MainAPI() {
         }
     }
 
-    private fun extractEpisodes(document: Document, animeUrl: String): List<Episode> {
+    private fun extractEpisodes(document: Document, animeUrl: String, posterUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
+
+        document.select("#episodes-grid a[data-episode]").forEach { card ->
+            val epHref = card.attr("abs:href")
+            val epNum = card.attr("data-episode").toIntOrNull()
+            if (epHref.isNotBlank() && epNum != null) {
+                val epImg = card.selectFirst("img")
+                val epThumb = epImg?.run {
+                    attr("src").ifBlank {
+                        attr("data-fallback").ifBlank { attr("data-src") }
+                    }
+                }
+                episodes.add(
+                    newEpisode(epHref) {
+                        this.name = "Episodio $epNum"
+                        this.episode = epNum
+                        this.posterUrl = epThumb?.takeIf { it.isNotBlank() } ?: posterUrl.ifBlank { null }
+                    }
+                )
+            }
+        }
+
+        if (episodes.isNotEmpty()) return episodes
 
         val numEpisodes = extractEpisodeCount(document)
         if (numEpisodes <= 0) return episodes
@@ -255,6 +277,7 @@ class AnimeGratisProvider : MainAPI() {
                 newEpisode(epUrl) {
                     this.name = "Episodio $epNum"
                     this.episode = epNum
+                    this.posterUrl = posterUrl.ifBlank { null }
                 }
             )
         }
@@ -284,9 +307,10 @@ class AnimeGratisProvider : MainAPI() {
     }
 
     private fun extractPoster(document: Document): String {
-        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
-        if (!ogImage.isNullOrBlank() && ogImage.contains("cdn.animegratis.net")) {
-            return if (ogImage.startsWith("http")) ogImage else "$mainUrl$ogImage"
+        val pageImg = document.selectFirst("div.rounded-xl.overflow-hidden img[src*='cdn.animegratis.net']")
+        if (pageImg != null) {
+            val src = pageImg.attr("src")
+            if (src.isNotBlank() && !src.contains("cdn-cgi/image")) return src
         }
 
         val canonicalUrl = document.selectFirst("link[rel='canonical']")?.attr("href") ?: ""
@@ -294,14 +318,13 @@ class AnimeGratisProvider : MainAPI() {
             ?: Regex("/donghua/([^/]+)").find(canonicalUrl)?.groupValues?.get(1)
 
         if (!slug.isNullOrBlank()) {
-            return "https://cdn.animegratis.net/anime/$slug/images/cover.webp"
+            val cdnUrl = "https://cdn.animegratis.net/anime/$slug/images/cover.webp"
+            return cdnUrl
         }
 
-        val img = document.selectFirst("div.rounded-xl.overflow-hidden img[src]")
-            ?: document.selectFirst("img[src*='cdn.animegratis.net']")
-        if (img != null) {
-            val src = img.attr("src")
-            if (src.isNotBlank()) return src
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        if (!ogImage.isNullOrBlank()) {
+            return if (ogImage.startsWith("http")) ogImage else "$mainUrl$ogImage"
         }
 
         return ""
@@ -322,11 +345,11 @@ class AnimeGratisProvider : MainAPI() {
             val serverName = btn.attr("data-server")
             val serverUrl = btn.attr("data-url")
             val langGroup = btn.attr("data-lang-group")
-            val langLabel = langMap[langGroup] ?: ""
+            val langLabel = langMap[langGroup] ?: "SUB"
 
             if (serverUrl.isNotBlank()) {
-                val displayName = if (langLabel.isNotEmpty()) "[$langLabel] $serverName" else serverName
-                Log.d("AnimeGratis", "Servidor: $displayName -> $serverUrl")
+                val displayName = "[$langLabel] $serverName"
+                Log.d("AnimeGratis", "Server: $displayName -> $serverUrl")
                 try {
                     loadExtractor(serverUrl, mainUrl, subtitleCallback, callback)
                 } catch (e: Exception) {
@@ -338,7 +361,7 @@ class AnimeGratisProvider : MainAPI() {
         document.select("iframe#videoFrame").forEach { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank()) {
-                Log.d("AnimeGratis", "iframe: $src")
+                Log.d("AnimeGratis", "iframe videoFrame: $src")
                 loadExtractor(fixUrl(src), mainUrl, subtitleCallback, callback)
             }
         }
