@@ -13,24 +13,37 @@ class FilemoonExtractor : ExtractorApi() {
         Log.d("SoloLatino", "[Filemoon] URL recibida: $url")
         Log.d("SoloLatino", "[Filemoon] Referer: $referer")
 
-        val response = app.get(url, referer = referer)
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "en-US,en;q=0.5",
+        )
+        val response = app.get(url, headers = headers, referer = referer)
         Log.d("SoloLatino", "[Filemoon] HTML length: ${response.text.length}")
+        Log.d("SoloLatino", "[Filemoon] HTML preview: ${response.text.take(500)}")
 
-        val script = response.document.selectFirst("script:containsData(eval)")?.data()
-            ?: response.document.selectFirst("script:containsData(wurl)")?.data()
-            ?: response.document.selectFirst("script:containsData(sources:)")?.data()
-            ?: run {
-                Log.e("SoloLatino", "[Filemoon] No se encontró script con datos de video")
-                return
-            }
+        var script = response.document.select("script").find { it.data().contains("eval(") }?.data()
+        if (script == null || !script.contains("sources")) {
+            script = response.document.select("script").find { it.data().contains("wurl") }?.data()
+        }
+        if (script == null || !script.contains("sources")) {
+            script = response.document.select("script").find { it.data().contains("sources:") }?.data()
+        }
+        if (script == null) {
+            Log.e("SoloLatino", "[Filemoon] No se encontró script con datos de video")
+            return
+        }
 
         Log.d("SoloLatino", "[Filemoon] Script length: ${script.length}")
+        Log.d("SoloLatino", "[Filemoon] Script preview: ${script.take(300)}")
 
         val sources = Regex("""sources:\s*\[\{file:\s*"([^"]+)"""")
             .find(script)?.groupValues?.get(1)
             ?: Regex("""file:\s*"([^"]+\.m3u8[^"]*)"""")
             .find(script)?.groupValues?.get(1)
             ?: Regex("""wurl\s*=\s*"([^"]+)"""")
+            .find(script)?.groupValues?.get(1)
+            ?: Regex("""sources:\s*\[["']([^"']+)["']\]""")
             .find(script)?.groupValues?.get(1)
             ?: run {
                 Log.e("SoloLatino", "[Filemoon] No se pudo extraer URL del script")

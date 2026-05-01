@@ -446,6 +446,7 @@ fun fixHostsLinks(url: String): String {
         .replaceFirst("https://swdyu.com", "https://streamwish.to")
         .replaceFirst("https://cybervynx.com", "https://streamwish.to")
         .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+        .replaceFirst("https://minochinos.com", "https://vidhidepro.com")
         .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
         .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
         .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")

@@ -14,7 +14,6 @@ class SoloLatinoPlugin : Plugin() {
         registerExtractorAPI(StreamTapeExtractor())
         registerExtractorAPI(DoodStreamExtractor())
         registerExtractorAPI(UqloadExtractor())
-        registerExtractorAPI(LulustreamExtractor())
         registerExtractorAPI(WatchSBExtractor())
     }
 }
