@@ -243,7 +243,7 @@ class AnimeGratisProvider : MainAPI() {
     }
 
     private suspend fun extractEpisodes(document: Document, animeUrl: String, posterUrl: String): List<Episode> {
-        val slug = Regex("/anime/([^/]+)-anime").find(animeUrl)?.groupValues?.get(1)
+        val slug = Regex("/anime/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: return extractEpisodesFromHtml(document, animeUrl, posterUrl)
 
         try {
@@ -258,7 +258,7 @@ class AnimeGratisProvider : MainAPI() {
                     val ep = episodesArray.getJSONObject(i)
                     val epNum = ep.optInt("episode_number", 0)
                     if (epNum > 0) {
-                        val epUrl = "$mainUrl/anime/$slug-anime/episodio-$epNum"
+                        val epUrl = "$mainUrl/anime/$slug/episodio-$epNum"
                         val thumb = ep.optString("thumbnail_url", "")
                         val thumbUrl = if (thumb.isNotBlank()) {
                             if (thumb.startsWith("http")) thumb else "$mainUrl$thumb"
@@ -322,7 +322,7 @@ class AnimeGratisProvider : MainAPI() {
         val numEpisodes = extractEpisodeCount(document)
         if (numEpisodes <= 0) return episodes
 
-        val slug = Regex("/anime/([^/]+)-anime").find(animeUrl)?.groupValues?.get(1)
+        val slug = Regex("/anime/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: Regex("/donghua/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: return episodes
 
