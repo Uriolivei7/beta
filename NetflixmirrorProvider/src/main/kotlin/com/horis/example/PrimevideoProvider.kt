@@ -68,16 +68,12 @@ class PrimevideoProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val rawResponse = app.get(
+        val data = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).text
+        ).parsed<NewTvPostResponse>()
 
-        val data = rawResponse.let {
-            com.lagradost.cloudstream3.utils.AppUtils.parseJson<NewTvPostResponse>(it)
-        }
-
-        Log.d("Primevideo", "ua: ${data.ua}, hdsd: ${data.hdsd}, d_lang: ${data.d_lang}, moredetails: ${data.moredetails}")
+        Log.d("Primevideo", "ua: ${data.ua}")
         Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
         data.season?.forEachIndexed { i, s ->
             Log.d("Primevideo", "Season[$i]: id=${s.id}, s=${s.s}, selected=${s.selected}")
@@ -85,7 +81,6 @@ class PrimevideoProvider : MainAPI() {
         Log.d("Primevideo", "Episodes count: ${data.episodes?.size ?: 0}")
         Log.d("Primevideo", "nextPageSeason: ${data.nextPageSeason}")
         Log.d("Primevideo", "type: ${data.type}")
-        Log.d("Primevideo", "age: ${data.age}, certification: ${data.certification}, rated: ${data.rated}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -109,7 +104,7 @@ class PrimevideoProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                this.contentRating = data.ua ?: data.age ?: data.certification ?: data.rated
+                this.contentRating = data.ua
             }
         }
 
@@ -162,7 +157,7 @@ class PrimevideoProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            this.contentRating = data.ua ?: data.age ?: data.certification ?: data.rated
+            this.contentRating = data.ua
         }
     }
 
@@ -178,11 +173,6 @@ class PrimevideoProvider : MainAPI() {
                 params = mapOf("id" to sid, "page" to pg.toString()),
                 headers = buildNewTvHeaders(ott)
             ).parsed<NewTvEpisodesResponse>()
-
-            Log.d("Primevideo", "getEpisodes: sid=$sid page=$pg got=${data.episodes?.size ?: 0}")
-            data.episodes?.forEach { e ->
-                Log.d("Primevideo", "  ep: t=${e.t}, s=${e.s}, ep=${e.ep}")
-            }
 
             data.episodes.orEmpty().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {

@@ -67,18 +67,13 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val rawResponse = app.get(
+        val data = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).text
+        ).parsed<NewTvPostResponse>()
 
-        val data = rawResponse.let {
-            com.lagradost.cloudstream3.utils.AppUtils.parseJson<NewTvPostResponse>(it)
-        }
-
-        Log.d("Netflix", "ua: ${data.ua}, hdsd: ${data.hdsd}, d_lang: ${data.d_lang}, moredetails: ${data.moredetails}")
+        Log.d("Netflix", "ua: ${data.ua}")
         Log.d("Netflix", "Seasons count: ${data.season?.size ?: 0}")
-        Log.d("Netflix", "age: ${data.age}, certification: ${data.certification}, rated: ${data.rated}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -102,7 +97,7 @@ class NetflixProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                this.contentRating = data.ua ?: data.age ?: data.certification ?: data.rated
+                this.contentRating = data.ua
             }
         }
 
@@ -153,7 +148,7 @@ class NetflixProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            this.contentRating = data.ua ?: data.age ?: data.certification ?: data.rated
+            this.contentRating = data.ua
         }
     }
 

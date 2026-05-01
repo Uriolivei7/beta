@@ -199,6 +199,7 @@ data class NewTvOttLogo(
     val maxw: Int? = null
 )
 
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
 data class NewTvPostResponse(
     val status: String? = null,
     val title: String? = null,
@@ -209,26 +210,16 @@ data class NewTvPostResponse(
     val cast: String? = null,
     val match: String? = null,
     val runtime: String? = null,
-    val age: String? = null,
-    val certification: String? = null,
-    val rated: String? = null,
     val ua: String? = null,
     val hdsd: String? = null,
     val d_lang: String? = null,
-    val ott_logo: NewTvOttLogo? = null,
-    val title_name: String? = null,
-    val row: String? = null,
-    val moredetails: String? = null,
-    val last_ep: String? = null,
-    val lang: String? = null,
+    val moredetails: List<String>? = null,
     val episodes: List<NewTvApiEpisode?>? = null,
     val season: List<NewTvSeason>? = null,
     val nextPageSeason: String? = null,
     val nextPageShow: Int? = null,
-    val nextPage: Int? = null,
     val type: String? = null,
     val main_poster: String? = null,
-    val morelike_poster: String? = null,
     val ep_poster: String? = null,
     val suggest: List<NewTvSuggest>? = null
 )
