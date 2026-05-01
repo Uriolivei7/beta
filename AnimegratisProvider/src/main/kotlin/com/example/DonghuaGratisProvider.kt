@@ -135,7 +135,7 @@ class DonghuaGratisProvider : MainAPI() {
 
         val year = Regex("(\\d{4})").find(document.text())?.groupValues?.get(1)?.toIntOrNull()
 
-        val episodes = extractEpisodes(document, url)
+        val episodes = extractEpisodes(document, url, poster)
         Log.d("DonghuaGratis", "Episodes found: ${episodes.size}")
 
         return if (episodes.isNotEmpty()) {
@@ -157,7 +157,7 @@ class DonghuaGratisProvider : MainAPI() {
         }
     }
 
-    private fun extractEpisodes(document: Document, animeUrl: String): List<Episode> {
+    private fun extractEpisodes(document: Document, animeUrl: String, posterUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
         document.select("#dh-episodes-grid a[data-episode]").forEach { card ->
@@ -168,6 +168,7 @@ class DonghuaGratisProvider : MainAPI() {
                     newEpisode(epHref) {
                         this.name = "Episodio $epNum"
                         this.episode = epNum
+                        this.posterUrl = posterUrl.ifBlank { null }
                     }
                 )
             }
@@ -187,6 +188,7 @@ class DonghuaGratisProvider : MainAPI() {
                 newEpisode(epUrl) {
                     this.name = "Episodio $epNum"
                     this.episode = epNum
+                    this.posterUrl = posterUrl.ifBlank { null }
                 }
             )
         }
