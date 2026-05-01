@@ -99,13 +99,12 @@ class PrimevideoProvider : MainAPI() {
         } else {
             val selectedSeasonIdx = data.season?.indexOfFirst { it.selected == true }?.takeIf { it >= 0 }
             val selectedSeasonId = selectedSeasonIdx?.let { data.season?.getOrNull(it)?.id } ?: data.nextPageSeason
-            val selectedSeasonNumber = selectedSeasonIdx?.plus(1)
 
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
+                    season = it.s?.toIntOrNull() ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = pvEpPoster(it.id.orEmpty())
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
@@ -113,18 +112,18 @@ class PrimevideoProvider : MainAPI() {
             }
 
             if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank())
-                episodes.addAll(getEpisodes(title, selectedSeasonId, 2, selectedSeasonNumber))
+                episodes.addAll(getEpisodes(title, selectedSeasonId, 2))
 
-            data.season?.forEachIndexed { index, season ->
+            data.season?.forEach { season ->
                 if (season.id != selectedSeasonId && !season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1, index + 1))
+                    episodes.addAll(getEpisodes(title, season.id, 1))
             }
         }
 
         if (data.type == "t" && episodes.isEmpty() && !data.season.isNullOrEmpty()) {
-            data.season.forEachIndexed { index, season ->
+            data.season.forEach { season ->
                 if (!season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1, index + 1))
+                    episodes.addAll(getEpisodes(title, season.id, 1))
             }
         }
 
@@ -139,8 +138,7 @@ class PrimevideoProvider : MainAPI() {
     }
 
     private suspend fun getEpisodes(
-        title: String, sid: String, page: Int,
-        seasonNumber: Int? = null
+        title: String, sid: String, page: Int
     ): List<Episode> {
         val apiBase = resolveApiUrl()
         val episodes = arrayListOf<Episode>()
@@ -156,7 +154,7 @@ class PrimevideoProvider : MainAPI() {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
+                    season = it.s?.toIntOrNull() ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = pvEpPoster(it.id.orEmpty())
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
