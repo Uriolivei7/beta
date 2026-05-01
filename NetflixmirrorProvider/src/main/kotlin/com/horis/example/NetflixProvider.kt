@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import android.util.Log
+import org.json.JSONObject
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -66,10 +67,19 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val data = app.get(
+        val rawResponse = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        ).text
+
+        val keys = org.json.JSONObject(rawResponse).keys()
+        val allKeys = mutableListOf<String>()
+        while (keys.hasNext()) allKeys.add(keys.next())
+        Log.d("Netflix", "ALL JSON KEYS: ${allKeys.joinToString(", ")}")
+
+        val data = rawResponse.let {
+            com.lagradost.cloudstream3.utils.AppUtils.parseJson<NewTvPostResponse>(it)
+        }
 
         Log.d("Netflix", "Seasons count: ${data.season?.size ?: 0}")
         Log.d("Netflix", "age: ${data.age}, certification: ${data.certification}, rated: ${data.rated}")

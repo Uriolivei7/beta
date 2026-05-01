@@ -68,10 +68,19 @@ class PrimevideoProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val data = app.get(
+        val rawResponse = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        ).text
+
+        val keys = org.json.JSONObject(rawResponse).keys()
+        val allKeys = mutableListOf<String>()
+        while (keys.hasNext()) allKeys.add(keys.next())
+        Log.d("Primevideo", "ALL JSON KEYS: ${allKeys.joinToString(", ")}")
+
+        val data = rawResponse.let {
+            com.lagradost.cloudstream3.utils.AppUtils.parseJson<NewTvPostResponse>(it)
+        }
 
         Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
         data.season?.forEachIndexed { i, s ->
