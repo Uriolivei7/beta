@@ -174,15 +174,15 @@ class DonghuaGratisProvider : MainAPI() {
             }
         }
 
-        if (episodes.isNotEmpty()) return episodes
-
         val numEpisodes = extractEpisodeCount(document)
         if (numEpisodes <= 0) return episodes
 
         val slug = Regex("/donghua/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: return episodes
 
+        val foundNums = episodes.map { it.episode }.toSet()
         for (epNum in 1..numEpisodes) {
+            if (epNum in foundNums) continue
             val epUrl = "$mainUrl/donghua/$slug/episodio-$epNum"
             episodes.add(
                 newEpisode(epUrl) {
@@ -192,7 +192,8 @@ class DonghuaGratisProvider : MainAPI() {
                 }
             )
         }
-        return episodes
+
+        return episodes.sortedBy { it.episode }
     }
 
     private fun extractEpisodeCount(document: Document): Int {

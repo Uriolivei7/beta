@@ -42,8 +42,7 @@ class AnimeGratisProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/directorio" to "Animes",
-        "$mainUrl/directorio/doblado" to "Doblados"
+        "$mainUrl/directorio" to "Animes"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
