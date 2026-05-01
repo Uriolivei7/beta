@@ -9,11 +9,6 @@ import com.lagradost.cloudstream3.MainAPI
 class SoloLatinoPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(SoloLatinoProvider())
-        registerExtractorAPI(FilemoonExtractor())
-        registerExtractorAPI(VidhideExtractor())
-        registerExtractorAPI(StreamTapeExtractor())
-        registerExtractorAPI(DoodStreamExtractor())
-        registerExtractorAPI(UqloadExtractor())
-        registerExtractorAPI(WatchSBExtractor())
+        registerExtractorAPI(ByseExtractor())
     }
 }

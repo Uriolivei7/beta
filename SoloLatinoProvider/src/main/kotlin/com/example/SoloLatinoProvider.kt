@@ -440,18 +440,11 @@ suspend fun loadSourceNameExtractor(
 fun fixHostsLinks(url: String): String {
     return url
         .replaceFirst("https://hglink.to", "https://streamwish.to")
-        .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
         .replaceFirst("https://filemoon.link", "https://filemoon.sx")
         .replaceFirst("https://filemoon.to", "https://filemoon.sx")
         .replaceFirst("https://swdyu.com", "https://streamwish.to")
         .replaceFirst("https://cybervynx.com", "https://streamwish.to")
         .replaceFirst("https://dumbalag.com", "https://streamwish.to")
-        .replaceFirst("https://minochinos.com", "https://vidhidepro.com")
-        .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
-        .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
-        .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
-        .replaceFirst("https://vidhide.com", "https://vidhidepro.com")
-        .replaceFirst("https://vidhidevip.com", "https://vidhidepro.com")
         .replaceFirst("https://sblona.com", "https://watchsb.com")
         .replaceFirst("https://lulu.st", "https://lulustream.com")
         .replaceFirst("https://uqload.io", "https://uqload.com")
