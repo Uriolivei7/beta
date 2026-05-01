@@ -244,14 +244,10 @@ class AnimeGratisProvider : MainAPI() {
 
     private suspend fun extractEpisodes(document: Document, animeUrl: String, posterUrl: String): List<Episode> {
         val slug = Regex("/anime/([^/]+)-anime").find(animeUrl)?.groupValues?.get(1)
-            ?: Regex("/donghua/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: return extractEpisodesFromHtml(document, animeUrl, posterUrl)
 
-        val numEpisodes = extractEpisodeCount(document)
-        if (numEpisodes <= 0) return extractEpisodesFromHtml(document, animeUrl, posterUrl)
-
         try {
-            val apiUrl = "$mainUrl/api/episodes-range?slug=$slug&start=1&end=$numEpisodes"
+            val apiUrl = "$mainUrl/api/episodes-range?slug=$slug&start=1&end=9999"
             Log.d("AnimeGratis", "API URL: $apiUrl")
             val response = app.get(apiUrl).text
             val json = JSONObject(response)
@@ -262,11 +258,16 @@ class AnimeGratisProvider : MainAPI() {
                     val ep = episodesArray.getJSONObject(i)
                     val epNum = ep.optInt("episode_number", 0)
                     if (epNum > 0) {
-                        val epUrl = "$mainUrl/anime/$slug/episodio-$epNum"
+                        val epUrl = "$mainUrl/anime/$slug-anime/episodio-$epNum"
                         val thumb = ep.optString("thumbnail_url", "")
                         val thumbUrl = if (thumb.isNotBlank()) {
                             if (thumb.startsWith("http")) thumb else "$mainUrl$thumb"
                         } else posterUrl.ifBlank { null }
+
+                        val titleJson = ep.opt("title")
+                        val epTitle = if (titleJson != null && titleJson != JSONObject.NULL && titleJson.toString().isNotBlank()) {
+                            titleJson.toString()
+                        } else "Episodio $epNum"
 
                         val playersArray = ep.optJSONArray("players") ?: JSONArray()
                         val epData = JSONObject().apply {
@@ -276,7 +277,7 @@ class AnimeGratisProvider : MainAPI() {
 
                         episodes.add(
                             newEpisode(epData.toString()) {
-                                this.name = ep.optString("title", "Episodio $epNum")
+                                this.name = epTitle
                                 this.episode = epNum
                                 this.posterUrl = thumbUrl
                             }
