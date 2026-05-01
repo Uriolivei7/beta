@@ -20,7 +20,16 @@ class FilemoonExtractor : ExtractorApi() {
         )
         val response = app.get(url, headers = headers, referer = referer)
         Log.d("SoloLatino", "[Filemoon] HTML length: ${response.text.length}")
-        Log.d("SoloLatino", "[Filemoon] HTML preview: ${response.text.take(500)}")
+        Log.d("SoloLatino", "[Filemoon] Todos los scripts en la página:")
+        response.document.select("script[src]").forEach {
+            Log.d("SoloLatino", "[Filemoon]   Script src: ${it.attr("src")}")
+        }
+        response.document.select("script").forEachIndexed { i, el ->
+            val data = el.data()
+            if (data.isNotBlank()) {
+                Log.d("SoloLatino", "[Filemoon]   Script inline #$i (${data.length} chars): ${data.take(200)}")
+            }
+        }
 
         var script = response.document.select("script").find { it.data().contains("eval(") }?.data()
         if (script == null || !script.contains("sources")) {
@@ -29,8 +38,11 @@ class FilemoonExtractor : ExtractorApi() {
         if (script == null || !script.contains("sources")) {
             script = response.document.select("script").find { it.data().contains("sources:") }?.data()
         }
+        if (script == null || !script.contains("sources")) {
+            script = response.document.select("script").find { it.data().contains("player_") || it.data().contains("playerConfig") }?.data()
+        }
         if (script == null) {
-            Log.e("SoloLatino", "[Filemoon] No se encontró script con datos de video")
+            Log.e("SoloLatino", "[Filemoon] No se encontró script con datos de video - probablemente SPA o Cloudflare")
             return
         }
 
@@ -44,6 +56,8 @@ class FilemoonExtractor : ExtractorApi() {
             ?: Regex("""wurl\s*=\s*"([^"]+)"""")
             .find(script)?.groupValues?.get(1)
             ?: Regex("""sources:\s*\[["']([^"']+)["']\]""")
+            .find(script)?.groupValues?.get(1)
+            ?: Regex("""hls:\s*"([^"]+)"""")
             .find(script)?.groupValues?.get(1)
             ?: run {
                 Log.e("SoloLatino", "[Filemoon] No se pudo extraer URL del script")
@@ -76,19 +90,44 @@ class VidhideExtractor : ExtractorApi() {
 
         val response = app.get(url, referer = referer)
         Log.d("SoloLatino", "[Vidhide] HTML length: ${response.text.length}")
-
-        val script = response.document.select("script").find { it.data().contains("sources:") }?.data()
-            ?: response.document.select("script").find { it.data().contains("file:") }?.data()
-            ?: run {
-                Log.e("SoloLatino", "[Vidhide] No se encontró script con datos de video")
-                return
+        Log.d("SoloLatino", "[Vidhide] Todos los scripts en la página:")
+        response.document.select("script[src]").forEach {
+            Log.d("SoloLatino", "[Vidhide]   Script src: ${it.attr("src")}")
+        }
+        response.document.select("script").forEachIndexed { i, el ->
+            val data = el.data()
+            if (data.isNotBlank()) {
+                Log.d("SoloLatino", "[Vidhide]   Script inline #$i (${data.length} chars): ${data.take(300)}")
             }
+        }
+
+        var script = response.document.select("script").find { it.data().contains("sources:") }?.data()
+        if (script == null) {
+            script = response.document.select("script").find { it.data().contains("file:") && (it.data().contains(".m3u8") || it.data().contains("video")) }?.data()
+        }
+        if (script == null) {
+            script = response.document.select("script").find { it.data().contains("eval(") }?.data()
+        }
+        if (script == null) {
+            script = response.document.select("script").find { it.data().contains("player.js") || it.data().contains("PlayerConfig") }?.data()
+        }
+        if (script == null) {
+            Log.e("SoloLatino", "[Vidhide] No se encontró script con datos de video")
+            return
+        }
 
         Log.d("SoloLatino", "[Vidhide] Script length: ${script.length}")
+        Log.d("SoloLatino", "[Vidhide] Script preview: ${script.take(300)}")
 
         val fileUrl = Regex("""file:\s*"([^"]+)"""")
             .find(script)?.groupValues?.get(1)
             ?: Regex("""sources:\s*\[\{file:\s*"([^"]+)"""")
+            .find(script)?.groupValues?.get(1)
+            ?: Regex("""hls:\s*"([^"]+)"""")
+            .find(script)?.groupValues?.get(1)
+            ?: Regex("""video_url:\s*"([^"]+)"""")
+            .find(script)?.groupValues?.get(1)
+            ?: Regex("""src:\s*"([^"]+)"""")
             .find(script)?.groupValues?.get(1)
             ?: run {
                 Log.e("SoloLatino", "[Vidhide] No se pudo extraer URL del script")
