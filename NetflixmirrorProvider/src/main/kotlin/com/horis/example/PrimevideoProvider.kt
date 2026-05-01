@@ -73,6 +73,14 @@ class PrimevideoProvider : MainAPI() {
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).parsed<NewTvPostResponse>()
 
+        Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
+        data.season?.forEachIndexed { i, s ->
+            Log.d("Primevideo", "Season[$i]: id=${s.id}, s=${s.s}, selected=${s.selected}")
+        }
+        Log.d("Primevideo", "Episodes count: ${data.episodes?.size ?: 0}")
+        Log.d("Primevideo", "nextPageSeason: ${data.nextPageSeason}")
+        Log.d("Primevideo", "type: ${data.type}")
+
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
@@ -162,6 +170,11 @@ class PrimevideoProvider : MainAPI() {
                 params = mapOf("id" to sid, "page" to pg.toString()),
                 headers = buildNewTvHeaders(ott)
             ).parsed<NewTvEpisodesResponse>()
+
+            Log.d("Primevideo", "getEpisodes: sid=$sid page=$pg got=${data.episodes?.size ?: 0}")
+            data.episodes?.forEach { e ->
+                Log.d("Primevideo", "  ep: t=${e.t}, s=${e.s}, ep=${e.ep}")
+            }
 
             data.episodes.orEmpty().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {

@@ -56,11 +56,6 @@ class NetflixProvider : MainAPI() {
         }
     }
 
-    private fun extractSeasonNumber(s: String?): Int? {
-        if (s.isNullOrBlank()) return null
-        return Regex("(\\d+)").find(s)?.groupValues?.get(1)?.toIntOrNull()
-    }
-
     override suspend fun load(url: String): LoadResponse? {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
@@ -102,13 +97,13 @@ class NetflixProvider : MainAPI() {
         } else {
             val selectedSeasonIdx = data.season?.indexOfFirst { it.selected == true }?.takeIf { it >= 0 }
             val selectedSeasonId = selectedSeasonIdx?.let { data.season?.getOrNull(it)?.id } ?: data.nextPageSeason
-            val selectedSeasonNumber = extractSeasonNumber(data.season?.find { it.selected == true }?.s)
+            val selectedSeasonNumber = selectedSeasonIdx?.plus(1)
 
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = selectedSeasonNumber ?: extractSeasonNumber(it.s)
+                    season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
@@ -118,20 +113,16 @@ class NetflixProvider : MainAPI() {
             if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank())
                 episodes.addAll(getEpisodes(title, selectedSeasonId, 2, data.ep_poster, selectedSeasonNumber))
 
-            data.season?.forEach { season ->
-                if (season.id != selectedSeasonId && !season.id.isNullOrBlank()) {
-                    val num = extractSeasonNumber(season.s)
-                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, num))
-                }
+            data.season?.forEachIndexed { index, season ->
+                if (season.id != selectedSeasonId && !season.id.isNullOrBlank())
+                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, index + 1))
             }
         }
 
         if (data.type == "t" && episodes.isEmpty() && !data.season.isNullOrEmpty()) {
-            data.season.forEach { season ->
-                if (!season.id.isNullOrBlank()) {
-                    val num = extractSeasonNumber(season.s)
-                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, num))
-                }
+            data.season.forEachIndexed { index, season ->
+                if (!season.id.isNullOrBlank())
+                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, index + 1))
             }
         }
 
@@ -163,7 +154,7 @@ class NetflixProvider : MainAPI() {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = seasonNumber ?: extractSeasonNumber(it.s)
+                    season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = buildPosterUrl(epPoster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
@@ -176,7 +167,6 @@ class NetflixProvider : MainAPI() {
         return episodes
     }
 
-    @Suppress("DEPRECATION")
     override suspend fun loadLinks(
         data: String, isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
