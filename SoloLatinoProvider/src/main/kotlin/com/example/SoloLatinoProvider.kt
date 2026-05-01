@@ -243,7 +243,9 @@ class SoloLatinoProvider : MainAPI() {
                         this.episode = episodeNumber
                         this.posterUrl = epPoster
                         this.description = epDesc.ifBlank { null }
-                        this.addDate(epDate.takeIf { it.isNotBlank() })
+                        if (epReleaseDate != null) {
+                            this.addDate(Date(epReleaseDate))
+                        }
                     }
                 } else null
             }
