@@ -341,7 +341,7 @@ class AnimeGratisProvider : MainAPI() {
         Log.d("AnimeGratis", "loadLinks URL: $data")
         val document = app.get(data).document
 
-        val langMap = mapOf("ja" to "SUB", "cast" to "CAST", "lat" to "LAT")
+        val langMap = mapOf("ja" to "Subtitulado", "cast" to "Castellano", "lat" to "Latino")
 
         document.select("button.server-btn").forEach { btn ->
             val serverName = btn.attr("data-server")
