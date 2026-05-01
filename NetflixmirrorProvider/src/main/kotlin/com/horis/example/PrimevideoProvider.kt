@@ -73,15 +73,11 @@ class PrimevideoProvider : MainAPI() {
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).text
 
-        val keys = org.json.JSONObject(rawResponse).keys()
-        val allKeys = mutableListOf<String>()
-        while (keys.hasNext()) allKeys.add(keys.next())
-        Log.d("Primevideo", "ALL JSON KEYS: ${allKeys.joinToString(", ")}")
-
         val data = rawResponse.let {
             com.lagradost.cloudstream3.utils.AppUtils.parseJson<NewTvPostResponse>(it)
         }
 
+        Log.d("Primevideo", "ua: ${data.ua}, hdsd: ${data.hdsd}, d_lang: ${data.d_lang}, moredetails: ${data.moredetails}")
         Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
         data.season?.forEachIndexed { i, s ->
             Log.d("Primevideo", "Season[$i]: id=${s.id}, s=${s.s}, selected=${s.selected}")
@@ -113,7 +109,7 @@ class PrimevideoProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                this.contentRating = data.age ?: data.certification ?: data.rated
+                this.contentRating = data.ua ?: data.age ?: data.certification ?: data.rated
             }
         }
 
@@ -166,7 +162,7 @@ class PrimevideoProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            this.contentRating = data.age ?: data.certification ?: data.rated
+            this.contentRating = data.ua ?: data.age ?: data.certification ?: data.rated
         }
     }
 
