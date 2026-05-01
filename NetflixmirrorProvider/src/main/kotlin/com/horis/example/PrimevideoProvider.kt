@@ -80,6 +80,7 @@ class PrimevideoProvider : MainAPI() {
         Log.d("Primevideo", "Episodes count: ${data.episodes?.size ?: 0}")
         Log.d("Primevideo", "nextPageSeason: ${data.nextPageSeason}")
         Log.d("Primevideo", "type: ${data.type}")
+        Log.d("Primevideo", "age: ${data.age}, certification: ${data.certification}, rated: ${data.rated}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -103,6 +104,7 @@ class PrimevideoProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
+                this.contentRating = data.age ?: data.certification ?: data.rated
             }
         }
 
@@ -155,6 +157,7 @@ class PrimevideoProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
+            this.contentRating = data.age ?: data.certification ?: data.rated
         }
     }
 
