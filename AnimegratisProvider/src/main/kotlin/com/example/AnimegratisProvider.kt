@@ -247,15 +247,22 @@ class AnimeGratisProvider : MainAPI() {
             ?: return extractEpisodesFromHtml(document, animeUrl, posterUrl)
 
         try {
-            val apiUrl = "$mainUrl/api/episodes-range?slug=$slug&start=1&end=2000"
-            Log.d("AnimeGratis", "API URL: $apiUrl")
-            val response = app.get(apiUrl).text
-            val json = JSONObject(response)
-            val episodesArray = json.optJSONArray("episodes")
-            if (episodesArray != null && episodesArray.length() > 0) {
-                val episodes = mutableListOf<Episode>()
-                for (i in 0 until episodesArray.length()) {
-                    val ep = episodesArray.getJSONObject(i)
+            val episodes = mutableListOf<Episode>()
+            var start = 1
+            val chunkSize = 100
+
+            while (true) {
+                val end = start + chunkSize - 1
+                val apiUrl = "$mainUrl/api/episodes-range?slug=$slug&start=$start&end=$end"
+                Log.d("AnimeGratis", "API chunk: $start-$end")
+                val response = app.get(apiUrl).text
+                val json = JSONObject(response)
+                val chunkArray = json.optJSONArray("episodes")
+
+                if (chunkArray == null || chunkArray.length() == 0) break
+
+                for (i in 0 until chunkArray.length()) {
+                    val ep = chunkArray.getJSONObject(i)
                     val epNum = ep.optInt("episode_number", 0)
                     if (epNum > 0) {
                         val epUrl = "$mainUrl/anime/$slug/episodio-$epNum"
@@ -284,10 +291,14 @@ class AnimeGratisProvider : MainAPI() {
                         )
                     }
                 }
-                if (episodes.isNotEmpty()) {
-                    Log.d("AnimeGratis", "API returned ${episodes.size} episodes")
-                    return episodes
-                }
+
+                if (chunkArray.length() < chunkSize) break
+                start = end + 1
+            }
+
+            if (episodes.isNotEmpty()) {
+                Log.d("AnimeGratis", "API returned ${episodes.size} episodes total")
+                return episodes
             }
         } catch (e: Exception) {
             Log.e("AnimeGratis", "API error: ${e.message}")
