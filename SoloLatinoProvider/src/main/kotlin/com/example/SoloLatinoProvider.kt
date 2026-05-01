@@ -244,7 +244,7 @@ class SoloLatinoProvider : MainAPI() {
                         this.posterUrl = epPoster
                         this.description = epDesc.ifBlank { null }
                         if (epReleaseDate != null) {
-                            this.addDate(Date(epReleaseDate))
+                            this.addDate(java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date(epReleaseDate)))
                         }
                     }
                 } else null
