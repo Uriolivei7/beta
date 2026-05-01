@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
+import android.util.Log
 
 class PrimevideoProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -66,6 +67,14 @@ class PrimevideoProvider : MainAPI() {
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).parsed<NewTvPostResponse>()
+
+        Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
+        data.season?.forEachIndexed { i, s ->
+            Log.d("Primevideo", "Season[$i]: id=${s.id}, s=${s.s}, selected=${s.selected}")
+        }
+        Log.d("Primevideo", "Episodes count: ${data.episodes?.size ?: 0}")
+        Log.d("Primevideo", "nextPageSeason: ${data.nextPageSeason}")
+        Log.d("Primevideo", "type: ${data.type}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
