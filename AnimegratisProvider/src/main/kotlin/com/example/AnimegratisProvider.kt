@@ -90,14 +90,14 @@ class AnimeGratisProvider : MainAPI() {
                 val poster = item.optString("fb", "").ifEmpty {
                     item.optString("im", "")
                 }
+                val ty = item.optString("ty", "")
 
                 val href = if (slug.isNotBlank()) "$mainUrl/anime/$slug-anime" else ""
                 if (title.isNotBlank() && href.isNotBlank()) {
-                    val ty = item.optString("ty", "")
                     val tvType = if (ty == "movie") TvType.AnimeMovie else TvType.Anime
                     results.add(
                         newTvSeriesSearchResponse(title, href, tvType) {
-                            this.posterUrl = fixUrlNull(poster)
+                            this.posterUrl = if (poster.startsWith("http")) poster else "$mainUrl$poster"
                         }
                     )
                 }
@@ -105,6 +105,39 @@ class AnimeGratisProvider : MainAPI() {
             results
         } catch (e: Exception) {
             Log.e("AnimeGratis", "Error parsing SSR JSON: ${e.message}")
+            results
+        }
+    }
+
+    private fun parseSearchJson(json: String): List<SearchResponse> {
+        val results = mutableListOf<SearchResponse>()
+        return try {
+            val root = JSONObject(json)
+            val animesArray = root.optJSONArray("animes") ?: return results
+            Log.d("AnimeGratis", "API search results: ${animesArray.length()}")
+
+            for (i in 0 until animesArray.length()) {
+                val item = animesArray.getJSONObject(i)
+                val title = item.optString("t", "")
+                val slug = item.optString("sl", "")
+                val poster = item.optString("fb", "").ifEmpty {
+                    item.optString("im", "")
+                }
+                val ty = item.optString("ty", "")
+
+                val href = if (slug.isNotBlank()) "$mainUrl/anime/$slug-anime" else ""
+                if (title.isNotBlank() && href.isNotBlank()) {
+                    val tvType = if (ty == "movie") TvType.AnimeMovie else TvType.Anime
+                    results.add(
+                        newTvSeriesSearchResponse(title, href, tvType) {
+                            this.posterUrl = poster
+                        }
+                    )
+                }
+            }
+            results
+        } catch (e: Exception) {
+            Log.e("AnimeGratis", "Error parsing search API JSON: ${e.message}")
             results
         }
     }
@@ -128,30 +161,32 @@ class AnimeGratisProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/directorio?q=$query"
-        Log.d("AnimeGratis", "search URL: $url")
-        val document = app.get(url).document
+        val apiUrl = "$mainUrl/api/animes/directory?page=1&limit=100&q=${query.replace(" ", "+")}&genre=&type=&status=&sort=&year=&score_min="
+        Log.d("AnimeGratis", "search API URL: $apiUrl")
 
-        val ssrScript = document.selectFirst("script#ssr-init")
-        if (ssrScript != null) {
-            val allItems = parseSsrJson(ssrScript.data())
-            if (allItems.isNotEmpty()) {
-                Log.d("AnimeGratis", "SSR search items before filter: ${allItems.size}")
-                val q = query.lowercase()
-                val filtered = allItems.filter { item ->
-                    val name = item.name.lowercase()
-                    val urlPart = item.url.lowercase()
-                    val posterPart = (item.posterUrl ?: "").lowercase()
-                    name.contains(q) || urlPart.contains(q) || posterPart.contains(q) ||
-                    name.contains(query, ignoreCase = true) || urlPart.contains(query, ignoreCase = true)
+        return try {
+            val response = app.get(apiUrl).text
+            val apiResults = parseSearchJson(response)
+            if (apiResults.isNotEmpty()) return apiResults
+
+            val docUrl = "$mainUrl/directorio?q=$query"
+            Log.d("AnimeGratis", "Falling back to SSR search: $docUrl")
+            val document = app.get(docUrl).document
+
+            val ssrScript = document.selectFirst("script#ssr-init")
+            if (ssrScript != null) {
+                val allItems = parseSsrJson(ssrScript.data())
+                if (allItems.isNotEmpty()) {
+                    val q = query.lowercase()
+                    return allItems.filter { it.name.lowercase().contains(q) }
                 }
-                Log.d("AnimeGratis", "SSR search items after filter: ${filtered.size}")
-                if (filtered.isNotEmpty()) return filtered
             }
-        }
 
-        Log.d("AnimeGratis", "Falling back to HTML card scraping for search")
-        return document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
+            document.select("div.anime-card").mapNotNull { it.toAnimeCardResult() }
+        } catch (e: Exception) {
+            Log.e("AnimeGratis", "Search error: ${e.message}")
+            emptyList()
+        }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -182,26 +217,7 @@ class AnimeGratisProvider : MainAPI() {
         val yearSpan = allSpans.find { it.text().contains("📅") }?.text()
         val year = Regex("(\\d{4})").find(yearSpan ?: "")?.groupValues?.get(1)?.toIntOrNull()
 
-        val episodes = mutableListOf<Episode>()
-
-        document.select("#episodes-grid a[data-episode]").forEach { card ->
-            val epHref = fixUrl(card.attr("href"))
-            val epNum = card.attr("data-episode").toIntOrNull()
-            val epImg = card.selectFirst("img")
-            val epPoster = epImg?.run {
-                attr("src").ifEmpty { attr("data-src") }
-            }
-            if (epHref.isNotBlank()) {
-                episodes.add(
-                    newEpisode(epHref) {
-                        this.name = "Episodio $epNum"
-                        this.episode = epNum
-                        this.posterUrl = fixPosterUrl(epPoster ?: "")
-                    }
-                )
-            }
-        }
-
+        val episodes = extractEpisodes(document, url)
         Log.d("AnimeGratis", "Episodes found: ${episodes.size}")
 
         return if (episodes.isNotEmpty()) {
@@ -221,6 +237,50 @@ class AnimeGratisProvider : MainAPI() {
                 this.year = year
             }
         }
+    }
+
+    private fun extractEpisodes(document: Document, animeUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+
+        val numEpisodes = extractEpisodeCount(document)
+        if (numEpisodes <= 0) return episodes
+
+        val slug = Regex("/anime/([^/]+)-anime").find(animeUrl)?.groupValues?.get(1)
+            ?: Regex("/donghua/([^/]+)-donghua").find(animeUrl)?.groupValues?.get(1)
+            ?: return episodes
+
+        for (epNum in 1..numEpisodes) {
+            val epUrl = "$mainUrl/anime/$slug/episodio-$epNum"
+            episodes.add(
+                newEpisode(epUrl) {
+                    this.name = "Episodio $epNum"
+                    this.episode = epNum
+                }
+            )
+        }
+        return episodes
+    }
+
+    private fun extractEpisodeCount(document: Document): Int {
+        val jsonLdScripts = document.select("script[type=\"application/ld+json\"]")
+        for (script in jsonLdScripts) {
+            val data = script.data()
+            if (data.contains("\"numberOfEpisodes\"")) {
+                val match = Regex("\"numberOfEpisodes\":(\\d+)").find(data)
+                match?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+            }
+        }
+
+        val infoSpans = document.select("div.flex.items-center.gap-1\\.5, div.flex.items-center.gap-2")
+        for (span in infoSpans) {
+            val text = span.text()
+            if (text.contains("Episodios", ignoreCase = true)) {
+                val match = Regex("(\\d+)").find(text)
+                match?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+            }
+        }
+
+        return 0
     }
 
     private fun extractPoster(document: Document): String {
@@ -245,11 +305,6 @@ class AnimeGratisProvider : MainAPI() {
         }
 
         return ""
-    }
-
-    private fun fixPosterUrl(raw: String): String {
-        if (raw.isBlank()) return ""
-        return if (raw.startsWith("http")) raw else "$mainUrl$raw"
     }
 
     override suspend fun loadLinks(

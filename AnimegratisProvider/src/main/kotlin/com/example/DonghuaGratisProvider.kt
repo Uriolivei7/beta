@@ -24,6 +24,7 @@ import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.addEpisodes
 import com.lagradost.cloudstream3.newAnimeLoadResponse
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -40,7 +41,7 @@ class DonghuaGratisProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/donghua" to "Donghua",
+        "$mainUrl/donghua" to "Donghuas",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -134,23 +135,7 @@ class DonghuaGratisProvider : MainAPI() {
 
         val year = Regex("(\\d{4})").find(document.text())?.groupValues?.get(1)?.toIntOrNull()
 
-        val episodes = mutableListOf<Episode>()
-
-        document.select("#dh-episodes-grid a[data-episode]").forEach { card ->
-            val epHref = fixUrl(card.attr("href"))
-            val epNum = card.attr("data-episode").toIntOrNull()
-
-            if (epHref.isNotBlank() && epNum != null) {
-                episodes.add(
-                    newEpisode(epHref) {
-                        this.name = "Episodio $epNum"
-                        this.episode = epNum
-                        this.posterUrl = poster
-                    }
-                )
-            }
-        }
-
+        val episodes = extractEpisodes(document, url)
         Log.d("DonghuaGratis", "Episodes found: ${episodes.size}")
 
         return if (episodes.isNotEmpty()) {
@@ -170,6 +155,41 @@ class DonghuaGratisProvider : MainAPI() {
                 this.year = year
             }
         }
+    }
+
+    private fun extractEpisodes(document: Document, animeUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+
+        val numEpisodes = extractEpisodeCount(document)
+        if (numEpisodes <= 0) return episodes
+
+        val slug = Regex("/donghua/([^/]+)-donghua").find(animeUrl)?.groupValues?.get(1)
+            ?: Regex("/donghua/([^/]+)").find(animeUrl)?.groupValues?.get(1)
+            ?: return episodes
+
+        for (epNum in 1..numEpisodes) {
+            val epUrl = "$mainUrl/donghua/$slug/episodio-$epNum"
+            episodes.add(
+                newEpisode(epUrl) {
+                    this.name = "Episodio $epNum"
+                    this.episode = epNum
+                }
+            )
+        }
+        return episodes
+    }
+
+    private fun extractEpisodeCount(document: Document): Int {
+        val jsonLdScripts = document.select("script[type=\"application/ld+json\"]")
+        for (script in jsonLdScripts) {
+            val data = script.data()
+            if (data.contains("\"numberOfEpisodes\"")) {
+                val match = Regex("\"numberOfEpisodes\":(\\d+)").find(data)
+                match?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+            }
+        }
+
+        return 0
     }
 
     private fun extractPoster(document: Document): String {
