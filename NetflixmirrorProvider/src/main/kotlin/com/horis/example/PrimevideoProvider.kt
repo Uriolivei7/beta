@@ -111,19 +111,25 @@ class PrimevideoProvider : MainAPI() {
                 }
             }
 
-            if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank())
-                episodes.addAll(getEpisodes(title, selectedSeasonId, 2))
+            if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank()) {
+                val selNum = data.season?.find { it.id == selectedSeasonId }?.s?.toIntOrNull()
+                episodes.addAll(getEpisodes(title, selectedSeasonId, 2, selNum))
+            }
 
             data.season?.forEach { season ->
-                if (season.id != selectedSeasonId && !season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1))
+                if (season.id != selectedSeasonId && !season.id.isNullOrBlank()) {
+                    val num = season.s?.toIntOrNull()
+                    episodes.addAll(getEpisodes(title, season.id, 1, num))
+                }
             }
         }
 
         if (data.type == "t" && episodes.isEmpty() && !data.season.isNullOrEmpty()) {
             data.season.forEach { season ->
-                if (!season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1))
+                if (!season.id.isNullOrBlank()) {
+                    val num = season.s?.toIntOrNull()
+                    episodes.addAll(getEpisodes(title, season.id, 1, num))
+                }
             }
         }
 
@@ -138,7 +144,7 @@ class PrimevideoProvider : MainAPI() {
     }
 
     private suspend fun getEpisodes(
-        title: String, sid: String, page: Int
+        title: String, sid: String, page: Int, seasonNumber: Int? = null
     ): List<Episode> {
         val apiBase = resolveApiUrl()
         val episodes = arrayListOf<Episode>()
@@ -154,7 +160,7 @@ class PrimevideoProvider : MainAPI() {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = it.s?.toIntOrNull() ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
+                    season = seasonNumber ?: it.s?.toIntOrNull() ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = pvEpPoster(it.id.orEmpty())
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
