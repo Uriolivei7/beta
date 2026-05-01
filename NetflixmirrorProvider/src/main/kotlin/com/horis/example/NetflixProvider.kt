@@ -4,8 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
-import android.util.Log
-import org.json.JSONObject
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -72,9 +70,6 @@ class NetflixProvider : MainAPI() {
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).parsed<NewTvPostResponse>()
 
-        Log.d("Netflix", "ua: ${data.ua}")
-        Log.d("Netflix", "Seasons count: ${data.season?.size ?: 0}")
-
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
@@ -97,7 +92,6 @@ class NetflixProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                this.contentRating = data.ua
             }
         }
 
@@ -148,7 +142,6 @@ class NetflixProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            this.contentRating = data.ua
         }
     }
 
