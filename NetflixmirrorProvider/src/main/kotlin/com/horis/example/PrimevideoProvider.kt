@@ -148,6 +148,14 @@ class PrimevideoProvider : MainAPI() {
             }
         }
 
+        episodes.groupBy { Pair(it.season, it.episode) }.forEach { (_, group) ->
+            if (group.size > 1) {
+                group.forEachIndexed { i, ep ->
+                    ep.name = "${ep.name} [Audio ${i + 1}]"
+                }
+            }
+        }
+
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             posterUrl = pvPoster(id)
             backgroundPosterUrl = pvBg(id)
