@@ -156,7 +156,7 @@ class PrimevideoProvider : MainAPI() {
                 group.forEachIndexed { i, ep ->
                     ep.name = "${ep.name} [Audio ${i + 1}]"
                     if (i > 0) {
-                        ep.episode = null
+                        ep.episode = (ep.episode ?: 0) + (i + 1) * 100
                     }
                 }
             }
