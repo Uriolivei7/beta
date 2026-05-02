@@ -155,6 +155,9 @@ class PrimevideoProvider : MainAPI() {
                 Log.d("Primevideo", "Duplicate found for S${pair.first}E${pair.second}: ${group.size} versions")
                 group.forEachIndexed { i, ep ->
                     ep.name = "${ep.name} [Audio ${i + 1}]"
+                    if (i > 0) {
+                        ep.episode = null
+                    }
                 }
             }
         }
