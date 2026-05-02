@@ -115,15 +115,16 @@ class PrimevideoProvider : MainAPI() {
             val selectedSeasonId = selectedSeasonIdx?.let { data.season?.getOrNull(it)?.id } ?: data.nextPageSeason
             val selectedSeasonNum = extractSeasonNumber(data.season?.find { it.selected == true }?.s)
 
-            data.episodes.filterNotNull().mapTo(episodes) {
-                newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
+            data.episodes.filterNotNull().forEach { it ->
+                Log.d("Primevideo", "Main episode block: t=${it.t}, ep=${it.ep}, id=${it.id}")
+                episodes.add(newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = selectedSeasonNum ?: extractSeasonNumber(it.s)
                     posterUrl = pvEpPoster(it.id.orEmpty())
                     this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = it.ep_desc
-                }
+                })
             }
 
             if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank()) {
@@ -148,13 +149,16 @@ class PrimevideoProvider : MainAPI() {
             }
         }
 
-        episodes.groupBy { Pair(it.season, it.episode) }.forEach { (_, group) ->
+        Log.d("Primevideo", "Total episodes before grouping: ${episodes.size}")
+        episodes.groupBy { Pair(it.season, it.episode) }.forEach { (pair, group) ->
             if (group.size > 1) {
+                Log.d("Primevideo", "Duplicate found for S${pair.first}E${pair.second}: ${group.size} versions")
                 group.forEachIndexed { i, ep ->
                     ep.name = "${ep.name} [Audio ${i + 1}]"
                 }
             }
         }
+        Log.d("Primevideo", "Final episodes returned: ${episodes.size}")
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             posterUrl = pvPoster(id)
