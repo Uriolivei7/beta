@@ -101,15 +101,23 @@ class PrimevideoProvider : MainAPI() {
         }
 
         val episodes = arrayListOf<Episode>()
+        var counter = 1
 
         if (data.episodes.isNullOrEmpty()) {
-            if (data.type != "t") episodes.add(newEpisode(NewTvLoadData(title, playbackId)) { name = title })
+            if (data.type != "t") episodes.add(newEpisode(NewTvLoadData(title, playbackId)) {
+                name = title
+                episode = counter++
+            })
         } else {
             val selectedSeasonIdx = data.season?.indexOfFirst { it.selected == true }?.takeIf { it >= 0 }
             val selectedSeasonId = selectedSeasonIdx?.let { data.season?.getOrNull(it)?.id } ?: data.nextPageSeason
             val selectedSeasonNum = extractSeasonNumber(data.season?.find { it.selected == true }?.s)
 
-            data.episodes.filterNotNull().mapTo(episodes) { ep ->
+            // Collect all seasons with their numbers
+            val allSeasons = mutableListOf<Pair<String, Int?>>()
+
+            // Main block episodes belong to selected season
+            val mainBlockEpisodes = data.episodes.filterNotNull().map { ep ->
                 newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
                     name = ep.t
                     episode = ep.ep?.toIntOrNull() ?: ep.epNum?.replace("E", "").orEmpty().toIntOrNull()
@@ -122,34 +130,50 @@ class PrimevideoProvider : MainAPI() {
 
             if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank()) {
                 val selNum = extractSeasonNumber(data.season?.find { it.id == selectedSeasonId }?.s)
-                episodes.addAll(getEpisodes(title, selectedSeasonId, 2, selNum))
+                allSeasons.add(Pair(selectedSeasonId, selNum))
             }
 
             data.season?.forEach { season ->
                 if (season.id != selectedSeasonId && !season.id.isNullOrBlank()) {
-                    val num = extractSeasonNumber(season.s)
-                    episodes.addAll(getEpisodes(title, season.id, 1, num))
+                    allSeasons.add(Pair(season.id, extractSeasonNumber(season.s)))
+                }
+            }
+
+            // Sort by season number
+            allSeasons.sortBy { it.second ?: 0 }
+
+            // Fetch in order, inserting main block at correct position
+            allSeasons.forEach { (sid, sNum) ->
+                if (sid == selectedSeasonId) {
+                    // Add main block with sequential numbering
+                    mainBlockEpisodes.forEach { ep ->
+                        episodes.add(ep.copy(episode = counter++))
+                    }
+                    // Add remaining pages for this season
+                    if (data.nextPageShow == 1) {
+                        val extra = getEpisodes(title, sid, 2, sNum)
+                        extra.forEach { ep -> episodes.add(ep.copy(episode = counter++)) }
+                    }
+                } else {
+                    val seasonEps = getEpisodes(title, sid, 1, sNum)
+                    seasonEps.forEach { ep -> episodes.add(ep.copy(episode = counter++)) }
                 }
             }
         }
 
         if (data.type == "t" && episodes.isEmpty() && !data.season.isNullOrEmpty()) {
-            data.season.forEach { season ->
-                if (!season.id.isNullOrBlank()) {
-                    val num = extractSeasonNumber(season.s)
-                    episodes.addAll(getEpisodes(title, season.id, 1, num))
+            val seasonsList = data.season.map { Pair(it.id, extractSeasonNumber(it.s)) }.sortedBy { it.second ?: 0 }
+            seasonsList.forEach { (sid, sNum) ->
+                if (!sid.isNullOrBlank()) {
+                    val seasonEps = getEpisodes(title, sid, 1, sNum)
+                    seasonEps.forEach { ep -> episodes.add(ep.copy(episode = counter++)) }
                 }
             }
         }
 
-        // Assign sequential numbers to prevent CloudStream dedup
-        val finalEpisodes = episodes.mapIndexed { index, ep ->
-            ep.copy(episode = index + 1)
-        }
+        Log.d("Primevideo", "Total episodes returned: ${episodes.size}")
 
-        Log.d("Primevideo", "Total episodes returned: ${finalEpisodes.size}")
-
-        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, finalEpisodes) {
+        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             posterUrl = pvPoster(id)
             backgroundPosterUrl = pvBg(id)
             posterHeaders = mapOf("Referer" to apiBase)
