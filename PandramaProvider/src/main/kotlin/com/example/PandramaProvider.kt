@@ -230,22 +230,22 @@ class PandramaProvider:MainAPI() {
                 Log.d(TAG, "No bootstrapData found in HTML")
                 return null
             }
-            
+
             val scriptStart = html.lastIndexOf("<script>", startIdx)
             val scriptEnd = html.indexOf("</script>", scriptStart)
             if (scriptStart == -1 || scriptEnd == -1) {
                 Log.d(TAG, "No script tags found")
                 return null
             }
-            
+
             val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
             val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
-            
+
             Log.d(TAG, "parseBootstrapData: JSON length=${jsonContent.length}")
-            
+
             val bootstrap = parseJson<BootstrapData>(jsonContent)
             Log.d(TAG, "parseBootstrapData: success, loaders=${bootstrap.loaders != null}")
-            
+
             return bootstrap
         } catch (e: Exception) {
             Log.d(TAG, "parseBootstrapData error: ${e.message}")
@@ -258,7 +258,7 @@ class PandramaProvider:MainAPI() {
 
         try {
             Log.d(TAG, "getMainPage: Starting")
-            
+
             val sections = listOf(
                 "Dramas" to "/dramas",
                 "Películas" to "/peliculas"
@@ -269,15 +269,15 @@ class PandramaProvider:MainAPI() {
                     Log.d(TAG, "getMainPage: Fetching $mainUrl$endpoint")
                     val html = app.get("$mainUrl$endpoint").text
                     Log.d(TAG, "getMainPage: Got HTML, length=${html.length}")
-                    
+
                     val bootstrap = parseBootstrapData(html) ?: continue
-                    
+
                     val channelContent = bootstrap.loaders?.channelPage?.channel?.content?.data
                     Log.d(TAG, "getMainPage: channelContent=${channelContent?.size}")
-                    
+
                     if (channelContent != null && channelContent.isNotEmpty()) {
                         val allTitles = ArrayList<TitleApiData>()
-                        
+
                         for (item in channelContent) {
                             if (item.id != null && item.name != null) {
                                 allTitles.add(
@@ -295,9 +295,9 @@ class PandramaProvider:MainAPI() {
                                 allTitles.addAll(nested.filter { it.id != null && it.name != null })
                             }
                         }
-                        
+
                         Log.d(TAG, "getMainPage: allTitles=${allTitles.size}")
-                        
+
                         val titleItems = allTitles.take(15).map { info ->
                             val titleId = info.id
                             val titleSlug = info.slug ?: info.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: "unknown"
@@ -333,16 +333,16 @@ class PandramaProvider:MainAPI() {
         val search = ArrayList<SearchResponse>()
         try {
             Log.d(TAG, "search: query=$query")
-            
+
             val searchUrl = "$mainUrl/search/$query"
             val html = app.get(searchUrl).text
             Log.d(TAG, "search: Got HTML, length=${html.length}")
-            
+
             val bootstrap = parseBootstrapData(html) ?: return search
-            
+
             val results = bootstrap.loaders?.searchPage?.results
             Log.d(TAG, "search: results=${results?.size}")
-            
+
             results?.forEach { title ->
                 val titleId = title.id
                 val titleSlug = title.slug ?: title.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: "unknown"
@@ -352,7 +352,7 @@ class PandramaProvider:MainAPI() {
                     })
                 }
             }
-            
+
             if (search.isEmpty()) {
                 val trending = bootstrap.loaders?.searchPage?.trendingTitles
                 trending?.forEach { title ->
@@ -374,15 +374,15 @@ class PandramaProvider:MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         try {
             Log.d(TAG, "load: url=$url")
-            
+
             val html = app.get(url).text
             Log.d(TAG, "load: Got HTML, length=${html.length}")
-            
+
             val bootstrap = parseBootstrapData(html) ?: return null
-            
+
             val titleInfo = bootstrap.loaders?.titlePage?.title
             Log.d(TAG, "load: titleInfo=${titleInfo?.name}")
-            
+
             if (titleInfo == null) return null
 
             val title = titleInfo.name ?: ""
@@ -400,7 +400,7 @@ class PandramaProvider:MainAPI() {
             if (isSeries) {
                 val episodes = titlePage?.episodes?.data ?: emptyList()
                 Log.d(TAG, "load: episodes=${episodes.size}")
-                
+
                 val episodeList = episodes.map { episode ->
                     val seasonNum = episode.seasonNumber ?: 1
                     newEpisode("$mainUrl/titulo/${titleInfo.id}/temporada/$seasonNum/episodio/${episode.id}") {
@@ -444,11 +444,11 @@ override suspend fun loadLinks(
     ): Boolean {
         return try {
             Log.d(TAG, "loadLinks: data=$data")
-            
+
             val titleId: Int?
             val seasonNum: Int?
             val episodeId: Int?
-            
+
             when {
                 data.contains("/titulo/") && data.contains("/temporada/") && data.contains("/episodio/") -> {
                     val parts = data.split("/")
@@ -472,64 +472,64 @@ override suspend fun loadLinks(
                     seasonNum = null
                 }
             }
-            
+
             Log.d(TAG, "loadLinks: titleId=$titleId, seasonNum=$seasonNum, episodeId=$episodeId")
-            
+
             if (titleId == null || seasonNum == null || episodeId == null) {
                 Log.d(TAG, "loadLinks: missing required IDs")
                 return false
             }
-            
+
             // Step 1: Visit the episode page to get cookies
             val episodePageResponse = app.get(data)
             val episodeHtml = episodePageResponse.text
             val cookies = episodePageResponse.cookies
             Log.d(TAG, "loadLinks: got ${cookies.size} cookies: $cookies")
-            
+
             // Extract XSRF token from cookie and use as header
             val xsrfCookie = cookies["XSRF-TOKEN"] ?: ""
             val xsrfToken = if (xsrfCookie.isNotEmpty()) java.net.URLDecoder.decode(xsrfCookie, "UTF-8") else ""
             Log.d(TAG, "loadLinks: XSRF token=${xsrfToken.take(30)}")
-            
+
             val apiHeaders = mapOf(
                 "Accept" to "application/json",
                 "Referer" to data,
                 "X-XSRF-TOKEN" to xsrfToken
             )
-            
+
             // Step 2: Get episode list to find episode number
             var episodeNumber = 1
             val episodeListUrl = "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes?perPage=200"
             Log.d(TAG, "loadLinks: fetching episode list")
-            
+
             try {
                 val episodeListResponse = app.get(episodeListUrl, headers = apiHeaders, cookies = cookies)
                 val episodeListText = episodeListResponse.text
                 Log.d(TAG, "loadLinks: episode list sample: ${episodeListText.take(1000)}")
-                
+
                 // Try to find video directly from episode list (primary_video)
                 val mpdRegexList = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+\.mpd[^"]*)"""".toRegex()
                 val mpdMatchList = mpdRegexList.find(episodeListText)
-                
+
                 if (mpdMatchList != null) {
                     // Try to find non-DRM videos first
                     val allSrcRegex = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+)"""".toRegex()
                     val allSrcMatches = allSrcRegex.findAll(episodeListText).toList()
                     Log.d(TAG, "loadLinks: found ${allSrcMatches.size} total src in episode list")
-                    
+
                     // Extract subtitles
                     val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
                     val captionUrlRegex = """"url"\s*:\s*"([^"]+)"""".toRegex()
                     val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
                     val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
-                    
+
                     val captionMatches = captionRegex.findAll(episodeListText)
                     for (captionMatch in captionMatches) {
                         val objContent = captionMatch.value
                         val subUrlMatch = captionUrlRegex.find(objContent)
                         val nameMatch = captionNameRegex.find(objContent)
                         val langMatch = captionLangRegex.find(objContent)
-                        
+
                         val subUrl = subUrlMatch?.groupValues?.get(1)
                         if (!subUrl.isNullOrEmpty() && !subUrl.contains("mpd")) {
                             val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
@@ -538,39 +538,39 @@ override suspend fun loadLinks(
                             subtitleCallback(newSubtitleFile(name, fullSubUrl))
                         }
                     }
-                    
+
                     // Try non-DRM sources first (mp4, m3u8, embed, youtube)
                     var foundNonDrm = false
-                    
+
                     // 1. Try known video embeds (not youtube, not mpd)
                     val preferredSourcesList = allSrcMatches.filter { match ->
                         val src = match.groupValues[1].replace("\\/", "/")
                         !src.contains(".mpd") && !src.contains("youtube") && !src.contains("vimeo")
                     }
-                    
+
                     if (preferredSourcesList.isNotEmpty()) {
                         var videoSrc = preferredSourcesList.first().groupValues[1].replace("\\/", "/")
-                        Log.d(TAG, "loadLinks: using preferred source from list: $videoSrc")
+                        Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
                         foundNonDrm = true
                     }
-                    
+
                     // Fallback to MPD if no other source found
                     if (!foundNonDrm) {
                         var videoSrc = mpdMatchList.groupValues[1].replace("\\/", "/")
                         Log.d(TAG, "loadLinks: falling back to MPD: $videoSrc")
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
-                        
+
                         // Also try loading the episode page as an iframe source
                         Log.d(TAG, "loadLinks: trying episode page as iframe: $data")
                         loadExtractor(data, subtitleCallback, callback)
                     }
                     return true
                 }
-                
+
                 val idRegex = """"id"\s*:\s*$episodeId""".toRegex()
                 val epNumRegex = """"episode_number"\s*:\s*(\d+)""".toRegex()
-                
+
                 if (idRegex.containsMatchIn(episodeListText)) {
                     val idMatch = idRegex.find(episodeListText)!!
                     val searchWindow = episodeListText.substring(
@@ -586,40 +586,40 @@ override suspend fun loadLinks(
             } catch (e: Exception) {
                 Log.d(TAG, "loadLinks: episode list error: ${e.message}")
             }
-            
+
             // Step 3: Call episode API
             val episodeApiUrl = "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeNumber?loader=episodePage"
             Log.d(TAG, "loadLinks: calling API: $episodeApiUrl")
-            
+
             try {
                 val apiResponse = app.get(episodeApiUrl, headers = apiHeaders, cookies = cookies)
                 val apiText = apiResponse.text
                 Log.d(TAG, "loadLinks: API response length=${apiText.length}")
                 Log.d(TAG, "loadLinks: API sample: ${apiText.take(2000)}")
-                
+
                 // Extract video URL - handle escaped JSON slashes
                 val mpdRegex = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+\.mpd[^"]*)"""".toRegex()
                 val mpdMatch = mpdRegex.find(apiText)
-                
+
                 if (mpdMatch != null) {
                     // Try to find all sources
                     val allSrcRegex = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+)"""".toRegex()
                     val allSrcMatches = allSrcRegex.findAll(apiText).toList()
                     Log.d(TAG, "loadLinks: found ${allSrcMatches.size} total src in API")
-                    
+
                     // Extract subtitles
                     val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
                     val captionUrlRegex = """"url"\s*:\s*"([^"]+)"""".toRegex()
                     val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
                     val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
-                    
+
                     val captionMatches = captionRegex.findAll(apiText)
                     for (captionMatch in captionMatches) {
                         val objContent = captionMatch.value
                         val subUrlMatch = captionUrlRegex.find(objContent)
                         val nameMatch = captionNameRegex.find(objContent)
                         val langMatch = captionLangRegex.find(objContent)
-                        
+
                         val subUrl = subUrlMatch?.groupValues?.get(1)
                         if (!subUrl.isNullOrEmpty() && !subUrl.contains("mpd")) {
                             val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
@@ -628,16 +628,16 @@ override suspend fun loadLinks(
                             subtitleCallback(newSubtitleFile(name, fullSubUrl))
                         }
                     }
-                    
+
                     // Try non-DRM sources first
                     var foundNonDrm = false
-                    
+
                     // 1. Try known video embeds (not youtube, not mpd)
                     val preferredSources = allSrcMatches.filter { match ->
                         val src = match.groupValues[1].replace("\\/", "/")
                         !src.contains(".mpd") && !src.contains("youtube") && !src.contains("vimeo")
                     }
-                    
+
                     if (preferredSources.isNotEmpty()) {
                         var videoSrc = preferredSources.first().groupValues[1].replace("\\/", "/")
                         Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
