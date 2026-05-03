@@ -127,7 +127,7 @@ class GnulaProvider : MainAPI() {
         }
 
         return if (!post.seasons.isNullOrEmpty()) {
-            val episodes = post.seasons.flatMap { season ->
+            val episodes = post.seasons.flatMap { season: Season ->
                 season.episodes.map { ep: SeasonEpisode ->
                     val sNum = ep.slug.season ?: season.number?.toString() ?: "1"
                     val eNum = ep.slug.episode ?: ep.number?.toString() ?: "1"
