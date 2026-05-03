@@ -40,18 +40,60 @@ class AnimeParadiseProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
+    companion object {
+        private var searchActionHash = "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
+        private var watchActionHash = "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
+        private var lastRefreshTime = 0L
+    }
+
+    private suspend fun refreshActionHashesIfNeeded() {
+        if (System.currentTimeMillis() - lastRefreshTime < 3600000) return // Refresh max once per hour
+
+        try {
+            Log.d(TAG, "Refreshing action hashes...")
+            val res = app.get(
+                "$mainUrl/search?q=test",
+                headers = mapOf("user-agent" to apiHeaders["user-agent"]!!)
+            )
+            val html = res.text
+
+            // Extract JS URLs from HTML script tags
+            val jsUrls = Regex("\"(/_next/static/chunks/[^\"]+\\.js)\"").findAll(html)
+                .map { it.groupValues[1] }
+                .toSet()
+                .take(5) // Scan first 5 JS files for speed
+
+            val hashes = mutableSetOf<String>()
+            for (url in jsUrls) {
+                val js = app.get("$mainUrl$url", headers = mapOf("referer" to "$mainUrl/")).text
+                Regex("\"([a-f0-9]{40})\"").findAll(js).forEach {
+                    hashes.add(it.groupValues[1])
+                }
+                if (hashes.size >= 2) break
+            }
+
+            val list = hashes.toList()
+            if (list.size >= 2) {
+                searchActionHash = list[0]
+                watchActionHash = list[1]
+                lastRefreshTime = System.currentTimeMillis()
+                Log.d(TAG, "Hashes updated: ${searchActionHash.take(10)}... / ${watchActionHash.take(10)}...")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to refresh hashes: ${e.message}")
+        }
+    }
+
     private data class PageSession(val cookie: String, val actionHash: String)
 
-    private val searchActionHash = "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
-    private val watchActionHash = "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
-
-    private suspend fun getPageSession(path: String): PageSession {
+    private suspend fun getPageSession(path: String, isWatch: Boolean = false): PageSession {
+        refreshActionHashesIfNeeded()
         return try {
             val res = app.get(
                 "$mainUrl/$path",
                 headers = mapOf(
                     "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "user-agent" to apiHeaders["user-agent"]!!,
                     "referer" to "$mainUrl/"
                 )
             )
@@ -59,11 +101,10 @@ class AnimeParadiseProvider : MainAPI() {
                 ?.split(";")
                 ?.firstOrNull { it.trimStart().startsWith("anp_session") }
                 ?.trim() ?: ""
-            Log.d(TAG, "Logs: Cookie: ${if (cookie.isNotEmpty()) cookie.take(40) + "..." else "VACÍA"}")
-            PageSession(cookie, if (path.startsWith("search")) searchActionHash else watchActionHash)
+            PageSession(cookie, if (isWatch) watchActionHash else searchActionHash)
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error getPageSession: ${e.message}")
-            PageSession("", searchActionHash)
+            Log.e(TAG, "Error getPageSession: ${e.message}")
+            PageSession("", if (isWatch) watchActionHash else searchActionHash)
         }
     }
 
@@ -73,14 +114,11 @@ class AnimeParadiseProvider : MainAPI() {
             val recentRes = app.get("$apiUrl/ep/recently-added?v=1", headers = apiHeaders)
             val popularRes = app.get("$apiUrl/search?sort=POPULARITY&limit=15&v=1", headers = apiHeaders)
 
-            Log.d(TAG, "Logs: API Status - Recent: ${recentRes.code}, Popular: ${popularRes.code}")
-
             val recentData = parseNextJsJson<AnimeListResponse>(recentRes.text)
             val popularData = parseNextJsJson<AnimeListResponse>(popularRes.text)
 
             val homePages = mutableListOf<HomePageList>()
             popularData?.data?.let { list ->
-                Log.d(TAG, "Logs: Agregando ${list.size} items a Populares")
                 homePages.add(HomePageList("Populares", list.map { it.toSearchResponse() }))
             }
 
@@ -104,7 +142,7 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/$searchPath",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to apiHeaders["user-agent"]!!,
                 "cookie" to session.cookie
             )
 
@@ -116,26 +154,37 @@ class AnimeParadiseProvider : MainAPI() {
                 requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
-            Log.d(TAG, "Logs: Search Status: ${response.code}")
-            Log.d(TAG, "Logs: Search resText[0..300]: ${response.text.take(300)}")
+            if (response.code !in 200..299) {
+                Log.w(TAG, "Search failed, refreshing hashes...")
+                lastRefreshTime = 0
+                val newSession = getPageSession(searchPath)
+                val retryHeaders = searchHeaders + ("next-action" to newSession.actionHash) + ("cookie" to newSession.cookie)
+                val retryRes = app.post(
+                    "$mainUrl/$searchPath",
+                    headers = retryHeaders,
+                    requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                )
+                return processSearchResponse(retryRes.text)
+            }
 
-            val cleanJson = parseNextJsJson<AnimeListResponse>(response.text)
-            val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
-            Log.d(TAG, "Logs: Encontrados ${results.size} resultados")
-            results
+            processSearchResponse(response.text)
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en search: ${e.message}")
             emptyList()
         }
     }
 
+    private fun processSearchResponse(text: String): List<SearchResponse> {
+        val cleanJson = parseNextJsJson<AnimeListResponse>(text)
+        val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
+        Log.d(TAG, "Logs: Encontrados ${results.size} resultados")
+        return results
+    }
+
     private inline fun <reified T> parseNextJsJson(input: String): T? {
         return try {
             val startIndex = input.indexOf("{\"success\":true")
-            if (startIndex == -1) {
-                Log.e(TAG, "Logs: No se encontró JSON de éxito en la respuesta")
-                return null
-            }
+            if (startIndex == -1) return null
             var braceCount = 0
             var endIndex = -1
             for (i in startIndex until input.length) {
@@ -177,7 +226,6 @@ class AnimeParadiseProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val slug = url.substringAfterLast("/")
-        Log.d(TAG, "Logs: --- CARGANDO DETALLES: $slug ---")
         if (slug.isBlank() || slug == "null") return null
 
         return try {
@@ -195,7 +243,6 @@ class AnimeParadiseProvider : MainAPI() {
 
             val episodes = epData.data?.mapNotNull { ep ->
                 val uid = ep.uid ?: return@mapNotNull null
-                Log.d(TAG, "Logs: EP ${ep.number} - uid: $uid")
                 newEpisode("$uid|$internalId") {
                     this.episode = ep.number?.toIntOrNull() ?: 0
                     this.name = ep.title ?: "Episodio ${ep.number}"
@@ -208,8 +255,6 @@ class AnimeParadiseProvider : MainAPI() {
                     this.posterUrl = sim.posterImage?.large
                 }
             }
-
-            Log.d(TAG, "Logs: ${episodes.size} episodios encontrados")
 
             newAnimeLoadResponse(getEnglishTitle(data.title, data.alternativeTitle), url, TvType.Anime) {
                 this.posterUrl = data.posterImage?.original ?: data.posterImage?.large
@@ -235,11 +280,9 @@ class AnimeParadiseProvider : MainAPI() {
         val uid = parts.getOrNull(0)?.substringAfterLast("/") ?: return false
         val origin = parts.getOrNull(1)?.substringAfterLast("/") ?: return false
 
-        Log.d(TAG, "Logs: uid: $uid | origin: $origin")
-
         return try {
             val watchPath = "watch/$uid?origin=$origin"
-            val session = getPageSession(watchPath)
+            val session = getPageSession(watchPath, isWatch = true)
 
             val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
 
@@ -250,23 +293,32 @@ class AnimeParadiseProvider : MainAPI() {
                 "next-router-state-tree" to routerStateTree,
                 "origin" to mainUrl,
                 "referer" to "$mainUrl/$watchPath",
-                "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "user-agent" to apiHeaders["user-agent"]!!,
                 "cookie" to session.cookie
             )
 
-            val resText = app.post(
+            var resText = app.post(
                 "$mainUrl/$watchPath",
                 headers = actionHeaders,
                 requestBody = "[\"$uid\",\"$origin\"]"
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text.replace("\\/", "/")
 
-            Log.d(TAG, "Logs: resText[0..2000]: ${resText.take(2000)}")
+            if (!resText.contains("streamLink")) {
+                Log.w(TAG, "loadLinks failed, refreshing hashes...")
+                lastRefreshTime = 0
+                val newSession = getPageSession(watchPath, isWatch = true)
+                val retryHeaders = actionHeaders + ("next-action" to newSession.actionHash) + ("cookie" to newSession.cookie)
+                resText = app.post(
+                    "$mainUrl/$watchPath",
+                    headers = retryHeaders,
+                    requestBody = "[\"$uid\",\"$origin\"]"
+                        .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                ).text.replace("\\/", "/")
+            }
 
             val streamLink = Regex(""""streamLink"\s*:\s*"([^"]+)""")
                 .find(resText)?.groupValues?.getOrNull(1)
-
-            Log.d(TAG, "Logs: streamLink: $streamLink")
 
             if (streamLink != null) {
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${streamLink.encodeUri()}"
@@ -287,11 +339,8 @@ class AnimeParadiseProvider : MainAPI() {
             val subDataJson = Regex(""""subData"\s*:\s*(\[.*?])""", RegexOption.DOT_MATCHES_ALL)
                 .find(resText)?.groupValues?.getOrNull(1)
 
-            Log.d(TAG, "Logs: subData: $subDataJson")
-
             if (subDataJson != null) {
                 val subList = mapper.readValue<List<SubData>>(subDataJson)
-                Log.d(TAG, "Logs: ${subList.size} subtítulos encontrados")
                 subList.forEach { sub ->
                     val label = sub.label ?: "Unknown"
                     val src = sub.src ?: return@forEach
@@ -301,7 +350,6 @@ class AnimeParadiseProvider : MainAPI() {
                             "vtt" -> subtitleCallback.invoke(newSubtitleFile(label, src))
                             "ass" -> subtitleCallback.invoke(newSubtitleFile(label, "$apiUrl/stream/file/$src"))
                         }
-                        Log.d(TAG, "Logs: Sub $type: $label -> $src")
                     } catch (e: Exception) {
                         Log.e(TAG, "Logs: Error sub $label: ${e.message}")
                     }

@@ -541,18 +541,16 @@ override suspend fun loadLinks(
 
                     // Try non-DRM sources first (mp4, m3u8, embed, youtube)
                     var foundNonDrm = false
+                    for (srcMatch in allSrcMatches) {
+                        var videoSrc = srcMatch.groupValues[1].replace("\\/", "/")
+                        Log.d(TAG, "loadLinks: trying src: $videoSrc")
 
-                    // 1. Try known video embeds (not youtube, not mpd)
-                    val preferredSourcesList = allSrcMatches.filter { match ->
-                        val src = match.groupValues[1].replace("\\/", "/")
-                        !src.contains(".mpd") && !src.contains("youtube") && !src.contains("vimeo")
-                    }
-
-                    if (preferredSourcesList.isNotEmpty()) {
-                        var videoSrc = preferredSourcesList.first().groupValues[1].replace("\\/", "/")
-                        Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
-                        loadExtractor(videoSrc, data, subtitleCallback, callback)
-                        foundNonDrm = true
+                        if (videoSrc.contains(".mp4") || videoSrc.contains(".m3u8") || videoSrc.contains("youtube") || videoSrc.contains("embed") || videoSrc.contains("player")) {
+                            Log.d(TAG, "loadLinks: using non-DRM source: $videoSrc")
+                            loadExtractor(videoSrc, data, subtitleCallback, callback)
+                            foundNonDrm = true
+                            break
+                        }
                     }
 
                     // Fallback to MPD if no other source found
@@ -560,10 +558,6 @@ override suspend fun loadLinks(
                         var videoSrc = mpdMatchList.groupValues[1].replace("\\/", "/")
                         Log.d(TAG, "loadLinks: falling back to MPD: $videoSrc")
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
-
-                        // Also try loading the episode page as an iframe source
-                        Log.d(TAG, "loadLinks: trying episode page as iframe: $data")
-                        loadExtractor(data, subtitleCallback, callback)
                     }
                     return true
                 }
@@ -602,10 +596,8 @@ override suspend fun loadLinks(
                 val mpdMatch = mpdRegex.find(apiText)
 
                 if (mpdMatch != null) {
-                    // Try to find all sources
-                    val allSrcRegex = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+)"""".toRegex()
-                    val allSrcMatches = allSrcRegex.findAll(apiText).toList()
-                    Log.d(TAG, "loadLinks: found ${allSrcMatches.size} total src in API")
+                    var videoSrc = mpdMatch.groupValues[1].replace("\\/", "/")
+                    Log.d(TAG, "loadLinks: found video: $videoSrc")
 
                     // Extract subtitles
                     val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
@@ -629,50 +621,16 @@ override suspend fun loadLinks(
                         }
                     }
 
-                    // Try non-DRM sources first
-                    var foundNonDrm = false
-
-                    // 1. Try known video embeds (not youtube, not mpd)
-                    val preferredSources = allSrcMatches.filter { match ->
-                        val src = match.groupValues[1].replace("\\/", "/")
-                        !src.contains(".mpd") && !src.contains("youtube") && !src.contains("vimeo")
-                    }
-
-                    if (preferredSources.isNotEmpty()) {
-                        var videoSrc = preferredSources.first().groupValues[1].replace("\\/", "/")
-                        Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
-                        loadExtractor(videoSrc, data, subtitleCallback, callback)
-                        foundNonDrm = true
-                    }
-                    
-                    // 2. Fallback to MPD if no other source found
-                    if (!foundNonDrm) {
-                        var videoSrc = mpdMatch.groupValues[1].replace("\\/", "/")
-                        Log.d(TAG, "loadLinks: falling back to MPD: $videoSrc")
-                        loadExtractor(videoSrc, data, subtitleCallback, callback)
-                    }
+                    loadExtractor(videoSrc, data, subtitleCallback, callback)
                     return true
                 } else {
                     Log.d(TAG, "loadLinks: no .mpd in API response")
-                    val anySrcRegex = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+)"""".toRegex()
+                    val anySrcRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
                     val anyMatches = anySrcRegex.findAll(apiText).toList()
                     Log.d(TAG, "loadLinks: found ${anyMatches.size} src matches")
                     for (match in anyMatches) {
-                        val src = match.groupValues[1].replace("\\/", "/")
+                        val src = match.groupValues[1]
                         Log.d(TAG, "loadLinks: src=$src")
-                        loadExtractor(src, data, subtitleCallback, callback)
-                    }
-                    
-                    // Check for alternative videos or embeds
-                    if (anyMatches.isEmpty()) {
-                        val embedRegex = """"url"\s*:\s*"(https?:\\?/\\?/[^"]+)"""".toRegex()
-                        val embedMatches = embedRegex.findAll(apiText).toList()
-                        Log.d(TAG, "loadLinks: found ${embedMatches.size} embed matches")
-                        for (match in embedMatches) {
-                            val url = match.groupValues[1].replace("\\/", "/")
-                            Log.d(TAG, "loadLinks: trying embed: $url")
-                            loadExtractor(url, data, subtitleCallback, callback)
-                        }
                     }
                 }
             } catch (e: Exception) {
