@@ -41,7 +41,6 @@ class AnimeParadiseProvider : MainAPI() {
     )
 
     companion object {
-        // Default hashes (will be updated dynamically if they fail)
         private var searchActionHash = "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
         private var watchActionHash = "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
         private var lastRefreshTime = 0L
@@ -50,41 +49,51 @@ class AnimeParadiseProvider : MainAPI() {
 
     private data class PageSession(val cookie: String, val actionHash: String)
 
-    // Lightweight refresh: Scans only ONE chunk file to avoid timeouts
     private suspend fun refreshActionHashesIfNeeded(force: Boolean = false) {
-        if (!force && System.currentTimeMillis() - lastRefreshTime < 3600000) return // Cache for 1 hour (or less if forced)
+        if (!force && System.currentTimeMillis() - lastRefreshTime < 3600000) return
 
         try {
-            Log.d(TAG, "Refreshing hashes (scanning 1 chunk)...")
+            Log.d(TAG, "Refreshing hashes (scanning chunks)...")
             val res = app.get(
                 "$mainUrl/search?q=test",
                 headers = mapOf("user-agent" to apiHeaders["user-agent"]!!)
             )
             val html = res.text
 
-            // Find the first JS chunk URL
-            val jsUrlMatch = Regex("\"(/_next/static/chunks/[^\\\"]+\\.js)\"").find(html)
-            if (jsUrlMatch != null) {
-                val url = jsUrlMatch.groupValues[1]
-                // Fetch only that specific chunk
+            // Find ALL JS chunk URLs
+            val jsUrls = Regex("\"(/_next/static/chunks/[^\\\"]+\\.js)\"").findAll(html)
+                .map { it.groupValues[1] }
+                .distinct()
+                .toList()
+
+            val hashes = mutableSetOf<String>()
+            // Search in up to 5 chunks to find action hashes
+            val chunksToScan = jsUrls.take(5)
+
+            for (url in chunksToScan) {
+                Log.d(TAG, "Scanning chunk: $url")
                 val js = app.get("$mainUrl$url", headers = mapOf("referer" to "$mainUrl/")).text
 
-                // Extract hex strings (likely hashes) - looking for 40+ chars
-                val hashes = Regex("\"([a-f0-9]{40,})\"").findAll(js)
-                    .map { it.groupValues[1] }
-                    .distinct()
-                    .toList()
+                // Look for Next.js Action hashes: createServerReference("HASH")
+                // Or just any 40-60 alphanumeric string that looks like a hash
+                val actionRegex = Regex("[\"']([a-zA-Z0-9]{40,60})[\"']")
+                val matches = actionRegex.findAll(js).map { it.groupValues[1] }.toList().distinct()
 
-                if (hashes.isNotEmpty()) {
-                    candidateHashes = hashes
-                    searchActionHash = hashes[0]
-                    // Try to find a second distinct hash for watch actions, otherwise use the first
-                    watchActionHash = hashes.getOrElse(1) { hashes[0] }
-                    lastRefreshTime = System.currentTimeMillis()
-                    Log.d(TAG, "Hashes updated. Found ${hashes.size} candidates.")
-                } else {
-                    Log.w(TAG, "No valid hashes found in JS chunk.")
-                }
+                hashes.addAll(matches)
+                Log.d(TAG, "Found ${matches.size} potential hashes in this chunk")
+
+                if (hashes.size >= 5) break
+            }
+
+            if (hashes.isNotEmpty()) {
+                candidateHashes = hashes.toList()
+                searchActionHash = candidateHashes[0]
+                // Try to find a second distinct hash for watch actions, otherwise use the first
+                watchActionHash = candidateHashes.getOrElse(1) { candidateHashes[0] }
+                lastRefreshTime = System.currentTimeMillis()
+                Log.d(TAG, "Hashes updated. Found ${candidateHashes.size} total candidates.")
+            } else {
+                Log.w(TAG, "No valid hashes found in any chunk.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Refresh hashes failed: ${e.message}")
@@ -92,7 +101,6 @@ class AnimeParadiseProvider : MainAPI() {
     }
 
     private suspend fun getPageSession(path: String, isWatch: Boolean = false): PageSession {
-        // Note: We do NOT refresh here to prevent timeouts on every page load
         return try {
             val res = app.get(
                 "$mainUrl/$path",
@@ -137,30 +145,20 @@ class AnimeParadiseProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "Logs: --- BUSCANDO (API): $query ---")
         return try {
-            // 1. Intentar usar la API directa (más rápido y estable)
             val searchUrl = "$apiUrl/search?q=${query.encodeUri()}&limit=25"
             val response = app.get(searchUrl, headers = apiHeaders)
-            
-            // La API devuelve JSON directo, probamos parsearlo
+
             val list = try {
                 mapper.readValue<AnimeListResponse>(response.text).data
             } catch (e: Exception) {
-                // Si falla, intentar parsear formato NextJS
                 parseNextJsJson<AnimeListResponse>(response.text)?.data
             }
-            
+
             list?.map { it.toSearchResponse() } ?: emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en search API: ${e.message}")
             emptyList()
         }
-    }
-
-    private fun processSearchResponse(text: String): List<SearchResponse> {
-        val cleanJson = parseNextJsJson<AnimeListResponse>(text)
-        val results = cleanJson?.data?.map { it.toSearchResponse() } ?: emptyList()
-        Log.d(TAG, "Logs: Encontrados ${results.size} resultados")
-        return results
     }
 
     private inline fun <reified T> parseNextJsJson(input: String): T? {
@@ -290,19 +288,20 @@ class AnimeParadiseProvider : MainAPI() {
                 Log.w(TAG, "loadLinks failed (no streamLink), refreshing and trying all hashes...")
                 lastRefreshTime = 0
                 refreshActionHashesIfNeeded(force = true)
-                
+
                 // If we have candidates, try them one by one
                 if (candidateHashes.isNotEmpty()) {
+                    Log.d(TAG, "Trying ${candidateHashes.size} candidate hashes...")
                     for (hash in candidateHashes) {
-                        Log.d(TAG, "Trying hash: ${hash.take(10)}...")
+                        Log.d(TAG, "Trying hash: ${hash.take(15)}...")
                         val retryHeaders = actionHeaders + ("next-action" to hash) + ("cookie" to session.cookie)
                         resText = try {
                             app.post("$mainUrl/$watchPath", headers = retryHeaders, requestBody = body).text.replace("\\/", "/")
                         } catch (e: Exception) { "" }
-                        
+
                         if (resText.contains("streamLink")) {
                             watchActionHash = hash
-                            Log.d(TAG, "Found working watch hash: $hash")
+                            Log.d(TAG, "Found working watch hash!")
                             break
                         }
                     }
