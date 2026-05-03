@@ -117,6 +117,10 @@ class PrimevideoProvider : MainAPI() {
             val allSeasons = mutableListOf<Pair<String, Int?>>()
 
             // Main block episodes belong to selected season
+            Log.d("Primevideo", "Main block episodes count: ${data.episodes?.size ?: 0}")
+            data.episodes?.forEachIndexed { i, ep ->
+                Log.d("Primevideo", "  main ep[$i]: id=${ep?.id}, t=${ep?.t}, ep=${ep?.ep}")
+            }
             val mainBlockEpisodes = data.episodes
                 .filterNotNull()
                 .distinctBy { it.id }
@@ -202,7 +206,7 @@ class PrimevideoProvider : MainAPI() {
 
             Log.d("Primevideo", "getEpisodes: sid=$sid page=$pg got=${data.episodes?.size ?: 0}")
             data.episodes?.forEach { e ->
-                Log.d("Primevideo", "  ep: t=${e.t}, s=${e.s}, ep=${e.ep}")
+                Log.d("Primevideo", "  ep: id=${e.id}, t=${e.t}, s=${e.s}, ep=${e.ep}")
             }
 
             data.episodes.orEmpty().forEach { ep ->
@@ -230,14 +234,19 @@ class PrimevideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         val apiBase = resolveApiUrl()
-        val id = parseJson<NewTvLoadData>(data).id
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
+        val load = parseJson<NewTvLoadData>(data)
+        Log.d("Primevideo", "loadLinks: playbackId=${load.id}")
+        val result = app.get(
+            "$apiBase/newtv/player.php?id=${load.id}",
             headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
-        callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = response.referer ?: apiBase
+        Log.d("Primevideo", "loadLinks result=${result}")
+        if (result.status != "ok" || result.video_link.isNullOrBlank()) {
+            Log.e("Primevideo", "loadLinks FAILED: status=${result.status}, video_link=${result.video_link}")
+            return false
+        }
+        callback.invoke(newExtractorLink(name, name, result.video_link, type = ExtractorLinkType.M3U8) {
+            this.referer = result.referer ?: apiBase
         })
         return true
     }
