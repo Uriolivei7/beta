@@ -44,10 +44,11 @@ class AnimeParadiseProvider : MainAPI() {
         private var searchActionHash = "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
         private var watchActionHash = "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
         private var lastRefreshTime = 0L
+        private var candidateHashes = listOf<String>()
     }
 
-    private suspend fun refreshActionHashesIfNeeded() {
-        if (System.currentTimeMillis() - lastRefreshTime < 3600000) return // Refresh max once per hour
+    private suspend fun refreshActionHashesIfNeeded(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - lastRefreshTime < 3600000) return
 
         try {
             Log.d(TAG, "Refreshing action hashes...")
@@ -57,27 +58,41 @@ class AnimeParadiseProvider : MainAPI() {
             )
             val html = res.text
 
-            // Extract JS URLs from HTML script tags
+            // Extract JS URLs from HTML
             val jsUrls = Regex("\"(/_next/static/chunks/[^\"]+\\.js)\"").findAll(html)
                 .map { it.groupValues[1] }
                 .toSet()
-                .take(5) // Scan first 5 JS files for speed
+                .take(10) // Scan up to 10 chunks
 
             val hashes = mutableSetOf<String>()
+            // Look for createServerReference("HASH") pattern which is standard for Next.js actions
+            val actionRegex = Regex("createServerReference\\(\"([a-f0-9]{40,60})\"\\)")
+            
+            // Fallback regex for any 40-60 char hex string
+            val hexRegex = Regex("\"([a-f0-9]{40,60})\"")
+
             for (url in jsUrls) {
                 val js = app.get("$mainUrl$url", headers = mapOf("referer" to "$mainUrl/")).text
-                Regex("\"([a-f0-9]{40})\"").findAll(js).forEach {
-                    hashes.add(it.groupValues[1])
+                
+                // Priority 1: Explicit server references
+                actionRegex.findAll(js).forEach { hashes.add(it.groupValues[1]) }
+                
+                // Priority 2: Any long hex string if we don't have enough
+                if (hashes.size < 4) {
+                    hexRegex.findAll(js).forEach { hashes.add(it.groupValues[1]) }
                 }
-                if (hashes.size >= 2) break
+                
+                if (hashes.size >= 4) break
             }
 
-            val list = hashes.toList()
-            if (list.size >= 2) {
-                searchActionHash = list[0]
-                watchActionHash = list[1]
+            candidateHashes = hashes.toList()
+            if (candidateHashes.isNotEmpty()) {
+                searchActionHash = candidateHashes[0]
+                watchActionHash = if (candidateHashes.size > 1) candidateHashes[1] else candidateHashes[0]
                 lastRefreshTime = System.currentTimeMillis()
-                Log.d(TAG, "Hashes updated: ${searchActionHash.take(10)}... / ${watchActionHash.take(10)}...")
+                Log.d(TAG, "Hashes updated. Found: ${candidateHashes.take(3)}")
+            } else {
+                Log.w(TAG, "No valid hashes found in JS chunks.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to refresh hashes: ${e.message}")
@@ -133,7 +148,7 @@ class AnimeParadiseProvider : MainAPI() {
         Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
         return try {
             val searchPath = "search?q=${query.encodeUri()}&page=1"
-            val session = getPageSession(searchPath)
+            var session = getPageSession(searchPath)
 
             val searchHeaders = mapOf(
                 "accept" to "text/x-component",
@@ -148,23 +163,31 @@ class AnimeParadiseProvider : MainAPI() {
 
             val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
 
-            val response = app.post(
+            var response = app.post(
                 "$mainUrl/$searchPath",
                 headers = searchHeaders,
                 requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             )
 
+            // Retry with different hashes if failed
             if (response.code !in 200..299) {
-                Log.w(TAG, "Search failed, refreshing hashes...")
+                Log.w(TAG, "Search failed (Code: ${response.code}), trying alternative hashes...")
                 lastRefreshTime = 0
-                val newSession = getPageSession(searchPath)
-                val retryHeaders = searchHeaders + ("next-action" to newSession.actionHash) + ("cookie" to newSession.cookie)
-                val retryRes = app.post(
-                    "$mainUrl/$searchPath",
-                    headers = retryHeaders,
-                    requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-                )
-                return processSearchResponse(retryRes.text)
+                refreshActionHashesIfNeeded(force = true)
+                
+                for (hash in candidateHashes) {
+                    val retryHeaders = searchHeaders + ("next-action" to hash) + ("cookie" to session.cookie)
+                    response = app.post(
+                        "$mainUrl/$searchPath",
+                        headers = retryHeaders,
+                        requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                    )
+                    if (response.code in 200..299) {
+                        searchActionHash = hash
+                        Log.d(TAG, "Found working search hash: $hash")
+                        break
+                    }
+                }
             }
 
             processSearchResponse(response.text)
@@ -282,7 +305,7 @@ class AnimeParadiseProvider : MainAPI() {
 
         return try {
             val watchPath = "watch/$uid?origin=$origin"
-            val session = getPageSession(watchPath, isWatch = true)
+            var session = getPageSession(watchPath, isWatch = true)
 
             val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
 
@@ -304,17 +327,27 @@ class AnimeParadiseProvider : MainAPI() {
                     .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
             ).text.replace("\\/", "/")
 
+            // Retry with different hashes if streamLink not found
             if (!resText.contains("streamLink")) {
-                Log.w(TAG, "loadLinks failed, refreshing hashes...")
+                Log.w(TAG, "loadLinks failed (no streamLink), trying alternative hashes...")
                 lastRefreshTime = 0
-                val newSession = getPageSession(watchPath, isWatch = true)
-                val retryHeaders = actionHeaders + ("next-action" to newSession.actionHash) + ("cookie" to newSession.cookie)
-                resText = app.post(
-                    "$mainUrl/$watchPath",
-                    headers = retryHeaders,
-                    requestBody = "[\"$uid\",\"$origin\"]"
-                        .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-                ).text.replace("\\/", "/")
+                refreshActionHashesIfNeeded(force = true)
+                
+                for (hash in candidateHashes) {
+                    val retryHeaders = actionHeaders + ("next-action" to hash) + ("cookie" to session.cookie)
+                    resText = app.post(
+                        "$mainUrl/$watchPath",
+                        headers = retryHeaders,
+                        requestBody = "[\"$uid\",\"$origin\"]"
+                            .toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
+                    ).text.replace("\\/", "/")
+                    
+                    if (resText.contains("streamLink")) {
+                        watchActionHash = hash
+                        Log.d(TAG, "Found working watch hash: $hash")
+                        break
+                    }
+                }
             }
 
             val streamLink = Regex(""""streamLink"\s*:\s*"([^"]+)""")
