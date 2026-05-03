@@ -552,16 +552,6 @@ override suspend fun loadLinks(
                         var videoSrc = preferredSourcesList.first().groupValues[1].replace("\\/", "/")
                         Log.d(TAG, "loadLinks: using preferred source from list: $videoSrc")
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
-                        callback(
-                            ExtractorLink(
-                                source = name,
-                                name = "$name (Directo)",
-                                url = videoSrc,
-                                referer = "$mainUrl/",
-                                quality = Qualities.Unknown.value,
-                                type = if (videoSrc.contains(".m3u8")) INFER_TYPE else VIDEO
-                            )
-                        )
                         foundNonDrm = true
                     }
                     
@@ -651,19 +641,7 @@ override suspend fun loadLinks(
                     if (preferredSources.isNotEmpty()) {
                         var videoSrc = preferredSources.first().groupValues[1].replace("\\/", "/")
                         Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
-                        // Call extractor first
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
-                        // Also add directly as fallback in case loadExtractor fails
-                        callback(
-                            ExtractorLink(
-                                source = name,
-                                name = "$name (Directo)",
-                                url = videoSrc,
-                                referer = "$mainUrl/",
-                                quality = Qualities.Unknown.value,
-                                type = if (videoSrc.contains(".m3u8")) INFER_TYPE else VIDEO
-                            )
-                        )
                         foundNonDrm = true
                     }
                     
