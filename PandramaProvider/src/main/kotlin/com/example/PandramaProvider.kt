@@ -589,33 +589,117 @@ override suspend fun loadLinks(
                 }
             }
             
-            // Fallback: try HTML parsing - extract video data directly from JSON using regex
+            // Fallback: try HTML parsing - extract video data directly from raw HTML
             Log.d(TAG, "loadLinks: trying HTML parsing for: $data")
             val html = app.get(data).text
             
-            // Find the JSON block that contains episode data (look for loaders or episodePage)
+            // First try to find video data in any script tag
             var jsonContent = ""
             val scriptRegex = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
-            for (match in scriptRegex.findAll(html)) {
+            val allScripts = scriptRegex.findAll(html).toList()
+            Log.d(TAG, "loadLinks: total scripts found=${allScripts.size}")
+            
+            for ((idx, match) in allScripts.withIndex()) {
                 val scriptContent = match.groupValues[1].trim()
-                if ((scriptContent.contains("episodePage") || scriptContent.contains("episode_page")) && scriptContent.contains("src")) {
-                    // This is the script with episode data
+                if (scriptContent.contains("vikidash") || (scriptContent.contains(".mpd") && scriptContent.contains("src"))) {
                     val jsonStr = scriptContent.removePrefix("window.bootstrapData =").removePrefix("window.__NUXT__=").trim().trimEnd(';')
                     jsonContent = jsonStr
-                    Log.d(TAG, "loadLinks: found episode script, length=${jsonContent.length}")
+                    Log.d(TAG, "loadLinks: found video script at index $idx, length=${jsonContent.length}")
                     break
                 }
             }
             
             if (jsonContent.isEmpty()) {
-                // Fallback: try the standard bootstrapData
-                val jsonStart = html.indexOf("window.bootstrapData")
-                if (jsonStart != -1) {
-                    val scriptStart = html.lastIndexOf("<script>", jsonStart)
-                    val scriptEnd = html.indexOf("</script>", scriptStart)
-                    if (scriptStart != -1 && scriptEnd != -1) {
-                        val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
-                        jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
+                for ((idx, match) in allScripts.withIndex()) {
+                    val scriptContent = match.groupValues[1].trim()
+                    if (scriptContent.contains("loaders") && scriptContent.contains("episodePage")) {
+                        val jsonStr = scriptContent.removePrefix("window.bootstrapData =").removePrefix("window.__NUXT__=").trim().trimEnd(';')
+                        jsonContent = jsonStr
+                        Log.d(TAG, "loadLinks: found loaders script at index $idx, length=${jsonContent.length}")
+                        break
+                    }
+                }
+            }
+            
+            // If still no JSON content, search the entire HTML for video URLs directly
+            if (jsonContent.isEmpty()) {
+                Log.d(TAG, "loadLinks: searching entire HTML for video URLs")
+                
+                // Quick check: is vikidash anywhere in the HTML?
+                Log.d(TAG, "loadLinks: contains vikidash=${html.contains("vikidash")}")
+                Log.d(TAG, "loadLinks: contains .mpd=${html.contains(".mpd")}")
+                Log.d(TAG, "loadLinks: contains loaders=${html.contains("loaders")}")
+                Log.d(TAG, "loadLinks: contains episodePage=${html.contains("episodePage")}")
+                Log.d(TAG, "loadLinks: HTML length=${html.length}")
+                
+                val mpdRegex = """"src"\s*:\s*"(https?://[^"]*\.mpd[^"]*)"""".toRegex()
+                val m3u8Regex = """"src"\s*:\s*"(https?://[^"]*\.m3u8[^"]*)"""".toRegex()
+                val directRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
+                
+                val mpdMatches = mpdRegex.findAll(html).toList()
+                Log.d(TAG, "loadLinks: found ${mpdMatches.size} .mpd src matches in HTML")
+                for (mpdMatch in mpdMatches) {
+                    val videoSrc = mpdMatch.groupValues[1]
+                    Log.d(TAG, "loadLinks: found .mpd video: $videoSrc")
+                    
+                    // Extract clearkey from nearby text
+                    val mpdIndex = mpdMatch.range.first
+                    val windowSize = 1000
+                    val searchStart = maxOf(0, mpdIndex - windowSize)
+                    val searchEnd = minOf(html.length, mpdIndex + windowSize)
+                    val searchWindow = html.substring(searchStart, searchEnd)
+                    
+                    val clearkeyRegex = """"clearkey"\s*:\s*"([^"]+)"""".toRegex()
+                    val clearkeyMatch = clearkeyRegex.find(searchWindow)
+                    val clearkey = clearkeyMatch?.groupValues?.get(1)
+                    Log.d(TAG, "loadLinks: clearkey found=${clearkey != null}")
+                    
+                    // Extract subtitles from entire HTML
+                    val captionUrlRegex = """"url"\s*:\s*"([^"]*\.vtt[^"]*)"""".toRegex()
+                    val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
+                    
+                    // Find caption objects near the video data
+                    val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
+                    val captionMatches = captionRegex.findAll(searchWindow)
+                    for (captionMatch in captionMatches) {
+                        val objContent = captionMatch.value
+                        val subUrlMatch = captionUrlRegex.find(objContent)
+                        val langMatch = captionLangRegex.find(objContent)
+                        val nameMatch = captionNameRegex.find(objContent)
+                        
+                        val subUrl = subUrlMatch?.groupValues?.get(1)
+                        if (!subUrl.isNullOrEmpty()) {
+                            val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                            val name = nameMatch?.groupValues?.get(1) ?: langMatch?.groupValues?.get(1) ?: "Español"
+                            Log.d(TAG, "loadLinks: subtitle $name from $fullSubUrl")
+                            subtitleCallback(newSubtitleFile(name, fullSubUrl))
+                        }
+                    }
+                    
+                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                    return true
+                }
+                
+                // Try m3u8
+                val m3u8Matches = m3u8Regex.findAll(html).toList()
+                Log.d(TAG, "loadLinks: found ${m3u8Matches.size} .m3u8 src matches")
+                for (m3u8Match in m3u8Matches) {
+                    val videoSrc = m3u8Match.groupValues[1]
+                    Log.d(TAG, "loadLinks: found .m3u8 video: $videoSrc")
+                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                    return true
+                }
+                
+                // Try any https src that looks like a video
+                val allSrcMatches = directRegex.findAll(html).toList()
+                Log.d(TAG, "loadLinks: found ${allSrcMatches.size} total src matches")
+                for (srcMatch in allSrcMatches) {
+                    val videoSrc = srcMatch.groupValues[1]
+                    if (videoSrc.contains(".mp4") || videoSrc.contains(".mkv") || videoSrc.contains("embed") || videoSrc.contains("player")) {
+                        Log.d(TAG, "loadLinks: found video src: $videoSrc")
+                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                        return true
                     }
                 }
             }
