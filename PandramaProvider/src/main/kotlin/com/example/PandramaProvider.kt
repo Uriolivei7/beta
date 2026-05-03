@@ -611,6 +611,21 @@ override suspend fun loadLinks(
             Log.d(TAG, "loadLinks: episodePage (direct) null=${bootstrap?.episodePage == null}")
             Log.d(TAG, "loadLinks: titlePage null=${bootstrap?.loaders?.titlePage == null}")
             
+            // Debug: print full JSON keys when loaders is null
+            if (bootstrap?.loaders == null) {
+                val jsonStart = html.indexOf("window.bootstrapData")
+                if (jsonStart != -1) {
+                    val scriptStart = html.lastIndexOf("<script>", jsonStart)
+                    val scriptEnd = html.indexOf("</script>", scriptStart)
+                    if (scriptStart != -1 && scriptEnd != -1) {
+                        val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
+                        val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
+                        // Print first 2000 chars to see the full structure
+                        Log.d(TAG, "loadLinks: FULL JSON SAMPLE (no loaders): ${jsonContent.take(2000)}")
+                    }
+                }
+            }
+            
             // Try to get video from episodePage -> currentVideo (checks both formats)
             val episodePage = bootstrap?.loaders?.episodePage ?: bootstrap?.episodePage
             
