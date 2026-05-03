@@ -507,6 +507,40 @@ override suspend fun loadLinks(
                 val episodeListText = episodeListResponse.text
                 Log.d(TAG, "loadLinks: episode list sample: ${episodeListText.take(1000)}")
                 
+                // Try to find video directly from episode list (primary_video)
+                val mpdRegexList = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+\.mpd[^"]*)"""".toRegex()
+                val mpdMatchList = mpdRegexList.find(episodeListText)
+                
+                if (mpdMatchList != null) {
+                    var videoSrc = mpdMatchList.groupValues[1].replace("\\/", "/")
+                    Log.d(TAG, "loadLinks: found video in episode list: $videoSrc")
+                    
+                    // Extract subtitles from episode list
+                    val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
+                    val captionUrlRegex = """"url"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
+                    
+                    val captionMatches = captionRegex.findAll(episodeListText)
+                    for (captionMatch in captionMatches) {
+                        val objContent = captionMatch.value
+                        val subUrlMatch = captionUrlRegex.find(objContent)
+                        val nameMatch = captionNameRegex.find(objContent)
+                        val langMatch = captionLangRegex.find(objContent)
+                        
+                        val subUrl = subUrlMatch?.groupValues?.get(1)
+                        if (!subUrl.isNullOrEmpty() && !subUrl.contains("mpd")) {
+                            val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                            val name = nameMatch?.groupValues?.get(1) ?: langMatch?.groupValues?.get(1) ?: "Español"
+                            Log.d(TAG, "loadLinks: subtitle $name")
+                            subtitleCallback(newSubtitleFile(name, fullSubUrl))
+                        }
+                    }
+                    
+                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                    return true
+                }
+                
                 val idRegex = """"id"\s*:\s*$episodeId""".toRegex()
                 val epNumRegex = """"episode_number"\s*:\s*(\d+)""".toRegex()
                 
@@ -536,12 +570,12 @@ override suspend fun loadLinks(
                 Log.d(TAG, "loadLinks: API response length=${apiText.length}")
                 Log.d(TAG, "loadLinks: API sample: ${apiText.take(2000)}")
                 
-                // Extract video URL
-                val mpdRegex = """"src"\s*:\s*"(https?://[^"]+\.mpd[^"]*)"""".toRegex()
+                // Extract video URL - handle escaped JSON slashes
+                val mpdRegex = """"src"\s*:\s*"(https?:\\?/\\?/[^"]+\.mpd[^"]*)"""".toRegex()
                 val mpdMatch = mpdRegex.find(apiText)
                 
                 if (mpdMatch != null) {
-                    val videoSrc = mpdMatch.groupValues[1]
+                    var videoSrc = mpdMatch.groupValues[1].replace("\\/", "/")
                     Log.d(TAG, "loadLinks: found video: $videoSrc")
                     
                     // Extract subtitles
