@@ -541,16 +541,18 @@ override suspend fun loadLinks(
                     
                     // Try non-DRM sources first (mp4, m3u8, embed, youtube)
                     var foundNonDrm = false
-                    for (srcMatch in allSrcMatches) {
-                        var videoSrc = srcMatch.groupValues[1].replace("\\/", "/")
-                        Log.d(TAG, "loadLinks: trying src: $videoSrc")
-                        
-                        if (videoSrc.contains(".mp4") || videoSrc.contains(".m3u8") || videoSrc.contains("youtube") || videoSrc.contains("embed") || videoSrc.contains("player")) {
-                            Log.d(TAG, "loadLinks: using non-DRM source: $videoSrc")
-                            loadExtractor(videoSrc, data, subtitleCallback, callback)
-                            foundNonDrm = true
-                            break
-                        }
+                    
+                    // 1. Try known video embeds (not youtube, not mpd)
+                    val preferredSourcesList = allSrcMatches.filter { match ->
+                        val src = match.groupValues[1].replace("\\/", "/")
+                        !src.contains(".mpd") && !src.contains("youtube") && !src.contains("vimeo")
+                    }
+                    
+                    if (preferredSourcesList.isNotEmpty()) {
+                        var videoSrc = preferredSourcesList.first().groupValues[1].replace("\\/", "/")
+                        Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
+                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                        foundNonDrm = true
                     }
                     
                     // Fallback to MPD if no other source found
@@ -629,26 +631,25 @@ override suspend fun loadLinks(
                     
                     // Try non-DRM sources first
                     var foundNonDrm = false
-                    for (srcMatch in allSrcMatches) {
-                        var videoSrc = srcMatch.groupValues[1].replace("\\/", "/")
-                        Log.d(TAG, "loadLinks: trying API src: $videoSrc")
-                        
-                        if (videoSrc.contains(".mp4") || videoSrc.contains(".m3u8") || videoSrc.contains("youtube") || videoSrc.contains("embed") || videoSrc.contains("player") || videoSrc.contains("iframe")) {
-                            Log.d(TAG, "loadLinks: using non-DRM source: $videoSrc")
-                            loadExtractor(videoSrc, data, subtitleCallback, callback)
-                            foundNonDrm = true
-                        }
+                    
+                    // 1. Try known video embeds (not youtube, not mpd)
+                    val preferredSources = allSrcMatches.filter { match ->
+                        val src = match.groupValues[1].replace("\\/", "/")
+                        !src.contains(".mpd") && !src.contains("youtube") && !src.contains("vimeo")
                     }
                     
-                    // Fallback to MPD if no other source found
+                    if (preferredSources.isNotEmpty()) {
+                        var videoSrc = preferredSources.first().groupValues[1].replace("\\/", "/")
+                        Log.d(TAG, "loadLinks: using preferred source: $videoSrc")
+                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                        foundNonDrm = true
+                    }
+                    
+                    // 2. Fallback to MPD if no other source found
                     if (!foundNonDrm) {
                         var videoSrc = mpdMatch.groupValues[1].replace("\\/", "/")
                         Log.d(TAG, "loadLinks: falling back to MPD: $videoSrc")
                         loadExtractor(videoSrc, data, subtitleCallback, callback)
-                        
-                        // Also try loading the episode page as an iframe source
-                        Log.d(TAG, "loadLinks: trying episode page as iframe: $data")
-                        loadExtractor(data, subtitleCallback, callback)
                     }
                     return true
                 } else {
