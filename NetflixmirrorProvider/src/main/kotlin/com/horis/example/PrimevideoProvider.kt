@@ -117,16 +117,19 @@ class PrimevideoProvider : MainAPI() {
             val allSeasons = mutableListOf<Pair<String, Int?>>()
 
             // Main block episodes belong to selected season
-            val mainBlockEpisodes = data.episodes.filterNotNull().map { ep ->
-                newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
-                    name = ep.t
-                    episode = ep.ep?.toIntOrNull() ?: ep.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = selectedSeasonNum ?: extractSeasonNumber(ep.s)
-                    posterUrl = pvEpPoster(ep.id.orEmpty())
-                    this.runTime = ep.timeVal?.replace("m", "").orEmpty().toIntOrNull()
-                    description = ep.ep_desc
+            val mainBlockEpisodes = data.episodes
+                .filterNotNull()
+                .distinctBy { it.id }
+                .map { ep ->
+                    newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
+                        name = ep.t
+                        episode = ep.ep?.toIntOrNull() ?: ep.epNum?.replace("E", "").orEmpty().toIntOrNull()
+                        season = selectedSeasonNum ?: extractSeasonNumber(ep.s)
+                        posterUrl = pvEpPoster(ep.id.orEmpty())
+                        this.runTime = ep.timeVal?.replace("m", "").orEmpty().toIntOrNull()
+                        description = ep.ep_desc
+                    }
                 }
-            }
 
             if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank()) {
                 val selNum = extractSeasonNumber(data.season?.find { it.id == selectedSeasonId }?.s)
@@ -188,6 +191,7 @@ class PrimevideoProvider : MainAPI() {
     ): List<Episode> {
         val apiBase = resolveApiUrl()
         val episodes = arrayListOf<Episode>()
+        val seenIds = mutableSetOf<String>()
         var pg = page
         while (true) {
             val data = app.get(
@@ -201,15 +205,18 @@ class PrimevideoProvider : MainAPI() {
                 Log.d("Primevideo", "  ep: t=${e.t}, s=${e.s}, ep=${e.ep}")
             }
 
-            data.episodes.orEmpty().mapTo(episodes) { ep ->
-                newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
+            data.episodes.orEmpty().forEach { ep ->
+                if (ep.id.isNullOrBlank()) return@forEach
+                if (ep.id in seenIds) return@forEach
+                seenIds.add(ep.id)
+                episodes.add(newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
                     name = ep.t
                     episode = ep.ep?.toIntOrNull() ?: ep.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = seasonNumber ?: extractSeasonNumber(ep.s) ?: extractSeasonNumber(ep.sNum)
                     posterUrl = pvEpPoster(ep.id.orEmpty())
                     this.runTime = ep.timeVal?.replace("m", "").orEmpty().toIntOrNull()
                     description = ep.ep_desc
-                }
+                })
             }
 
             if (data.nextPageShow != 1) break
