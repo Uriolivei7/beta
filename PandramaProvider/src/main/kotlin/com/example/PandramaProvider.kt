@@ -484,7 +484,18 @@ override suspend fun loadLinks(
             val episodePageResponse = app.get(data)
             val episodeHtml = episodePageResponse.text
             val cookies = episodePageResponse.cookies
-            Log.d(TAG, "loadLinks: got ${cookies.size} cookies")
+            Log.d(TAG, "loadLinks: got ${cookies.size} cookies: $cookies")
+            
+            // Extract XSRF token from cookie and use as header
+            val xsrfCookie = cookies["XSRF-TOKEN"] ?: ""
+            val xsrfToken = if (xsrfCookie.isNotEmpty()) java.net.URLDecoder.decode(xsrfCookie, "UTF-8") else ""
+            Log.d(TAG, "loadLinks: XSRF token=${xsrfToken.take(30)}")
+            
+            val apiHeaders = mapOf(
+                "Accept" to "application/json",
+                "Referer" to data,
+                "X-XSRF-TOKEN" to xsrfToken
+            )
             
             // Step 2: Get episode list to find episode number
             var episodeNumber = 1
@@ -492,7 +503,7 @@ override suspend fun loadLinks(
             Log.d(TAG, "loadLinks: fetching episode list")
             
             try {
-                val episodeListResponse = app.get(episodeListUrl, headers = mapOf("Accept" to "application/json"), cookies = cookies)
+                val episodeListResponse = app.get(episodeListUrl, headers = apiHeaders, cookies = cookies)
                 val episodeListText = episodeListResponse.text
                 Log.d(TAG, "loadLinks: episode list sample: ${episodeListText.take(1000)}")
                 
@@ -520,7 +531,7 @@ override suspend fun loadLinks(
             Log.d(TAG, "loadLinks: calling API: $episodeApiUrl")
             
             try {
-                val apiResponse = app.get(episodeApiUrl, headers = mapOf("Accept" to "application/json"), cookies = cookies)
+                val apiResponse = app.get(episodeApiUrl, headers = apiHeaders, cookies = cookies)
                 val apiText = apiResponse.text
                 Log.d(TAG, "loadLinks: API response length=${apiText.length}")
                 Log.d(TAG, "loadLinks: API sample: ${apiText.take(2000)}")
