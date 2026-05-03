@@ -102,6 +102,8 @@ class PandramaProvider:MainAPI() {
     data class EpisodePageData(
         @JsonProperty("title") var title: TitleDetailData? = null,
         @JsonProperty("episode") var episode: EpisodeWithVideos? = null,
+        @JsonProperty("current_video") var currentVideo: ApiVideoData? = null,
+        @JsonProperty("alternative_videos") var alternativeVideos: List<ApiVideoData>? = null,
         @JsonProperty("loader") var loader: String? = null
     )
 
@@ -489,7 +491,10 @@ override suspend fun loadLinks(
             for (apiUrl in apiUrls) {
                 Log.d(TAG, "loadLinks: trying API: $apiUrl")
                 try {
-                    val jsonResponse = app.get(apiUrl).text
+                    val jsonResponse = app.get(apiUrl, headers = mapOf(
+                        "Accept" to "application/json",
+                        "X-Requested-With" to "XMLHttpRequest"
+                    )).text
                     if (jsonResponse.startsWith("<")) {
                         Log.d(TAG, "loadLinks: got HTML response, not JSON")
                         continue
@@ -602,96 +607,27 @@ override suspend fun loadLinks(
             Log.d(TAG, "loadLinks: episodePage null=${bootstrap?.loaders?.episodePage == null}")
             Log.d(TAG, "loadLinks: titlePage null=${bootstrap?.loaders?.titlePage == null}")
             
-            // Try to get episode from episodePage
-            val episodeData = bootstrap?.loaders?.episodePage?.episode
+            // Try to get video from episodePage -> currentVideo
+            val episodePage = bootstrap?.loaders?.episodePage
             
-            Log.d(TAG, "loadLinks: episodeData from episodePage=${episodeData?.name}, videos=${episodeData?.videos?.size}")
-            
-            // If no episodePage, try to get from title page episodes
-            if (episodeData == null) {
-                val titleIdFromUrl = data.substringAfter("/titulo/").substringBefore("/").toIntOrNull()
-                if (titleIdFromUrl != null) {
-                    val titlePageUrl = "$mainUrl/titulo/$titleIdFromUrl"
-                    Log.d(TAG, "loadLinks: trying to get episode from title page: $titlePageUrl")
-                    try {
-                        val titleHtml = app.get(titlePageUrl).text
-                        val titleBootstrap = parseBootstrapData(titleHtml)
-                        val episodes = titleBootstrap?.loaders?.titlePage?.episodes?.data
-                        val seasonNum = data.substringAfter("/temporada/").substringBefore("/").toIntOrNull() ?: 1
-                        val episodeIdFromUrl = data.substringAfterLast("/episodio/").toIntOrNull()
-                        
-                        if (episodeIdFromUrl != null && !episodes.isNullOrEmpty()) {
-                            val episode = episodes.find { it.id == episodeIdFromUrl }
-                            if (episode != null) {
-                                Log.d(TAG, "loadLinks: found episode in title page, primaryVideo=${episode.primaryVideo != null}")
-                                episode.primaryVideo?.let { primaryVid ->
-                                    val videoId = primaryVid.id
-                                    if (videoId != null) {
-                                        Log.d(TAG, "loadLinks: loading video from primaryVideo id: $videoId")
-                                        loadExtractor("$mainUrl/api/videos/$videoId", data, subtitleCallback, callback)
-                                        return true
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.d(TAG, "loadLinks: title page fallback error: ${e.message}")
-                    }
-                }
-            }
-            
-            if (bootstrap == null) {
-                Log.d(TAG, "loadLinks: bootstrap is null, returning false")
-                return false
-            }
-            
-            if (episodeData == null) {
-                // Try to find videos in title info
-                val titleInfo = bootstrap.loaders?.titlePage?.title
-                Log.d(TAG, "loadLinks: titleInfo videos=${titleInfo?.videos?.size}")
+            if (episodePage?.currentVideo != null) {
+                val video = episodePage.currentVideo
+                val videoSrc = video?.src
+                Log.d(TAG, "loadLinks: found currentVideo src=$videoSrc")
                 
-                Log.d(TAG, "loadLinks: bootstrap settings=${bootstrap.settings != null}")
-                Log.d(TAG, "loadLinks: bootstrap themes=${bootstrap.themes != null}")
-                
-                titleInfo?.videos?.forEach { video ->
-                    if (video.category == "full" || video.category == "trailer") {
-                        if (video.src?.contains("youtube") == true || video.src?.contains("embed") == true) {
-                            loadExtractor(video.src!!, data, subtitleCallback, callback)
-                            return true
-                        }
-                    }
-                }
-                
-                Log.d(TAG, "loadLinks: no episode data found, returning false")
-                return false
-            }
-            
-            if (episodeData != null) {
-                val videos = episodeData.videos ?: emptyList()
-                
-                for (video in videos) {
-                    val videoSrc = video.src
-                    if (videoSrc.isNullOrEmpty()) continue
-                    
-                    Log.d(TAG, "loadLinks: video src=$videoSrc, type=${video.type}")
-                    
-                    video.captions?.forEach { caption ->
+                if (!videoSrc.isNullOrEmpty()) {
+                    video?.captions?.forEach { caption ->
                         val subUrl = caption.url
                         if (!subUrl.isNullOrEmpty()) {
                             val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
-                            val lang = caption.language ?: "unknown"
-                            val name = caption.name ?: lang
-                            Log.d(TAG, "loadLinks: adding subtitle $name from $fullSubUrl")
+                            val name = caption.name ?: caption.language ?: "unknown"
+                            Log.d(TAG, "loadLinks: adding subtitle $name")
                             subtitleCallback(newSubtitleFile(name, fullSubUrl))
                         }
                     }
                     
                     when {
-                        videoSrc.contains(".mpd") || video.type == "shaka" -> {
-                            loadExtractor(videoSrc, data, subtitleCallback, callback)
-                            return true
-                        }
-                        videoSrc.contains("youtube.com") || videoSrc.contains("youtu.be") -> {
+                        videoSrc.contains(".mpd") || video?.type == "shaka" -> {
                             loadExtractor(videoSrc, data, subtitleCallback, callback)
                             return true
                         }
@@ -703,7 +639,29 @@ override suspend fun loadLinks(
                 }
             }
             
-            true
+            // Fallback to alternative videos
+            episodePage?.alternativeVideos?.forEach { video ->
+                val videoSrc = video.src
+                if (videoSrc.isNullOrEmpty()) return@forEach
+                Log.d(TAG, "loadLinks: trying alternative video src=$videoSrc")
+                
+                video.captions?.forEach { caption ->
+                    val subUrl = caption.url
+                    if (!subUrl.isNullOrEmpty()) {
+                        val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                        val name = caption.name ?: caption.language ?: "unknown"
+                        subtitleCallback(newSubtitleFile(name, fullSubUrl))
+                    }
+                }
+                
+                if (videoSrc.startsWith("http") && !videoSrc.contains(".mpd")) {
+                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                    return true
+                }
+            }
+            
+            Log.d(TAG, "loadLinks: no video found in bootstrap data, returning false")
+            return false
         } catch (e: Exception) {
             Log.d(TAG, "loadLinks error: ${e.message}")
             false
