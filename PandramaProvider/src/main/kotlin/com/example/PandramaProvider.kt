@@ -27,6 +27,9 @@ class PandramaProvider:MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class BootstrapData(
         @JsonProperty("loaders") var loaders: LoadersData? = null,
+        @JsonProperty("episodePage") var episodePage: EpisodePageData? = null,
+        @JsonProperty("titlePage") var titlePage: TitlePageData? = null,
+        @JsonProperty("searchPage") var searchPage: SearchPageData? = null,
         @JsonProperty("settings") var settings: Any? = null,
         @JsonProperty("i18n") var i18n: Any? = null,
         @JsonProperty("themes") var themes: Any? = null,
@@ -604,11 +607,12 @@ override suspend fun loadLinks(
             
             Log.d(TAG, "loadLinks: bootstrap null=${bootstrap == null}")
             Log.d(TAG, "loadLinks: loaders null=${bootstrap?.loaders == null}")
-            Log.d(TAG, "loadLinks: episodePage null=${bootstrap?.loaders?.episodePage == null}")
+            Log.d(TAG, "loadLinks: episodePage (loaders) null=${bootstrap?.loaders?.episodePage == null}")
+            Log.d(TAG, "loadLinks: episodePage (direct) null=${bootstrap?.episodePage == null}")
             Log.d(TAG, "loadLinks: titlePage null=${bootstrap?.loaders?.titlePage == null}")
             
-            // Try to get video from episodePage -> currentVideo
-            val episodePage = bootstrap?.loaders?.episodePage
+            // Try to get video from episodePage -> currentVideo (checks both formats)
+            val episodePage = bootstrap?.loaders?.episodePage ?: bootstrap?.episodePage
             
             if (episodePage?.currentVideo != null) {
                 val video = episodePage.currentVideo
