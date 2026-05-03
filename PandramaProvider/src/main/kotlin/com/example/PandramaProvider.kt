@@ -449,7 +449,6 @@ override suspend fun loadLinks(
             val seasonNum: Int?
             val episodeId: Int?
             
-            // Parse URL to get title/season/episode IDs
             when {
                 data.contains("/titulo/") && data.contains("/temporada/") && data.contains("/episodio/") -> {
                     val parts = data.split("/")
@@ -476,149 +475,108 @@ override suspend fun loadLinks(
             
             Log.d(TAG, "loadLinks: titleId=$titleId, seasonNum=$seasonNum, episodeId=$episodeId")
             
-            // Step 1: Visit the episode page to get session cookies
+            if (titleId == null || seasonNum == null || episodeId == null) {
+                Log.d(TAG, "loadLinks: missing required IDs")
+                return false
+            }
+            
+            // Step 1: Visit the episode page to get cookies
             val episodePageResponse = app.get(data)
             val episodeHtml = episodePageResponse.text
-            Log.d(TAG, "loadLinks: episode page HTML length=${episodeHtml.length}")
-            
-            // Extract XSRF-TOKEN from meta tag or cookie
-            var xsrfToken = ""
-            val xsrfMetaRegex = """<meta[^>]*name="csrf-token"[^>]*content="([^"]+)"""".toRegex()
-            val xsrfMetaMatch = xsrfMetaRegex.find(episodeHtml)
-            if (xsrfMetaMatch != null) {
-                xsrfToken = xsrfMetaMatch.groupValues[1]
-                Log.d(TAG, "loadLinks: found XSRF token from meta: ${xsrfToken.take(20)}...")
-            }
-            
-            // Try to get cookies from response
             val cookies = episodePageResponse.cookies
-            Log.d(TAG, "loadLinks: got ${cookies.size} cookies from episode page")
+            Log.d(TAG, "loadLinks: got ${cookies.size} cookies")
             
-            // Step 2: If we have titleId and seasonNum, call the API directly
-            var episodeNumber = 1 // Default
+            // Step 2: Get episode list to find episode number
+            var episodeNumber = 1
+            val episodeListUrl = "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes?perPage=200"
+            Log.d(TAG, "loadLinks: fetching episode list")
             
-            if (titleId != null && seasonNum != null) {
-                // First get episode list to find the episode number
-                val episodeListUrl = "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes?perPage=200"
-                Log.d(TAG, "loadLinks: fetching episode list from $episodeListUrl")
+            try {
+                val episodeListResponse = app.get(episodeListUrl, headers = mapOf("Accept" to "application/json"), cookies = cookies)
+                val episodeListText = episodeListResponse.text
+                Log.d(TAG, "loadLinks: episode list sample: ${episodeListText.take(1000)}")
                 
-                try {
-                    val episodeListResponse = app.get(episodeListUrl, headers = mapOf(
-                        "Accept" to "application/json",
-                        "Referer" to data
-                    ), cookies = cookies)
-                    val episodeListText = episodeListResponse.text
-                    
-                    if (episodeListText.startsWith("{") || episodeListText.startsWith("[")) {
-                        // Parse episode list to find episode number
-                        val idRegex = """"id"\s*:\s*$episodeId""".toRegex()
-                        val epNumRegex = """"episode_number"\s*:\s*(\d+)""".toRegex()
-                        
-                        if (idRegex.containsMatchIn(episodeListText)) {
-                            // Find episode_number near this ID
-                            val idMatch = idRegex.find(episodeListText)
-                            if (idMatch != null) {
-                                val searchWindow = episodeListText.substring(
-                                    maxOf(0, idMatch.range.first - 500),
-                                    minOf(episodeListText.length, idMatch.range.first + 500)
-                                )
-                                val epNumMatch = epNumRegex.find(searchWindow)
-                                if (epNumMatch != null) {
-                                    episodeNumber = epNumMatch.groupValues[1].toInt()
-                                    Log.d(TAG, "loadLinks: found episode number $episodeNumber for id $episodeId")
-                                }
-                            }
-                        }
+                val idRegex = """"id"\s*:\s*$episodeId""".toRegex()
+                val epNumRegex = """"episode_number"\s*:\s*(\d+)""".toRegex()
+                
+                if (idRegex.containsMatchIn(episodeListText)) {
+                    val idMatch = idRegex.find(episodeListText)!!
+                    val searchWindow = episodeListText.substring(
+                        maxOf(0, idMatch.range.first - 500),
+                        minOf(episodeListText.length, idMatch.range.first + 500)
+                    )
+                    val epNumMatch = epNumRegex.find(searchWindow)
+                    if (epNumMatch != null) {
+                        episodeNumber = epNumMatch.groupValues[1].toInt()
+                        Log.d(TAG, "loadLinks: found episode number $episodeNumber")
                     }
-                } catch (e: Exception) {
-                    Log.d(TAG, "loadLinks: episode list fetch error: ${e.message}")
                 }
-                
-                // Step 3: Call the episode API with the episode number
-                val episodeApiUrl = "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeNumber?loader=episodePage"
-                Log.d(TAG, "loadLinks: calling episode API: $episodeApiUrl")
-                
-                try {
-                    val apiResponse = app.get(episodeApiUrl, headers = mapOf(
-                        "Accept" to "application/json",
-                        "Referer" to data
-                    ), cookies = cookies)
-                    val apiText = apiResponse.text
-                    
-                    if (apiText.startsWith("{")) {
-                        Log.d(TAG, "loadLinks: API response starts with JSON, length=${apiText.length}")
-                        
-                        // Try to extract video using regex
-                        val mpdRegex = """"src"\s*:\s*"(https?://[^"]+\.mpd[^"]*)"""".toRegex()
-                        val mpdMatch = mpdRegex.find(apiText)
-                        
-                        if (mpdMatch != null) {
-                            val videoSrc = mpdMatch.groupValues[1]
-                            Log.d(TAG, "loadLinks: found video: $videoSrc")
-                            
-                            // Extract clearkey
-                            val mpdIndex = mpdMatch.range.first
-                            val searchWindow = apiText.substring(
-                                maxOf(0, mpdIndex - 500),
-                                minOf(apiText.length, mpdIndex + 500)
-                            )
-                            val clearkeyRegex = """"clearkey"\s*:\s*"([^"]+)"""".toRegex()
-                            val clearkeyMatch = clearkeyRegex.find(searchWindow)
-                            val clearkey = clearkeyMatch?.groupValues?.get(1)
-                            Log.d(TAG, "loadLinks: clearkey=${clearkey != null}")
-                            
-                            // Extract subtitles
-                            val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
-                            val captionUrlRegex = """"url"\s*:\s*"([^"]+)"""".toRegex()
-                            val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
-                            val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
-                            
-                            val captionMatches = captionRegex.findAll(searchWindow)
-                            for (captionMatch in captionMatches) {
-                                val objContent = captionMatch.value
-                                val subUrlMatch = captionUrlRegex.find(objContent)
-                                val langMatch = captionLangRegex.find(objContent)
-                                val nameMatch = captionNameRegex.find(objContent)
-                                
-                                val subUrl = subUrlMatch?.groupValues?.get(1)
-                                if (!subUrl.isNullOrEmpty() && !subUrl.contains("mpd")) {
-                                    val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
-                                    val name = nameMatch?.groupValues?.get(1) ?: langMatch?.groupValues?.get(1) ?: "Español"
-                                    Log.d(TAG, "loadLinks: subtitle $name")
-                                    subtitleCallback(newSubtitleFile(name, fullSubUrl))
-                                }
-                            }
-                            
-                            loadExtractor(videoSrc, data, subtitleCallback, callback)
-                            return true
-                        } else {
-                            Log.d(TAG, "loadLinks: no .mpd found in API response, checking for other videos")
-                            val anySrcRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
-                            val anyMatches = anySrcRegex.findAll(apiText).toList()
-                            Log.d(TAG, "loadLinks: found ${anyMatches.size} src matches in API")
-                            for (match in anyMatches) {
-                                val src = match.groupValues[1]
-                                Log.d(TAG, "loadLinks: src=$src")
-                                if (src.contains("youtube") || src.contains("embed") || src.contains(".m3u8")) {
-                                    loadExtractor(src, data, subtitleCallback, callback)
-                                    return true
-                                }
-                            }
-                        }
-                    } else {
-                        Log.d(TAG, "loadLinks: API response is not JSON, length=${apiText.length}, starts with: ${apiText.take(100)}")
-                    }
-                } catch (e: Exception) {
-                    Log.d(TAG, "loadLinks: API call error: ${e.message}")
-                }
+            } catch (e: Exception) {
+                Log.d(TAG, "loadLinks: episode list error: ${e.message}")
             }
             
-            // Fallback: try to extract from episode page HTML
-            Log.d(TAG, "loadLinks: trying to extract from episode HTML")
-            val anySrcRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
-            val anyMatches = anySrcRegex.findAll(episodeHtml).toList()
-            Log.d(TAG, "loadLinks: found ${anyMatches.size} src matches in HTML")
-            for (match in anyMatches) {
+            // Step 3: Call episode API
+            val episodeApiUrl = "$mainUrl/api/v1/titles/$titleId/seasons/$seasonNum/episodes/$episodeNumber?loader=episodePage"
+            Log.d(TAG, "loadLinks: calling API: $episodeApiUrl")
+            
+            try {
+                val apiResponse = app.get(episodeApiUrl, headers = mapOf("Accept" to "application/json"), cookies = cookies)
+                val apiText = apiResponse.text
+                Log.d(TAG, "loadLinks: API response length=${apiText.length}")
+                Log.d(TAG, "loadLinks: API sample: ${apiText.take(2000)}")
+                
+                // Extract video URL
+                val mpdRegex = """"src"\s*:\s*"(https?://[^"]+\.mpd[^"]*)"""".toRegex()
+                val mpdMatch = mpdRegex.find(apiText)
+                
+                if (mpdMatch != null) {
+                    val videoSrc = mpdMatch.groupValues[1]
+                    Log.d(TAG, "loadLinks: found video: $videoSrc")
+                    
+                    // Extract subtitles
+                    val captionRegex = Regex("""\{[^{}]*"url"[^{}]*\}""", RegexOption.DOT_MATCHES_ALL)
+                    val captionUrlRegex = """"url"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
+                    
+                    val captionMatches = captionRegex.findAll(apiText)
+                    for (captionMatch in captionMatches) {
+                        val objContent = captionMatch.value
+                        val subUrlMatch = captionUrlRegex.find(objContent)
+                        val nameMatch = captionNameRegex.find(objContent)
+                        val langMatch = captionLangRegex.find(objContent)
+                        
+                        val subUrl = subUrlMatch?.groupValues?.get(1)
+                        if (!subUrl.isNullOrEmpty() && !subUrl.contains("mpd")) {
+                            val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                            val name = nameMatch?.groupValues?.get(1) ?: langMatch?.groupValues?.get(1) ?: "Español"
+                            Log.d(TAG, "loadLinks: subtitle $name")
+                            subtitleCallback(newSubtitleFile(name, fullSubUrl))
+                        }
+                    }
+                    
+                    loadExtractor(videoSrc, data, subtitleCallback, callback)
+                    return true
+                } else {
+                    Log.d(TAG, "loadLinks: no .mpd in API response")
+                    val anySrcRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
+                    val anyMatches = anySrcRegex.findAll(apiText).toList()
+                    Log.d(TAG, "loadLinks: found ${anyMatches.size} src matches")
+                    for (match in anyMatches) {
+                        val src = match.groupValues[1]
+                        Log.d(TAG, "loadLinks: src=$src")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "loadLinks: API error: ${e.message}")
+            }
+            
+            // Fallback: search HTML
+            Log.d(TAG, "loadLinks: searching HTML for videos")
+            val htmlSrcRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
+            val htmlMatches = htmlSrcRegex.findAll(episodeHtml).toList()
+            Log.d(TAG, "loadLinks: found ${htmlMatches.size} src in HTML")
+            for (match in htmlMatches) {
                 val src = match.groupValues[1]
                 if (src.contains("mpd") || src.contains("m3u8") || src.contains("youtube")) {
                     Log.d(TAG, "loadLinks: found video in HTML: $src")
