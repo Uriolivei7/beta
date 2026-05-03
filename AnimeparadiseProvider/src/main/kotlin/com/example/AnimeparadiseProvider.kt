@@ -8,8 +8,6 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
 
 class AnimeParadiseProvider : MainAPI() {
     override var mainUrl = "https://www.animeparadise.moe"
@@ -40,87 +38,6 @@ class AnimeParadiseProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
     )
 
-    companion object {
-        private var searchActionHash = "70bc90e5d6f376d6614c3a08d7c8aca80385f082c9"
-        private var watchActionHash = "600dc21e94ea824156f9863dfc1bd5118623ebe0a0"
-        private var lastRefreshTime = 0L
-        private var candidateHashes = listOf<String>()
-    }
-
-    private data class PageSession(val cookie: String, val actionHash: String)
-
-    private suspend fun refreshActionHashesIfNeeded(force: Boolean = false) {
-        if (!force && System.currentTimeMillis() - lastRefreshTime < 3600000) return
-
-        try {
-            Log.d(TAG, "Refreshing hashes (scanning chunks)...")
-            val res = app.get(
-                "$mainUrl/search?q=test",
-                headers = mapOf("user-agent" to apiHeaders["user-agent"]!!)
-            )
-            val html = res.text
-
-            // Find ALL JS chunk URLs
-            val jsUrls = Regex("\"(/_next/static/chunks/[^\\\"]+\\.js)\"").findAll(html)
-                .map { it.groupValues[1] }
-                .distinct()
-                .toList()
-
-            val hashes = mutableSetOf<String>()
-            // Search in up to 5 chunks to find action hashes
-            val chunksToScan = jsUrls.take(5)
-
-            for (url in chunksToScan) {
-                Log.d(TAG, "Scanning chunk: $url")
-                val js = app.get("$mainUrl$url", headers = mapOf("referer" to "$mainUrl/")).text
-
-                // Look for Next.js Action hashes: createServerReference("HASH")
-                // Or just any 40-60 alphanumeric string that looks like a hash
-                val actionRegex = Regex("[\"']([a-zA-Z0-9]{40,60})[\"']")
-                val matches = actionRegex.findAll(js).map { it.groupValues[1] }.toList().distinct()
-
-                hashes.addAll(matches)
-                Log.d(TAG, "Found ${matches.size} potential hashes in this chunk")
-
-                if (hashes.size >= 5) break
-            }
-
-            if (hashes.isNotEmpty()) {
-                candidateHashes = hashes.toList()
-                searchActionHash = candidateHashes[0]
-                // Try to find a second distinct hash for watch actions, otherwise use the first
-                watchActionHash = candidateHashes.getOrElse(1) { candidateHashes[0] }
-                lastRefreshTime = System.currentTimeMillis()
-                Log.d(TAG, "Hashes updated. Found ${candidateHashes.size} total candidates.")
-            } else {
-                Log.w(TAG, "No valid hashes found in any chunk.")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Refresh hashes failed: ${e.message}")
-        }
-    }
-
-    private suspend fun getPageSession(path: String, isWatch: Boolean = false): PageSession {
-        return try {
-            val res = app.get(
-                "$mainUrl/$path",
-                headers = mapOf(
-                    "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "user-agent" to apiHeaders["user-agent"]!!,
-                    "referer" to "$mainUrl/"
-                )
-            )
-            val cookie = res.headers["set-cookie"]
-                ?.split(";")
-                ?.firstOrNull { it.trimStart().startsWith("anp_session") }
-                ?.trim() ?: ""
-            PageSession(cookie, if (isWatch) watchActionHash else searchActionHash)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getPageSession: ${e.message}")
-            PageSession("", if (isWatch) watchActionHash else searchActionHash)
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "Logs: --- INICIANDO MAIN PAGE ---")
         return try {
@@ -147,13 +64,13 @@ class AnimeParadiseProvider : MainAPI() {
         return try {
             val searchUrl = "$apiUrl/search?q=${query.encodeUri()}&limit=25"
             val response = app.get(searchUrl, headers = apiHeaders)
-
+            
             val list = try {
                 mapper.readValue<AnimeListResponse>(response.text).data
             } catch (e: Exception) {
                 parseNextJsJson<AnimeListResponse>(response.text)?.data
             }
-
+            
             list?.map { it.toSearchResponse() } ?: emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "Logs: Error en search API: ${e.message}")
@@ -261,56 +178,13 @@ class AnimeParadiseProvider : MainAPI() {
         val origin = parts.getOrNull(1)?.substringAfterLast("/") ?: return false
 
         return try {
-            val watchPath = "watch/$uid?origin=$origin"
-            var session = getPageSession(watchPath, isWatch = true)
+            Log.d(TAG, "Logs: --- CARGANDO LINKS (API): uid=$uid origin=$origin ---")
+            
+            val epRes = app.get("$apiUrl/ep/$uid?origin=$origin&v=1", headers = apiHeaders)
+            val epData = mapper.readValue<EpisodeDetailResponse>(epRes.text)
+            val episode = epData.data?.episode ?: return false
 
-            val routerStateTree = """["",{"children":["watch",{"children":[["id","$uid","d"],{"children":["__PAGE__",{},null,null]}]},null,null]}]"""
-
-            val actionHeaders = mapOf(
-                "accept" to "text/x-component",
-                "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to session.actionHash,
-                "next-router-state-tree" to routerStateTree,
-                "origin" to mainUrl,
-                "referer" to "$mainUrl/$watchPath",
-                "user-agent" to apiHeaders["user-agent"]!!,
-                "cookie" to session.cookie
-            )
-
-            val body = "[\"$uid\",\"$origin\"]".toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-
-            var resText = try {
-                app.post("$mainUrl/$watchPath", headers = actionHeaders, requestBody = body).text.replace("\\/", "/")
-            } catch (e: Exception) { "" }
-
-            // If streamLink not found, try refreshing hashes and retrying with all candidates
-            if (!resText.contains("streamLink")) {
-                Log.w(TAG, "loadLinks failed (no streamLink), refreshing and trying all hashes...")
-                lastRefreshTime = 0
-                refreshActionHashesIfNeeded(force = true)
-
-                // If we have candidates, try them one by one
-                if (candidateHashes.isNotEmpty()) {
-                    Log.d(TAG, "Trying ${candidateHashes.size} candidate hashes...")
-                    for (hash in candidateHashes) {
-                        Log.d(TAG, "Trying hash: ${hash.take(15)}...")
-                        val retryHeaders = actionHeaders + ("next-action" to hash) + ("cookie" to session.cookie)
-                        resText = try {
-                            app.post("$mainUrl/$watchPath", headers = retryHeaders, requestBody = body).text.replace("\\/", "/")
-                        } catch (e: Exception) { "" }
-
-                        if (resText.contains("streamLink")) {
-                            watchActionHash = hash
-                            Log.d(TAG, "Found working watch hash!")
-                            break
-                        }
-                    }
-                }
-            }
-
-            val streamLink = Regex(""""streamLink"\s*:\s*"([^"]+)""")
-                .find(resText)?.groupValues?.getOrNull(1)
-
+            val streamLink = episode.streamLink
             if (streamLink != null) {
                 val proxyUrl = "https://stream.animeparadise.moe/m3u8?url=${streamLink.encodeUri()}"
 
@@ -327,23 +201,17 @@ class AnimeParadiseProvider : MainAPI() {
                 )
             }
 
-            val subDataJson = Regex(""""subData"\s*:\s*(\[.*?])""", RegexOption.DOT_MATCHES_ALL)
-                .find(resText)?.groupValues?.getOrNull(1)
-
-            if (subDataJson != null) {
-                val subList = mapper.readValue<List<SubData>>(subDataJson)
-                subList.forEach { sub ->
-                    val label = sub.label ?: "Unknown"
-                    val src = sub.src ?: return@forEach
-                    val type = sub.type ?: "vtt"
-                    try {
-                        when (type.lowercase()) {
-                            "vtt" -> subtitleCallback.invoke(newSubtitleFile(label, src))
-                            "ass" -> subtitleCallback.invoke(newSubtitleFile(label, "$apiUrl/stream/file/$src"))
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Logs: Error sub $label: ${e.message}")
+            episode.subData?.forEach { sub ->
+                val label = sub.label ?: "Unknown"
+                val src = sub.src ?: return@forEach
+                val type = sub.type ?: "vtt"
+                try {
+                    when (type.lowercase()) {
+                        "vtt" -> subtitleCallback.invoke(newSubtitleFile(label, src))
+                        "ass" -> subtitleCallback.invoke(newSubtitleFile(label, "$apiUrl/stream/file/$src"))
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Logs: Error sub $label: ${e.message}")
                 }
             }
 
@@ -395,4 +263,24 @@ data class EpisodeData(
     val number: String?,
     val image: String?
 )
+data class EpisodeDetailResponse(val success: Boolean?, val error: Any?, val data: EpisodeDetailData?)
+data class EpisodeDetailData(
+    val episode: EpisodeStreamData?,
+    val episodeList: List<EpisodeData>?
+)
+data class EpisodeStreamData(
+    @JsonProperty("_id") val id: String?,
+    val image: String?,
+    val title: String?,
+    val uid: String?,
+    val number: String?,
+    val origin: String?,
+    val summary: String?,
+    val streamLink: String?,
+    val subData: List<SubData>?,
+    val thumbnail: String?,
+    val skipData: SkipData?
+)
+data class SkipData(val intro: TimeRange?, val outro: TimeRange?)
+data class TimeRange(val start: Int?, val end: Int?)
 data class SubData(val src: String?, val label: String?, val type: String?)
