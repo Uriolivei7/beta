@@ -589,53 +589,41 @@ override suspend fun loadLinks(
                 }
             }
             
-            // Fallback: try HTML parsing
+            // Fallback: try HTML parsing - extract video data directly from JSON using regex
             Log.d(TAG, "loadLinks: trying HTML parsing for: $data")
             val html = app.get(data).text
             
-            // Debug: print first 500 chars of JSON
+            // Extract bootstrap JSON
             val jsonStart = html.indexOf("window.bootstrapData")
-            if (jsonStart != -1) {
-                val scriptStart = html.lastIndexOf("<script>", jsonStart)
-                val scriptEnd = html.indexOf("</script>", scriptStart)
-                val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
-                val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
-                Log.d(TAG, "loadLinks: JSON sample: ${jsonContent.take(500)}")
+            if (jsonStart == -1) {
+                Log.d(TAG, "loadLinks: no bootstrapData found")
+                return false
             }
             
+            val scriptStart = html.lastIndexOf("<script>", jsonStart)
+            val scriptEnd = html.indexOf("</script>", scriptStart)
+            if (scriptStart == -1 || scriptEnd == -1) {
+                Log.d(TAG, "loadLinks: no script tags found")
+                return false
+            }
+            
+            val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
+            val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
+            
+            // Try to parse with Jackson first
             val bootstrap = parseBootstrapData(html)
+            Log.d(TAG, "loadLinks: bootstrap loaders null=${bootstrap?.loaders == null}")
             
-            Log.d(TAG, "loadLinks: bootstrap null=${bootstrap == null}")
-            Log.d(TAG, "loadLinks: loaders null=${bootstrap?.loaders == null}")
-            Log.d(TAG, "loadLinks: episodePage (loaders) null=${bootstrap?.loaders?.episodePage == null}")
-            Log.d(TAG, "loadLinks: episodePage (direct) null=${bootstrap?.episodePage == null}")
-            Log.d(TAG, "loadLinks: titlePage null=${bootstrap?.loaders?.titlePage == null}")
-            
-            // Debug: print full JSON keys when loaders is null
-            if (bootstrap?.loaders == null) {
-                val jsonStart = html.indexOf("window.bootstrapData")
-                if (jsonStart != -1) {
-                    val scriptStart = html.lastIndexOf("<script>", jsonStart)
-                    val scriptEnd = html.indexOf("</script>", scriptStart)
-                    if (scriptStart != -1 && scriptEnd != -1) {
-                        val jsonStr = html.substring(scriptStart + 8, scriptEnd).trim()
-                        val jsonContent = jsonStr.removePrefix("window.bootstrapData =").trim().trimEnd(';')
-                        // Print first 2000 chars to see the full structure
-                        Log.d(TAG, "loadLinks: FULL JSON SAMPLE (no loaders): ${jsonContent.take(2000)}")
-                    }
-                }
-            }
-            
-            // Try to get video from episodePage -> currentVideo (checks both formats)
+            // Check if Jackson parsed episodePage correctly
             val episodePage = bootstrap?.loaders?.episodePage ?: bootstrap?.episodePage
             
             if (episodePage?.currentVideo != null) {
-                val video = episodePage.currentVideo
-                val videoSrc = video?.src
+                val video = episodePage.currentVideo!!
+                val videoSrc = video.src
                 Log.d(TAG, "loadLinks: found currentVideo src=$videoSrc")
                 
                 if (!videoSrc.isNullOrEmpty()) {
-                    video?.captions?.forEach { caption ->
+                    video.captions?.forEach { caption ->
                         val subUrl = caption.url
                         if (!subUrl.isNullOrEmpty()) {
                             val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
@@ -646,7 +634,7 @@ override suspend fun loadLinks(
                     }
                     
                     when {
-                        videoSrc.contains(".mpd") || video?.type == "shaka" -> {
+                        videoSrc.contains(".mpd") || video.type == "shaka" -> {
                             loadExtractor(videoSrc, data, subtitleCallback, callback)
                             return true
                         }
@@ -658,7 +646,79 @@ override suspend fun loadLinks(
                 }
             }
             
-            // Fallback to alternative videos
+            // If Jackson failed, extract videos directly using regex from raw JSON
+            Log.d(TAG, "loadLinks: trying regex extraction from raw JSON")
+            
+            // Find all video objects in the JSON - look for "src":"https://...mpd" or similar
+            val srcRegex = """"src"\s*:\s*"(https?://[^"]+)"""".toRegex()
+            val clearkeyRegex = """"clearkey"\s*:\s*"([^"]+)"""".toRegex()
+            val typeRegex = """"type"\s*:\s*"([^"]+)"""".toRegex()
+            
+            val srcMatches = srcRegex.findAll(jsonContent).toList()
+            Log.d(TAG, "loadLinks: found ${srcMatches.size} src matches")
+            
+            for (srcMatch in srcMatches) {
+                val videoSrc = srcMatch.groupValues[1]
+                Log.d(TAG, "loadLinks: checking video src=$videoSrc")
+                
+                // Skip non-video URLs
+                if (!videoSrc.contains(".mpd") && !videoSrc.contains(".m3u8") && !videoSrc.contains("embed") && !videoSrc.contains("youtube")) {
+                    continue
+                }
+                
+                // Find clearkey near this src
+                val srcIndex = srcMatch.range.first
+                val searchWindow = jsonContent.substring(maxOf(0, srcIndex - 500), minOf(jsonContent.length, srcIndex + 500))
+                val clearkeyMatch = clearkeyRegex.find(searchWindow)
+                val clearkey = clearkeyMatch?.groupValues?.get(1)
+                
+                Log.d(TAG, "loadLinks: video src=$videoSrc, clearkey=${clearkey != null}")
+                
+                // Add subtitles - look for captions in the episode data
+                val episodeSectionRegex = """"captions"\s*:\s*\[(.*?)\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
+                val captionsMatch = episodeSectionRegex.find(jsonContent)
+                if (captionsMatch != null) {
+                    val captionsContent = captionsMatch.groupValues[1]
+                    val captionUrlRegex = """"url"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionLangRegex = """"language"\s*:\s*"([^"]+)"""".toRegex()
+                    val captionNameRegex = """"name"\s*:\s*"([^"]+)"""".toRegex()
+                    
+                    // Split by individual caption objects
+                    val captionObjects = Regex("""\{[^{}]*\}""").findAll(captionsContent)
+                    for (captionObj in captionObjects) {
+                        val objContent = captionObj.value
+                        val subUrlMatch = captionUrlRegex.find(objContent)
+                        val langMatch = captionLangRegex.find(objContent)
+                        val nameMatch = captionNameRegex.find(objContent)
+                        
+                        val subUrl = subUrlMatch?.groupValues?.get(1)
+                        if (!subUrl.isNullOrEmpty()) {
+                            val fullSubUrl = if (subUrl.startsWith("/")) "$mainUrl$subUrl" else subUrl
+                            val name = nameMatch?.groupValues?.get(1) ?: langMatch?.groupValues?.get(1) ?: "unknown"
+                            Log.d(TAG, "loadLinks: regex subtitle $name")
+                            subtitleCallback(newSubtitleFile(name, fullSubUrl))
+                        }
+                    }
+                }
+                
+                // Pass video to extractor
+                when {
+                    videoSrc.contains(".mpd") -> {
+                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                        return true
+                    }
+                    videoSrc.contains(".m3u8") -> {
+                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                        return true
+                    }
+                    videoSrc.contains("youtube") || videoSrc.contains("embed") -> {
+                        loadExtractor(videoSrc, data, subtitleCallback, callback)
+                        return true
+                    }
+                }
+            }
+            
+            // Fallback to alternative videos from Jackson
             episodePage?.alternativeVideos?.forEach { video ->
                 val videoSrc = video.src
                 if (videoSrc.isNullOrEmpty()) return@forEach
