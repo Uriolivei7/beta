@@ -130,50 +130,26 @@ class AnimeParadiseProvider : MainAPI() {
         }
     }
 
+    // Reemplaza solo la función search en AnimeparadiseProvider.kt
+
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "Logs: --- BUSCANDO: $query ---")
+        Log.d(TAG, "Logs: --- BUSCANDO (API): $query ---")
         return try {
-            val searchPath = "search?q=${query.encodeUri()}&page=1"
-            var session = getPageSession(searchPath)
+            // 1. Intentar usar la API directa (más rápido y estable)
+            val searchUrl = "$apiUrl/search?q=${query.encodeUri()}&limit=25"
+            val response = app.get(searchUrl, headers = apiHeaders)
 
-            val searchHeaders = mapOf(
-                "accept" to "text/x-component",
-                "content-type" to "text/plain;charset=UTF-8",
-                "next-action" to session.actionHash,
-                "next-router-state-tree" to """["",{"children":["search",{"children":["__PAGE__",{},null,null]},null,null]}]""",
-                "origin" to mainUrl,
-                "referer" to "$mainUrl/$searchPath",
-                "user-agent" to apiHeaders["user-agent"]!!,
-                "cookie" to session.cookie
-            )
-
-            val body = "[\"$query\",{\"genres\":[],\"year\":null,\"season\":null,\"page\":1,\"limit\":25,\"sort\":null},\"\$undefined\"]"
-
-            var response = app.post(
-                "$mainUrl/$searchPath",
-                headers = searchHeaders,
-                requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-            )
-
-            // If search fails, try refreshing hashes and retrying
-            if (response.code !in 200..299) {
-                Log.w(TAG, "Search failed (Code: ${response.code}), refreshing hashes...")
-                lastRefreshTime = 0 // Force refresh
-                refreshActionHashesIfNeeded()
-                
-                // Retry with new hash
-                val newSession = getPageSession(searchPath)
-                val retryHeaders = searchHeaders + ("next-action" to newSession.actionHash) + ("cookie" to newSession.cookie)
-                response = app.post(
-                    "$mainUrl/$searchPath",
-                    headers = retryHeaders,
-                    requestBody = body.toRequestBody("text/plain;charset=UTF-8".toMediaTypeOrNull())
-                )
+            // La API devuelve JSON directo, probamos parsearlo
+            val list = try {
+                mapper.readValue<AnimeListResponse>(response.text).data
+            } catch (e: Exception) {
+                // Si falla, intentar parsear formato NextJS
+                parseNextJsJson<AnimeListResponse>(response.text)?.data
             }
 
-            processSearchResponse(response.text)
+            list?.map { it.toSearchResponse() } ?: emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Logs: Error en search: ${e.message}")
+            Log.e(TAG, "Logs: Error en search API: ${e.message}")
             emptyList()
         }
     }
