@@ -20,6 +20,18 @@ class AnimeLatinoHDProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val cloudflareKiller = CloudflareKiller()
+    
+    private val baseHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "sec-ch-ua" to "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "sec-fetch-dest" to "document",
+        "sec-fetch-mode" to "navigate",
+        "sec-fetch-site" to "same-origin",
+    )
 
     override val mainPage = mainPageOf(
         "$mainUrl/animes" to "Animes",
@@ -31,7 +43,16 @@ class AnimeLatinoHDProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (request.data.contains('?')) "${request.data}&page=$page" else "${request.data}?page=$page"
-        val document = app.get(url, interceptor = cloudflareKiller).document
+        val response = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders)
+        val document = response.document
+        
+        if (!response.isSuccessful || response.text.contains("challenge-platform")) {
+            Log.w("AnimeLatinoHD", "Cloudflare challenge detected on main page")
+            return newHomePageResponse(
+                list = HomePageList(name = request.name, list = emptyList(), isHorizontalImages = false),
+                hasNext = false
+            )
+        }
 
         val ssrScript = document.selectFirst("script#ssr-init")
         if (ssrScript != null) {
@@ -150,20 +171,29 @@ class AnimeLatinoHDProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val apiUrl = "$mainUrl/api/search?query=${query.replace(" ", "+")}"
         return try {
-            val response = app.get(apiUrl, interceptor = cloudflareKiller).text
-            val apiResults = parseSearchJson(response)
+            val response = app.get(apiUrl, interceptor = cloudflareKiller, headers = baseHeaders)
+            val text = response.text
+            
+            if (!response.isSuccessful || text.trimStart().startsWith("<")) {
+                Log.w("AnimeLatinoHD", "Search API returned HTML instead of JSON")
+                val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
+                val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders).document
+                val ssrScript = document.selectFirst("script#ssr-init")
+                if (ssrScript != null) {
+                    val allItems = parseSsrJson(ssrScript.data())
+                    if (allItems.isNotEmpty()) {
+                        val q = query.lowercase()
+                        return allItems.filter { it.name.lowercase().contains(q) }
+                    }
+                }
+                return document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
+            }
+            
+            val apiResults = parseSearchJson(text)
             if (apiResults.isNotEmpty()) return apiResults
 
             val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
-            val document = app.get(docUrl, interceptor = cloudflareKiller).document
-            val ssrScript = document.selectFirst("script#ssr-init")
-            if (ssrScript != null) {
-                val allItems = parseSsrJson(ssrScript.data())
-                if (allItems.isNotEmpty()) {
-                    val q = query.lowercase()
-                    return allItems.filter { it.name.lowercase().contains(q) }
-                }
-            }
+            val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders).document
             document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
         } catch (e: Exception) {
             emptyList()
@@ -171,7 +201,7 @@ class AnimeLatinoHDProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, interceptor = cloudflareKiller).document
+        val document = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders).document
 
         val title = document.selectFirst("h1")?.ownText()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim()
@@ -313,7 +343,7 @@ class AnimeLatinoHDProvider : MainAPI() {
             }
         } catch (e: Exception) {}
 
-        val document = app.get(data, interceptor = cloudflareKiller).document
+        val document = app.get(data, interceptor = cloudflareKiller, headers = baseHeaders).document
 
         val ssrScript = document.selectFirst("script#ssr-init")
         if (ssrScript != null) {
