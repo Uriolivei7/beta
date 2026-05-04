@@ -3,12 +3,11 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Document
 import android.util.Log
-import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Element
+import org.jsoup.Jsoup
 
 class AnimeLatinoHDProvider : MainAPI() {
     override var mainUrl = "https://www.animelatinohd.com"
@@ -19,9 +18,6 @@ class AnimeLatinoHDProvider : MainAPI() {
     override val hasQuickSearch = true
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-
-    private val cloudflareKiller = CloudflareKiller()
-    private var sessionCookies = mutableMapOf<String, String>()
     
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -35,18 +31,18 @@ class AnimeLatinoHDProvider : MainAPI() {
         "sec-fetch-site" to "same-origin",
     )
 
-    private suspend fun initCookies() {
-        if (sessionCookies.isNotEmpty()) return
-        try {
-            val response = app.get(mainUrl, timeout = 15, headers = baseHeaders)
-            if (response.isSuccessful && !response.text.contains("challenge-platform") && !response.text.contains("cf-turnstile")) {
-                sessionCookies = response.cookies.toMutableMap()
-                Log.d("AnimeLatinoHD", "Collected ${sessionCookies.size} cookies")
-            } else {
-                Log.w("AnimeLatinoHD", "Cloudflare challenge page detected, waiting for user to solve in WebView")
+    private suspend fun getHtml(url: String): String? {
+        return try {
+            val response = app.get(url, headers = baseHeaders, timeout = 30)
+            val html = response.text
+            if (html.contains("challenge-platform") || html.contains("cf-turnstile")) {
+                Log.w("AnimeLatinoHD", "Cloudflare challenge detected on $url")
+                return null
             }
+            html
         } catch (e: Exception) {
-            Log.e("AnimeLatinoHD", "Failed to collect cookies: ${e.message}")
+            Log.e("AnimeLatinoHD", "Error fetching $url: ${e.message}")
+            null
         }
     }
 
@@ -59,19 +55,17 @@ class AnimeLatinoHDProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        initCookies()
         val url = if (request.data.contains('?')) "${request.data}&page=$page" else "${request.data}?page=$page"
-        val response = app.get(url, timeout = 15, headers = baseHeaders, cookies = sessionCookies)
+        val html = getHtml(url)
         
-        if (!response.isSuccessful || response.text.contains("challenge-platform") || response.text.contains("cf-turnstile")) {
-            Log.w("AnimeLatinoHD", "Cloudflare challenge detected on main page")
+        if (html == null) {
             return newHomePageResponse(
                 list = HomePageList(name = request.name, list = emptyList(), isHorizontalImages = false),
                 hasNext = false
             )
         }
 
-        val items = parseRscPayload(response.text)
+        val items = parseRscPayload(html)
         if (items.isNotEmpty()) {
             return newHomePageResponse(
                 list = HomePageList(
@@ -83,7 +77,7 @@ class AnimeLatinoHDProvider : MainAPI() {
             )
         }
 
-        val fallback = response.document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
+        val fallback = Jsoup.parse(html).select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = fallback, isHorizontalImages = false),
             hasNext = true
@@ -127,24 +121,17 @@ class AnimeLatinoHDProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-        initCookies()
         val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
         return try {
-            val response = app.get(docUrl, timeout = 15, headers = baseHeaders, cookies = sessionCookies)
-            val text = response.text
+            val html = getHtml(docUrl) ?: return emptyList()
             
-            if (!response.isSuccessful || text.contains("challenge-platform") || text.contains("cf-turnstile")) {
-                Log.w("AnimeLatinoHD", "Cloudflare challenge detected on search")
-                return emptyList()
-            }
-            
-            val rscResults = parseRscPayload(text)
+            val rscResults = parseRscPayload(html)
             if (rscResults.isNotEmpty()) {
                 val q = query.lowercase()
                 return rscResults.filter { it.name.lowercase().contains(q) }
             }
             
-            response.document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
+            Jsoup.parse(html).select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
         } catch (e: Exception) {
             Log.e("AnimeLatinoHD", "Search error: ${e.message}")
             emptyList()
@@ -152,8 +139,8 @@ class AnimeLatinoHDProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        initCookies()
-        val document = app.get(url, timeout = 15, headers = baseHeaders, cookies = sessionCookies).document
+        val html = getHtml(url) ?: throw Exception("Failed to load page")
+        val document = Jsoup.parse(html)
 
         val title = document.selectFirst("h1")?.ownText()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim()
@@ -275,9 +262,7 @@ class AnimeLatinoHDProvider : MainAPI() {
             }
         } catch (e: Exception) {}
 
-        initCookies()
-        val response = app.get(data, timeout = 15, headers = baseHeaders, cookies = sessionCookies)
-        val html = response.text
+        val html = getHtml(data) ?: return false
 
         val videoUrlMatches = Regex("\"videoUrlEncrypted\":\"([^\"]+)\"").findAll(html)
         for (match in videoUrlMatches) {
@@ -303,7 +288,7 @@ class AnimeLatinoHDProvider : MainAPI() {
             }
         }
 
-        val document = response.document
+        val document = Jsoup.parse(html)
         document.select("div.VidePlayer_options__yxprW select option").forEach { option ->
             val serverName = option.text()
             val iframe = document.selectFirst("div.VidePlayer_iframeContainer__qIOOy iframe")
