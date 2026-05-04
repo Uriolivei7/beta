@@ -38,10 +38,12 @@ class AnimeLatinoHDProvider : MainAPI() {
     private suspend fun initCookies() {
         if (sessionCookies.isNotEmpty()) return
         try {
-            val response = app.get(mainUrl, interceptor = cloudflareKiller, headers = baseHeaders)
-            if (response.isSuccessful) {
+            val response = app.get(mainUrl, timeout = 15, headers = baseHeaders)
+            if (response.isSuccessful && !response.text.contains("challenge-platform") && !response.text.contains("cf-turnstile")) {
                 sessionCookies = response.cookies.toMutableMap()
                 Log.d("AnimeLatinoHD", "Collected ${sessionCookies.size} cookies")
+            } else {
+                Log.w("AnimeLatinoHD", "Cloudflare challenge page detected, waiting for user to solve in WebView")
             }
         } catch (e: Exception) {
             Log.e("AnimeLatinoHD", "Failed to collect cookies: ${e.message}")
@@ -59,10 +61,9 @@ class AnimeLatinoHDProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         initCookies()
         val url = if (request.data.contains('?')) "${request.data}&page=$page" else "${request.data}?page=$page"
-        val response = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies)
-        val document = response.document
+        val response = app.get(url, timeout = 15, headers = baseHeaders, cookies = sessionCookies)
         
-        if (!response.isSuccessful || response.text.contains("challenge-platform")) {
+        if (!response.isSuccessful || response.text.contains("challenge-platform") || response.text.contains("cf-turnstile")) {
             Log.w("AnimeLatinoHD", "Cloudflare challenge detected on main page")
             return newHomePageResponse(
                 list = HomePageList(name = request.name, list = emptyList(), isHorizontalImages = false),
@@ -70,103 +71,44 @@ class AnimeLatinoHDProvider : MainAPI() {
             )
         }
 
-        val ssrScript = document.selectFirst("script#ssr-init")
-        if (ssrScript != null) {
-            val items = parseSsrJson(ssrScript.data())
-            if (items.isNotEmpty()) {
-                return newHomePageResponse(
-                    list = HomePageList(
-                        name = request.name,
-                        list = items,
-                        isHorizontalImages = false
-                    ),
-                    hasNext = true
-                )
-            }
+        val items = parseRscPayload(response.text)
+        if (items.isNotEmpty()) {
+            return newHomePageResponse(
+                list = HomePageList(
+                    name = request.name,
+                    list = items,
+                    isHorizontalImages = false
+                ),
+                hasNext = true
+            )
         }
 
-        val fallback = document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
+        val fallback = response.document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = fallback, isHorizontalImages = false),
             hasNext = true
         )
     }
 
-    private fun parseSsrJson(json: String): List<SearchResponse> {
+    private fun parseRscPayload(html: String): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         return try {
-            val root = JSONObject(json)
-            val b = root.opt("b")
-            val children = mutableListOf<String>()
-            
-            if (b is JSONArray) {
-                for (i in 0 until b.length()) {
-                    children.add(b.getString(i))
-                }
-            }
-            
-            if (children.isEmpty()) return results
-
-            val ssrData = children.find { it.contains("\"episodes\"") || it.contains("\"animeSlug\"") }
-            if (ssrData != null) {
-                val cleanJson = ssrData.replace("&quot;", "\"")
-                val dataObj = JSONObject(cleanJson)
-                val animeName = dataObj.optString("animeName", "")
-                val animeSlug = dataObj.optString("animeSlug", "")
-                val animeBanner = dataObj.optString("animeBanner", "")
-                if (animeSlug.isNotBlank()) {
-                    results.add(
-                        newTvSeriesSearchResponse(animeName, "$mainUrl/anime/$animeSlug", TvType.Anime) {
-                            posterUrl = if (animeBanner.startsWith("http")) animeBanner else "https://media.themoviedb.org/t/p/w300$animeBanner"
-                        }
-                    )
-                }
-            }
-
-            if (results.isEmpty()) {
-                val allContent = children.joinToString("\n")
-                Regex("\"href\":\"([^\"]+)\",\"className\":\"animeCard[^\"]*\"").findAll(allContent).forEach { match ->
-                    val href = match.groupValues[1]
-                    val fullHref = if (href.startsWith("http")) href else "$mainUrl$href"
-                    if (href.contains("/anime/")) {
-                        val title = Regex("\"children\":\"([^\"]+)\"").find(allContent)?.groupValues?.get(1) ?: ""
-                        if (title.isNotBlank()) {
-                            results.add(newTvSeriesSearchResponse(title, fullHref, TvType.Anime))
-                        }
-                    }
+            val hrefMatches = Regex("\"href\":\"([^\"]*\\/anime\\/[^\"]+)\"").findAll(html)
+            for (match in hrefMatches) {
+                val href = match.groupValues[1]
+                val titleMatches = Regex("\"children\":\"([^\"]+)\"").findAll(html)
+                val title = titleMatches.map { it.groupValues[1] }.firstOrNull { it.isNotBlank() && !it.startsWith("/") && !it.startsWith("/") && !it.contains("http") } ?: ""
+                val posterMatches = Regex("\"image\":\"([^\"]+)\"").findAll(html)
+                val poster = posterMatches.map { it.groupValues[1] }.firstOrNull { it.isNotBlank() } ?: ""
+                if (title.isNotBlank()) {
+                    results.add(newTvSeriesSearchResponse(title, "$mainUrl$href", TvType.Anime) {
+                        this.posterUrl = if (poster.startsWith("http")) poster else "https://media.themoviedb.org/t/p/w300$poster"
+                    })
                 }
             }
             results
         } catch (e: Exception) {
-            Log.e("AnimeLatinoHD", "Error parsing SSR JSON: ${e.message}")
-            results
-        }
-    }
-
-    private fun parseSearchJson(json: String): List<SearchResponse> {
-        val results = mutableListOf<SearchResponse>()
-        return try {
-            val root = JSONObject(json)
-            val data = root.optJSONArray("data") ?: root.optJSONArray("animes") ?: return results
-            
-            for (i in 0 until data.length()) {
-                val item = data.getJSONObject(i)
-                val title = item.optString("name", item.optString("title", ""))
-                val slug = item.optString("slug", "")
-                val poster = item.optString("poster", item.optString("image", ""))
-
-                val href = if (slug.isNotBlank()) "$mainUrl/anime/$slug" else ""
-                if (title.isNotBlank() && href.isNotBlank()) {
-                    results.add(
-                        newTvSeriesSearchResponse(title, href, TvType.Anime) {
-                            this.posterUrl = if (poster.startsWith("http")) poster else "https://media.themoviedb.org/t/p/w300$poster"
-                        }
-                    )
-                }
-            }
-            results
-        } catch (e: Exception) {
-            Log.e("AnimeLatinoHD", "Error parsing search API JSON: ${e.message}")
+            Log.e("AnimeLatinoHD", "Error parsing RSC payload: ${e.message}")
             results
         }
     }
@@ -186,40 +128,32 @@ class AnimeLatinoHDProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         initCookies()
-        val apiUrl = "$mainUrl/api/search?query=${query.replace(" ", "+")}"
+        val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
         return try {
-            val response = app.get(apiUrl, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies)
+            val response = app.get(docUrl, timeout = 15, headers = baseHeaders, cookies = sessionCookies)
             val text = response.text
             
-            if (!response.isSuccessful || text.trimStart().startsWith("<")) {
-                Log.w("AnimeLatinoHD", "Search API returned HTML instead of JSON")
-                val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
-                val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
-                val ssrScript = document.selectFirst("script#ssr-init")
-                if (ssrScript != null) {
-                    val allItems = parseSsrJson(ssrScript.data())
-                    if (allItems.isNotEmpty()) {
-                        val q = query.lowercase()
-                        return allItems.filter { it.name.lowercase().contains(q) }
-                    }
-                }
-                return document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
+            if (!response.isSuccessful || text.contains("challenge-platform") || text.contains("cf-turnstile")) {
+                Log.w("AnimeLatinoHD", "Cloudflare challenge detected on search")
+                return emptyList()
             }
             
-            val apiResults = parseSearchJson(text)
-            if (apiResults.isNotEmpty()) return apiResults
-
-            val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
-            val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
-            document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
+            val rscResults = parseRscPayload(text)
+            if (rscResults.isNotEmpty()) {
+                val q = query.lowercase()
+                return rscResults.filter { it.name.lowercase().contains(q) }
+            }
+            
+            response.document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
         } catch (e: Exception) {
+            Log.e("AnimeLatinoHD", "Search error: ${e.message}")
             emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
         initCookies()
-        val document = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
+        val document = app.get(url, timeout = 15, headers = baseHeaders, cookies = sessionCookies).document
 
         val title = document.selectFirst("h1")?.ownText()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim()
@@ -269,44 +203,25 @@ class AnimeLatinoHDProvider : MainAPI() {
         val slug = Regex("/anime/([^/]+)").find(animeUrl)?.groupValues?.get(1)
             ?: return extractEpisodesFromHtml(document, animeUrl, posterUrl)
 
-        val ssrScript = document.selectFirst("script#ssr-init")
-        if (ssrScript != null) {
-            try {
-                val json = ssrScript.data()
-                val root = JSONObject(json)
-                val b = root.opt("b")
-                if (b is JSONArray) {
-                    for (i in 0 until b.length()) {
-                        val str = b.getString(i)
-                        if (str.contains("\"episodes\"")) {
-                            val dataObj = JSONObject(str.replace("&quot;", "\""))
-                            val episodesArray = dataObj.optJSONArray("episodes")
-                            val animeSlug = dataObj.optString("animeSlug", "")
-                            if (episodesArray != null && animeSlug.isNotBlank()) {
-                                for (j in 0 until episodesArray.length()) {
-                                    val ep = episodesArray.getJSONObject(j)
-                                    val epNum = ep.optInt("number", 0)
-                                    if (epNum > 0) {
-                                        val epUrl = "$mainUrl/ver/$animeSlug/$epNum"
-                                        val thumb = ep.optString("image", ep.optString("thumbnail", ""))
-                                        episodes.add(newEpisode(epUrl) {
-                                            this.name = "Episodio $epNum"
-                                            this.episode = epNum
-                                            this.posterUrl = if (thumb.startsWith("http")) thumb else posterUrl.ifBlank { null }
-                                        })
-                                    }
-                                }
-                                if (episodes.isNotEmpty()) {
-                                    return episodes.sortedBy { it.episode }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("AnimeLatinoHD", "API error: ${e.message}")
+        val html = document.html()
+        val epNumMatches = Regex("\"number\":(\\d+)").findAll(html)
+        val episodeNumbers = epNumMatches.map { it.groupValues[1].toIntOrNull() }.filterNotNull().toSet()
+        
+        for (epNum in episodeNumbers) {
+            if (epNum > 0) {
+                val epUrl = "$mainUrl/ver/$slug/$epNum"
+                episodes.add(newEpisode(epUrl) {
+                    this.name = "Episodio $epNum"
+                    this.episode = epNum
+                    this.posterUrl = posterUrl.ifBlank { null }
+                })
             }
         }
+        
+        if (episodes.isNotEmpty()) {
+            return episodes.sortedBy { it.episode }
+        }
+        
         return extractEpisodesFromHtml(document, animeUrl, posterUrl)
     }
 
@@ -354,7 +269,6 @@ class AnimeLatinoHDProvider : MainAPI() {
                 for (i in 0 until players.length()) {
                     val player = players.getJSONObject(i)
                     val embedUrl = player.optString("embed_url", "")
-                    val lang = player.optString("language", "0")
                     if (embedUrl.isNotBlank()) loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
                 }
                 return true
@@ -362,25 +276,34 @@ class AnimeLatinoHDProvider : MainAPI() {
         } catch (e: Exception) {}
 
         initCookies()
-        val document = app.get(data, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
+        val response = app.get(data, timeout = 15, headers = baseHeaders, cookies = sessionCookies)
+        val html = response.text
 
-        val ssrScript = document.selectFirst("script#ssr-init")
-        if (ssrScript != null) {
-            try {
-                val json = ssrScript.data()
-                val root = JSONObject(json)
-                val b = root.opt("b")
-                if (b is JSONArray) {
-                    for (i in 0 until b.length()) {
-                        val str = b.getString(i)
-                        if (str.contains("\"videoUrlEncrypted\"") || str.contains("\"server\"")) {
-                            parsePlayersJson(str, langMap, subtitleCallback, callback)
-                        }
-                    }
-                }
-            } catch (e: Exception) {}
+        val videoUrlMatches = Regex("\"videoUrlEncrypted\":\"([^\"]+)\"").findAll(html)
+        for (match in videoUrlMatches) {
+            val videoUrl = match.groupValues[1]
+            if (videoUrl.isNotBlank()) {
+                callback(newExtractorLink(
+                    source = "Video",
+                    name = "Video",
+                    url = videoUrl,
+                ) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.Unknown.value
+                    this.type = ExtractorLinkType.M3U8
+                })
+            }
         }
 
+        val serverUrlMatches = Regex("\"serverUrl\":\"([^\"]+)\"").findAll(html)
+        for (match in serverUrlMatches) {
+            val serverUrl = match.groupValues[1]
+            if (serverUrl.isNotBlank()) {
+                loadExtractor(serverUrl, mainUrl, subtitleCallback, callback)
+            }
+        }
+
+        val document = response.document
         document.select("div.VidePlayer_options__yxprW select option").forEach { option ->
             val serverName = option.text()
             val iframe = document.selectFirst("div.VidePlayer_iframeContainer__qIOOy iframe")
@@ -401,50 +324,5 @@ class AnimeLatinoHDProvider : MainAPI() {
         }
 
         return true
-    }
-
-    private suspend fun parsePlayersJson(json: String, langMap: Map<String, String>, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        try {
-            val dataObj = JSONObject(json.replace("&quot;", "\""))
-            val playersArray = when {
-                dataObj.has("data") -> dataObj.optJSONArray("data")
-                dataObj.has("episodes") -> dataObj.optJSONArray("episodes")
-                else -> null
-            }
-
-            val targetArray = when {
-                playersArray != null && playersArray.length() > 0 && playersArray.opt(0) is JSONArray -> playersArray.getJSONArray(0)
-                playersArray != null -> playersArray
-                else -> {
-                    val dataArray = JSONArray("[$json]")
-                    if (dataArray.length() > 0 && dataArray.opt(0) is JSONArray) dataArray.getJSONArray(0)
-                    else if (dataArray.length() > 0 && dataArray.opt(0) is JSONObject) JSONArray().put(dataArray.getJSONObject(0))
-                    else null
-                }
-            }
-
-            if (targetArray != null) {
-                for (i in 0 until targetArray.length()) {
-                    val player = targetArray.getJSONObject(i)
-                    val videoUrlEncrypted = player.optString("videoUrlEncrypted", "")
-                    val lang = player.optString("languaje", "0")
-                    val langLabel = langMap[lang] ?: "Subtitulado"
-                    val server = player.optJSONObject("server")
-                    val serverName = server?.optString("title", "Unknown") ?: "Unknown"
-
-                    if (videoUrlEncrypted.isNotBlank()) {
-                        callback(newExtractorLink(
-                            source = "[$langLabel] $serverName",
-                            name = "[$langLabel] $serverName",
-                            url = videoUrlEncrypted,
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                            this.type = ExtractorLinkType.M3U8
-                        })
-                    }
-                }
-            }
-        } catch (e: Exception) {}
     }
 }
