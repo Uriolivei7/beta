@@ -17,9 +17,11 @@ class AnimeLatinoHDProvider : MainAPI() {
     override var lang = "mx"
     override val hasDownloadSupport = true
     override val hasQuickSearch = true
+    override val usesWebView = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val cloudflareKiller = CloudflareKiller()
+    private var sessionCookies = mutableMapOf<String, String>()
     
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -33,6 +35,19 @@ class AnimeLatinoHDProvider : MainAPI() {
         "sec-fetch-site" to "same-origin",
     )
 
+    private suspend fun initCookies() {
+        if (sessionCookies.isNotEmpty()) return
+        try {
+            val response = app.get(mainUrl, interceptor = cloudflareKiller, headers = baseHeaders)
+            if (response.isSuccessful) {
+                sessionCookies = response.cookies.toMutableMap()
+                Log.d("AnimeLatinoHD", "Collected ${sessionCookies.size} cookies")
+            }
+        } catch (e: Exception) {
+            Log.e("AnimeLatinoHD", "Failed to collect cookies: ${e.message}")
+        }
+    }
+
     override val mainPage = mainPageOf(
         "$mainUrl/animes" to "Animes",
         "$mainUrl/animes/populares" to "Populares",
@@ -42,8 +57,9 @@ class AnimeLatinoHDProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        initCookies()
         val url = if (request.data.contains('?')) "${request.data}&page=$page" else "${request.data}?page=$page"
-        val response = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders)
+        val response = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies)
         val document = response.document
         
         if (!response.isSuccessful || response.text.contains("challenge-platform")) {
@@ -169,15 +185,16 @@ class AnimeLatinoHDProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
+        initCookies()
         val apiUrl = "$mainUrl/api/search?query=${query.replace(" ", "+")}"
         return try {
-            val response = app.get(apiUrl, interceptor = cloudflareKiller, headers = baseHeaders)
+            val response = app.get(apiUrl, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies)
             val text = response.text
             
             if (!response.isSuccessful || text.trimStart().startsWith("<")) {
                 Log.w("AnimeLatinoHD", "Search API returned HTML instead of JSON")
                 val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
-                val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders).document
+                val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
                 val ssrScript = document.selectFirst("script#ssr-init")
                 if (ssrScript != null) {
                     val allItems = parseSsrJson(ssrScript.data())
@@ -193,7 +210,7 @@ class AnimeLatinoHDProvider : MainAPI() {
             if (apiResults.isNotEmpty()) return apiResults
 
             val docUrl = "$mainUrl/animes?search=${query.replace(" ", "+")}"
-            val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders).document
+            val document = app.get(docUrl, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
             document.select("a.animeCard_animeCard__A3lxl, div.listAnime a").mapNotNull { it.toAnimeCardResult() }
         } catch (e: Exception) {
             emptyList()
@@ -201,7 +218,8 @@ class AnimeLatinoHDProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders).document
+        initCookies()
+        val document = app.get(url, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
 
         val title = document.selectFirst("h1")?.ownText()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim()
@@ -343,7 +361,8 @@ class AnimeLatinoHDProvider : MainAPI() {
             }
         } catch (e: Exception) {}
 
-        val document = app.get(data, interceptor = cloudflareKiller, headers = baseHeaders).document
+        initCookies()
+        val document = app.get(data, interceptor = cloudflareKiller, headers = baseHeaders, cookies = sessionCookies).document
 
         val ssrScript = document.selectFirst("script#ssr-init")
         if (ssrScript != null) {
