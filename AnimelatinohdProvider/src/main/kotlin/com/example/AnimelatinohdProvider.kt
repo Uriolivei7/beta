@@ -3,6 +3,7 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Document
 import android.util.Log
 import org.json.JSONObject
@@ -19,24 +20,21 @@ class AnimeLatinoHDProvider : MainAPI() {
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
     
+    private val cloudflareKiller = CloudflareKiller()
+
+    // IMPORTANTE: Sin User-Agent personalizado. Usamos el nativo de Android para que las cookies del WebView funcionen.
     private val baseHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
-        "sec-ch-ua" to "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Windows\"",
-        "sec-fetch-dest" to "document",
-        "sec-fetch-mode" to "navigate",
-        "sec-fetch-site" to "same-origin",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
     )
 
     private suspend fun getHtml(url: String): String? {
         return try {
-            val response = app.get(url, headers = baseHeaders, timeout = 30)
+            // Usamos CloudflareKiller como interceptor. Si falla, requerirá WebView manual.
+            val response = app.get(url, headers = baseHeaders, timeout = 30, interceptor = cloudflareKiller)
             val html = response.text
             if (html.contains("challenge-platform") || html.contains("cf-turnstile")) {
-                Log.w("AnimeLatinoHD", "Cloudflare challenge detected on $url")
+                Log.w("AnimeLatinoHD", "Cloudflare challenge detected. Manual WebView solve required.")
                 return null
             }
             html
@@ -247,21 +245,6 @@ class AnimeLatinoHDProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val langMap = mapOf("0" to "Subtitulado", "1" to "Latino", "2" to "Castellano")
-
-        try {
-            val dataObj = JSONObject(data)
-            val players = dataObj.optJSONArray("players")
-            if (players != null && players.length() > 0) {
-                for (i in 0 until players.length()) {
-                    val player = players.getJSONObject(i)
-                    val embedUrl = player.optString("embed_url", "")
-                    if (embedUrl.isNotBlank()) loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-                }
-                return true
-            }
-        } catch (e: Exception) {}
-
         val html = getHtml(data) ?: return false
 
         val videoUrlMatches = Regex("\"videoUrlEncrypted\":\"([^\"]+)\"").findAll(html)
@@ -290,7 +273,6 @@ class AnimeLatinoHDProvider : MainAPI() {
 
         val document = Jsoup.parse(html)
         document.select("div.VidePlayer_options__yxprW select option").forEach { option ->
-            val serverName = option.text()
             val iframe = document.selectFirst("div.VidePlayer_iframeContainer__qIOOy iframe")
             if (iframe != null) {
                 val src = iframe.attr("src")
