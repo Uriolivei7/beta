@@ -135,10 +135,10 @@ class PrimevideoProvider : MainAPI() {
                     }
                 }
 
-            if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank()) {
+            // Always add selected season to allSeasons (nextPageShow only controls if there are extra pages)
+            if (!selectedSeasonId.isNullOrBlank()) {
                 val selNum = extractSeasonNumber(data.season?.find { it.id == selectedSeasonId }?.s)
                 allSeasons.add(Pair(selectedSeasonId, selNum))
-                Log.d("Primevideo", "nextPageShow=1, adding selected season to allSeasons")
             }
             Log.d("Primevideo", "selectedSeasonId=$selectedSeasonId, nextPageShow=${data.nextPageShow}, allSeasons before loop=${allSeasons.size}")
 
