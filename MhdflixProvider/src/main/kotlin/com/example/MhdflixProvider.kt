@@ -37,31 +37,52 @@ class MhdflixProvider : MainAPI() {
         "dorama" to "Doramas Recientes",
     )
 
+    private fun matchesCategory(item: SearchResultItem, category: String): Boolean {
+        val title = item.title?.lowercase() ?: ""
+        val itemType = item.type ?: ""
+        val genres = item.genre.mapNotNull { it?.lowercase() }
+        
+        when (category) {
+            "peliculas" -> return itemType == "movie"
+            "series" -> {
+                if (itemType != "tv") return false
+                val animeGenres = setOf("anime", "animación", "animacion")
+                val doramaGenres = setOf("dorama", "k-drama", "kdrama", "coreano", "chino", "japonés", "japones")
+                return !genres.any { it in animeGenres || it in doramaGenres }
+            }
+            "anime" -> {
+                if (itemType != "tv" && itemType != "movie") return false
+                val animeKeywords = setOf("anime", "animación", "animacion", "shonen", "seinen", "shojo", "isekai", "manga", "nhentai", "hentai", "donghua")
+                return genres.any { it in animeKeywords } || title.contains(Regex("(naruto|one piece|dragon ball|bleach|attack on titan|demon slayer|jujutsu|my hero academia|boku no hero|one punch man|tokyo ghoul|death note|fullmetal|sword art|re:zero|konosuba|tensei|slime|black clover|dr. stone|fire force|hunter x hunter|fairy tail|seven deadly sins|mob psycho|dr stone|evangelion|gundam|sailor moon|inuyasha|yugioh|pokemon|digimon|beyblade|transformers|ranma|urusei|kenshin|berserk|trigun|outlaw star|cowboy bebop|samurai|akira|ghost in the shell|patlabor|macross|evangelion|gurren lagann|kill la|promised neverland|demon|slayer|chain saw|chainsaw|fire force|black clover|boruto|dragon|ball|one piece|naruto|bleach)"))
+            }
+            "dorama" -> {
+                if (itemType != "tv" && itemType != "movie") return false
+                val doramaKeywords = setOf("dorama", "k-drama", "kdrama", "coreano", "chino", "japonés", "japones", "tailandés", "tailandes", "filipino", "vietnamita", "drama coreano", "drama chino", "asia", "korean", "chinese", "japanese", "thai", "filipino")
+                return genres.any { it in doramaKeywords } || title.contains(Regex("(korean|kdrama|k-drama|coreano|chinese|china|japanese|japan|thai|thailand|filipino|philippines|vietnam|vietnamese|asian|asia)"))
+            }
+            else -> return true
+        }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("Mhdflix-MainPage", "=== getMainPage START ===")
         Log.d("Mhdflix-MainPage", "request.name: ${request.name}, category: ${request.data}")
 
         val searchTerms = when (request.data) {
-            "peliculas" -> listOf("movie", "pelicula", "action", "2024")
-            "series" -> listOf("series", "tv", "temporada", "2024")
-            "anime" -> listOf("anime", "naruto", "dragon ball", "one piece")
-            "dorama" -> listOf("dorama", "korean", "asia", "kdrama")
+            "peliculas" -> listOf("pelicula", "movie", "action", "comedia", "terror", "drama", "2024", "2023")
+            "series" -> listOf("series", "temporada", "tv show", "drama", "2024", "2023")
+            "anime" -> listOf("anime", "naruto", "one piece", "dragon ball", "bleach", "attack on titan", "demon slayer", "jujutsu", "isekai", "shonen")
+            "dorama" -> listOf("dorama", "korean", "kdrama", "k-drama", "coreano", "drama chino", "japanese drama", "tailandés")
             else -> listOf("2024", "movie", "series")
         }
 
-        val tvType = when (request.data) {
-            "peliculas" -> TvType.Movie
-            "anime" -> TvType.Anime
-            "dorama" -> TvType.AsianDrama
-            else -> TvType.TvSeries
-        }
-
-        val allItems = mutableMapOf<Long, SearchResultItem>()
+        val allItems = mutableListOf<SearchResultItem>()
+        val seenIds = mutableSetOf<Long>()
 
         for (term in searchTerms) {
             if (allItems.size >= 30) break
             try {
-                val searchUrl = "$mainUrl/api/search?query=${term.replace(" ", "+")}&page=1&limit=10"
+                val searchUrl = "$mainUrl/api/search?query=${term.replace(" ", "+")}&page=1&limit=15"
                 Log.d("Mhdflix-MainPage", "Searching: $searchUrl")
                 
                 val response = app.get(
@@ -76,21 +97,9 @@ class MhdflixProvider : MainAPI() {
                 val searchResponse = tryParseJson<SearchApiResponse>(response)
                 searchResponse?.data?.forEach { item ->
                     item.id?.let { id ->
-                        if (!allItems.containsKey(id)) {
-                            val title = item.title?.lowercase() ?: ""
-                            val itemType = item.type ?: ""
-                            
-                            val matchesCategory = when (request.data) {
-                                "peliculas" -> itemType == "movie"
-                                "series" -> itemType == "tv" && !title.contains("anime") && !title.contains("dorama") && !title.contains("korean")
-                                "anime" -> (itemType == "tv" || itemType == "movie") && (title.contains("anime") || title.contains("naruto") || title.contains("dragon ball") || title.contains("one piece") || title.contains("manga"))
-                                "dorama" -> (itemType == "tv" || itemType == "movie") && (title.contains("dorama") || title.contains("korean") || title.contains("kdrama") || title.contains("k-drama") || title.contains("asia"))
-                                else -> true
-                            }
-                            
-                            if (matchesCategory) {
-                                allItems[id] = item
-                            }
+                        if (!seenIds.contains(id) && allItems.size < 30 && matchesCategory(item, request.data)) {
+                            seenIds.add(id)
+                            allItems.add(item)
                         }
                     }
                 }
@@ -101,14 +110,21 @@ class MhdflixProvider : MainAPI() {
 
         Log.d("Mhdflix-MainPage", "Total unique items found: ${allItems.size}")
 
-        val searchResponses = allItems.values.take(30).mapNotNull { item ->
+        val tvType = when (request.data) {
+            "peliculas" -> TvType.Movie
+            "anime" -> TvType.Anime
+            "dorama" -> TvType.AsianDrama
+            else -> TvType.TvSeries
+        }
+
+        val searchResponses = allItems.take(30).mapNotNull { item ->
             val title = item.title ?: return@mapNotNull null
             val id = item.id ?: return@mapNotNull null
             val type = item.type ?: "tv"
             val slug = item.slug ?: return@mapNotNull null
             val url = if (type == "movie") "$mainUrl/movies/$id/$slug" else "$mainUrl/tvs/$id/$slug"
             
-            Log.d("Mhdflix-MainPage", "  Item: title='$title', poster='${item.poster?.take(50)}'")
+            Log.d("Mhdflix-MainPage", "  Item: title='$title', poster='${item.poster?.take(50)}', genres=${item.genre}")
             
             newMovieSearchResponse(title, url, if (type == "movie") TvType.Movie else tvType) {
                 this.posterUrl = fixUrlPath(item.poster)
