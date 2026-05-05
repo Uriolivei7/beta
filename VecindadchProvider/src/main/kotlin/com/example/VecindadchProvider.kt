@@ -108,6 +108,34 @@ class VecindadchProvider : MainAPI() {
             .distinctBy { it.url }
     }
 
+    private fun isCategoryUrl(url: String): Boolean {
+        // Category/season URLs end with "/something/" without a deeper slug
+        // e.g. /videos/_chavo_/_1973_/ or /videos/musical/
+        // Video URLs have a specific slug: /videos/la-casa-de-los-fantasmas/
+        val parts = url.replace(mainUrl, "").trim('/').split('/')
+        return parts.size <= 3
+    }
+
+    private fun Element.toEpisode(urlBase: String, index: Int): Episode {
+        val teamImage = this.selectFirst("div.team-image") ?: this
+        val link = teamImage.selectFirst("a")?.attr("href") ?: ""
+        val title = this.selectFirst("div.team-desc h3")?.text()?.trim()
+            ?: this.selectFirst("h3")?.text()?.trim()
+            ?: "Episodio ${index + 1}"
+        val img = teamImage.selectFirst("img")?.attr("src")
+            ?: teamImage.selectFirst("img")?.attr("data-src")
+            ?: ""
+        val desc = this.selectFirst("div.team-desc p")?.text()?.trim()
+
+        return newEpisode(fixUrl(link)) {
+            this.name = title
+            this.season = 1
+            this.episode = index + 1
+            this.posterUrl = if (img.startsWith("http")) img else "$mainUrl$img".takeIf { it.isNotBlank() }
+            this.description = desc
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         val html = safeAppGet(url) ?: return null
         val doc = Jsoup.parse(html)
@@ -116,7 +144,7 @@ class VecindadchProvider : MainAPI() {
             ?: doc.selectFirst("title")?.text()?.substringBefore("-")?.trim()
             ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
             ?: "Desconocido"
-        
+
         val title = rawTitle.replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), "")
             .replace(Regex("(?i)\\s*-\\s*Videos.*"), "")
             .replace(Regex("(?i)\\s*\\|.*"), "")
@@ -130,23 +158,30 @@ class VecindadchProvider : MainAPI() {
             ?: doc.selectFirst("div.team-image img")?.attr("src")
             ?: ""
 
-        // Crear un solo episodio con la URL de la página
-        val episodes = listOf(newEpisode(url) {
-            this.name = title
-            this.posterUrl = poster.ifBlank { null }
-            this.description = description.ifBlank { null }
-        })
+        val episodes = if (isCategoryUrl(url)) {
+            // Season/category page: extract all video cards as episodes
+            doc.select("div.team-member").mapIndexed { index, card ->
+                card.toEpisode(url, index)
+            }.filter { it.data.isNotBlank() && it.data != url }
+                .distinctBy { it.data }
+        } else {
+            // Individual video page: single episode
+            listOf(newEpisode(url) {
+                this.name = title
+                this.posterUrl = poster.ifBlank { null }
+                this.description = description.ifBlank { null }
+            })
+        }
 
-        // Recomendados
         val recommendations = doc.select("div.team-member").mapNotNull { card ->
             val rec = card.toSearchResponse()
             if (rec != null && rec.url != url) rec else null
         }.distinctBy { it.url }.take(12)
 
         return newTvSeriesLoadResponse(
-            name = title, 
-            url = url, 
-            type = TvType.TvSeries, 
+            name = title,
+            url = url,
+            type = TvType.TvSeries,
             episodes = episodes
         ) {
             this.posterUrl = poster
