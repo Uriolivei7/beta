@@ -77,7 +77,20 @@ class MhdflixProvider : MainAPI() {
                 searchResponse?.data?.forEach { item ->
                     item.id?.let { id ->
                         if (!allItems.containsKey(id)) {
-                            allItems[id] = item
+                            val title = item.title?.lowercase() ?: ""
+                            val itemType = item.type ?: ""
+                            
+                            val matchesCategory = when (request.data) {
+                                "peliculas" -> itemType == "movie"
+                                "series" -> itemType == "tv" && !title.contains("anime") && !title.contains("dorama") && !title.contains("korean")
+                                "anime" -> (itemType == "tv" || itemType == "movie") && (title.contains("anime") || title.contains("naruto") || title.contains("dragon ball") || title.contains("one piece") || title.contains("manga"))
+                                "dorama" -> (itemType == "tv" || itemType == "movie") && (title.contains("dorama") || title.contains("korean") || title.contains("kdrama") || title.contains("k-drama") || title.contains("asia"))
+                                else -> true
+                            }
+                            
+                            if (matchesCategory) {
+                                allItems[id] = item
+                            }
                         }
                     }
                 }
@@ -351,7 +364,7 @@ class MhdflixProvider : MainAPI() {
                 apiUrl,
                 headers = mapOf(
                     "User-Agent" to baseHeaders.getValue("User-Agent"),
-                    "Referer" to "$mainUrl/",
+                    "Referer" to data,
                     "Accept" to "application/json, text/plain, */*"
                 )
             ).text
@@ -361,12 +374,12 @@ class MhdflixProvider : MainAPI() {
             when {
                 response.trim().startsWith("[") -> {
                     val links = parseJson<List<ApiLink>>(response)
-                    processApiLinks(links, subtitleCallback, callback)
+                    processApiLinks(links, data, subtitleCallback, callback)
                 }
                 response.trim().startsWith("{") -> {
                     val singleLink = tryParseJson<ApiLink>(response)
                     if (singleLink != null) {
-                        processApiLinks(listOf(singleLink), subtitleCallback, callback)
+                        processApiLinks(listOf(singleLink), data, subtitleCallback, callback)
                     } else {
                         false
                     }
@@ -378,7 +391,7 @@ class MhdflixProvider : MainAPI() {
                     for (iframe in iframes) {
                         val src = iframe.attr("src")
                         if (src.isNotBlank() && !src.contains("undefined")) {
-                            loadExtractor(fixUrl(src), mainUrl, subtitleCallback, callback)
+                            loadExtractor(fixUrl(src), data, subtitleCallback, callback)
                             found = true
                         }
                     }
@@ -393,7 +406,7 @@ class MhdflixProvider : MainAPI() {
             for (iframe in doc.select("iframe[src]")) {
                 val src = iframe.attr("src")
                 if (src.isNotBlank() && !src.contains("undefined")) {
-                    loadExtractor(fixUrl(src), mainUrl, subtitleCallback, callback)
+                    loadExtractor(fixUrl(src), data, subtitleCallback, callback)
                     found = true
                 }
             }
@@ -403,15 +416,24 @@ class MhdflixProvider : MainAPI() {
 
     private suspend fun processApiLinks(
         links: List<ApiLink>,
+        referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var found = false
-        Log.d("Mhdflix-Links", "Processing ${links.size} links")
+        Log.d("Mhdflix-Links", "Processing ${links.size} links with referer: $referer")
+        
+        val extractorDomains = setOf(
+            "dood", "doodstream", "streamwish", "filelions", "streamhub",
+            "luluvdo", "netu", "uqload", "mixdrop", "netuplayer",
+            "bysejikuar", "vidhidepro", "voe", "streamvid",
+            "filemoon", "mp4upload", "gdriveplayer", "ok.ru", "vk",
+            "streamtape", "filemoon0", "gupload", "savefiles", "streamp2p"
+        )
         
         for ((index, link) in links.withIndex()) {
             val videoUrl = link.url ?: link.embedUrl ?: link.iframeUrl
-            Log.d("Mhdflix-Links", "Link[$index]: url=$videoUrl")
+            Log.d("Mhdflix-Links", "Link[$index]: url=$videoUrl, server=${link.server?.name}")
             
             if (videoUrl.isNullOrBlank() || videoUrl.contains("undefined")) continue
             
@@ -420,28 +442,29 @@ class MhdflixProvider : MainAPI() {
             val qualityName = link.quality?.name ?: ""
             val linkName = "$serverName - $languageName"
             
-            if (videoUrl.startsWith("http")) {
+            val hasExtractor = extractorDomains.any { domain -> videoUrl.contains(domain, ignoreCase = true) }
+            val isDirectMp4 = videoUrl.contains(".mp4", ignoreCase = true)
+            val isStreamtape = videoUrl.contains("streamtape", ignoreCase = true)
+            
+            if ((isDirectMp4 || isStreamtape) && !hasExtractor) {
                 val qualityValue = when {
                     qualityName.contains("4k", ignoreCase = true) || qualityName.contains("2160") -> Qualities.P2160.value
-                    qualityName.contains("1080") -> Qualities.P1080.value
+                    qualityName.contains("1080") || qualityName.contains("full hd") -> Qualities.P1080.value
                     qualityName.contains("720") -> Qualities.P720.value
                     qualityName.contains("480") -> Qualities.P480.value
                     else -> Qualities.Unknown.value
                 }
                 
-                val isM3u8 = videoUrl.contains(".m3u8") || videoUrl.contains("m3u8")
-                val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                
                 callback.invoke(
                     newExtractorLink(name, linkName, videoUrl) {
-                        this.referer = mainUrl
+                        this.referer = referer
                         this.quality = qualityValue
-                        this.type = linkType
+                        this.type = ExtractorLinkType.VIDEO
                     }
                 )
                 found = true
-            } else {
-                loadExtractor(fixUrl(videoUrl), mainUrl, subtitleCallback, callback)
+            } else if (hasExtractor) {
+                loadExtractor(fixUrl(videoUrl), referer, subtitleCallback, callback)
                 found = true
             }
             
