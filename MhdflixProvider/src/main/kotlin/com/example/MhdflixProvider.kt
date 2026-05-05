@@ -31,114 +31,80 @@ class MhdflixProvider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "peliculas" to "Películas Recientes",
-        "series" to "Series Recientes",
+        "movie" to "Películas Recientes",
+        "tv" to "Series Recientes",
         "anime" to "Animes Recientes",
         "dorama" to "Doramas Recientes",
     )
-
-    private fun matchesCategory(item: SearchResultItem, category: String): Boolean {
-        val title = item.title?.lowercase() ?: ""
-        val itemType = item.type ?: ""
-        val genres = item.genre.mapNotNull { it?.lowercase() }
-        
-        when (category) {
-            "peliculas" -> return itemType == "movie"
-            "series" -> {
-                if (itemType != "tv") return false
-                val animeGenres = setOf("anime", "animación", "animacion")
-                val doramaGenres = setOf("dorama", "k-drama", "kdrama", "coreano", "chino", "japonés", "japones")
-                return !genres.any { it in animeGenres || it in doramaGenres }
-            }
-            "anime" -> {
-                if (itemType != "tv" && itemType != "movie") return false
-                val animeKeywords = setOf("anime", "animación", "animacion", "shonen", "seinen", "shojo", "isekai", "manga", "nhentai", "hentai", "donghua")
-                return genres.any { it in animeKeywords } || title.contains(Regex("(naruto|one piece|dragon ball|bleach|attack on titan|demon slayer|jujutsu|my hero academia|boku no hero|one punch man|tokyo ghoul|death note|fullmetal|sword art|re:zero|konosuba|tensei|slime|black clover|dr. stone|fire force|hunter x hunter|fairy tail|seven deadly sins|mob psycho|dr stone|evangelion|gundam|sailor moon|inuyasha|yugioh|pokemon|digimon|beyblade|transformers|ranma|urusei|kenshin|berserk|trigun|outlaw star|cowboy bebop|samurai|akira|ghost in the shell|patlabor|macross|evangelion|gurren lagann|kill la|promised neverland|demon|slayer|chain saw|chainsaw|fire force|black clover|boruto|dragon|ball|one piece|naruto|bleach)"))
-            }
-            "dorama" -> {
-                if (itemType != "tv" && itemType != "movie") return false
-                val doramaKeywords = setOf("dorama", "k-drama", "kdrama", "coreano", "chino", "japonés", "japones", "tailandés", "tailandes", "filipino", "vietnamita", "drama coreano", "drama chino", "asia", "korean", "chinese", "japanese", "thai", "filipino")
-                return genres.any { it in doramaKeywords } || title.contains(Regex("(korean|kdrama|k-drama|coreano|chinese|china|japanese|japan|thai|thailand|filipino|philippines|vietnam|vietnamese|asian|asia)"))
-            }
-            else -> return true
-        }
-    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("Mhdflix-MainPage", "=== getMainPage START ===")
         Log.d("Mhdflix-MainPage", "request.name: ${request.name}, category: ${request.data}")
 
-        val searchTerms = when (request.data) {
-            "peliculas" -> listOf("pelicula", "movie", "action", "comedia", "terror", "drama", "2024", "2023")
-            "series" -> listOf("series", "temporada", "tv show", "drama", "2024", "2023")
-            "anime" -> listOf("anime", "naruto", "one piece", "dragon ball", "bleach", "attack on titan", "demon slayer", "jujutsu", "isekai", "shonen")
-            "dorama" -> listOf("dorama", "korean", "kdrama", "k-drama", "coreano", "drama chino", "japanese drama", "tailandés")
-            else -> listOf("2024", "movie", "series")
-        }
-
-        val allItems = mutableListOf<SearchResultItem>()
-        val seenIds = mutableSetOf<Long>()
-
-        for (term in searchTerms) {
-            if (allItems.size >= 30) break
-            try {
-                val searchUrl = "$mainUrl/api/search?query=${term.replace(" ", "+")}&page=1&limit=15"
-                Log.d("Mhdflix-MainPage", "Searching: $searchUrl")
-                
-                val response = app.get(
-                    searchUrl,
-                    headers = mapOf(
-                        "User-Agent" to baseHeaders.getValue("User-Agent"),
-                        "Referer" to "$mainUrl/",
-                        "Accept" to "application/json, text/plain, */*"
-                    )
-                ).text
-
-                val searchResponse = tryParseJson<SearchApiResponse>(response)
-                searchResponse?.data?.forEach { item ->
-                    item.id?.let { id ->
-                        if (!seenIds.contains(id) && allItems.size < 30 && matchesCategory(item, request.data)) {
-                            seenIds.add(id)
-                            allItems.add(item)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("Mhdflix-MainPage", "Search error for '$term': ${e.message}")
-            }
-        }
-
-        Log.d("Mhdflix-MainPage", "Total unique items found: ${allItems.size}")
-
         val tvType = when (request.data) {
-            "peliculas" -> TvType.Movie
+            "movie" -> TvType.Movie
             "anime" -> TvType.Anime
             "dorama" -> TvType.AsianDrama
             else -> TvType.TvSeries
         }
 
-        val searchResponses = allItems.take(30).mapNotNull { item ->
-            val title = item.title ?: return@mapNotNull null
-            val id = item.id ?: return@mapNotNull null
-            val type = item.type ?: "tv"
-            val slug = item.slug ?: return@mapNotNull null
-            val url = if (type == "movie") "$mainUrl/movies/$id/$slug" else "$mainUrl/tvs/$id/$slug"
-            
-            Log.d("Mhdflix-MainPage", "  Item: title='$title', poster='${item.poster?.take(50)}', genres=${item.genre}")
-            
-            newMovieSearchResponse(title, url, if (type == "movie") TvType.Movie else tvType) {
-                this.posterUrl = fixUrlPath(item.poster)
+        return try {
+            val apiPath = when (request.data) {
+                "movie" -> "/api/medias?type=movie&page=$page&limit=25"
+                "anime" -> "/api/medias?type=tv&page=$page&limit=25&category=anime"
+                "dorama" -> "/api/medias?type=tv&page=$page&limit=25&category=dorama"
+                else -> "/api/medias?type=tv&page=$page&limit=25"
             }
+
+            val url = "$mainUrl$apiPath"
+            val referer = when (request.data) {
+                "movie" -> "$mainUrl/movies"
+                "anime" -> "$mainUrl/tvs/category/anime"
+                "dorama" -> "$mainUrl/tvs/category/dorama"
+                else -> "$mainUrl/tvs"
+            }
+
+            Log.d("Mhdflix-MainPage", "Fetching: $url")
+
+            val response = app.get(
+                url,
+                headers = mapOf(
+                    "User-Agent" to baseHeaders.getValue("User-Agent"),
+                    "Referer" to referer,
+                    "Accept" to "application/json, text/plain, */*"
+                )
+            ).text
+
+            val apiResponse = tryParseJson<MediasApiResponse>(response)
+            val items = apiResponse?.data ?: emptyList()
+
+            Log.d("Mhdflix-MainPage", "Got ${items.size} items for ${request.data}")
+
+            val searchResponses = items.mapNotNull { item ->
+                val title = item.title ?: return@mapNotNull null
+                val id = item.id ?: return@mapNotNull null
+                val type = item.type ?: "tv"
+                val slug = item.slug ?: return@mapNotNull null
+                val url = if (type == "movie") "$mainUrl/movies/$id/$slug" else "$mainUrl/tvs/$id/$slug"
+
+                Log.d("Mhdflix-MainPage", "  Item: title='$title', genres=${item.genre}")
+
+                newMovieSearchResponse(title, url, if (type == "movie") TvType.Movie else tvType) {
+                    this.posterUrl = fixUrlPath(item.poster)
+                }
+            }
+
+            if (searchResponses.isEmpty()) null
+            else {
+                newHomePageResponse(
+                    list = HomePageList(request.name, searchResponses),
+                    hasNext = apiResponse?.totalPage?.let { it > page } ?: false
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("Mhdflix-MainPage", "Error: ${e.message}")
+            null
         }
-
-        Log.d("Mhdflix-MainPage", "=== getMainPage END - returning ${searchResponses.size} items ===")
-
-        return if (searchResponses.isNotEmpty()) {
-            newHomePageResponse(
-                list = HomePageList(request.name, searchResponses),
-                hasNext = false
-            )
-        } else null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -209,10 +175,29 @@ class MhdflixProvider : MainAPI() {
 
         val tvType = if (typeFromUrl == "movie") TvType.Movie else TvType.TvSeries
 
+        val tags = try {
+            val mediaType = if (typeFromUrl == "movie") "movie" else "tv"
+            val genreUrl = "$mainUrl/api/medias?type=$mediaType&page=1&limit=1"
+            val genreResponse = app.get(
+                "$mainUrl/api/search?query=$idFromUrl&page=1&limit=1",
+                headers = mapOf(
+                    "User-Agent" to baseHeaders.getValue("User-Agent"),
+                    "Referer" to url,
+                    "Accept" to "application/json, text/plain, */*"
+                )
+            ).text
+            val genreData = tryParseJson<SearchApiResponse>(genreResponse)
+            genreData?.data?.firstOrNull { it.id == idFromUrl }?.genre?.mapNotNull { it }?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.d("Mhdflix-Load", "Failed to fetch genres: ${e.message}")
+            null
+        }
+
         if (tvType == TvType.Movie) {
             return newMovieLoadResponse(title, url, TvType.Movie, idFromUrl.toString()) {
                 this.posterUrl = poster
                 this.plot = description
+                this.tags = tags
             }
         } else {
             val episodes = loadEpisodesFromApi(idFromUrl, url)
@@ -221,6 +206,7 @@ class MhdflixProvider : MainAPI() {
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = description
+                    this.tags = tags
                 }
             }
             
@@ -230,6 +216,7 @@ class MhdflixProvider : MainAPI() {
             })) {
                 this.posterUrl = poster
                 this.plot = description
+                this.tags = tags
             }
         }
     }
@@ -480,7 +467,20 @@ class MhdflixProvider : MainAPI() {
                 )
                 found = true
             } else if (hasExtractor) {
-                loadExtractor(fixUrl(videoUrl), referer, subtitleCallback, callback)
+                @Suppress("DEPRECATION")
+                loadExtractor(fixUrl(videoUrl), referer, subtitleCallback) { link ->
+                    val nameWithLang = "${link.name} [$languageName]"
+                    callback(
+                        ExtractorLink(
+                            source = nameWithLang,
+                            name = linkName,
+                            url = link.url,
+                            referer = link.referer,
+                            quality = link.quality,
+                            type = link.type
+                        )
+                    )
+                }
                 found = true
             }
             
@@ -512,6 +512,27 @@ class MhdflixProvider : MainAPI() {
         }
         return null
     }
+
+    data class MediasApiResponse(
+        @JsonProperty("data") val data: List<MediasItem> = emptyList(),
+        @JsonProperty("totalPage") val totalPage: Int? = null,
+        @JsonProperty("status") val status: Int? = null
+    )
+
+    data class MediasItem(
+        @JsonProperty("id") val id: Long? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("poster") val poster: String? = null,
+        @JsonProperty("backdrop") val backdrop: String? = null,
+        @JsonProperty("genre") val genre: List<String?> = emptyList(),
+        @JsonProperty("date") val date: String? = null,
+        @JsonProperty("duration") val duration: String? = null,
+        @JsonProperty("rating") val rating: Int? = null,
+        @JsonProperty("type") val type: String? = null,
+        @JsonProperty("slug") val slug: String? = null,
+        @JsonProperty("logo") val logo: String? = null,
+        @JsonProperty("views") val views: Int? = null
+    )
 
     data class SeasonsApiResponse(
         @JsonProperty("data") val data: List<SeasonItem> = emptyList()
