@@ -181,12 +181,12 @@ class MhdflixProvider : MainAPI() {
         val tvType = if (typeFromUrl == "movie") TvType.Movie else TvType.TvSeries
 
         if (tvType == TvType.Movie) {
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+            return newMovieLoadResponse(title, url, TvType.Movie, idFromUrl.toString()) {
                 this.posterUrl = poster
                 this.plot = description
             }
         } else {
-            val episodes = loadEpisodesFromApi(idFromUrl)
+            val episodes = loadEpisodesFromApi(idFromUrl, url)
             
             if (episodes.isNotEmpty()) {
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
@@ -205,19 +205,19 @@ class MhdflixProvider : MainAPI() {
         }
     }
 
-    private suspend fun loadEpisodesFromApi(tvId: Long?): List<Episode> {
+    private suspend fun loadEpisodesFromApi(tvId: Long?, tvUrl: String): List<Episode> {
         if (tvId == null) return emptyList()
         
-        val apiHeaders = mapOf(
+        Log.d("Mhdflix-Load", "Fetching seasons for TV ID: $tvId")
+        
+        val seasonsHeaders = mapOf(
             "User-Agent" to baseHeaders.getValue("User-Agent"),
             "Referer" to "$mainUrl/",
             "Accept" to "application/json, text/plain, */*"
         )
         
-        Log.d("Mhdflix-Load", "Fetching seasons for TV ID: $tvId")
-        
         val seasonsResponse = try {
-            val res = app.get("$mainUrl/api/series/$tvId/seasons", headers = apiHeaders).text
+            val res = app.get("$mainUrl/api/series/$tvId/seasons", headers = seasonsHeaders).text
             Log.d("Mhdflix-Load", "Seasons response: ${res.take(300)}")
             tryParseJson<SeasonsApiResponse>(res)
         } catch (e: Exception) {
@@ -235,17 +235,24 @@ class MhdflixProvider : MainAPI() {
         for (season in seasonsResponse.data) {
             val seasonId = season.id ?: continue
             val seasonNum = season.seasonNumber ?: continue
-            val seasonName = season.name ?: "Temporada $seasonNum"
             
             Log.d("Mhdflix-Load", "Fetching episodes for season $seasonNum (id=$seasonId)")
+            
+            val episodesHeaders = mapOf(
+                "User-Agent" to baseHeaders.getValue("User-Agent"),
+                "Referer" to "$tvUrl?seasson=$seasonId",
+                "Accept" to "application/json, text/plain, */*"
+            )
             
             var page = 1
             var hasMore = true
             
             while (hasMore) {
                 try {
-                    val epUrl = "$mainUrl/api/series/$seasonId/episodes?page=$page"
-                    val res = app.get(epUrl, headers = apiHeaders).text
+                    val epUrl = "$mainUrl/api/series/season/$seasonId/episodes?page=$page"
+                    Log.d("Mhdflix-Load", "  Requesting: $epUrl with Referer: ${episodesHeaders["Referer"]}")
+                    val res = app.get(epUrl, headers = episodesHeaders).text
+                    Log.d("Mhdflix-Load", "  Response: ${res.take(200)}")
                     
                     val epResponse = tryParseJson<EpisodesApiResponse>(res)
                     val seasonEpisodes = epResponse?.data ?: emptyList()
@@ -460,6 +467,9 @@ class MhdflixProvider : MainAPI() {
         }
         Regex("""/tvs/(\d+)""").find(data)?.groupValues?.get(1)?.let { id ->
             return Pair(id, "episode")
+        }
+        if (data.all { it.isDigit() }) {
+            return Pair(data, "movie")
         }
         return null
     }
