@@ -10,7 +10,7 @@ import kotlin.collections.ArrayList
 
 class VecindadchProvider : MainAPI() {
     override var mainUrl = "https://www.chavodel8.com"
-    override var name = "Vecindad CH"
+    override var name = "VecindadCH"
     override val supportedTypes = setOf(
         TvType.TvSeries,
         TvType.Cartoon,
@@ -193,6 +193,14 @@ class VecindadchProvider : MainAPI() {
         return null
     }
 
+    private fun findSeasonPoster(url: String): String {
+        for ((_, seasons) in subSeasons) {
+            seasons.find { it.url == url }?.takeIf { it.posterUrl.isNotBlank() }
+                ?.let { return it.posterUrl }
+        }
+        return ""
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         val html = safeAppGet(url) ?: return null
         val doc = Jsoup.parse(html)
@@ -211,9 +219,13 @@ class VecindadchProvider : MainAPI() {
             ?: doc.selectFirst("meta[name=description]")?.attr("content")
             ?: ""
 
-        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: doc.selectFirst("div.team-image img")?.attr("src")
-            ?: ""
+        val seasonPoster = findSeasonPoster(url)
+        val poster = if (seasonPoster.isNotBlank()) seasonPoster
+        else {
+            doc.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: doc.selectFirst("div.team-image img")?.attr("src")
+                ?: ""
+        }
 
         val isSeasonPage = findSeasonName(url) != null
 
