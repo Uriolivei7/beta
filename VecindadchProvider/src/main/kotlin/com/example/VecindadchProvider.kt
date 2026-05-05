@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.select.Elements
 import kotlin.collections.ArrayList
 
 class VecindadchProvider : MainAPI() {
@@ -37,6 +38,12 @@ class VecindadchProvider : MainAPI() {
         }
     }
 
+    private fun getVideoCards(doc: org.jsoup.nodes.Document): Elements {
+        val main = doc.selectFirst("section#page-content div.row.team-members.m-b-40")
+        return main?.select(" > div[class^='col'] > div.team-member")
+            ?: doc.select("div.row.team-members.m-b-40 > div[class^='col'] > div.team-member")
+    }
+
     private fun Element.toSearchResponse(): SearchResponse? {
         val teamImage = this.selectFirst("div.team-image") ?: this
         val link = teamImage.selectFirst("a")?.attr("href") ?: return null
@@ -52,95 +59,117 @@ class VecindadchProvider : MainAPI() {
         }
     }
 
-    private fun getSeasonCards(doc: org.jsoup.nodes.Document): List<Element> {
-        return doc.select("div.row.team-members.m-b-40").firstOrNull()?.select(" > div[class^='col'] > div.team-member")
-            ?.toList()
-            ?: doc.select("div.team-member").toList()
+    private fun Element.toEpisode(index: Int): Episode {
+        val teamImage = this.selectFirst("div.team-image") ?: this
+        val link = teamImage.selectFirst("a")?.attr("href") ?: ""
+        val title = this.selectFirst("div.team-desc h3")?.text()?.trim()
+            ?: this.selectFirst("h3")?.text()?.trim()
+            ?: "Episodio ${index + 1}"
+        val img = teamImage.selectFirst("img")?.attr("src")
+            ?: teamImage.selectFirst("img")?.attr("data-src")
+            ?: ""
+        val desc = this.selectFirst("div.team-desc p")?.text()?.trim()
+
+        return newEpisode(fixUrl(link)) {
+            this.name = title
+            this.season = 1
+            this.episode = index + 1
+            this.posterUrl = if (img.startsWith("http")) img else "$mainUrl$img".takeIf { it.isNotBlank() }
+            this.description = desc
+        }
     }
 
-    private data class SeasonDef(
+    private data class CatDef(
         val name: String,
         val url: String,
-        val isSeason: Boolean = true,
+        val isSeason: Boolean = false,
         val posterUrl: String = ""
     )
 
-    private val chaponBase = "$mainUrl/wp-content/uploads/2017/11"
+    private val chapuBase = "$mainUrl/wp-content/uploads/2017/11"
     private val chavoBase = "$mainUrl/img/ep"
+    private val animBase = "$mainUrl/wp-content/uploads/2017/11"
 
-    private val seasonDefs = listOf(
-        SeasonDef("Chapulín T1973", "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/", true, "$chaponBase/t73-1.jpg"),
-        SeasonDef("Chapulín T1974", "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/", true, "$chaponBase/t74-1.jpg"),
-        SeasonDef("Chapulín T1975", "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/", true, "$chaponBase/t75-1.jpg"),
-        SeasonDef("Chapulín T1976", "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/", true, "$chaponBase/t76.jpg"),
-        SeasonDef("Chapulín T1977", "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/", true, "$chaponBase/t77-1.jpg"),
-        SeasonDef("Chapulín T1978", "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/", true, "$chaponBase/t78-1.jpg"),
-        SeasonDef("Chavo T1973", "$mainUrl/videos/_chavo_/_1973_/", true, "$chavoBase/t73.jpg"),
-        SeasonDef("Chavo T1974", "$mainUrl/videos/_chavo_/_1974_/", true, "$chavoBase/t74.jpg"),
-        SeasonDef("Chavo T1975", "$mainUrl/videos/_chavo_/_1975_/", true, "$chavoBase/t75.jpg"),
-        SeasonDef("Chavo T1976", "$mainUrl/videos/_chavo_/_1976_/", true, "$chavoBase/t76.jpg"),
-        SeasonDef("Chavo T1977", "$mainUrl/videos/_chavo_/_1977_/", true, "$chavoBase/t77.jpg"),
-        SeasonDef("Chavo T1978", "$mainUrl/videos/_chavo_/_1978_/", true, "$chavoBase/t78.jpg"),
-        SeasonDef("Chavo T1979", "$mainUrl/videos/_chavo_/_1979_/", true, "$chavoBase/t79.jpg"),
+    private val homeRows = listOf(
+        CatDef("Chapulín Colorado", "$mainUrl/videos/_chapulin_colorado_/", false),
+        CatDef("Chavo del 8", "$mainUrl/videos/_chavo_/", false),
+        //CatDef("Chapulín Animado", "$mainUrl/videos/chapulin-animado/", false),
+        CatDef("Chavo Animado", "$mainUrl/videos/_chavo_animado_/", false),
+        CatDef("Canciones", "$mainUrl/videos/musical/", false),
+        CatDef("Chómpiras", "$mainUrl/videos/chompiras-peterete/", false),
+        CatDef("Dr. Chapatín", "$mainUrl/videos/chapatin/", false),
+        CatDef("Entremés", "$mainUrl/videos/entremes/", false),
+        CatDef("Películas", "$mainUrl/videos/pelicula/", false),
+        CatDef("Intros", "$mainUrl/videos/intro/", false),
     )
 
-    private val allCategories = listOf(
-        SeasonDef("Chapulín Colorado", "$mainUrl/videos/_chapulin_colorado_/", false),
-        SeasonDef("Chavo del 8", "$mainUrl/videos/_chavo_/", false),
-        *seasonDefs.toTypedArray(),
-        SeasonDef("Chapulín Animado", "$mainUrl/videos/chapulin-animado/"),
-        SeasonDef("Chavo Animado", "$mainUrl/videos/_chavo_animado_/"),
-        SeasonDef("Canciones", "$mainUrl/videos/musical/"),
-        SeasonDef("Chómpiras", "$mainUrl/videos/chompiras-peterete/"),
-        SeasonDef("Dr. Chapatín", "$mainUrl/videos/chapatin/"),
-        SeasonDef("Entremés", "$mainUrl/videos/entremes/"),
-        SeasonDef("Películas", "$mainUrl/videos/pelicula/"),
-        SeasonDef("Intros", "$mainUrl/videos/intro/"),
-        SeasonDef("Especial Chespirito", "$mainUrl/videos/especiales/especial_roberto_gomez/"),
-        SeasonDef("Especial Ramón", "$mainUrl/videos/especiales/especial_ramon_valdes/"),
+    private val subSeasons = mapOf(
+        "Chapulín Colorado" to listOf(
+            CatDef("T1973", "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/", true, "$chapuBase/t73-1.jpg"),
+            CatDef("T1974", "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/", true, "$chapuBase/t74-1.jpg"),
+            CatDef("T1975", "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/", true, "$chapuBase/t75-1.jpg"),
+            CatDef("T1976", "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/", true, "$chapuBase/t76.jpg"),
+            CatDef("T1977", "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/", true, "$chapuBase/t77-1.jpg"),
+            CatDef("T1978", "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/", true, "$chapuBase/t78-1.jpg"),
+        ),
+        "Chavo del 8" to listOf(
+            CatDef("T1973", "$mainUrl/videos/_chavo_/_1973_/", true, "$chavoBase/t73.jpg"),
+            CatDef("T1974", "$mainUrl/videos/_chavo_/_1974_/", true, "$chavoBase/t74.jpg"),
+            CatDef("T1975", "$mainUrl/videos/_chavo_/_1975_/", true, "$chavoBase/t75.jpg"),
+            CatDef("T1976", "$mainUrl/videos/_chavo_/_1976_/", true, "$chavoBase/t76.jpg"),
+            CatDef("T1977", "$mainUrl/videos/_chavo_/_1977_/", true, "$chavoBase/t77.jpg"),
+            CatDef("T1978", "$mainUrl/videos/_chavo_/_1978_/", true, "$chavoBase/t78.jpg"),
+            CatDef("T1979", "$mainUrl/videos/_chavo_/_1979_/", true, "$chavoBase/t79.jpg"),
+        ),
+        "Chavo Animado" to listOf(
+            CatDef("Temporada 1", "$mainUrl/videos/_chavo_animado_/_temporada_1_/", true, "$animBase/t01.jpg"),
+            CatDef("Temporada 2", "$mainUrl/videos/_chavo_animado_/_temporada_2_/", true, "$animBase/t02.jpg"),
+            CatDef("Temporada 3", "$mainUrl/videos/_chavo_animado_/_temporada_3_/", true, "$animBase/t03.jpg"),
+        ),
+        /*
+        "Chapulín Animado" to listOf(
+            CatDef("Temporada 1", "$mainUrl/videos/chapulin-animado/_temporada_1_/", true, "$animBase/ca01.jpg"),
+        ),*/
     )
 
-    private val homeCategories = allCategories.filter { !it.isSeason }
+    private val allUrls = (homeRows + subSeasons.values.flatten()).associateBy { it.url }
 
     override val mainPage = mainPageOf(
-        *homeCategories.map { it.url to it.name }.toTypedArray()
+        *homeRows.map { it.url to it.name }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val items = ArrayList<HomePageList>()
-        val cat = allCategories.find { it.url == request.data }
+        val cat = allUrls[request.data]
 
         when {
-            cat == null || !cat.isSeason -> {
-                val prefix = when (cat?.name) {
-                    "Chapulín Colorado" -> "Chapulín T"
-                    "Chavo del 8" -> "Chavo T"
-                    else -> null
-                }
-                if (prefix != null) {
-                    val seasons = allCategories.filter { it.name.startsWith(prefix) && it.isSeason }
-                    val results = seasons.map { s ->
-                        newTvSeriesSearchResponse(s.name, s.url) {
-                            this.posterUrl = s.posterUrl
-                        }
-                    }
-                    if (results.isNotEmpty()) items.add(HomePageList(request.name, results))
-                } else {
-                    val html = safeAppGet(request.data) ?: return null
-                    val doc = Jsoup.parse(html)
-                    val results = getSeasonCards(doc).mapNotNull { it.toSearchResponse() }
-                        .filter { it.url.contains("/videos/") }
-                        .distinctBy { it.url }
-                    if (results.isNotEmpty()) items.add(HomePageList(request.name, results))
-                }
-            }
-            else -> {
-                val html = safeAppGet(request.data) ?: return null
+            cat == null -> return null
+            cat.isSeason -> {
+                val html = safeAppGet(cat.url) ?: return null
                 val doc = Jsoup.parse(html)
-                val results = getSeasonCards(doc).mapNotNull { it.toSearchResponse() }
+                val cards = getVideoCards(doc)
+                val results = cards.mapNotNull { it.toSearchResponse() }
                     .filter { it.url.contains("/videos/") }
                     .distinctBy { it.url }
-                if (results.isNotEmpty()) items.add(HomePageList(request.name, results))
+                if (results.isNotEmpty()) items.add(HomePageList(cat.name, results))
+            }
+            cat.name in subSeasons -> {
+                val seasons = subSeasons[cat.name]!!
+                val results = seasons.map { s ->
+                    newTvSeriesSearchResponse(s.name, s.url) {
+                        this.posterUrl = s.posterUrl
+                    }
+                }
+                if (results.isNotEmpty()) items.add(HomePageList(cat.name, results))
+            }
+            else -> {
+                val html = safeAppGet(cat.url) ?: return null
+                val doc = Jsoup.parse(html)
+                val cards = getVideoCards(doc)
+                val results = cards.mapNotNull { it.toSearchResponse() }
+                    .filter { it.url.contains("/videos/") }
+                    .distinctBy { it.url }
+                if (results.isNotEmpty()) items.add(HomePageList(cat.name, results))
             }
         }
 
@@ -157,12 +186,11 @@ class VecindadchProvider : MainAPI() {
             .distinctBy { it.url }
     }
 
-    private fun isSeasonUrl(url: String): Boolean {
-        return allCategories.any { it.url == url && it.isSeason }
-    }
-
-    private fun getSeasonPosterForUrl(url: String): String {
-        return allCategories.find { it.url == url && it.isSeason }?.posterUrl ?: ""
+    private fun findSeasonName(url: String): String? {
+        for ((parentName, seasons) in subSeasons) {
+            if (seasons.any { it.url == url }) return parentName
+        }
+        return null
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -183,35 +211,15 @@ class VecindadchProvider : MainAPI() {
             ?: doc.selectFirst("meta[name=description]")?.attr("content")
             ?: ""
 
-        val poster = if (isSeasonUrl(url)) {
-            getSeasonPosterForUrl(url).takeIf { it.isNotBlank() }
-                ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
-                ?: ""
-        } else {
-            doc.selectFirst("meta[property='og:image']")?.attr("content")
-                ?: doc.selectFirst("div.team-image img")?.attr("src")
-                ?: ""
-        }
+        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
+            ?: doc.selectFirst("div.team-image img")?.attr("src")
+            ?: ""
 
-        val episodes = if (isSeasonUrl(url)) {
-            getSeasonCards(doc).mapIndexed { index, card ->
-                val teamImage = card.selectFirst("div.team-image") ?: card
-                val link = teamImage.selectFirst("a")?.attr("href") ?: ""
-                val epTitle = card.selectFirst("div.team-desc h3")?.text()?.trim()
-                    ?: card.selectFirst("h3")?.text()?.trim()
-                    ?: "Episodio ${index + 1}"
-                val img = teamImage.selectFirst("img")?.attr("src")
-                    ?: teamImage.selectFirst("img")?.attr("data-src")
-                    ?: ""
-                val epDesc = card.selectFirst("div.team-desc p")?.text()?.trim()
+        val isSeasonPage = findSeasonName(url) != null
 
-                newEpisode(fixUrl(link)) {
-                    this.name = epTitle
-                    this.season = 1
-                    this.episode = index + 1
-                    this.posterUrl = if (img.startsWith("http")) img else "$mainUrl$img".takeIf { it.isNotBlank() }
-                    this.description = epDesc
-                }
+        val episodes = if (isSeasonPage) {
+            getVideoCards(doc).mapIndexed { index, card ->
+                card.toEpisode(index)
             }.filter { it.data.isNotBlank() && it.data != url }
                 .distinctBy { it.data }
         } else {
@@ -222,13 +230,14 @@ class VecindadchProvider : MainAPI() {
             })
         }
 
-        val recs = if (isSeasonUrl(url)) {
+        val recommendations = if (isSeasonPage) {
             null
         } else {
-            doc.select("div.team-member").mapNotNull { card ->
-                val rec = card.toSearchResponse()
-                if (rec != null && rec.url != url) rec else null
-            }.distinctBy { it.url }.take(12).takeIf { it.isNotEmpty() }
+            doc.select("div.team-member").mapNotNull { it.toSearchResponse() }
+                .filter { it.url != url && it.url.contains("/videos/") }
+                .distinctBy { it.url }
+                .take(12)
+                .takeIf { it.isNotEmpty() }
         }
 
         return newTvSeriesLoadResponse(
@@ -239,7 +248,7 @@ class VecindadchProvider : MainAPI() {
         ) {
             this.posterUrl = poster
             this.plot = description
-            if (recs != null) this.recommendations = recs
+            if (recommendations != null) this.recommendations = recommendations
         }
     }
 
