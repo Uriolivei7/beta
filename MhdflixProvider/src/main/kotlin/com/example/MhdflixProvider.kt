@@ -69,10 +69,14 @@ class MhdflixProvider : MainAPI() {
                     Regex("""url\(['"]?([^'")]+)['"]?\)""").find(it.attr("style"))?.groupValues?.get(1)
                 }
 
+            val linkHtml = link.html()
+            if (poster.isNullOrBlank() && linkHtml.contains("tmdb.org")) {
+                poster = Regex("""tmdb\.org/t/p/w500([^'")\s]+)""").find(linkHtml)?.groupValues?.get(1)
+                    ?.let { "https://image.tmdb.org/t/p/w500$it" }
+            }
+
             if (poster.isNullOrBlank()) {
-                poster = link.html().let { html ->
-                    Regex("""tmdb\.org/t/p/w500([^'")\s]+)""").find(html)?.groupValues?.get(1)
-                }?.let { "https://image.tmdb.org/t/p/w500$it" }
+                Log.d("Mhdflix-MainPage", "  DEBUG linkHtml for id=$id: ${linkHtml.take(500)}")
             }
 
             val title = img?.attr("alt")?.takeIf { it.isNotBlank() }
@@ -179,6 +183,21 @@ class MhdflixProvider : MainAPI() {
                 this.plot = description
             }
         } else {
+            Log.d("Mhdflix-Load", "DEBUG HTML snippet (searching for season/episode):")
+            val seasonRelated = doc.select("[class*='season'], [class*='episode'], [class*='temporada'], select, option, button[data-season], .server")
+            Log.d("Mhdflix-Load", "Found ${seasonRelated.size} season/episode related elements")
+            seasonRelated.take(5).forEach { el ->
+                Log.d("Mhdflix-Load", "  Element: tag=${el.tagName()}, class=${el.className()}, text=${el.text().take(50)}, outerHtml=${el.outerHtml().take(200)}")
+            }
+            
+            val allSelects = doc.select("select")
+            Log.d("Mhdflix-Load", "All selects on page: ${allSelects.size}")
+            allSelects.forEach { sel ->
+                Log.d("Mhdflix-Load", "  Select: name=${sel.attr("name")}, id=${sel.attr("id")}, class=${sel.className()}, options=${sel.select("option").size}")
+                sel.select("option").take(3).forEach { opt ->
+                    Log.d("Mhdflix-Load", "    Option: value=${opt.attr("value")}, text=${opt.text()}")
+                }
+            }
             val episodes = mutableListOf<Episode>()
             val slug = Regex("""/tvs/\d+/([^/?]+)""").find(url)?.groupValues?.get(1)
             
