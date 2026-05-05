@@ -54,7 +54,12 @@ class VecindadchProvider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Inicio",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/" to "Chapulín Colorado T1973",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/" to "Chapulín Colorado T1974",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/" to "Chapulín Colorado T1975",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/" to "Chapulín Colorado T1976",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/" to "Chapulín Colorado T1977",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/" to "Chapulín Colorado T1978",
         "$mainUrl/videos/_chavo_/_1973_/" to "Chavo T1973",
         "$mainUrl/videos/_chavo_/_1974_/" to "Chavo T1974",
         "$mainUrl/videos/_chavo_/_1975_/" to "Chavo T1975",
@@ -62,21 +67,14 @@ class VecindadchProvider : MainAPI() {
         "$mainUrl/videos/_chavo_/_1977_/" to "Chavo T1977",
         "$mainUrl/videos/_chavo_/_1978_/" to "Chavo T1978",
         "$mainUrl/videos/_chavo_/_1979_/" to "Chavo T1979",
-        "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/" to "Chapulín T1973",
-        "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/" to "Chapulín T1974",
-        "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/" to "Chapulín T1975",
-        "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/" to "Chapulín T1976",
-        "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/" to "Chapulín T1977",
-        "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/" to "Chapulín T1978",
+        "$mainUrl/videos/chapulin-animado/" to "Chapulín Animado",
+        "$mainUrl/videos/_chavo_animado_/" to "Chavo Animado",
         "$mainUrl/videos/musical/" to "Canciones",
         "$mainUrl/videos/chompiras-peterete/" to "Chómpiras",
         "$mainUrl/videos/chapatin/" to "Dr. Chapatín",
         "$mainUrl/videos/entremes/" to "Entremés",
         "$mainUrl/videos/pelicula/" to "Películas",
-        "$mainUrl/videos/_chavo_animado_/" to "Chavo Animado",
-        "$mainUrl/videos/chapulin-animado/" to "Chapulín Animado",
         "$mainUrl/videos/intro/" to "Intros",
-        "$mainUrl/videos/publicidad/" to "Anuncios",
         "$mainUrl/videos/especiales/especial_roberto_gomez/" to "Especial Chespirito",
         "$mainUrl/videos/especiales/especial_ramon_valdes/" to "Especial Ramón",
     )
@@ -173,7 +171,8 @@ class VecindadchProvider : MainAPI() {
         iframes.forEach { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank()) {
-                loadExtractor(src, mainUrl, subtitleCallback, callback)
+                val fixedSrc = fixUrl(src)
+                loadExtractor(fixedSrc, mainUrl, subtitleCallback, callback)
                 found = true
             }
         }
