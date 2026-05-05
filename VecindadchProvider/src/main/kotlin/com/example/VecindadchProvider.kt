@@ -177,13 +177,7 @@ class VecindadchProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/?s=$query"
-        val html = safeAppGet(url) ?: return emptyList()
-        val doc = Jsoup.parse(html)
-
-        return doc.select("div.team-member, div.post-item").mapNotNull { it.toSearchResponse() }
-            .filter { it.url.contains("/videos/") }
-            .distinctBy { it.url }
+        return emptyList()
     }
 
     private fun findSeasonName(url: String): String? {
