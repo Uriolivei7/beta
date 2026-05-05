@@ -58,24 +58,36 @@ class VecindadchProvider : MainAPI() {
             ?: doc.select("div.team-member").toList()
     }
 
-    private data class SeasonDef(val name: String, val url: String, val isSeason: Boolean = true)
+    private data class SeasonDef(
+        val name: String,
+        val url: String,
+        val isSeason: Boolean = true,
+        val posterUrl: String = ""
+    )
+
+    private val chaponBase = "$mainUrl/wp-content/uploads/2017/11"
+    private val chavoBase = "$mainUrl/img/ep"
+
+    private val seasonDefs = listOf(
+        SeasonDef("Chapulín T1973", "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/", true, "$chaponBase/t73-1.jpg"),
+        SeasonDef("Chapulín T1974", "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/", true, "$chaponBase/t74-1.jpg"),
+        SeasonDef("Chapulín T1975", "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/", true, "$chaponBase/t75-1.jpg"),
+        SeasonDef("Chapulín T1976", "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/", true, "$chaponBase/t76.jpg"),
+        SeasonDef("Chapulín T1977", "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/", true, "$chaponBase/t77-1.jpg"),
+        SeasonDef("Chapulín T1978", "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/", true, "$chaponBase/t78-1.jpg"),
+        SeasonDef("Chavo T1973", "$mainUrl/videos/_chavo_/_1973_/", true, "$chavoBase/t73.jpg"),
+        SeasonDef("Chavo T1974", "$mainUrl/videos/_chavo_/_1974_/", true, "$chavoBase/t74.jpg"),
+        SeasonDef("Chavo T1975", "$mainUrl/videos/_chavo_/_1975_/", true, "$chavoBase/t75.jpg"),
+        SeasonDef("Chavo T1976", "$mainUrl/videos/_chavo_/_1976_/", true, "$chavoBase/t76.jpg"),
+        SeasonDef("Chavo T1977", "$mainUrl/videos/_chavo_/_1977_/", true, "$chavoBase/t77.jpg"),
+        SeasonDef("Chavo T1978", "$mainUrl/videos/_chavo_/_1978_/", true, "$chavoBase/t78.jpg"),
+        SeasonDef("Chavo T1979", "$mainUrl/videos/_chavo_/_1979_/", true, "$chavoBase/t79.jpg"),
+    )
 
     private val allCategories = listOf(
         SeasonDef("Chapulín Colorado", "$mainUrl/videos/_chapulin_colorado_/", false),
         SeasonDef("Chavo del 8", "$mainUrl/videos/_chavo_/", false),
-        SeasonDef("Chapulín T1973", "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/", true),
-        SeasonDef("Chapulín T1974", "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/", true),
-        SeasonDef("Chapulín T1975", "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/", true),
-        SeasonDef("Chapulín T1976", "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/", true),
-        SeasonDef("Chapulín T1977", "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/", true),
-        SeasonDef("Chapulín T1978", "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/", true),
-        SeasonDef("Chavo T1973", "$mainUrl/videos/_chavo_/_1973_/", true),
-        SeasonDef("Chavo T1974", "$mainUrl/videos/_chavo_/_1974_/", true),
-        SeasonDef("Chavo T1975", "$mainUrl/videos/_chavo_/_1975_/", true),
-        SeasonDef("Chavo T1976", "$mainUrl/videos/_chavo_/_1976_/", true),
-        SeasonDef("Chavo T1977", "$mainUrl/videos/_chavo_/_1977_/", true),
-        SeasonDef("Chavo T1978", "$mainUrl/videos/_chavo_/_1978_/", true),
-        SeasonDef("Chavo T1979", "$mainUrl/videos/_chavo_/_1979_/", true),
+        *seasonDefs.toTypedArray(),
         SeasonDef("Chapulín Animado", "$mainUrl/videos/chapulin-animado/"),
         SeasonDef("Chavo Animado", "$mainUrl/videos/_chavo_animado_/"),
         SeasonDef("Canciones", "$mainUrl/videos/musical/"),
@@ -88,8 +100,10 @@ class VecindadchProvider : MainAPI() {
         SeasonDef("Especial Ramón", "$mainUrl/videos/especiales/especial_ramon_valdes/"),
     )
 
+    private val homeCategories = allCategories.filter { !it.isSeason }
+
     override val mainPage = mainPageOf(
-        *allCategories.map { it.url to it.name }.toTypedArray()
+        *homeCategories.map { it.url to it.name }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -106,7 +120,9 @@ class VecindadchProvider : MainAPI() {
                 if (prefix != null) {
                     val seasons = allCategories.filter { it.name.startsWith(prefix) && it.isSeason }
                     val results = seasons.map { s ->
-                        newTvSeriesSearchResponse(s.name, s.url)
+                        newTvSeriesSearchResponse(s.name, s.url) {
+                            this.posterUrl = s.posterUrl
+                        }
                     }
                     if (results.isNotEmpty()) items.add(HomePageList(request.name, results))
                 } else {
@@ -145,6 +161,10 @@ class VecindadchProvider : MainAPI() {
         return allCategories.any { it.url == url && it.isSeason }
     }
 
+    private fun getSeasonPosterForUrl(url: String): String {
+        return allCategories.find { it.url == url && it.isSeason }?.posterUrl ?: ""
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         val html = safeAppGet(url) ?: return null
         val doc = Jsoup.parse(html)
@@ -163,9 +183,15 @@ class VecindadchProvider : MainAPI() {
             ?: doc.selectFirst("meta[name=description]")?.attr("content")
             ?: ""
 
-        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: doc.selectFirst("div.team-image img")?.attr("src")
-            ?: ""
+        val poster = if (isSeasonUrl(url)) {
+            getSeasonPosterForUrl(url).takeIf { it.isNotBlank() }
+                ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: ""
+        } else {
+            doc.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: doc.selectFirst("div.team-image img")?.attr("src")
+                ?: ""
+        }
 
         val episodes = if (isSeasonUrl(url)) {
             getSeasonCards(doc).mapIndexed { index, card ->
@@ -196,10 +222,14 @@ class VecindadchProvider : MainAPI() {
             })
         }
 
-        val recommendations = doc.select("div.team-member").mapNotNull { card ->
-            val rec = card.toSearchResponse()
-            if (rec != null && rec.url != url) rec else null
-        }.distinctBy { it.url }.take(12)
+        val recs = if (isSeasonUrl(url)) {
+            null
+        } else {
+            doc.select("div.team-member").mapNotNull { card ->
+                val rec = card.toSearchResponse()
+                if (rec != null && rec.url != url) rec else null
+            }.distinctBy { it.url }.take(12).takeIf { it.isNotEmpty() }
+        }
 
         return newTvSeriesLoadResponse(
             name = title,
@@ -209,7 +239,7 @@ class VecindadchProvider : MainAPI() {
         ) {
             this.posterUrl = poster
             this.plot = description
-            this.recommendations = recommendations
+            if (recs != null) this.recommendations = recs
         }
     }
 
