@@ -12,7 +12,7 @@ class MhdflixProvider : MainAPI() {
     override var mainUrl = "https://ww1.mhdflix.com"
     override var name = "MHDFLIX"
     override val hasMainPage = true
-    override var lang = "es"
+    override var lang = "mx"
     override val hasDownloadSupport = true
     override val hasChromecastSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
