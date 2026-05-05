@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
 
 class MhdflixProvider : MainAPI() {
-    override var mainUrl = "https://mhdflix.com"
+    override var mainUrl = "https://ww1.mhdflix.com"
     override var name = "MHDFLIX"
     override val hasMainPage = true
     override var lang = "es"
@@ -17,10 +17,8 @@ class MhdflixProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
 
-    private val apiBaseUrl = "https://ww1.mhdflix.com"
-
     private val baseHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
         "Referer" to "$mainUrl/"
@@ -32,151 +30,6 @@ class MhdflixProvider : MainAPI() {
         else "https://image.tmdb.org/t/p/w500$path"
     }
 
-    private fun parseRscPayload(html: String): String {
-        return try {
-            val matches = Regex("""self\.__next_f\.push\(\[\d+,"(.*?)"\]\)""", RegexOption.DOT_MATCHES_ALL).findAll(html)
-            val combined = matches.joinToString("") { it.groupValues[1] }
-                .replace("\\\\\"", "\"")
-                .replace("\\\\n", "")
-                .replace("\\n", "")
-            Log.d("Mhdflix-RSC", "parseRscPayload - Length: ${combined.length}")
-            combined
-        } catch (e: Exception) {
-            Log.e("Mhdflix-RSC", "parseRscPayload - Error: ${e.message}")
-            ""
-        }
-    }
-
-    private fun extractPosterFromRsc(rscPayload: String, mediaId: Long?): String {
-        if (mediaId == null) return ""
-        return try {
-            val pattern = """"id":${mediaId},"title":"[^"]*","poster":"([^"]*)"""".toRegex().find(rscPayload)
-            val result = pattern?.groupValues?.get(1)?.takeIf { it.isNotBlank() && !it.contains("undefined") } ?: ""
-            Log.d("Mhdflix-Poster", "extractPosterFromRsc - id=$mediaId, result=$result")
-            result
-        } catch (e: Exception) {
-            Log.e("Mhdflix-Poster", "extractPosterFromRsc - Error: ${e.message}")
-            ""
-        }
-    }
-
-    private fun extractItemListFromRsc(rscPayload: String, sectionKey: String): List<SearchItem> {
-        return try {
-            Log.d("Mhdflix-Items", "extractItemListFromRsc - Looking for key: '$sectionKey'")
-            val sectionPattern = """"$sectionKey":\s*\[""".toRegex().find(rscPayload)
-            if (sectionPattern == null) {
-                Log.d("Mhdflix-Items", "extractItemListFromRsc - Key '$sectionKey' not found")
-                return emptyList()
-            }
-            
-            val afterSection = rscPayload.substring(sectionPattern.range.last)
-            val itemsRegex = """"id":(\d+),"title":"([^"]*)","poster":"([^"]*)"""".toRegex().findAll(afterSection)
-            
-            val results = mutableListOf<SearchItem>()
-            var count = 0
-            for (match in itemsRegex) {
-                if (count >= 30) break
-                val id = match.groupValues[1].toLongOrNull() ?: continue
-                val title = match.groupValues[2]
-                val poster = match.groupValues[3].takeIf { it.isNotBlank() && !it.contains("undefined") } ?: ""
-                
-                if (title.isNotBlank() && title.length > 2) {
-                    Log.d("Mhdflix-Items", "  Found: id=$id, title='$title', poster='${poster.take(30)}...'")
-                    results.add(SearchItem(id, title, poster, "movie"))
-                }
-                count++
-            }
-            Log.d("Mhdflix-Items", "extractItemListFromRsc - Found ${results.size} items for key '$sectionKey'")
-            results.distinctBy { it.id }
-        } catch (e: Exception) {
-            Log.e("Mhdflix-Items", "extractItemListFromRsc - Error: ${e.message}")
-            emptyList()
-        }
-    }
-
-    private fun extractMediaFromRsc(html: String): RscMedia? {
-        return try {
-            val rsc = parseRscPayload(html)
-            val mediaPattern = """"media":\s*\{[^}]*"id":(\d+),"title":"([^"]*)","poster":"([^"]*)","backdrop":"([^"]*)","genre":\[(.*?)\],"date":"([^"]*)","duration":"([^"]*)","rating":(\d+)?,"description":"([^"]*)","type":"([^"]*)"""".toRegex(RegexOption.DOT_MATCHES_ALL).find(rsc)
-            
-            if (mediaPattern != null) {
-                val media = RscMedia(
-                    id = mediaPattern.groupValues[1].toLongOrNull(),
-                    title = mediaPattern.groupValues[2],
-                    poster = mediaPattern.groupValues[3],
-                    backdrop = mediaPattern.groupValues[4],
-                    genre = mediaPattern.groupValues[5].split(",").filter { it.isNotBlank() }.map { it.trim('"') },
-                    date = mediaPattern.groupValues[6],
-                    duration = mediaPattern.groupValues[7],
-                    rating = mediaPattern.groupValues[8].toIntOrNull(),
-                    description = mediaPattern.groupValues[9],
-                    type = mediaPattern.groupValues[10]
-                )
-                Log.d("Mhdflix-Media", "extractMediaFromRsc - Found: title='${media.title}', type='${media.type}', poster='${media.poster?.take(30)}'")
-                media
-            } else {
-                Log.d("Mhdflix-Media", "extractMediaFromRsc - No media pattern found")
-                null
-            }
-        } catch (e: Exception) {
-            Log.e("Mhdflix-Media", "extractMediaFromRsc - Error: ${e.message}")
-            null
-        }
-    }
-
-    private fun extractEpisodeListFromRsc(html: String, serieId: Long): List<EpisodeItem> {
-        return try {
-            val rsc = parseRscPayload(html)
-            val episodes = mutableListOf<EpisodeItem>()
-            
-            Log.d("Mhdflix-Episodes", "extractEpisodeListFromRsc - serieId=$serieId, rsc length=${rsc.length}")
-            
-            val epPattern = """"idEpisodios":(\d+),"title":"([^"]*)","overview":"([^"]*)","numEpisode":(\d+),"numSeason":(\d+)""".toRegex(RegexOption.DOT_MATCHES_ALL).findAll(rsc)
-            var count = 0
-            for (match in epPattern) {
-                val ep = EpisodeItem(
-                    id = match.groupValues[1].toLong(),
-                    title = match.groupValues[2],
-                    overview = match.groupValues[3],
-                    episodeNum = match.groupValues[4].toInt(),
-                    seasonNum = match.groupValues[5].toInt()
-                )
-                episodes.add(ep)
-                count++
-                if (count <= 5) {
-                    Log.d("Mhdflix-Episodes", "  Ep ${ep.seasonNum}x${ep.episodeNum}: ${ep.title}")
-                }
-            }
-            Log.d("Mhdflix-Episodes", "extractEpisodeListFromRsc - Pattern1 found $count episodes")
-            
-            if (episodes.isEmpty()) {
-                val simplePattern = """"idEpisodios":(\d+),"title":"([^"]*)","numEpisode":(\d+),""".toRegex().findAll(rsc)
-                var count2 = 0
-                for (match in simplePattern) {
-                    val ep = EpisodeItem(
-                        id = match.groupValues[1].toLong(),
-                        title = match.groupValues[2],
-                        overview = "",
-                        episodeNum = match.groupValues[3].toInt(),
-                        seasonNum = 1
-                    )
-                    episodes.add(ep)
-                    count2++
-                    if (count2 <= 5) {
-                        Log.d("Mhdflix-Episodes", "  Ep (simple) ${ep.episodeNum}: ${ep.title}")
-                    }
-                }
-                Log.d("Mhdflix-Episodes", "extractEpisodeListFromRsc - Simple pattern found $count2 episodes")
-            }
-            
-            Log.d("Mhdflix-Episodes", "extractEpisodeListFromRsc - Total unique: ${episodes.distinctBy { it.id }.size}")
-            episodes.distinctBy { it.id }
-        } catch (e: Exception) {
-            Log.e("Mhdflix-Episodes", "extractEpisodeListFromRsc - Error: ${e.message}")
-            emptyList()
-        }
-    }
-
     override val mainPage = mainPageOf(
         "$mainUrl/movies" to "Películas Recientes",
         "$mainUrl/tvs" to "Series Recientes",
@@ -186,83 +39,62 @@ class MhdflixProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("Mhdflix-MainPage", "=== getMainPage START ===")
-        Log.d("Mhdflix-MainPage", "request.name: ${request.name}")
-        Log.d("Mhdflix-MainPage", "request.data: ${request.data}")
+        Log.d("Mhdflix-MainPage", "request.name: ${request.name}, request.data: ${request.data}")
         
         val html = app.get(request.data, headers = baseHeaders).text
         Log.d("Mhdflix-MainPage", "HTML length: ${html.length}")
-        
-        val rscPayload = parseRscPayload(html)
-        Log.d("Mhdflix-MainPage", "RSC payload length: ${rscPayload.length}")
-        
+
+        val doc = Jsoup.parse(html)
+        val links = doc.select("a[href*='/movies/'], a[href*='/tvs/']")
+        Log.d("Mhdflix-MainPage", "Total links: ${links.size}")
+
         val tvType = when {
             request.name.contains("Película") -> TvType.Movie
             request.name.contains("Anime") -> TvType.Anime
             request.name.contains("Dorama") -> TvType.AsianDrama
             else -> TvType.TvSeries
         }
-        Log.d("Mhdflix-MainPage", "tvType: $tvType")
 
-        val sectionKeys = listOf("movies", "series", "animes", "doramas", "recent", "latest", "items", "data")
-        var allItems = emptyList<SearchItem>()
-        
-        Log.d("Mhdflix-MainPage", "--- Trying RSC extraction ---")
-        for (key in sectionKeys) {
-            val items = extractItemListFromRsc(rscPayload, key)
-            Log.d("Mhdflix-MainPage", "Key '$key' returned ${items.size} items")
-            if (items.isNotEmpty()) {
-                allItems = items
-                Log.d("Mhdflix-MainPage", "Using items from key '$key'")
-                break
+        val items = links.mapNotNull { link ->
+            val href = link.attr("href")
+            if (href.contains("/episode/") || href.contains("/category/") || href.contains("/genres")) return@mapNotNull null
+            
+            val id = Regex("""/(?:movies|tvs)/(\d+)/""").find(href)?.groupValues?.get(1) ?: return@mapNotNull null
+            val slug = Regex("""/(?:movies|tvs)/\d+/([^/]+)""").find(href)?.groupValues?.get(1) ?: return@mapNotNull null
+            
+            val img = link.selectFirst("img")
+            var poster = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                ?: img?.attr("src")?.takeIf { it.isNotBlank() }
+                ?: img?.let { 
+                    Regex("""url\(['"]?([^'")]+)['"]?\)""").find(it.attr("style"))?.groupValues?.get(1)
+                }
+
+            if (poster.isNullOrBlank()) {
+                poster = link.html().let { html ->
+                    Regex("""tmdb\.org/t/p/w500([^'")\s]+)""").find(html)?.groupValues?.get(1)
+                }?.let { "https://image.tmdb.org/t/p/w500$it" }
+            }
+
+            val title = img?.attr("alt")?.takeIf { it.isNotBlank() }
+                ?: link.selectFirst("h3, h4, p, span")?.text()
+                ?: slug.replace("-", " ").replaceFirstChar { it.uppercase() }
+            
+            if (title.isNotBlank() && title.length > 2) {
+                val fullUrl = if (href.startsWith("http")) href else "$mainUrl$href"
+                val type = if (href.contains("/movies/")) "movie" else "tv"
+                Log.d("Mhdflix-MainPage", "  Item: title='$title', poster='${poster?.take(50)}', url='$fullUrl'")
+                SearchItem(id.toLong(), title, poster ?: "", fullUrl, type)
+            } else null
+        }.distinctBy { it.id }.take(30)
+
+        Log.d("Mhdflix-MainPage", "Total items: ${items.size}")
+
+        val searchResponses = items.map { item ->
+            newMovieSearchResponse(item.title, item.url, tvType) {
+                this.posterUrl = fixUrlPath(item.poster)
             }
         }
-        
-        if (allItems.isEmpty()) {
-            Log.d("Mhdflix-MainPage", "--- RSC extraction empty, trying DOM fallback ---")
-            val doc = Jsoup.parse(html)
-            val links = doc.select("a[href*='/movies/'], a[href*='/tvs/']")
-            Log.d("Mhdflix-MainPage", "Total links found: ${links.size}")
-            
-            val filteredLinks = links
-                .filter { !it.attr("href").contains("/episode/") && !it.attr("href").contains("/category/") && !it.attr("href").contains("/genres") }
-            Log.d("Mhdflix-MainPage", "Filtered links (no episode/category/genres): ${filteredLinks.size}")
-            
-            allItems = filteredLinks.mapNotNull { link ->
-                val href = link.attr("href")
-                val idRegex = Regex("""/(?:movies|tvs)/(\d+)/""")
-                val id = idRegex.find(href)?.groupValues?.get(1)?.toLongOrNull() ?: return@mapNotNull null
-                
-                val img = link.selectFirst("img")
-                val poster = img?.let { 
-                    val dataSrc = it.attr("data-src")
-                    val src = it.attr("src")
-                    val styleUrl = Regex("""url\(['"]?([^'")]+)['"]?\)""").find(it.attr("style"))?.groupValues?.get(1)
-                    val result = dataSrc.ifBlank { src.ifBlank { styleUrl ?: "" } }
-                    Log.d("Mhdflix-MainPage", "  Poster extraction: dataSrc='$dataSrc', src='$src', styleUrl='$styleUrl', final='${result.take(30)}'")
-                    result
-                } ?: ""
-                val title = img?.attr("alt") ?: link.text()
-                Log.d("Mhdflix-MainPage", "  Link: href='$href', id=$id, title='$title'")
-                
-                if (title.isNotBlank() && title.length > 2) {
-                    SearchItem(id, title, poster, if (href.contains("/movies/")) "movie" else "tv")
-                } else null
-            }.distinctBy { it.id }.take(20)
-        }
 
-        Log.d("Mhdflix-MainPage", "Total items before mapping: ${allItems.size}")
-        
-        val searchResponses = allItems.map { item ->
-            val slug = item.title.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
-            val url = if (item.type == "movie") "$mainUrl/movies/${item.id}/$slug" else "$mainUrl/tvs/${item.id}/$slug"
-            val posterFixed = fixUrlPath(item.poster)
-            Log.d("Mhdflix-MainPage", "Item: title='${item.title}', poster='${item.poster.take(30)}', fixed='$posterFixed', url='$url'")
-            newMovieSearchResponse(item.title, url, tvType) {
-                this.posterUrl = posterFixed
-            }
-        }.take(20)
-
-        Log.d("Mhdflix-MainPage", "Final searchResponses: ${searchResponses.size}")
         Log.d("Mhdflix-MainPage", "=== getMainPage END ===")
 
         return if (searchResponses.isNotEmpty()) {
@@ -270,207 +102,154 @@ class MhdflixProvider : MainAPI() {
                 list = HomePageList(request.name, searchResponses),
                 hasNext = false
             )
-        } else {
-            Log.e("Mhdflix-MainPage", "Returning null - no items found")
-            null
-        }
+        } else null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("Mhdflix-Search", "=== search START - query: '$query' ===")
-        val searchUrl = "$mainUrl/search?q=${query.replace(" ", "+")}"
-        Log.d("Mhdflix-Search", "searchUrl: $searchUrl")
         
-        val html = app.get(searchUrl, headers = baseHeaders).text
-        Log.d("Mhdflix-Search", "Search HTML length: ${html.length}")
-        Log.d("Mhdflix-Search", "Search HTML snippet: ${html.take(500)}")
+        val searchUrl = "$mainUrl/api/search?query=${query.replace(" ", "+")}&page=1&limit=25"
+        Log.d("Mhdflix-Search", "API URL: $searchUrl")
         
-        val rscPayload = parseRscPayload(html)
-        Log.d("Mhdflix-Search", "Search RSC length: ${rscPayload.length}")
-        
-        val searchKeys = listOf("results", "search", "movies", "series", "items", "data")
-        var items = emptyList<SearchItem>()
-        
-        Log.d("Mhdflix-Search", "--- Trying RSC extraction for search ---")
-        for (key in searchKeys) {
-            val extracted = extractItemListFromRsc(rscPayload, key)
-            Log.d("Mhdflix-Search", "Key '$key' returned ${extracted.size} items")
-            if (extracted.isNotEmpty()) {
-                items = extracted
-                break
-            }
-        }
-        
-        if (items.isEmpty()) {
-            Log.d("Mhdflix-Search", "--- RSC empty, trying DOM fallback ---")
-            val doc = Jsoup.parse(html)
-            val links = doc.select("a[href*='/movies/'], a[href*='/tvs/']")
-            Log.d("Mhdflix-Search", "DOM links found: ${links.size}")
+        return try {
+            val response = app.get(
+                searchUrl,
+                headers = mapOf(
+                    "User-Agent" to baseHeaders.getValue("User-Agent"),
+                    "Referer" to "$mainUrl/search?q=${query.replace(" ", "%20")}",
+                    "Accept" to "application/json, text/plain, */*"
+                )
+            ).text
             
-            items = links.mapNotNull { link ->
-                val href = link.attr("href")
-                val idRegex = Regex("""/(?:movies|tvs)/(\d+)/""")
-                val id = idRegex.find(href)?.groupValues?.get(1)?.toLongOrNull() ?: return@mapNotNull null
+            Log.d("Mhdflix-Search", "Response: ${response.take(500)}")
+            
+            val searchResponse = parseJson<SearchApiResponse>(response)
+            val results = searchResponse.data.mapNotNull { item ->
+                val slug = item.slug ?: item.title?.lowercase()?.replace(Regex("[^a-z0-9]+"), "-")?.trim('-') ?: return@mapNotNull null
+                val type = item.type ?: "tv"
+                val url = if (type == "movie") "$mainUrl/movies/${item.id}/$slug" else "$mainUrl/tvs/${item.id}/$slug"
+                val tvType = if (type == "movie") TvType.Movie else TvType.TvSeries
                 
-                val img = link.selectFirst("img")
-                val poster = img?.let { 
-                    it.attr("data-src").ifBlank { it.attr("src") } 
-                } ?: ""
-                val title = img?.attr("alt") ?: link.text()
-                Log.d("Mhdflix-Search", "DOM link: id=$id, title='$title', matches query: ${title.contains(query, ignoreCase = true)}")
+                Log.d("Mhdflix-Search", "  Result: title='${item.title}', poster='${item.poster}', url='$url'")
                 
-                if (title.contains(query, ignoreCase = true)) {
-                    SearchItem(id, title, poster, if (href.contains("/movies/")) "movie" else "tv")
-                } else null
-            }.distinctBy { it.id }.take(20)
-        }
-
-        Log.d("Mhdflix-Search", "Total search items: ${items.size}")
-        
-        val results = items.map { item ->
-            val slug = item.title.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
-            val url = if (item.type == "movie") "$mainUrl/movies/${item.id}/$slug" else "$mainUrl/tvs/${item.id}/$slug"
-            val tvType = if (item.type == "movie") TvType.Movie else TvType.TvSeries
-            val posterFixed = fixUrlPath(item.poster)
-            Log.d("Mhdflix-Search", "Result: title='${item.title}', poster='$posterFixed', url='$url'")
-            newMovieSearchResponse(item.title, url, tvType) {
-                this.posterUrl = posterFixed
+                newMovieSearchResponse(item.title ?: "", url, tvType) {
+                    this.posterUrl = fixUrlPath(item.poster)
+                }
             }
+            
+            Log.d("Mhdflix-Search", "=== search END - returning ${results.size} results ===")
+            results
+        } catch (e: Exception) {
+            Log.e("Mhdflix-Search", "Error: ${e.message}", e)
+            emptyList()
         }
-        
-        Log.d("Mhdflix-Search", "=== search END - returning ${results.size} results ===")
-        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d("Mhdflix-Load", "=== load START - url: $url ===")
+        
         val html = app.get(url, headers = baseHeaders).text
-        Log.d("Mhdflix-Load", "Load HTML length: ${html.length}")
+        Log.d("Mhdflix-Load", "HTML length: ${html.length}")
 
         if (url.contains("/episode/")) {
-            Log.d("Mhdflix-Load", "Episode page detected")
             return loadEpisodePage(url, html)
         }
 
-        val media = extractMediaFromRsc(html)
-        val idFromUrl = Regex("""/(?:movies|tvs)/(\d+)/""").find(url)?.groupValues?.get(1)?.toLongOrNull()
-        Log.d("Mhdflix-Load", "idFromUrl: $idFromUrl")
-
-        val title = media?.title
-            ?: Jsoup.parse(html).selectFirst("h1")?.text()
-            ?: Jsoup.parse(html).selectFirst("title")?.text()?.substringBefore("|")?.trim()
+        val doc = Jsoup.parse(html)
+        
+        val title = doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()
             ?: "Sin título"
-        Log.d("Mhdflix-Load", "title: $title")
-
-        val posterUrl = fixUrlPath(media?.poster)
-        Log.d("Mhdflix-Load", "posterUrl from media: $posterUrl")
-        val finalPoster = if (posterUrl.isNotEmpty()) posterUrl
-            else extractPosterFromRsc(parseRscPayload(html), idFromUrl)
-            .ifEmpty { Jsoup.parse(html).selectFirst("meta[property='og:image']")?.attr("content") ?: "" }
-        Log.d("Mhdflix-Load", "finalPoster: $finalPoster")
-
-        val backdrop = fixUrlPath(media?.backdrop?.takeIf { it.isNotBlank() ?: false })
-        Log.d("Mhdflix-Load", "backdrop: $backdrop")
-
-        val description = media?.description?.takeIf { it.isNotBlank() }
-            ?: Jsoup.parse(html).selectFirst("meta[name='description']")?.attr("content")
+        
+        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
+        val description = doc.selectFirst("meta[property='og:description']")?.attr("content")
+            ?: doc.selectFirst("meta[name='description']")?.attr("content")
             ?: ""
+        
+        val idFromUrl = Regex("""/(?:movies|tvs)/(\d+)/""").find(url)?.groupValues?.get(1)?.toLongOrNull()
+        val typeFromUrl = if (url.contains("/movies/")) "movie" else "tv"
+        
+        Log.d("Mhdflix-Load", "title: $title, poster: $poster, idFromUrl: $idFromUrl, type: $typeFromUrl")
 
-        val year = media?.date?.takeIf { it.length >= 4 }?.substring(0, 4)?.toIntOrNull()
-        val rating = media?.rating?.let { Score.from10(it.toFloat()) }
-        val tags = media?.genre?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }
-
-        val duration = media?.duration?.let { dur ->
-            val h = Regex("""(\d+)h""").find(dur)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val m = Regex("""(\d+)min""").find(dur)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            (h * 60) + m
-        }
-
-        val tvType = if (media?.type == "movie" || url.contains("/movies/")) TvType.Movie else TvType.TvSeries
-        Log.d("Mhdflix-Load", "tvType: $tvType, media.type: ${media?.type}")
-
-        val slug = title.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+        val tvType = if (typeFromUrl == "movie") TvType.Movie else TvType.TvSeries
 
         if (tvType == TvType.Movie) {
-            Log.d("Mhdflix-Load", "Returning movie load response")
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = backdrop.takeIf { it.isNotBlank() }
+                this.posterUrl = poster
                 this.plot = description
-                this.year = year
-                this.tags = tags
-                this.score = rating
-                this.duration = duration
             }
         } else {
-            val serieId = idFromUrl ?: media?.id
-            Log.d("Mhdflix-Load", "Serie detected - serieId: $serieId")
+            val episodes = mutableListOf<Episode>()
+            val slug = Regex("""/tvs/\d+/([^/?]+)""").find(url)?.groupValues?.get(1)
             
-            val episodes = if (serieId != null) {
-                extractEpisodeListFromRsc(html, serieId).map { ep ->
-                    val epUrl = "$mainUrl/tvs/episode/${ep.id}/$slug"
-                    Log.d("Mhdflix-Load", "Episode URL: $epUrl")
-                    newEpisode(epUrl) {
-                        this.name = ep.title
-                        this.season = ep.seasonNum
-                        this.episode = ep.episodeNum
-                        this.description = ep.overview.takeIf { it.isNotBlank() }
-                        this.posterUrl = finalPoster
+            val seasonSelect = doc.selectFirst("select[name*='season'], select[id*='season'], select[class*='season']")
+            
+            if (seasonSelect != null) {
+                val options = seasonSelect.select("option")
+                Log.d("Mhdflix-Load", "Season select found with ${options.size} options")
+                
+                for (option in options) {
+                    val seasonValue = option.attr("value")
+                    if (seasonValue.isBlank()) continue
+                    
+                    val seasonNum = seasonValue.toIntOrNull() ?: continue
+                    val seasonUrl = "$mainUrl/tvs/${idFromUrl}/${slug}?seasson=$seasonValue"
+                    Log.d("Mhdflix-Load", "Loading season $seasonNum from: $seasonUrl")
+                    
+                    val seasonHtml = app.get(seasonUrl, headers = baseHeaders).text
+                    val seasonDoc = Jsoup.parse(seasonHtml)
+                    val episodeLinks = seasonDoc.select("a[href*='/episode/']")
+                    
+                    Log.d("Mhdflix-Load", "Season $seasonNum: ${episodeLinks.size} episode links found")
+                    
+                    for (epLink in episodeLinks) {
+                        val epHref = epLink.attr("href")
+                        val epId = Regex("""/episode/(\d+)""").find(epHref)?.groupValues?.get(1)?.toLongOrNull() ?: continue
+                        val epTitle = epLink.text().trim()
+                        val epUrl = if (epHref.startsWith("http")) epHref else "$mainUrl$epHref"
+                        
+                        Log.d("Mhdflix-Load", "  Episode: id=$epId, title='$epTitle'")
+                        
+                        episodes.add(newEpisode(epUrl) {
+                            this.name = epTitle.ifBlank { "Episodio $epId" }
+                            this.season = seasonNum
+                            this.episode = episodes.count { it.season == seasonNum } + 1
+                        })
                     }
                 }
-            } else emptyList()
-
-            Log.d("Mhdflix-Load", "Episodes from RSC: ${episodes.size}")
-
-            val fallbackEpisodes = if (episodes.isEmpty()) {
-                Log.d("Mhdflix-Load", "--- Trying DOM fallback for episodes ---")
-                val doc = Jsoup.parse(html)
-                val epLinks = doc.select("a[href*='/episode/']")
-                Log.d("Mhdflix-Load", "Episode links in DOM: ${epLinks.size}")
+            } else {
+                Log.d("Mhdflix-Load", "No season select found, looking for episodes directly")
+                val episodeLinks = doc.select("a[href*='/episode/']")
+                Log.d("Mhdflix-Load", "Direct episode links: ${episodeLinks.size}")
                 
-                epLinks.mapNotNull { link ->
-                    val href = link.attr("href")
-                    val epId = Regex("""/episode/(\d+)""").find(href)?.groupValues?.get(1)?.toLongOrNull() ?: return@mapNotNull null
-                    val epTitle = link.text().trim()
-                    Log.d("Mhdflix-Load", "DOM episode: id=$epId, title='$epTitle', href='$href'")
-                    newEpisode(fixUrl(href)) {
-                        this.name = epTitle.ifBlank { "Episodio" }
+                for (epLink in episodeLinks) {
+                    val epHref = epLink.attr("href")
+                    val epId = Regex("""/episode/(\d+)""").find(epHref)?.groupValues?.get(1)?.toLongOrNull() ?: continue
+                    val epTitle = epLink.text().trim()
+                    val epUrl = if (epHref.startsWith("http")) epHref else "$mainUrl$epHref"
+                    
+                    episodes.add(newEpisode(epUrl) {
+                        this.name = epTitle.ifBlank { "Episodio $epId" }
                         this.season = 1
-                        this.episode = 1
-                    }
-                }.distinctBy { it.data }.take(50)
-            } else emptyList()
-
-            val finalEpisodes = episodes.ifEmpty { fallbackEpisodes }
-            Log.d("Mhdflix-Load", "Final episodes count: ${finalEpisodes.size}")
-            
-            if (finalEpisodes.isNotEmpty()) {
-                finalEpisodes.take(5).forEachIndexed { i, ep ->
-                    Log.d("Mhdflix-Load", "  Ep[$i]: name='${ep.name}', S${ep.season}E${ep.episode}, data='${ep.data}'")
+                        this.episode = episodes.size + 1
+                    })
                 }
             }
 
-            return if (finalEpisodes.isNotEmpty()) {
-                newTvSeriesLoadResponse(title, url, TvType.TvSeries, finalEpisodes) {
-                    this.posterUrl = finalPoster
-                    this.backgroundPosterUrl = backdrop.takeIf { it.isNotBlank() }
+            Log.d("Mhdflix-Load", "Total episodes: ${episodes.size}")
+            
+            if (episodes.isNotEmpty()) {
+                return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = poster
                     this.plot = description
-                    this.year = year
-                    this.tags = tags
-                    this.score = rating
-                    this.duration = duration
                 }
             } else {
                 Log.d("Mhdflix-Load", "No episodes found, returning single episode")
-                newTvSeriesLoadResponse(title, url, TvType.TvSeries, listOf(newEpisode(url) {
+                return newTvSeriesLoadResponse(title, url, TvType.TvSeries, listOf(newEpisode(url) {
                     this.name = title
-                    this.posterUrl = finalPoster
                 })) {
-                    this.posterUrl = finalPoster
-                    this.backgroundPosterUrl = backdrop.takeIf { it.isNotBlank() }
+                    this.posterUrl = poster
                     this.plot = description
-                    this.year = year
-                    this.tags = tags
                 }
             }
         }
@@ -478,41 +257,31 @@ class MhdflixProvider : MainAPI() {
 
     private suspend fun loadEpisodePage(url: String, html: String): LoadResponse? {
         Log.d("Mhdflix-EpPage", "=== loadEpisodePage - url: $url ===")
-        val rsc = parseRscPayload(html)
         
-        val episodeId = Regex("""/episode/(\d+)""").find(url)?.groupValues?.get(1)?.toLongOrNull()
-        Log.d("Mhdflix-EpPage", "episodeId: $episodeId")
+        val doc = Jsoup.parse(html)
+        val episodeTitle = doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("h1")?.text()
+            ?: "Episodio"
         
-        val epTitlePattern = """"idEpisodios":${episodeId}[^}]*"title":"([^"]*)"""".toRegex().find(rsc)
-        val episodeTitle = epTitlePattern?.groupValues?.get(1) ?: "Episodio"
-        Log.d("Mhdflix-EpPage", "episodeTitle: $episodeTitle")
+        val description = doc.selectFirst("meta[property='og:description']")?.attr("content") ?: ""
+        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
         
-        val overviewPattern = """"idEpisodios":${episodeId}[^}]*"overview":"([^"]*)"""".toRegex().find(rsc)
-        val overview = overviewPattern?.groupValues?.get(1) ?: ""
-        
-        val seasonPattern = """"idEpisodios":${episodeId}[^}]*"numSeason":(\d+)""".toRegex().find(rsc)
-        val seasonNum = seasonPattern?.groupValues?.get(1)?.toIntOrNull() ?: 1
-        
-        val epNumPattern = """"idEpisodios":${episodeId}[^}]*"numEpisode":(\d+)""".toRegex().find(rsc)
-        val epNum = epNumPattern?.groupValues?.get(1)?.toIntOrNull() ?: 1
-        
-        val posterPattern = """"idEpisodios":${episodeId}[^}]*"posterPath":"([^"]*)"""".toRegex().find(rsc)
-        val poster = fixUrlPath(posterPattern?.groupValues?.get(1))
-        
-        val serieSlugPattern = """"serieSlug":"([^"]*)"""".toRegex().find(rsc)
-        val serieSlug = serieSlugPattern?.groupValues?.get(1)
-        
-        val serieUrl = if (serieSlug != null) "$mainUrl/tvs/$serieSlug" else url
+        val epId = Regex("""/episode/(\d+)""").find(url)?.groupValues?.get(1)
+        Log.d("Mhdflix-EpPage", "episodeTitle: $episodeTitle, epId: $epId")
+
+        val serieSlug = Regex("""/tvs/\d+/([^/]+)""").find(url)?.groupValues?.get(1)
+        val serieId = Regex("""/tvs/(\d+)/""").find(url)?.groupValues?.get(1)
+        val serieUrl = if (serieId != null && serieSlug != null) "$mainUrl/tvs/$serieId/$serieSlug" else url
 
         return newTvSeriesLoadResponse(episodeTitle, serieUrl, TvType.TvSeries, listOf(newEpisode(url) {
             this.name = episodeTitle
-            this.season = seasonNum
-            this.episode = epNum
-            this.description = overview.takeIf { it.isNotBlank() }
+            this.season = 1
+            this.episode = 1
+            this.description = description.takeIf { it.isNotBlank() }
             this.posterUrl = poster
         })) {
             this.posterUrl = poster
-            this.plot = overview.takeIf { it.isNotBlank() }
+            this.plot = description.takeIf { it.isNotBlank() }
         }
     }
 
@@ -531,8 +300,7 @@ class MhdflixProvider : MainAPI() {
         }
         
         val (id, type) = contentInfo
-        val apiUrl = "$apiBaseUrl/api/links?id=$id&type=$type"
-        Log.d("Mhdflix-Links", "Extracted: id=$id, type=$type")
+        val apiUrl = "$mainUrl/api/links?id=$id&type=$type"
         Log.d("Mhdflix-Links", "API URL: $apiUrl")
         
         return try {
@@ -541,40 +309,52 @@ class MhdflixProvider : MainAPI() {
                 headers = mapOf(
                     "User-Agent" to baseHeaders.getValue("User-Agent"),
                     "Referer" to "$mainUrl/",
+                    "Accept" to "application/json, text/plain, */*"
                 )
             ).text
             
-            Log.d("Mhdflix-Links", "API Response length: ${response.length}")
-            Log.d("Mhdflix-Links", "API Response: $response")
+            Log.d("Mhdflix-Links", "Response: $response")
             
             when {
                 response.trim().startsWith("[") -> {
-                    Log.d("Mhdflix-Links", "Response is JSON array")
                     val links = parseJson<List<ApiLink>>(response)
-                    Log.d("Mhdflix-Links", "Parsed ${links.size} links from array")
                     processApiLinks(links, subtitleCallback, callback)
                 }
                 response.trim().startsWith("{") -> {
-                    Log.d("Mhdflix-Links", "Response is JSON object")
                     val singleLink = tryParseJson<ApiLink>(response)
                     if (singleLink != null) {
                         processApiLinks(listOf(singleLink), subtitleCallback, callback)
                     } else {
-                        Log.e("Mhdflix-Links", "Could not parse single link object")
                         false
                     }
                 }
                 else -> {
-                    Log.d("Mhdflix-Links", "Unexpected format, trying iframe fallback")
-                    extractIframesFromHtml(response, subtitleCallback, callback)
+                    val doc = Jsoup.parse(response)
+                    val iframes = doc.select("iframe[src]")
+                    var found = false
+                    for (iframe in iframes) {
+                        val src = iframe.attr("src")
+                        if (src.isNotBlank() && !src.contains("undefined")) {
+                            loadExtractor(fixUrl(src), mainUrl, subtitleCallback, callback)
+                            found = true
+                        }
+                    }
+                    found
                 }
             }
         } catch (e: Exception) {
             Log.e("Mhdflix-Links", "API error: ${e.message}", e)
-            Log.d("Mhdflix-Links", "Trying HTML page fallback")
             val html = app.get(data, headers = baseHeaders).text
-            Log.d("Mhdflix-Links", "HTML fallback length: ${html.length}")
-            extractIframesFromHtml(html, subtitleCallback, callback)
+            val doc = Jsoup.parse(html)
+            var found = false
+            for (iframe in doc.select("iframe[src]")) {
+                val src = iframe.attr("src")
+                if (src.isNotBlank() && !src.contains("undefined")) {
+                    loadExtractor(fixUrl(src), mainUrl, subtitleCallback, callback)
+                    found = true
+                }
+            }
+            found
         }
     }
 
@@ -584,23 +364,18 @@ class MhdflixProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var found = false
-        Log.d("Mhdflix-Links", "Processing ${links.size} API links")
+        Log.d("Mhdflix-Links", "Processing ${links.size} links")
         
         for ((index, link) in links.withIndex()) {
             val videoUrl = link.url ?: link.embedUrl ?: link.iframeUrl
-            Log.d("Mhdflix-Links", "Link[$index]: url=$videoUrl, server=${link.server?.name ?: link.serverName}, lang=${link.language?.name ?: link.languageName}")
+            Log.d("Mhdflix-Links", "Link[$index]: url=$videoUrl")
             
-            if (videoUrl.isNullOrBlank() || videoUrl.contains("undefined")) {
-                Log.d("Mhdflix-Links", "Link[$index]: Skipping - blank or undefined")
-                continue
-            }
+            if (videoUrl.isNullOrBlank() || videoUrl.contains("undefined")) continue
             
-            val serverName = link.server?.name ?: link.serverName ?: "Unknown"
+            val serverName = link.server?.name ?: link.serverName ?: "Server"
             val languageName = link.language?.name ?: link.languageName ?: "Latino"
             val qualityName = link.quality?.name ?: ""
-            
             val linkName = "$serverName - $languageName"
-            Log.d("Mhdflix-Links", "Link[$index]: Processing - name='$linkName', quality='$qualityName'")
             
             if (videoUrl.startsWith("http")) {
                 val qualityValue = when {
@@ -608,14 +383,12 @@ class MhdflixProvider : MainAPI() {
                     qualityName.contains("1080") -> Qualities.P1080.value
                     qualityName.contains("720") -> Qualities.P720.value
                     qualityName.contains("480") -> Qualities.P480.value
-                    qualityName.contains("360") -> Qualities.P360.value
                     else -> Qualities.Unknown.value
                 }
                 
                 val isM3u8 = videoUrl.contains(".m3u8") || videoUrl.contains("m3u8")
                 val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 
-                Log.d("Mhdflix-Links", "Link[$index]: Creating ExtractorLink - url='$videoUrl', quality=$qualityValue, isM3u8=$isM3u8")
                 callback.invoke(
                     newExtractorLink(name, linkName, videoUrl) {
                         this.referer = mainUrl
@@ -625,14 +398,12 @@ class MhdflixProvider : MainAPI() {
                 )
                 found = true
             } else {
-                Log.d("Mhdflix-Links", "Link[$index]: Passing to loadExtractor - url='$videoUrl'")
                 loadExtractor(fixUrl(videoUrl), mainUrl, subtitleCallback, callback)
                 found = true
             }
             
             link.subtitles?.forEach { sub ->
                 sub.url?.let { url ->
-                    Log.d("Mhdflix-Links", "Link[$index]: Subtitle - name='${sub.name}', url='$url'")
                     subtitleCallback.invoke(
                         newSubtitleFile(sub.name ?: languageName, fixUrl(url))
                     )
@@ -644,70 +415,16 @@ class MhdflixProvider : MainAPI() {
         return found
     }
 
-    private suspend fun extractIframesFromHtml(
-        html: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var found = false
-        Log.d("Mhdflix-Links", "extractIframesFromHtml - HTML length: ${html.length}")
-        
-        val doc = Jsoup.parse(html)
-        val iframes = doc.select("iframe[src]")
-        Log.d("Mhdflix-Links", "Iframes found: ${iframes.size}")
-        
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            Log.d("Mhdflix-Links", "Iframe src: $src")
-            if (src.isNotBlank() && !src.contains("undefined")) {
-                Log.d("Mhdflix-Links", "Loading extractor for iframe: $src")
-                loadExtractor(fixUrl(src), mainUrl, subtitleCallback, callback)
-                found = true
-            }
-        }
-        
-        if (!found) {
-            Log.d("Mhdflix-Links", "No iframes, searching RSC for URLs")
-            val rsc = parseRscPayload(html)
-            val urlPatterns = listOf(
-                """"url":"(https?://[^"]+)""",
-                """"embedUrl":"(https?://[^"]+)""",
-                """"iframe":"(https?://[^"]+)""",
-                """"playerUrl":"(https?://[^"]+)""",
-                """"videoUrl":"(https?://[^"]+)""",
-            )
-            
-            for (pattern in urlPatterns) {
-                val matches = pattern.toRegex().findAll(rsc)
-                for (match in matches) {
-                    val url = match.groupValues[1]
-                    Log.d("Mhdflix-Links", "RSC URL found (pattern=$pattern): $url")
-                    if (url.isNotBlank() && !url.contains("undefined")) {
-                        loadExtractor(fixUrl(url), mainUrl, subtitleCallback, callback)
-                        found = true
-                    }
-                }
-            }
-        }
-        
-        Log.d("Mhdflix-Links", "extractIframesFromHtml - found=$found")
-        return found
-    }
-
     private fun extractContentInfo(data: String): Pair<String, String>? {
         Regex("""/movies/(\d+)""").find(data)?.groupValues?.get(1)?.let { id ->
-            Log.d("Mhdflix-Links", "extractContentInfo - Movie id=$id")
             return Pair(id, "movie")
         }
         Regex("""/tvs/episode/(\d+)""").find(data)?.groupValues?.get(1)?.let { id ->
-            Log.d("Mhdflix-Links", "extractContentInfo - Episode id=$id")
             return Pair(id, "episode")
         }
         Regex("""/tvs/(\d+)""").find(data)?.groupValues?.get(1)?.let { id ->
-            Log.d("Mhdflix-Links", "extractContentInfo - TV id=$id (treating as episode)")
             return Pair(id, "episode")
         }
-        Log.d("Mhdflix-Links", "extractContentInfo - No match for: $data")
         return null
     }
 
@@ -715,28 +432,28 @@ class MhdflixProvider : MainAPI() {
         val id: Long,
         val title: String,
         val poster: String,
+        val url: String,
         val type: String
     )
 
-    data class EpisodeItem(
-        val id: Long,
-        val title: String,
-        val overview: String,
-        val episodeNum: Int,
-        val seasonNum: Int
+    data class SearchApiResponse(
+        @JsonProperty("data") val data: List<SearchResultItem> = emptyList(),
+        @JsonProperty("totalPage") val totalPage: Int? = null,
+        @JsonProperty("status") val status: Int? = null
     )
 
-    data class RscMedia(
-        val id: Long?,
-        val title: String?,
-        val poster: String?,
-        val backdrop: String?,
-        val genre: List<String>,
-        val date: String?,
-        val duration: String?,
-        val rating: Int?,
-        val description: String?,
-        val type: String?
+    data class SearchResultItem(
+        @JsonProperty("id") val id: Long? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("poster") val poster: String? = null,
+        @JsonProperty("backdrop") val backdrop: String? = null,
+        @JsonProperty("type") val type: String? = null,
+        @JsonProperty("slug") val slug: String? = null,
+        @JsonProperty("description") val description: String? = null,
+        @JsonProperty("genre") val genre: List<String?> = emptyList(),
+        @JsonProperty("date") val date: String? = null,
+        @JsonProperty("duration") val duration: String? = null,
+        @JsonProperty("rating") val rating: Int? = null
     )
 
     data class ApiLink(
