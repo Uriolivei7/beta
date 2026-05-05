@@ -572,5 +572,19 @@
     "iconUrl": "https://chavodel8.com/wp-content/uploads/2024/08/cropped-ico-32x32.png",
     "language": "mx",
     "fileSize": 65000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/MhdflixProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "MHDFLIX",
+    "internalName": "MhdflixProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para series, animes, doramas y peliculas en Latino, Subtitulado y Castellano",
+    "tvTypes": ["TvSeries","Movie","Anime","AsianDrama"],
+    "iconUrl": "https://ww1.mhdflix.com/favicon.ico",
+    "language": "mx",
+    "fileSize": 65000
   }
 ]
