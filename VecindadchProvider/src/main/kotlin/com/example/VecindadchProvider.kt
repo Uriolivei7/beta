@@ -13,7 +13,6 @@ class VecindadchProvider : MainAPI() {
     override val supportedTypes = setOf(
         TvType.TvSeries,
         TvType.Cartoon,
-        TvType.Anime,
     )
 
     override var lang = "mx"
@@ -39,14 +38,16 @@ class VecindadchProvider : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val link = this.selectFirst("a")?.attr("href") ?: return null
-        val title = this.selectFirst("h3")?.text()?.trim()
+        val teamImage = this.selectFirst("div.team-image") ?: this
+        val link = teamImage.selectFirst("a")?.attr("href") ?: return null
+        val title = this.selectFirst("div.team-desc h3")?.text()?.trim()
+            ?: this.selectFirst("h3")?.text()?.trim()
             ?: this.selectFirst("h2")?.text()?.trim()
             ?: return null
-        val img = this.selectFirst("img")?.attr("src")
-            ?: this.selectFirst("img")?.attr("data-src")
+        val img = teamImage.selectFirst("img")?.attr("src")
+            ?: teamImage.selectFirst("img")?.attr("data-src")
             ?: ""
-        
+
         return newTvSeriesSearchResponse(title, fixUrl(link)) {
             this.posterUrl = if (img.startsWith("http")) img else "$mainUrl$img"
         }
@@ -54,17 +55,30 @@ class VecindadchProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Inicio",
-        "$mainUrl/videos/_chavo_/" to "Chavo del 8",
-        "$mainUrl/videos/_chapulin_colorado_/" to "Chapulín Colorado",
+        "$mainUrl/videos/_chavo_/_1973_/" to "Chavo T1973",
+        "$mainUrl/videos/_chavo_/_1974_/" to "Chavo T1974",
+        "$mainUrl/videos/_chavo_/_1975_/" to "Chavo T1975",
+        "$mainUrl/videos/_chavo_/_1976_/" to "Chavo T1976",
+        "$mainUrl/videos/_chavo_/_1977_/" to "Chavo T1977",
+        "$mainUrl/videos/_chavo_/_1978_/" to "Chavo T1978",
+        "$mainUrl/videos/_chavo_/_1979_/" to "Chavo T1979",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1973_/" to "Chapulín T1973",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1974_/" to "Chapulín T1974",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1975_/" to "Chapulín T1975",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1976_/" to "Chapulín T1976",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1977_/" to "Chapulín T1977",
+        "$mainUrl/videos/_chapulin_colorado_/_ch_1978_/" to "Chapulín T1978",
         "$mainUrl/videos/musical/" to "Canciones",
-        "$mainUrl/videos/chompiras-peterete/" to "Chómpiras y Peterete",
-        "$mainUrl/videos/chapatin/" to "Doctor Chapatín",
+        "$mainUrl/videos/chompiras-peterete/" to "Chómpiras",
+        "$mainUrl/videos/chapatin/" to "Dr. Chapatín",
         "$mainUrl/videos/entremes/" to "Entremés",
         "$mainUrl/videos/pelicula/" to "Películas",
         "$mainUrl/videos/_chavo_animado_/" to "Chavo Animado",
         "$mainUrl/videos/chapulin-animado/" to "Chapulín Animado",
-        "$mainUrl/videos/intro/" to "Introducciones",
-        "$mainUrl/videos/publicidad/" to "Anuncios Comerciales",
+        "$mainUrl/videos/intro/" to "Intros",
+        "$mainUrl/videos/publicidad/" to "Anuncios",
+        "$mainUrl/videos/especiales/especial_roberto_gomez/" to "Especial Chespirito",
+        "$mainUrl/videos/especiales/especial_ramon_valdes/" to "Especial Ramón",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -73,27 +87,24 @@ class VecindadchProvider : MainAPI() {
         val html = safeAppGet(request.data) ?: return null
         val doc = Jsoup.parse(html)
         
-        // Seleccionar tarjetas de videos (team-member y post-item)
-        val results = doc.select("div.team-member, div.post-item").mapNotNull { card ->
+        val results = doc.select("div.team-member").mapNotNull { card ->
             card.toSearchResponse()
-        }.filter { it.url.contains("/videos/") || it.url.contains(mainUrl) }
+        }.filter { it.url.contains("/videos/") }
             .distinctBy { it.url }
 
         if (results.isNotEmpty()) {
-            val sectionName = request.name
-            items.add(HomePageList(sectionName, results))
+            items.add(HomePageList(request.name, results))
         }
 
         return if (items.isNotEmpty()) newHomePageResponse(items, false) else null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // WordPress usa ?s= para búsqueda
         val url = "$mainUrl/?s=$query"
         val html = safeAppGet(url) ?: return emptyList()
         val doc = Jsoup.parse(html)
         
-        return doc.select("div.team-member, div.post-item, article").mapNotNull { card ->
+        return doc.select("div.team-member, div.post-item").mapNotNull { card ->
             card.toSearchResponse()
         }.filter { it.url.contains("/videos/") }
             .distinctBy { it.url }
@@ -103,27 +114,22 @@ class VecindadchProvider : MainAPI() {
         val html = safeAppGet(url) ?: return null
         val doc = Jsoup.parse(html)
 
-        // Título del h1
         val rawTitle = doc.selectFirst("h1")?.text()?.trim()
             ?: doc.selectFirst("title")?.text()?.substringBefore("-")?.trim()
             ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
             ?: "Desconocido"
         
-        // Limpiar título
         val title = rawTitle.replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), "")
             .replace(Regex("(?i)\\s*-\\s*Videos.*"), "")
             .replace(Regex("(?i)\\s*\\|.*"), "")
             .trim()
 
-        // Descripción
         val description = doc.selectFirst("p")?.text()?.trim()
             ?: doc.selectFirst("meta[name=description]")?.attr("content")
             ?: ""
 
-        // Poster desde og:image
         val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
             ?: doc.selectFirst("div.team-image img")?.attr("src")
-            ?: doc.selectFirst("div.post-image img")?.attr("src")
             ?: ""
 
         // Crear un solo episodio con la URL de la página
@@ -133,7 +139,7 @@ class VecindadchProvider : MainAPI() {
             this.description = description.ifBlank { null }
         })
 
-        // Elementos relacionados
+        // Recomendados
         val recommendations = doc.select("div.team-member").mapNotNull { card ->
             val rec = card.toSearchResponse()
             if (rec != null && rec.url != url) rec else null
@@ -157,25 +163,16 @@ class VecindadchProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("VecindadCH", "loadLinks - URL: $data")
-        
         val html = safeAppGet(data) ?: return false
         val doc = Jsoup.parse(html)
 
-        // Buscar todos los iframes en la página
         val iframes = doc.select("iframe")
-        
-        if (iframes.isEmpty()) {
-            Log.e("VecindadCH", "No se encontraron iframes en la página")
-            return false
-        }
+        if (iframes.isEmpty()) return false
 
         var found = false
         iframes.forEach { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank()) {
-                Log.d("VecindadCH", "Procesando iframe: $src")
-                // Cargar extractores para mega.nz, youtube, etc.
                 loadExtractor(src, mainUrl, subtitleCallback, callback)
                 found = true
             }
