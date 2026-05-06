@@ -53,54 +53,78 @@ class DonghualifeProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        Log.d("DLife-Main", "=== getMainPage START ===")
+        
+        val html = app.get("$mainUrl/").text
+        Log.d("DLife-Main", "HTML length: ${html.length}")
         val doc = app.get("$mainUrl/").document
 
-        val carousel = doc.select(".carousel-inner .views-row .banner").mapNotNull { banner ->
+        val carouselItems = doc.select(".carousel-inner .views-row .banner")
+        Log.d("DLife-Main", "Carousel items found: ${carouselItems.size}")
+        val carousel = carouselItems.mapNotNull { banner ->
             val poster = banner.selectFirst(".imagen img")?.absUrl("src")
             val href = banner.selectFirst(".titulo a")?.attr("abs:href") ?: banner.selectFirst(".vermas a")?.attr("abs:href")
             val title = fixTitle(banner.selectFirst(".titulo")?.text())
+            Log.d("DLife-Main", "  Carousel: title='$title', href='$href', poster='${poster != null}'")
             if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
+        Log.d("DLife-Main", "Carousel parsed: ${carousel.size} items")
 
-        val latestEpisodes = doc.select(".view-patreon .views-row .episode").mapNotNull { ep ->
+        val latestItems = doc.select(".view-patreon .views-row .episode")
+        Log.d("DLife-Main", "Latest episodes items found: ${latestItems.size}")
+        val latestEpisodes = latestItems.mapNotNull { ep ->
             val poster = ep.selectFirst(".imagen img")?.absUrl("src")
             val href = ep.selectFirst(".imagen a")?.attr("abs:href")
             val title = fixTitle(ep.selectFirst(".titulo")?.text())
             val subtitulo = ep.selectFirst(".subtitulo")?.text()?.trim()
             val fullName = if (!subtitulo.isNullOrBlank()) "$title $subtitulo" else title
+            Log.d("DLife-Main", "  Latest: title='$title', sub='$subtitulo', href='$href'")
             if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(fullName, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
+        Log.d("DLife-Main", "Latest episodes parsed: ${latestEpisodes.size} items")
 
-        val movies = doc.select(".view-pelis-donghuas .views-row .movie").mapNotNull { movie ->
+        val movieItems = doc.select(".view-pelis-donghuas .views-row .movie")
+        Log.d("DLife-Main", "Movie items found: ${movieItems.size}")
+        val movies = movieItems.mapNotNull { movie ->
             val poster = movie.selectFirst(".imagen img")?.absUrl("src")
             val href = movie.selectFirst(".imagen a")?.attr("abs:href")
             val title = fixTitle(movie.selectFirst(".titulo")?.text())
+            Log.d("DLife-Main", "  Movie: title='$title', href='$href'")
             if (href.isNullOrBlank() || title.isBlank()) null else newMovieSearchResponse(title, href, TvType.AnimeMovie) {
                 this.posterUrl = poster
             }
         }
+        Log.d("DLife-Main", "Movies parsed: ${movies.size} items")
 
-        val popular = doc.select(".view-mas-populares .views-row .serie").mapNotNull { serie ->
+        val popularItems = doc.select(".view-mas-populares .views-row .serie")
+        Log.d("DLife-Main", "Popular items found: ${popularItems.size}")
+        val popular = popularItems.mapNotNull { serie ->
             val poster = serie.getPosterUrl()
             val href = serie.getSeriesLink()
             val title = serie.getTitle()
+            Log.d("DLife-Main", "  Popular: title='$title', href='$href'")
             if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
+        Log.d("DLife-Main", "Popular parsed: ${popular.size} items")
 
-        val mostViewed = doc.select(".view-mas-vistos-hoy .views-row .episodio").mapNotNull { ep ->
+        val viewedItems = doc.select(".view-mas-vistos-hoy .views-row .episodio")
+        Log.d("DLife-Main", "Most viewed items found: ${viewedItems.size}")
+        val mostViewed = viewedItems.mapNotNull { ep ->
             val poster = ep.selectFirst(".imagen img")?.absUrl("src")
             val href = ep.selectFirst(".titulo a")?.attr("abs:href")
             val title = fixTitle(ep.selectFirst(".titulo")?.text())
+            Log.d("DLife-Main", "  MostViewed: title='$title', href='$href'")
             if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
+        Log.d("DLife-Main", "Most viewed parsed: ${mostViewed.size} items")
 
         val pages = mutableListOf<HomePageList>()
         if (carousel.isNotEmpty()) pages.add(HomePageList("Destacados", carousel, isHorizontalImages = true))
@@ -109,19 +133,35 @@ class DonghualifeProvider : MainAPI() {
         if (popular.isNotEmpty()) pages.add(HomePageList("Populares", popular))
         if (mostViewed.isNotEmpty()) pages.add(HomePageList("Más Vistos", mostViewed))
 
+        Log.d("DLife-Main", "Total pages: ${pages.size}")
+        
         return if (pages.isEmpty()) null else newHomePageResponse(pages, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val doc = app.get("$mainUrl/search?search_api_fulltext=$query").document
-        return doc.select(".view-content .views-row .serie, .view-content .views-row .movie").mapNotNull { item ->
+        Log.d("DLife-Search", "=== search START - query: '$query' ===")
+        val searchUrl = "$mainUrl/search?search_api_fulltext=$query"
+        Log.d("DLife-Search", "URL: $searchUrl")
+        
+        val html = app.get(searchUrl).text
+        Log.d("DLife-Search", "Response length: ${html.length}")
+        val doc = app.get(searchUrl).document
+        
+        val allItems = doc.select(".view-content .views-row .serie, .view-content .views-row .movie")
+        Log.d("DLife-Search", "Items found with selector: ${allItems.size}")
+        
+        val results = allItems.mapNotNull { item ->
             val poster = item.getPosterUrl()
-            val href = item.getSeriesLink() ?: return@mapNotNull null
+            val href = item.getSeriesLink()
             val title = item.getTitle()
-            if (title.isBlank()) null else newAnimeSearchResponse(title, href, if (item.hasClass("movie")) TvType.AnimeMovie else TvType.Anime) {
+            Log.d("DLife-Search", "  Item: title='$title', href='$href', poster='${poster != null}', isMovie=${item.hasClass("movie")}")
+            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, if (item.hasClass("movie")) TvType.AnimeMovie else TvType.Anime) {
                 this.posterUrl = poster
             }
         }
+        
+        Log.d("DLife-Search", "=== search END - returning ${results.size} results ===")
+        return results
     }
 
     private fun parseSeasonUrl(url: String): Pair<String, Int>? {
