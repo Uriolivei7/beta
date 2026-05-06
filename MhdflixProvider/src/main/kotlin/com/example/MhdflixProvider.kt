@@ -440,6 +440,33 @@ class MhdflixProvider : MainAPI() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun createExtractorLink(
+        source: String,
+        name: String,
+        url: String,
+        referer: String = "",
+        quality: Int = Qualities.Unknown.value,
+        type: ExtractorLinkType = ExtractorLinkType.VIDEO
+    ): ExtractorLink {
+        return ExtractorLink(
+            source = source,
+            name = name,
+            url = url,
+            referer = referer,
+            quality = quality,
+            type = type
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun createSubtitleFile(lang: String, url: String): SubtitleFile {
+        return SubtitleFile(
+            lang = lang,
+            url = url
+        )
+    }
+
     private suspend fun processApiLinks(
         links: List<ApiLink>,
         referer: String,
@@ -483,20 +510,22 @@ class MhdflixProvider : MainAPI() {
                 }
                 
                 callback.invoke(
-                    newExtractorLink(name, linkName, videoUrl) {
-                        this.referer = referer
-                        this.quality = qualityValue
-                        this.type = ExtractorLinkType.VIDEO
-                    }
+                    createExtractorLink(
+                        source = name,
+                        name = linkName,
+                        url = videoUrl,
+                        referer = referer,
+                        quality = qualityValue,
+                        type = ExtractorLinkType.VIDEO
+                    )
                 )
                 found = true
             } else if (hasExtractor) {
                 @Suppress("DEPRECATION")
                 loadExtractor(videoUrl, subtitleCallback) { extractedLink ->
                     val nameWithLang = "${extractedLink.name} [$languageName]"
-                    @Suppress("DEPRECATION")
                     callback.invoke(
-                        ExtractorLink(
+                        createExtractorLink(
                             source = nameWithLang,
                             name = linkName,
                             url = extractedLink.url,
@@ -511,7 +540,7 @@ class MhdflixProvider : MainAPI() {
             item.subtitles?.forEach { sub ->
                 sub.url?.let { url ->
                     subtitleCallback.invoke(
-                        newSubtitleFile(sub.name ?: languageName, fixUrl(url))
+                        createSubtitleFile(sub.name ?: languageName, fixUrl(url))
                     )
                 }
             }
