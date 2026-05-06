@@ -6,15 +6,18 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import org.jsoup.nodes.Element
 
 class DonghualifeProvider : MainAPI() {
     override var mainUrl = "https://donghualife.com"
     override var name = "DonghuaLife"
     override val hasMainPage = true
-    override var lang = "mx"
+    override var lang = "es"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.Anime
+        TvType.Anime,
+        TvType.AnimeMovie,
+        TvType.OVA,
     )
 
     private fun fixTitle(title: String?): String {
@@ -25,45 +28,76 @@ class DonghualifeProvider : MainAPI() {
         return datetime?.take(4)?.takeIf { it.all { c -> c.isDigit() } }
     }
 
+    private fun Element.getPosterUrl(): String? {
+        return selectFirst("img")?.absUrl("src")
+    }
+
+    private fun Element.getSeriesLink(): String? {
+        val link = selectFirst(".titulo a") ?: selectFirst(".vermas a") ?: selectFirst(".imagen a")
+        return link?.attr("abs:href")?.takeIf { it.isNotBlank() }
+    }
+
+    private fun Element.getTitle(): String {
+        return fixTitle(selectFirst(".titulo")?.text())
+    }
+
+    private fun parseSearchItem(item: Element): SearchResponse? {
+        val poster = item.getPosterUrl()
+        val href = item.getSeriesLink() ?: return null
+        val title = item.getTitle()
+        if (title.isBlank()) return null
+        val isMovie = item.hasClass("movie")
+        return newAnimeSearchResponse(title, href, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
+            this.posterUrl = poster
+        }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val doc = app.get("$mainUrl/").document
 
-        val carousel = doc.select(".carousel-inner .views-row .banner").mapNotNull {
-            val a = it.selectFirst("a") ?: return@mapNotNull null
-            val title = fixTitle(a.selectFirst(".title")?.text())
-            val poster = a.selectFirst("img")?.absUrl("src")
-            val href = a.attr("abs:href")
-            if (href.isBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
+        val carousel = doc.select(".carousel-inner .views-row .banner").mapNotNull { banner ->
+            val poster = banner.selectFirst(".imagen img")?.absUrl("src")
+            val href = banner.selectFirst(".titulo a")?.attr("abs:href") ?: banner.selectFirst(".vermas a")?.attr("abs:href")
+            val title = fixTitle(banner.selectFirst(".titulo")?.text())
+            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
 
-        val latestEpisodes = doc.select(".view-episodios-home .views-row .episode").mapNotNull {
-            val a = it.selectFirst("a") ?: return@mapNotNull null
-            val title = fixTitle(a.selectFirst(".title")?.text())
-            val poster = a.selectFirst("img")?.absUrl("src")
-            val href = a.attr("abs:href")
-            if (href.isBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
+        val latestEpisodes = doc.select(".view-patreon .views-row .episode").mapNotNull { ep ->
+            val poster = ep.selectFirst(".imagen img")?.absUrl("src")
+            val href = ep.selectFirst(".imagen a")?.attr("abs:href")
+            val title = fixTitle(ep.selectFirst(".titulo")?.text())
+            val subtitulo = ep.selectFirst(".subtitulo")?.text()?.trim()
+            val fullName = if (!subtitulo.isNullOrBlank()) "$title $subtitulo" else title
+            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(fullName, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
 
-        val movies = doc.select(".view-pelis-donghuas .views-row .movie").mapNotNull {
-            val a = it.selectFirst("a") ?: return@mapNotNull null
-            val title = fixTitle(a.selectFirst(".title")?.text())
-            val poster = a.selectFirst("img")?.absUrl("src")
-            val href = a.attr("abs:href")
-            if (href.isBlank() || title.isBlank()) null else newMovieSearchResponse(title, href, TvType.AnimeMovie) {
+        val movies = doc.select(".view-pelis-donghuas .views-row .movie").mapNotNull { movie ->
+            val poster = movie.selectFirst(".imagen img")?.absUrl("src")
+            val href = movie.selectFirst(".imagen a")?.attr("abs:href")
+            val title = fixTitle(movie.selectFirst(".titulo")?.text())
+            if (href.isNullOrBlank() || title.isBlank()) null else newMovieSearchResponse(title, href, TvType.AnimeMovie) {
                 this.posterUrl = poster
             }
         }
 
-        val sidebarItems = doc.select(".view-mas-populares .views-row, .view-mas-vistos-hoy .views-row").mapNotNull {
-            val a = it.selectFirst("a") ?: return@mapNotNull null
-            val title = fixTitle(a.selectFirst(".title")?.text())
-            val poster = a.selectFirst("img")?.absUrl("src")
-            val href = a.attr("abs:href")
-            if (href.isBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
+        val popular = doc.select(".view-mas-populares .views-row .serie").mapNotNull { serie ->
+            val poster = serie.getPosterUrl()
+            val href = serie.getSeriesLink()
+            val title = serie.getTitle()
+            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
+                this.posterUrl = poster
+            }
+        }
+
+        val mostViewed = doc.select(".view-mas-vistos-hoy .views-row .episodio").mapNotNull { ep ->
+            val poster = ep.selectFirst(".imagen img")?.absUrl("src")
+            val href = ep.selectFirst(".titulo a")?.attr("abs:href")
+            val title = fixTitle(ep.selectFirst(".titulo")?.text())
+            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
         }
@@ -72,20 +106,19 @@ class DonghualifeProvider : MainAPI() {
         if (carousel.isNotEmpty()) pages.add(HomePageList("Destacados", carousel, isHorizontalImages = true))
         if (latestEpisodes.isNotEmpty()) pages.add(HomePageList("Últimos Episodios", latestEpisodes))
         if (movies.isNotEmpty()) pages.add(HomePageList("Películas", movies))
-        if (sidebarItems.isNotEmpty()) pages.add(HomePageList("Populares", sidebarItems))
+        if (popular.isNotEmpty()) pages.add(HomePageList("Populares", popular))
+        if (mostViewed.isNotEmpty()) pages.add(HomePageList("Más Vistos", mostViewed))
 
-        return newHomePageResponse(pages, false)
+        return if (pages.isEmpty()) null else newHomePageResponse(pages, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val doc = app.get("$mainUrl/search?search_api_fulltext=$query").document
-        return doc.select("div.serie, div.movie").mapNotNull {
-            val a = it.selectFirst("a") ?: return@mapNotNull null
-            val title = fixTitle(a.selectFirst(".title")?.text())
-            val poster = a.selectFirst("img")?.absUrl("src")
-            val href = a.attr("abs:href")
-            val isMovie = it.hasClass("movie")
-            if (href.isBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
+        return doc.select(".view-content .views-row .serie, .view-content .views-row .movie").mapNotNull { item ->
+            val poster = item.getPosterUrl()
+            val href = item.getSeriesLink() ?: return@mapNotNull null
+            val title = item.getTitle()
+            if (title.isBlank()) null else newAnimeSearchResponse(title, href, if (item.hasClass("movie")) TvType.AnimeMovie else TvType.Anime) {
                 this.posterUrl = poster
             }
         }
@@ -99,7 +132,7 @@ class DonghualifeProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
         
-        val isMovie = url.contains("/movie/") || url.contains("/movies/")
+        val isMovie = url.contains("/movie/")
         
         val title = fixTitle(doc.selectFirst(".field--name-title")?.text())
             ?: fixTitle(doc.selectFirst("h2 a span")?.text())
