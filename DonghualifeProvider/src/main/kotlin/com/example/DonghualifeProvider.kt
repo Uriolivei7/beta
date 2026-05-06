@@ -28,13 +28,23 @@ class DonghualifeProvider : MainAPI() {
         return datetime?.take(4)?.takeIf { it.all { c -> c.isDigit() } }
     }
 
+    private fun extractHref(element: Element?): String? {
+        val href = element?.attr("href") ?: element?.attr("abs:href")
+        return if (href.isNullOrBlank()) null else fixUrl(href)
+    }
+
+    private fun extractImgSrc(element: Element?): String? {
+        val src = element?.attr("src") ?: element?.attr("abs:src")
+        return if (src.isNullOrBlank()) null else fixUrl(src)
+    }
+
     private fun Element.getPosterUrl(): String? {
-        return selectFirst("img")?.absUrl("src")
+        return extractImgSrc(selectFirst("img"))
     }
 
     private fun Element.getSeriesLink(): String? {
         val link = selectFirst(".titulo a") ?: selectFirst(".vermas a") ?: selectFirst(".imagen a")
-        return link?.attr("abs:href")?.takeIf { it.isNotBlank() }
+        return extractHref(link)
     }
 
     private fun Element.getTitle(): String {
@@ -62,8 +72,8 @@ class DonghualifeProvider : MainAPI() {
         val carouselItems = doc.select(".carousel-inner .views-row .banner")
         Log.d("DLife-Main", "Carousel items found: ${carouselItems.size}")
         val carousel = carouselItems.mapNotNull { banner ->
-            val poster = banner.selectFirst(".imagen img")?.absUrl("src")
-            val href = banner.selectFirst(".titulo a")?.attr("abs:href") ?: banner.selectFirst(".vermas a")?.attr("abs:href")
+            val poster = extractImgSrc(banner.selectFirst(".imagen img"))
+            val href = extractHref(banner.selectFirst(".titulo a")) ?: extractHref(banner.selectFirst(".vermas a"))
             val title = fixTitle(banner.selectFirst(".titulo")?.text())
             Log.d("DLife-Main", "  Carousel: title='$title', href='$href', poster='${poster != null}'")
             if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
@@ -75,8 +85,8 @@ class DonghualifeProvider : MainAPI() {
         val latestItems = doc.select(".view-patreon .views-row .episode")
         Log.d("DLife-Main", "Latest episodes items found: ${latestItems.size}")
         val latestEpisodes = latestItems.mapNotNull { ep ->
-            val poster = ep.selectFirst(".imagen img")?.absUrl("src")
-            val href = ep.selectFirst(".imagen a")?.attr("abs:href")
+            val poster = extractImgSrc(ep.selectFirst(".imagen img"))
+            val href = extractHref(ep.selectFirst(".imagen a"))
             val title = fixTitle(ep.selectFirst(".titulo")?.text())
             val subtitulo = ep.selectFirst(".subtitulo")?.text()?.trim()
             val fullName = if (!subtitulo.isNullOrBlank()) "$title $subtitulo" else title
@@ -90,8 +100,8 @@ class DonghualifeProvider : MainAPI() {
         val movieItems = doc.select(".view-pelis-donghuas .views-row .movie")
         Log.d("DLife-Main", "Movie items found: ${movieItems.size}")
         val movies = movieItems.mapNotNull { movie ->
-            val poster = movie.selectFirst(".imagen img")?.absUrl("src")
-            val href = movie.selectFirst(".imagen a")?.attr("abs:href")
+            val poster = extractImgSrc(movie.selectFirst(".imagen img"))
+            val href = extractHref(movie.selectFirst(".imagen a"))
             val title = fixTitle(movie.selectFirst(".titulo")?.text())
             Log.d("DLife-Main", "  Movie: title='$title', href='$href'")
             if (href.isNullOrBlank() || title.isBlank()) null else newMovieSearchResponse(title, href, TvType.AnimeMovie) {
@@ -116,8 +126,8 @@ class DonghualifeProvider : MainAPI() {
         val viewedItems = doc.select(".view-mas-vistos-hoy .views-row .episodio")
         Log.d("DLife-Main", "Most viewed items found: ${viewedItems.size}")
         val mostViewed = viewedItems.mapNotNull { ep ->
-            val poster = ep.selectFirst(".imagen img")?.absUrl("src")
-            val href = ep.selectFirst(".titulo a")?.attr("abs:href")
+            val poster = extractImgSrc(ep.selectFirst(".imagen img"))
+            val href = extractHref(ep.selectFirst(".titulo a"))
             val title = fixTitle(ep.selectFirst(".titulo")?.text())
             Log.d("DLife-Main", "  MostViewed: title='$title', href='$href'")
             if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
@@ -178,7 +188,7 @@ class DonghualifeProvider : MainAPI() {
             ?: fixTitle(doc.selectFirst("h2 a span")?.text())
             ?: "Sin título"
             
-        val poster = doc.selectFirst(".field--name-field-poster img")?.absUrl("src")
+        val poster = extractImgSrc(doc.selectFirst(".field--name-field-poster img"))
             ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
             
         val description = doc.selectFirst(".field--name-field-synopsis")?.text()
@@ -197,7 +207,7 @@ class DonghualifeProvider : MainAPI() {
         }
 
         val seasonsUrls = doc.select(".view-temporadas .views-row .serie a").mapNotNull {
-            it.attr("abs:href").takeIf { href -> href.isNotBlank() }
+            extractHref(it)
         }
 
         val episodes = mutableListOf<Episode>()
@@ -213,7 +223,7 @@ class DonghualifeProvider : MainAPI() {
                     seasonDoc.select("table.table-hover tbody tr, .views-row tr").forEach { row ->
                         val epNum = row.selectFirst("th[scope=row]")?.text()?.trim()?.toIntOrNull()
                         val epLink = row.selectFirst("td a") ?: return@forEach
-                        val epHref = epLink.attr("abs:href")
+                        val epHref = extractHref(epLink) ?: return@forEach
                         val epName = epLink.text().trim()
                         
                         if (epHref.isNotBlank()) {
@@ -232,7 +242,7 @@ class DonghualifeProvider : MainAPI() {
             doc.select(".episode-item, .views-row .episode").forEach {
                 val a = it.selectFirst("a") ?: return@forEach
                 val epTitle = a.text().trim()
-                val epHref = a.attr("abs:href")
+                val epHref = extractHref(a) ?: return@forEach
                 val epNum = Regex("(?i)episodio\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
                 episodes.add(newEpisode(epHref) {
                     this.name = epTitle
