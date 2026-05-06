@@ -586,5 +586,33 @@
     "iconUrl": "https://ww1.mhdflix.com/favicon.ico",
     "language": "mx",
     "fileSize": 65000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/MundodonghuaProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "MundoDonghua",
+    "internalName": "MundodonghuaProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para Donghuas subtitulados",
+    "tvTypes": ["Anime"],
+    "iconUrl": "https://www.mundodonghua.com/images/favicon.png",
+    "language": "mx",
+    "fileSize": 65000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DonghualifeProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "DonghuaLife",
+    "internalName": "DonghualifeProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para Donghuas subtitulados",
+    "tvTypes": ["Anime"],
+    "iconUrl": "https://donghualife.com/sites/default/files/cropped-Publicacion-grafica-cuadrada-800x800-px-2-modified-1.png",
+    "language": "mx",
+    "fileSize": 65000
   }
 ]
