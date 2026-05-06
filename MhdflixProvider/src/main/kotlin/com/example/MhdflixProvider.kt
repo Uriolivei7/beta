@@ -15,7 +15,7 @@ class MhdflixProvider : MainAPI() {
     override var lang = "mx"
     override val hasDownloadSupport = true
     override val hasChromecastSupport = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon, TvType.AsianDrama)
 
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
@@ -31,10 +31,10 @@ class MhdflixProvider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "movie" to "Películas Recientes",
         "tv" to "Series Recientes",
         "anime" to "Animes Recientes",
         "dorama" to "Doramas Recientes",
+        "movie" to "Películas Recientes"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {

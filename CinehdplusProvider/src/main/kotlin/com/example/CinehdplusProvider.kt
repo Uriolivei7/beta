@@ -72,12 +72,12 @@ class CinehdplusProvider : MainAPI() {
         val tags = doc.selectFirst(".details__list li")?.text()?.substringAfter(":")?.split(",")
         val trailer = doc.selectFirst("#OptYt iframe")?.attr("data-src")?.replaceFirst("https://www.youtube.com/embed/","https://www.youtube.com/watch?v=")
         val recommendations = doc.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
-        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { seasonEl ->
-            val season = seasonEl.attr("id").replaceFirst("season-", "").toIntOrNull()
-            seasonEl.select(".episodios_list li").mapIndexed { idx, item ->
-                val url = item.selectFirst("a")?.attr("href")
-                val title = item.selectFirst("figure img")?.attr("alt")
-                val img = item.selectFirst("figure img")?.attr("src")
+        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap {
+            val season = it.attr("id").replaceFirst("season-", "").toIntOrNull()
+            it.select(".episodios_list li").mapIndexed { idx, it ->
+                val url = it.selectFirst("a")?.attr("href")
+                val title = it.selectFirst("figure img")?.attr("alt")
+                val img = it.selectFirst("figure img")?.attr("src")
                 newEpisode(url){
                         this.name = title
                         this.season = season
