@@ -116,10 +116,8 @@ class DonghualifeProvider : MainAPI() {
 
         val pages = mutableListOf<HomePageList>()
         if (carousel.isNotEmpty()) pages.add(HomePageList("Destacados", carousel, isHorizontalImages = true))
-        if (latestEpisodes.isNotEmpty()) pages.add(HomePageList("Últimos Episodios", latestEpisodes))
-        if (movies.isNotEmpty()) pages.add(HomePageList("Películas", movies))
         if (popular.isNotEmpty()) pages.add(HomePageList("Populares", popular))
-        if (mostViewed.isNotEmpty()) pages.add(HomePageList("Más Vistos", mostViewed))
+        if (movies.isNotEmpty()) pages.add(HomePageList("Películas", movies))
 
         return if (pages.isEmpty()) null else newHomePageResponse(pages, false)
     }
