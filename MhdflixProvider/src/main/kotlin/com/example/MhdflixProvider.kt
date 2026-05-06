@@ -193,11 +193,32 @@ class MhdflixProvider : MainAPI() {
             null
         }
 
+        val recommendations = doc.select("h2:containsOwn(Recomendaciones) + div.grid > div.relative > a")
+            .mapNotNull { card ->
+                val href = card.attr("href")
+                if (href.isBlank() || !href.startsWith("/")) return@mapNotNull null
+                
+                val link = "$mainUrl$href"
+                val img = card.selectFirst("img")
+                val poster = img?.attr("src") ?: ""
+                val recTitle = img?.attr("alt") ?: ""
+                val recType = if (href.startsWith("/movies/")) TvType.Movie else TvType.TvSeries
+                
+                Log.d("Mhdflix-Load", "  Rec: title='$recTitle', poster='$poster', link='$link'")
+                
+                newMovieSearchResponse(recTitle, link, recType) {
+                    this.posterUrl = fixUrlPath(poster)
+                }
+            }.take(20)
+        
+        Log.d("Mhdflix-Load", "Total recommendations: ${recommendations.size}")
+
         if (tvType == TvType.Movie) {
             return newMovieLoadResponse(title, url, TvType.Movie, idFromUrl.toString()) {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
+                this.recommendations = recommendations
             }
         } else {
             val episodes = loadEpisodesFromApi(idFromUrl, url)
@@ -207,6 +228,7 @@ class MhdflixProvider : MainAPI() {
                     this.posterUrl = poster
                     this.plot = description
                     this.tags = tags
+                    this.recommendations = recommendations
                 }
             }
             
@@ -217,6 +239,7 @@ class MhdflixProvider : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
+                this.recommendations = recommendations
             }
         }
     }
