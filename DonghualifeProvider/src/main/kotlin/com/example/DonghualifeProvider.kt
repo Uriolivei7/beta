@@ -5,6 +5,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.nodes.Element
 
 class DonghualifeProvider : MainAPI() {
@@ -36,90 +39,71 @@ class DonghualifeProvider : MainAPI() {
         return if (src.isNullOrBlank()) null else fixUrl(src)
     }
 
-    private fun Element.getPosterUrl(): String? {
-        return extractImgSrc(selectFirst("img"))
-    }
-
-    private fun Element.getSeriesLink(): String? {
-        val link = selectFirst(".titulo a") ?: selectFirst(".vermas a") ?: selectFirst(".imagen a")
-        return extractHref(link)
-    }
-
-    private fun Element.getTitle(): String {
-        return fixTitle(selectFirst(".titulo")?.text())
-    }
-
     private fun episodeToSeriesUrl(episodeUrl: String): String? {
         val match = Regex("/episode/([^/]+)-\\d+$").find(episodeUrl) ?: return null
         return "$mainUrl/series/${match.groupValues[1]}"
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val html = app.get("$mainUrl/").text
-        val doc = app.get("$mainUrl/").document
-
-        val carouselItems = doc.select(".carousel-inner .views-row .banner")
-        val carousel = carouselItems.mapNotNull { banner ->
-            val poster = extractImgSrc(banner.selectFirst(".imagen img"))
-            val href = extractHref(banner.selectFirst(".titulo a")) ?: extractHref(banner.selectFirst(".vermas a"))
-            val title = fixTitle(banner.selectFirst(".titulo")?.text())
-            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = poster
-            }
+    private fun parseListingItem(item: Element): SearchResponse? {
+        val isMovie = item.hasClass("movie")
+        val poster = extractImgSrc(item.selectFirst(".imagen img"))
+        val href = extractHref(item.selectFirst(".imagen a"))
+        val title = fixTitle(item.selectFirst(".titulo")?.text())
+        if (href.isNullOrBlank() || title.isBlank()) return null
+        return if (isMovie) {
+            newMovieSearchResponse(title, href, TvType.AnimeMovie) { this.posterUrl = poster }
+        } else {
+            newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = poster }
         }
+    }
 
-        val latestItems = doc.select(".view-patreon .views-row .episode")
-        val latestEpisodes = latestItems.mapNotNull { ep ->
-            val poster = extractImgSrc(ep.selectFirst(".imagen img"))
-            val episodeHref = extractHref(ep.selectFirst(".imagen a"))
-            val title = fixTitle(ep.selectFirst(".titulo")?.text())
-            val seriesUrl = episodeHref?.let { episodeToSeriesUrl(it) }
-            val href = seriesUrl ?: episodeHref ?: return@mapNotNull null
-            if (title.isBlank()) return@mapNotNull null
-            newAnimeSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = poster
-            }
-        }
+    private suspend fun fetchListingPage(path: String, page: Int): List<SearchResponse> {
+        val doc = app.get("$mainUrl/$path?page=$page").document
+        return doc.select(".views-row .serie, .views-row .movie").mapNotNull { parseListingItem(it) }
+    }
 
-        val movieItems = doc.select(".view-pelis-donghuas .views-row .movie")
-        val movies = movieItems.mapNotNull { movie ->
-            val poster = extractImgSrc(movie.selectFirst(".imagen img"))
-            val href = extractHref(movie.selectFirst(".imagen a"))
-            val title = fixTitle(movie.selectFirst(".titulo")?.text())
-            if (href.isNullOrBlank() || title.isBlank()) null else newMovieSearchResponse(title, href, TvType.AnimeMovie) {
-                this.posterUrl = poster
-            }
-        }
+    private fun parseSidebarSerie(item: Element): SearchResponse? {
+        val poster = extractImgSrc(item.selectFirst(".imagen img"))
+        val href = extractHref(item.selectFirst(".imagen a"))
+        val title = fixTitle(item.selectFirst(".titulo")?.text())
+            ?: fixTitle(item.selectFirst(".titulo a")?.text())
+        if (href.isNullOrBlank() || title.isBlank()) return null
+        return newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = poster }
+    }
 
-        val popularItems = doc.select(".view-mas-populares .views-row .serie")
-        val popular = popularItems.mapNotNull { serie ->
-            val poster = serie.getPosterUrl()
-            val href = serie.getSeriesLink()
-            val title = serie.getTitle()
-            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = poster
-            }
-        }
+    private fun parseSidebarEpisode(item: Element): SearchResponse? {
+        val poster = extractImgSrc(item.selectFirst(".imagen img"))
+        val episodeHref = extractHref(item.selectFirst(".titulo a"))
+        val title = fixTitle(item.selectFirst(".titulo")?.text())
+        val seriesUrl = episodeHref?.let { episodeToSeriesUrl(it) }
+        val href = seriesUrl ?: episodeHref ?: return null
+        if (title.isBlank()) return null
+        return newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = poster }
+    }
 
-        val viewedItems = doc.select(".view-mas-vistos-hoy .views-row .episodio")
-        val mostViewed = viewedItems.mapNotNull { ep ->
-            val poster = extractImgSrc(ep.selectFirst(".imagen img"))
-            val episodeHref = extractHref(ep.selectFirst(".titulo a"))
-            val title = fixTitle(ep.selectFirst(".titulo")?.text())
-            val seriesUrl = episodeHref?.let { episodeToSeriesUrl(it) }
-            val href = seriesUrl ?: episodeHref ?: return@mapNotNull null
-            if (title.isBlank()) return@mapNotNull null
-            newAnimeSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = poster
-            }
-        }
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? = coroutineScope {
+        val donghuas = async { fetchListingPage("donghuas", page) }
+        val moviesPage = async { fetchListingPage("movies", page) }
+        val airing = async { fetchListingPage("en-emision", page) }
+        val finished = async { fetchListingPage("finalizado", page) }
+        val homeDoc = async { app.get("$mainUrl/").document }
+
+        val donghuaList = donghuas.await()
+        val movieList = moviesPage.await()
+        val airingList = airing.await()
+        val finishedList = finished.await()
+        val home = homeDoc.await()
+
+        val popular = home.select(".view-mas-populares .views-row .serie").mapNotNull { parseSidebarSerie(it) }
+        val mostViewed = home.select(".view-mas-vistos-hoy .views-row .episodio").mapNotNull { parseSidebarEpisode(it) }
 
         val pages = mutableListOf<HomePageList>()
-        if (carousel.isNotEmpty()) pages.add(HomePageList("Destacados", carousel, isHorizontalImages = true))
-        if (popular.isNotEmpty()) pages.add(HomePageList("Populares", popular))
-        if (movies.isNotEmpty()) pages.add(HomePageList("Películas", movies))
+        if (donghuaList.isNotEmpty()) pages.add(HomePageList("Recientes", donghuaList))
+        if (airingList.isNotEmpty()) pages.add(HomePageList("En Emisión", airingList))
+        if (finishedList.isNotEmpty()) pages.add(HomePageList("Finalizados", finishedList))
+        if (movieList.isNotEmpty()) pages.add(HomePageList("Películas", movieList))
 
-        return if (pages.isEmpty()) null else newHomePageResponse(pages, false)
+        if (pages.isEmpty()) null else newHomePageResponse(pages, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -128,14 +112,7 @@ class DonghualifeProvider : MainAPI() {
         
         val allItems = doc.select(".view-content .views-row .serie, .view-content .views-row .movie")
         
-        return allItems.mapNotNull { item ->
-            val poster = item.getPosterUrl()
-            val href = item.getSeriesLink()
-            val title = item.getTitle()
-            if (href.isNullOrBlank() || title.isBlank()) null else newAnimeSearchResponse(title, href, if (item.hasClass("movie")) TvType.AnimeMovie else TvType.Anime) {
-                this.posterUrl = poster
-            }
-        }
+        return allItems.mapNotNull { parseListingItem(it) }
     }
 
     private fun parseSeasonUrl(url: String): Pair<String, Int>? {
