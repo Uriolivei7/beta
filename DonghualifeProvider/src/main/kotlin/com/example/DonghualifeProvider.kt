@@ -14,9 +14,7 @@ class DonghualifeProvider : MainAPI() {
     override var lang = "mx"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.Anime,
-        TvType.AnimeMovie,
-        TvType.OVA,
+        TvType.Anime
     )
 
     private fun fixTitle(title: String?): String {
