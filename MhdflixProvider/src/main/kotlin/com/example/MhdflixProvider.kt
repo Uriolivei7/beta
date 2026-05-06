@@ -454,7 +454,8 @@ class MhdflixProvider : MainAPI() {
             "luluvdo", "netu", "uqload", "mixdrop", "netuplayer",
             "bysejikuar", "vidhidepro", "voe", "streamvid",
             "filemoon", "mp4upload", "gdriveplayer", "ok.ru", "vk",
-            "streamtape", "filemoon0", "gupload", "savefiles", "streamp2p"
+            "streamtape", "filemoon0", "gupload", "savefiles", "streamp2p",
+            "cubeembed", "rpmvid"
         )
         
         for ((index, link) in links.withIndex()) {
