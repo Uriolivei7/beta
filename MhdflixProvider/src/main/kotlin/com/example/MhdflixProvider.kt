@@ -458,15 +458,15 @@ class MhdflixProvider : MainAPI() {
             "cubeembed", "rpmvid"
         )
         
-        for ((index, link) in links.withIndex()) {
-            val videoUrl = link.url ?: link.embedUrl ?: link.iframeUrl
-            Log.d("Mhdflix-Links", "Link[$index]: url=$videoUrl, server=${link.server?.name}")
+        for ((index, item) in links.withIndex()) {
+            val videoUrl = item.url ?: item.embedUrl ?: item.iframeUrl
+            Log.d("Mhdflix-Links", "Link[$index]: url=$videoUrl, server=${item.server?.name}")
             
             if (videoUrl.isNullOrBlank() || videoUrl.contains("undefined")) continue
             
-            val serverName = link.server?.name ?: link.serverName ?: "Server"
-            val languageName = link.language?.name ?: link.languageName ?: "Latino"
-            val qualityName = link.quality?.name ?: ""
+            val serverName = item.server?.name ?: item.serverName ?: "Server"
+            val languageName = item.language?.name ?: item.languageName ?: "Latino"
+            val qualityName = item.quality?.name ?: ""
             val linkName = "$serverName - $languageName"
             
             val hasExtractor = extractorDomains.any { domain -> videoUrl.contains(domain, ignoreCase = true) }
@@ -492,23 +492,23 @@ class MhdflixProvider : MainAPI() {
                 found = true
             } else if (hasExtractor) {
                 @Suppress("DEPRECATION")
-                loadExtractor(fixUrl(videoUrl), referer, subtitleCallback) { link ->
-                    val nameWithLang = "${link.name} [$languageName]"
-                    callback(
+                loadExtractor(videoUrl, subtitleCallback) { extractedLink ->
+                    val nameWithLang = "${extractedLink.name} [$languageName]"
+                    @Suppress("DEPRECATION")
+                    callback.invoke(
                         ExtractorLink(
                             source = nameWithLang,
                             name = linkName,
-                            url = link.url,
-                            referer = link.referer,
-                            quality = link.quality,
-                            type = link.type
+                            url = extractedLink.url,
+                            referer = extractedLink.referer,
+                            quality = extractedLink.quality,
+                            type = extractedLink.type
                         )
                     )
-                }
-                found = true
+                }.also { if (it) found = true }
             }
             
-            link.subtitles?.forEach { sub ->
+            item.subtitles?.forEach { sub ->
                 sub.url?.let { url ->
                     subtitleCallback.invoke(
                         newSubtitleFile(sub.name ?: languageName, fixUrl(url))
