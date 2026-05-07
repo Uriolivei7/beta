@@ -14,7 +14,6 @@ buildscript {
 
     dependencies {
         classpath("com.android.tools.build:gradle:8.13.2")
-        // Cloudstream gradle plugin which makes everything work and builds plugins
         classpath("com.github.recloudstream:gradle:-SNAPSHOT") {
             exclude(group = "com.github.vidstige", module = "jadb")
         }
@@ -79,20 +78,20 @@ subprojects {
 
         implementation(kotlin("stdlib"))
         implementation("com.github.Blatzar:NiceHttp:0.4.13")
-        implementation("org.jsoup:jsoup:1.21.2")
-        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.20.1")
-        implementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
-        implementation("com.fasterxml.jackson.core:jackson-core:2.20.1")
-        implementation("com.fasterxml.jackson.core:jackson-annotations:2.20")
+        implementation("org.jsoup:jsoup:1.22.2")
+        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.21.3")
+        implementation("com.fasterxml.jackson.core:jackson-databind:2.21.3")
+        implementation("com.fasterxml.jackson.core:jackson-core:2.21.3")
+        implementation("com.fasterxml.jackson.core:jackson-annotations:2.21")
         implementation("com.squareup.okhttp3:okhttp:5.3.2")
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-        implementation("org.mozilla:rhino:1.8.1")
-        implementation("com.google.code.gson:gson:2.13.2")
-        implementation("androidx.annotation:annotation:1.9.1")
-        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+        implementation("org.mozilla:rhino:1.9.1")
+        implementation("com.google.code.gson:gson:2.14.0")
+        implementation("androidx.annotation:annotation:1.10.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
         // Test dependencies
         testImplementation("junit:junit:4.13.2")
-        testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.20.1")
+        testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.21.3")
     }
 }
 

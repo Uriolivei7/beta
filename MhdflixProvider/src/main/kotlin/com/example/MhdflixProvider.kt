@@ -445,16 +445,16 @@ class MhdflixProvider : MainAPI() {
         source: String,
         name: String,
         url: String,
-        referer: String,
-        quality: Int,
+        referer: String?,
+        quality: Int?,
         type: ExtractorLinkType?
     ): ExtractorLink {
         return ExtractorLink(
             source = source,
             name = name,
             url = url,
-            referer = referer.takeIf { it.isNotBlank() } ?: "",
-            quality = quality,
+            referer = referer?.takeIf { it.isNotBlank() } ?: "",
+            quality = quality ?: Qualities.Unknown.value,
             type = type ?: ExtractorLinkType.VIDEO
         )
     }
