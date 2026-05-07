@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
@@ -122,8 +123,10 @@ class SeriesLanProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
+        val doc = app.get(data, headers = mapOf("Referer" to mainUrl)).document
         val iframeSrc = doc.selectFirst(".video-container iframe")?.attr("src") ?: return false
+
+        if (loadExtractor(iframeSrc, data, subtitleCallback, callback)) return true
 
         val videoUrl = if (iframeSrc.contains("bflix.store")) {
             val encoded = Regex("""[?&]v=([^&]+)""").find(iframeSrc)?.groupValues?.get(1)
@@ -134,9 +137,13 @@ class SeriesLanProvider : MainAPI() {
 
         callback.invoke(
             newExtractorLink(name, "SeriesLan", videoUrl) {
-                this.referer = mainUrl
+                this.referer = data
                 this.quality = Qualities.Unknown.value
                 this.type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                this.headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to iframeSrc
+                )
             }
         )
         return true
