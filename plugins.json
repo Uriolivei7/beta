@@ -638,7 +638,7 @@
     "internalName": "SerieslanProvider",
     "authors": ["Ranita"],
     "description": "Plugin para Series Animadas",
-    "tvTypes": ["Anime"],
+    "tvTypes": ["Cartoon"],
     "iconUrl": "https://serieslan.lat/img/logo.png",
     "language": "mx",
     "fileSize": 65000

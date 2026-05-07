@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -123,29 +124,61 @@ class SeriesLanProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data, headers = mapOf("Referer" to mainUrl)).document
-        val iframeSrc = doc.selectFirst(".video-container iframe")?.attr("src") ?: return false
+        Log.d("SeriesLan-Links", "=== loadLinks START - data: $data ===")
 
-        if (loadExtractor(iframeSrc, data, subtitleCallback, callback)) return true
+        val doc = app.get(data, headers = mapOf("Referer" to mainUrl)).document
+        val iframeSrc = doc.selectFirst(".video-container iframe")?.attr("src")
+        Log.d("SeriesLan-Links", "iframe src: $iframeSrc")
+        if (iframeSrc.isNullOrBlank()) {
+            Log.e("SeriesLan-Links", "No iframe found in page")
+            return false
+        }
+
+        val extractorResult = loadExtractor(iframeSrc, data, subtitleCallback, callback)
+        Log.d("SeriesLan-Links", "loadExtractor result: $extractorResult")
+        if (extractorResult) return true
 
         val videoUrl = if (iframeSrc.contains("bflix.store")) {
             val encoded = Regex("""[?&]v=([^&]+)""").find(iframeSrc)?.groupValues?.get(1)
+            Log.d("SeriesLan-Links", "bflix encoded v param: $encoded")
             if (encoded != null) {
-                try { URLDecoder.decode(encoded, "UTF-8") } catch (_: Exception) { iframeSrc }
-            } else iframeSrc
-        } else iframeSrc
-
-        callback.invoke(
-            newExtractorLink(name, "SeriesLan", videoUrl) {
-                this.referer = data
-                this.quality = Qualities.Unknown.value
-                this.type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to iframeSrc
-                )
+                try {
+                    val decoded = URLDecoder.decode(encoded, "UTF-8")
+                    Log.d("SeriesLan-Links", "decoded video URL: $decoded")
+                    decoded
+                } catch (e: Exception) {
+                    Log.e("SeriesLan-Links", "URL decode failed: ${e.message}")
+                    iframeSrc
+                }
+            } else {
+                Log.d("SeriesLan-Links", "No v param found, using iframe src as-is")
+                iframeSrc
             }
-        )
+        } else {
+            Log.d("SeriesLan-Links", "Not bflix.store, using iframe src directly")
+            iframeSrc
+        }
+
+        Log.d("SeriesLan-Links", "Emitting link: $videoUrl")
+        Log.d("SeriesLan-Links", "Referer: $data, iframeSrc referer: $iframeSrc")
+
+        try {
+            callback.invoke(
+                newExtractorLink(name, "SeriesLan", videoUrl) {
+                    this.referer = data
+                    this.quality = Qualities.Unknown.value
+                    this.type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer" to iframeSrc
+                    )
+                }
+            )
+            Log.d("SeriesLan-Links", "Link emitted successfully")
+        } catch (e: Exception) {
+            Log.e("SeriesLan-Links", "Failed to emit link: ${e.message}", e)
+            return false
+        }
         return true
     }
 }
