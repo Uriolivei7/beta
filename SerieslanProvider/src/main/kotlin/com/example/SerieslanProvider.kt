@@ -8,7 +8,7 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
+
 
 class SeriesLanProvider : MainAPI() {
     override var mainUrl = "https://serieslan.lat"
@@ -134,43 +134,17 @@ class SeriesLanProvider : MainAPI() {
             return false
         }
 
-        val extractorResult = loadExtractor(iframeSrc, data, subtitleCallback, callback)
-        Log.d("SeriesLan-Links", "loadExtractor result: $extractorResult")
-        if (extractorResult) return true
-
-        val videoUrl = if (iframeSrc.contains("bflix.store")) {
-            val encoded = Regex("""[?&]v=([^&]+)""").find(iframeSrc)?.groupValues?.get(1)
-            Log.d("SeriesLan-Links", "bflix encoded v param: $encoded")
-            if (encoded != null) {
-                try {
-                    val decoded = URLDecoder.decode(encoded, "UTF-8")
-                    Log.d("SeriesLan-Links", "decoded video URL: $decoded")
-                    decoded
-                } catch (e: Exception) {
-                    Log.e("SeriesLan-Links", "URL decode failed: ${e.message}")
-                    iframeSrc
-                }
-            } else {
-                Log.d("SeriesLan-Links", "No v param found, using iframe src as-is")
-                iframeSrc
-            }
-        } else {
-            Log.d("SeriesLan-Links", "Not bflix.store, using iframe src directly")
-            iframeSrc
-        }
-
-        Log.d("SeriesLan-Links", "Emitting link: $videoUrl")
-        Log.d("SeriesLan-Links", "Referer: $data, iframeSrc referer: $iframeSrc")
+        Log.d("SeriesLan-Links", "Using iframe src directly as video URL: $iframeSrc")
 
         try {
             callback.invoke(
-                newExtractorLink(name, "SeriesLan", videoUrl) {
+                newExtractorLink(name, "SeriesLan", iframeSrc) {
                     this.referer = data
                     this.quality = Qualities.Unknown.value
-                    this.type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    this.type = ExtractorLinkType.VIDEO
                     this.headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer" to iframeSrc
+                        "Referer" to mainUrl
                     )
                 }
             )
