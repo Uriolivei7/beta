@@ -134,25 +134,37 @@ class SeriesLanProvider : MainAPI() {
             return false
         }
 
-        Log.d("SeriesLan-Links", "Using iframe src directly as video URL: $iframeSrc")
-
+        Log.d("SeriesLan-Links", "Fetching bflix page to inspect response...")
         try {
-            callback.invoke(
-                newExtractorLink(name, "SeriesLan", iframeSrc) {
-                    this.referer = data
-                    this.quality = Qualities.Unknown.value
-                    this.type = ExtractorLinkType.VIDEO
-                    this.headers = mapOf(
+            val bflixResp = app.get(iframeSrc, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to mainUrl
+            ))
+            Log.d("SeriesLan-Links", "bflix response length: ${bflixResp.text.length}")
+            Log.d("SeriesLan-Links", "bflix response (first 1500 chars): ${bflixResp.text.take(1500)}")
+
+            val decodedMp4 = try {
+                val encoded = Regex("""[?&]v=([^&]+)""").find(iframeSrc)?.groupValues?.get(1)
+                if (encoded != null) java.net.URLDecoder.decode(encoded, "UTF-8") else null
+            } catch (_: Exception) { null }
+
+            if (decodedMp4 != null) {
+                Log.d("SeriesLan-Links", "Testing decoded MP4: $decodedMp4")
+                try {
+                    val mp4Resp = app.get(decodedMp4, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         "Referer" to mainUrl
-                    )
+                    ))
+                    Log.d("SeriesLan-Links", "MP4 response length: ${mp4Resp.text.length}")
+                    Log.d("SeriesLan-Links", "MP4 headers: ${mp4Resp.headers}")
+                } catch (e: Exception) {
+                    Log.e("SeriesLan-Links", "MP4 direct access failed: ${e.message}")
                 }
-            )
-            Log.d("SeriesLan-Links", "Link emitted successfully")
+            }
         } catch (e: Exception) {
-            Log.e("SeriesLan-Links", "Failed to emit link: ${e.message}", e)
-            return false
+            Log.e("SeriesLan-Links", "bflix fetch failed: ${e.message}")
         }
-        return true
+
+        return false
     }
 }
