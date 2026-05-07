@@ -482,7 +482,7 @@ class MhdflixProvider : MainAPI() {
             "bysejikuar", "vidhidepro", "voe", "streamvid",
             "filemoon", "mp4upload", "gdriveplayer", "ok.ru", "vk",
             "streamtape", "filemoon0", "gupload", "savefiles", "streamp2p",
-            "cubeembed", "rpmvid"
+            "cubeembed", "rpmvid", "sendvid"
         )
         
         for ((index, item) in links.withIndex()) {
