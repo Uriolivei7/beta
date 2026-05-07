@@ -134,37 +134,39 @@ class SeriesLanProvider : MainAPI() {
             return false
         }
 
-        Log.d("SeriesLan-Links", "Fetching bflix page to inspect response...")
-        try {
-            val bflixResp = app.get(iframeSrc, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer" to mainUrl
-            ))
-            Log.d("SeriesLan-Links", "bflix response length: ${bflixResp.text.length}")
-            Log.d("SeriesLan-Links", "bflix full response (first 5000 chars):\n${bflixResp.text.take(5000)}")
+        Log.d("SeriesLan-Links", "Fetching bflix page to extract video source...")
+        val bflixDoc = app.get(iframeSrc, headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer" to mainUrl
+        )).document
 
-            val decodedMp4 = try {
-                val encoded = Regex("""[?&]v=([^&]+)""").find(iframeSrc)?.groupValues?.get(1)
-                if (encoded != null) java.net.URLDecoder.decode(encoded, "UTF-8") else null
-            } catch (_: Exception) { null }
+        val sourceUrl = bflixDoc.select("video source[src]").attr("src").ifBlank {
+            bflixDoc.selectFirst("video[src]")?.attr("src") ?: ""
+        }
+        Log.d("SeriesLan-Links", "source URL from bflix: $sourceUrl")
 
-            if (decodedMp4 != null) {
-                Log.d("SeriesLan-Links", "Testing decoded MP4: $decodedMp4")
-                try {
-                    val mp4Resp = app.get(decodedMp4, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer" to mainUrl
-                    ))
-                    Log.d("SeriesLan-Links", "MP4 response length: ${mp4Resp.text.length}")
-                    Log.d("SeriesLan-Links", "MP4 headers: ${mp4Resp.headers}")
-                } catch (e: Exception) {
-                    Log.e("SeriesLan-Links", "MP4 direct access failed: ${e.message}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("SeriesLan-Links", "bflix fetch failed: ${e.message}")
+        if (sourceUrl.isNullOrBlank()) {
+            Log.e("SeriesLan-Links", "No video source found in bflix page")
+            return false
         }
 
-        return false
+        Log.d("SeriesLan-Links", "Emitting video URL: $sourceUrl")
+        Log.d("SeriesLan-Links", "Referer: $iframeSrc")
+
+        callback.invoke(
+            newExtractorLink(name, "SeriesLan", sourceUrl) {
+                this.referer = iframeSrc
+                this.quality = Qualities.Unknown.value
+                this.type = ExtractorLinkType.VIDEO
+                this.headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to iframeSrc,
+                    "Origin" to "https://bflix.store",
+                    "Accept" to "*/*"
+                )
+            }
+        )
+        Log.d("SeriesLan-Links", "Link emitted successfully")
+        return true
     }
 }
