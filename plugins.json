@@ -628,5 +628,19 @@
     "iconUrl": "https://donghualife.com/sites/default/files/cropped-Publicacion-grafica-cuadrada-800x800-px-2-modified-1.png",
     "language": "mx",
     "fileSize": 65000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SerieslanProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "SeriesLan",
+    "internalName": "SerieslanProvider",
+    "authors": ["Ranita"],
+    "description": "Plugin para Series Animadas",
+    "tvTypes": ["Anime"],
+    "iconUrl": "https://serieslan.lat/img/logo.png",
+    "language": "mx",
+    "fileSize": 65000
   }
 ]
