@@ -141,7 +141,7 @@ class SeriesLanProvider : MainAPI() {
                 "Referer" to mainUrl
             ))
             Log.d("SeriesLan-Links", "bflix response length: ${bflixResp.text.length}")
-            Log.d("SeriesLan-Links", "bflix response (first 1500 chars): ${bflixResp.text.take(1500)}")
+            Log.d("SeriesLan-Links", "bflix full response (first 5000 chars):\n${bflixResp.text.take(5000)}")
 
             val decodedMp4 = try {
                 val encoded = Regex("""[?&]v=([^&]+)""").find(iframeSrc)?.groupValues?.get(1)
