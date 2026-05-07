@@ -34,4 +34,5 @@ android {
 dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.25.2")
+    implementation("androidx.preference:preference-ktx:1.2.1")
 }
