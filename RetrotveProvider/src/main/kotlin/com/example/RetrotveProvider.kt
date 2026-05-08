@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import android.util.Log
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -100,6 +101,28 @@ class RetrotveProvider : MainAPI() {
         return results
     }
 
+    private fun extractEpisodePoster(row: Element): String? {
+        row.selectFirst(".MvTbImg img")?.let { img ->
+            val src = img.attr("src")
+            if (src.isNotBlank()) return if (src.startsWith("//")) "https:$src" else src
+        }
+        row.selectFirst(".MvTbImg span.cnv")?.let { span ->
+            val encoded = span.text()
+            val decoded = encoded
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&nbsp;", " ")
+            try {
+                val doc = Jsoup.parse(decoded)
+                val src = doc.selectFirst("img")?.attr("src")
+                if (!src.isNullOrBlank()) return if (src.startsWith("//")) "https:$src" else src
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         Log.d("RetrotveProvider", "load: url = $url")
         val document = app.get(url).document
@@ -127,11 +150,13 @@ class RetrotveProvider : MainAPI() {
                     val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
                     val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
                     val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
+                    val posterUrl = extractEpisodePoster(row)
                     
                     episodes.add(newEpisode(episodeUrl) {
                         this.name = episodeName
                         this.episode = episodeNum ?: episodes.size + 1
                         this.season = seasonNum
+                        this.posterUrl = posterUrl
                     })
                 }
             }
@@ -141,10 +166,12 @@ class RetrotveProvider : MainAPI() {
                     val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
                     val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
                     val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
+                    val posterUrl = extractEpisodePoster(row)
                     
                     episodes.add(newEpisode(episodeUrl) {
                         this.name = episodeName
                         this.episode = episodeNum ?: episodes.size + 1
+                        this.posterUrl = posterUrl
                     })
                 }
             }
