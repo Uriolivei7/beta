@@ -200,14 +200,26 @@ class RetrotveProvider : MainAPI() {
         Log.d("RetrotveProvider", "processPlayerPage: $playerUrl (server: $serverName)")
         
         try {
-            val playerDoc = app.get(playerUrl, referer = referer).document
+            val playerResponse = app.get(playerUrl, referer = referer)
+            Log.d("RetrotveProvider", "processPlayerPage: code=${playerResponse.code}, url=${playerResponse.url}")
+            val playerDoc = playerResponse.document
+            Log.d("RetrotveProvider", "processPlayerPage: page title=${playerDoc.title()}, html len=${playerDoc.html().length}")
+            
             val iframeCount = playerDoc.select("iframe[src]").size
             Log.d("RetrotveProvider", "Found $iframeCount iframes in player page")
             
             if (iframeCount == 0) {
                 Log.d("RetrotveProvider", "No iframes found - checking for alternative content")
-                val scriptContent = playerDoc.html()
-                Log.d("RetrotveProvider", "Page has ${scriptContent.length} chars of HTML")
+                val pageText = playerDoc.html()
+                // Check for any video-related content
+                val videoSrc = Regex("""https?://[^"'\s]+\.(mp4|m3u8)[^"'\s]*""").findAll(pageText).toList()
+                Log.d("RetrotveProvider", "Direct video URLs in page: ${videoSrc.map { it.value }}")
+                playerDoc.select("script").forEach { script ->
+                    val content = script.html()
+                    if (content.contains("player") || content.contains("video") || content.contains("source")) {
+                        Log.d("RetrotveProvider", "Relevant script: ${content.take(300)}")
+                    }
+                }
             }
             
             playerDoc.select("iframe[src]").forEach { iframe ->
@@ -273,11 +285,13 @@ class RetrotveProvider : MainAPI() {
         Log.d("RetrotveProvider", "loadLinks: data = $data")
         
         val document = app.get(data).document
+        Log.d("RetrotveProvider", "loadLinks: page title = ${document.title()}")
+        
         val trtype = if (data.contains("/pelicula/")) "1" else "2"
         
         Log.d("RetrotveProvider", "Searching for player URLs in episode page")
         
-        val trembedUrls = mutableListOf<Pair<String, String>>()
+        val allEmbeds = mutableListOf<Pair<String, String>>()
         var correctTrid: String? = null
         
         document.select("iframe[src*='trembed']").forEach { iframe ->
@@ -291,13 +305,14 @@ class RetrotveProvider : MainAPI() {
                         Log.d("RetrotveProvider", "Found correct trid from iframe: $trid")
                     }
                 }
-                trembedUrls.add(fixedSrc to "Iframe")
+                allEmbeds.add(fixedSrc to "Iframe")
                 Log.d("RetrotveProvider", "Found trembed iframe: $fixedSrc")
             }
         }
         
         document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
             val tabId = tab.attr("id")
+            Log.d("RetrotveProvider", "Checking tab: $tabId, html=${tab.html().take(200)}")
             
             tab.select("iframe[src]").forEach { iframe ->
                 val src = iframe.attr("src")
@@ -310,8 +325,8 @@ class RetrotveProvider : MainAPI() {
                             Log.d("RetrotveProvider", "Found correct trid from tab $tabId: $trid")
                         }
                     }
-                    if (!trembedUrls.any { it.first == fixedSrc }) {
-                        trembedUrls.add(fixedSrc to tabId)
+                    if (!allEmbeds.any { it.first == fixedSrc }) {
+                        allEmbeds.add(fixedSrc to tabId)
                         Log.d("RetrotveProvider", "Found trembed iframe in $tabId: $fixedSrc")
                     }
                 }
@@ -328,8 +343,8 @@ class RetrotveProvider : MainAPI() {
                             Log.d("RetrotveProvider", "Found correct trid from data-src: $trid")
                         }
                     }
-                    if (!trembedUrls.any { it.first == fixedSrc }) {
-                        trembedUrls.add(fixedSrc to tabId)
+                    if (!allEmbeds.any { it.first == fixedSrc }) {
+                        allEmbeds.add(fixedSrc to tabId)
                         Log.d("RetrotveProvider", "Found trembed data-src in $tabId: $fixedSrc")
                     }
                 }
@@ -341,17 +356,25 @@ class RetrotveProvider : MainAPI() {
             
             for (trembed in 0..5) {
                 val playerUrl = "$mainUrl/?trembed=$trembed&trid=$correctTrid&trtype=$trtype"
-                if (!trembedUrls.any { it.first.contains("trembed=$trembed&") && it.first.contains("trid=$correctTrid") }) {
-                    trembedUrls.add(playerUrl to "Opt${trembed + 1}")
+                if (!allEmbeds.any { it.first.contains("trembed=$trembed&") && it.first.contains("trid=$correctTrid") }) {
+                    allEmbeds.add(playerUrl to "Opt${trembed + 1}")
                     Log.d("RetrotveProvider", "Generated trembed $trembed: $playerUrl")
                 }
             }
+        } else {
+            Log.d("RetrotveProvider", "No trid found! Checking page for alternative embeds...")
+            document.select("iframe[src]").forEach {
+                Log.d("RetrotveProvider", "Page iframe: ${it.attr("src")}")
+            }
+            document.select("video[src], source[src]").forEach {
+                Log.d("RetrotveProvider", "Direct video: ${it.attr("src")}")
+            }
         }
         
-        val uniqueTrembedUrls = trembedUrls.distinctBy { it.first }
-        Log.d("RetrotveProvider", "Found ${uniqueTrembedUrls.size} unique trembed URLs to process")
+        val uniqueEmbeds = allEmbeds.distinctBy { it.first }
+        Log.d("RetrotveProvider", "Found ${uniqueEmbeds.size} unique embed URLs to process")
         
-        uniqueTrembedUrls.forEach { (playerUrl, serverName) ->
+        uniqueEmbeds.forEach { (playerUrl, serverName) ->
             processPlayerPage(playerUrl, data, serverName, subtitleCallback, callback)
         }
         
