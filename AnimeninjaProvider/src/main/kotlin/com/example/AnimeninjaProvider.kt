@@ -57,6 +57,9 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                 val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs)
                 val html = response.text
                 Log.d("AnimeOnlineNinja", "Fetched ${html.length} bytes from $url (attempt ${i + 1})")
+                if (html.length < 10000) {
+                    Log.d("AnimeOnlineNinja", "HTML preview (first 600 chars): ${html.take(600)}")
+                }
                 return html
             } catch (e: Exception) {
                 Log.e("AnimeOnlineNinja", "Attempt ${i + 1}/$retries failed for $url: ${e.message}")
@@ -112,6 +115,9 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         val document = Jsoup.parse(html)
 
         val items = document.select("article.item").mapNotNull { it.toSearchResult() }
+        if (items.isEmpty()) {
+            Log.d("AnimeOnlineNinja", "getMainPage: 0 items, HTML snippet: ${document.text().take(300)}")
+        }
         val hasNext = document.selectFirst(".pagination .next, .pagination a.next.page-numbers, a.next.page-numbers") != null
         Log.d("AnimeOnlineNinja", "getMainPage: ${items.size} items, hasNext=$hasNext")
 
@@ -182,6 +188,9 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         val html = getHtml(fallbackUrl) ?: return emptyList()
         val document = Jsoup.parse(html)
         val results = document.select("article.item").mapNotNull { it.toSearchResult() }
+        if (results.isEmpty()) {
+            Log.d("AnimeOnlineNinja", "search: 0 HTML results, snippet: ${document.text().take(300)}")
+        }
         Log.d("AnimeOnlineNinja", "search: ${results.size} HTML results for '$query'")
         return results
     }
