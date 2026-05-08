@@ -1042,7 +1042,7 @@ class YoutubeProvider(
 
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                     this.posterUrl = poster
-                    this.plot = "Channel: $title\nSubscribers: ${subscriberCount ?: "N/A"}\nVideos Fetched: ${allEpisodes.size}"
+                    this.plot = "Canal: $title\nSuscriptores: ${subscriberCount ?: "N/A"}\nVideos obtenidos: ${allEpisodes.size}"
                     this.tags = listOf(title, "Channel")
                 }
 
@@ -1060,7 +1060,9 @@ class YoutubeProvider(
                 val data = extractYtInitialData(html) ?: throw ErrorLoadingException("Failed to extract playlist data")
 
                 val header = safeGet(data, "header", "playlistHeaderRenderer") as? Map<*, *>
-                val title = extractTitle(safeGet(header, "title") as? Map<*, *>) ?: "YouTube Playlist"
+                val title = extractTitle(safeGet(header, "title") as? Map<*, *>)
+                    ?: response.document.selectFirst("title")?.text()?.substringBefore(" - YouTube")?.trim()
+                    ?: "YouTube Playlist"
                 val ownerObj = safeGet(header, "ownerText") as? Map<*, *>
                 val author = extractTitle(ownerObj) ?: "Unknown Channel"
                 val description = extractTitle(safeGet(header, "description") as? Map<*, *>)
@@ -1097,7 +1099,7 @@ class YoutubeProvider(
 
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                     this.posterUrl = playlistPoster
-                    val finalDescription = if (description.isNullOrBlank()) "Channel: $author" else "Channel: $author\n\n$description"
+                    val finalDescription = if (description.isNullOrBlank()) ": $author" else "Canal: $author\n\n$description"
                     this.plot = finalDescription
                     this.tags = listOf(author)
                 }
@@ -1184,7 +1186,7 @@ class YoutubeProvider(
             val channelUrlFull = if (channelId.startsWith("UC") || channelId.startsWith("@")) "$mainUrl/channel/$channelId" else "$mainUrl/$channelId"
 
             val channelCard = newMovieSearchResponse(
-                "Channel: $channelName",
+                "Canal: $channelName",
                 channelUrlFull,
                 TvType.Live
             ) {
