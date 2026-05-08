@@ -3,6 +3,7 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Document
 import android.util.Log
 import kotlinx.coroutines.delay
@@ -20,7 +21,9 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
+    private val cloudflareKiller = CloudflareKiller()
     private var cachedNonce: String? = null
+    private var cachedCookies: Map<String, String>? = null
 
     private val chromeHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -52,11 +55,29 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
     private suspend fun safeGet(url: String, timeoutMs: Long = 60000L, retries: Int = 3): String? {
         Log.d("AnimeOnlineNinja", "Fetching URL: $url (timeout=${timeoutMs}ms, retries=$retries)")
+        val cfCookies = cachedCookies
+        if (cfCookies != null) {
+            Log.d("AnimeOnlineNinja", "Using cached cf_clearance cookies: ${cfCookies.keys}")
+        }
         for (i in 0 until retries) {
             try {
-                val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs)
+                val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs,
+                    interceptor = cloudflareKiller, cookies = cfCookies ?: emptyMap())
+                val respCookies = response.cookies
+                if (respCookies.isNotEmpty()) {
+                    cachedCookies = respCookies
+                    Log.d("AnimeOnlineNinja", "Saved cookies: ${respCookies.keys}")
+                }
                 val html = response.text
                 Log.d("AnimeOnlineNinja", "Fetched ${html.length} bytes from $url (attempt ${i + 1})")
+                if (html.contains("Just a moment") && html.contains("challenges.cloudflare.com")) {
+                    Log.w("AnimeOnlineNinja", "Cloudflare JS challenge at $url (attempt ${i + 1})")
+                    if (i < retries - 1) {
+                        delay(5000L)
+                        continue
+                    }
+                    return null
+                }
                 if (html.length < 10000) {
                     Log.d("AnimeOnlineNinja", "HTML preview (first 600 chars): ${html.take(600)}")
                 }
@@ -64,7 +85,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
             } catch (e: Exception) {
                 Log.e("AnimeOnlineNinja", "Attempt ${i + 1}/$retries failed for $url: ${e.message}")
                 if (i < retries - 1) {
-                    kotlinx.coroutines.delay(3000L)
+                    delay(3000L)
                 }
             }
         }
@@ -327,7 +348,8 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                     val apiUrl = "${apiBase}${postId}?type=${type}&source=${nume}"
                     Log.d("AnimeOnlineNinja", "loadLinks: calling API $apiUrl")
                     val apiHeaders = ajaxHeaders + ("Referer" to data)
-                    val response = app.get(apiUrl, headers = apiHeaders, timeout = 60000L)
+                    val response = app.get(apiUrl, headers = apiHeaders, timeout = 60000L,
+                        interceptor = cloudflareKiller, cookies = cachedCookies ?: emptyMap())
                     val responseText = response.text
                     Log.d("AnimeOnlineNinja", "loadLinks: API response ${responseText.length} chars")
                     found = true
