@@ -50,7 +50,8 @@ class RetrotveProvider : MainAPI() {
             seenLinks.add(link)
             
             val title = element.selectFirst(".Title")?.text() ?: element.selectFirst("h3")?.text() ?: return@forEach
-            val poster = element.selectFirst(".Image img")?.attr("src")
+            val poster = fixPosterUrl(element.selectFirst(".Image img")?.attr("src")
+                ?: element.selectFirst(".Image img")?.attr("data-src"))
             
             if (title.isNotEmpty() && title.length > 2) {
                 val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
@@ -88,7 +89,8 @@ class RetrotveProvider : MainAPI() {
             seenLinks.add(link)
             
             val title = element.selectFirst(".Title")?.text() ?: element.selectFirst("h3")?.text() ?: return@forEach
-            val poster = element.selectFirst(".Image img")?.attr("src")
+            val poster = fixPosterUrl(element.selectFirst(".Image img")?.attr("src")
+                ?: element.selectFirst(".Image img")?.attr("data-src"))
             
             if (title.isEmpty() || title.length < 3) return@forEach
             
@@ -125,13 +127,20 @@ class RetrotveProvider : MainAPI() {
         return null
     }
 
+    private fun fixPosterUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        return if (url.startsWith("//")) "https:$url" else url
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         Log.d("RetrotveProvider", "load: url = $url")
         val document = app.get(url).document
         
         val title = document.selectFirst("h1.Title, h1")?.text() ?: return null
-        val poster = document.selectFirst(".TPost.Single .Image img, .TPostBg img, .poster img, article img")?.attr("src")
-            ?: document.selectFirst("meta[property='og:image']")?.attr("content")
+        val poster = fixPosterUrl(document.selectFirst(".TPost.Single .Image img")?.attr("src")
+            ?: document.selectFirst(".TPost.Single .Image img")?.attr("data-src")
+            ?: document.selectFirst(".TPostBg img")?.attr("src")
+            ?: document.selectFirst("meta[property='og:image']")?.attr("content"))
         val description = document.selectFirst(".Description p")?.text()
         
         val year = document.selectFirst(".Year")?.text()?.filter { it.isDigit() }?.take(4)?.toIntOrNull()
@@ -183,7 +192,7 @@ class RetrotveProvider : MainAPI() {
             val recUrl = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
             if (!recUrl.contains("/serie/") && !recUrl.contains("/pelicula/")) return@mapNotNull null
             val recTitle = element.selectFirst(".Title")?.text() ?: return@mapNotNull null
-            val recPoster = element.selectFirst("img")?.attr("src")
+            val recPoster = fixPosterUrl(element.selectFirst("img")?.attr("src") ?: element.selectFirst("img")?.attr("data-src"))
             
             val recType = if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
             newTvSeriesSearchResponse(recTitle, recUrl, recType) {
