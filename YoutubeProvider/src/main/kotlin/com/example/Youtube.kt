@@ -1043,7 +1043,7 @@ class YoutubeProvider(
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                     this.posterUrl = poster
                     this.plot = "Canal: $title\nSuscriptores: ${subscriberCount ?: "N/A"}\nVideos obtenidos: ${allEpisodes.size}"
-                    this.tags = listOf(title, "Channel")
+                    this.tags = listOf(title, "Canal")
                 }
 
             } catch (e: Exception) {
@@ -1064,7 +1064,7 @@ class YoutubeProvider(
                     ?: response.document.selectFirst("title")?.text()?.substringBefore(" - YouTube")?.trim()
                     ?: "YouTube Playlist"
                 val ownerObj = safeGet(header, "ownerText") as? Map<*, *>
-                val author = extractTitle(ownerObj) ?: "Unknown Channel"
+                val author = extractTitle(ownerObj) ?: "Canal Desconocido"
                 val description = extractTitle(safeGet(header, "description") as? Map<*, *>)
 
                 val episodes = mutableListOf<Episode>()
@@ -1161,7 +1161,7 @@ class YoutubeProvider(
                     val descObj = secondary["attributedDescription"] as? Map<*, *>
                         ?: secondary["description"] as? Map<*, *>
 
-                    val fullDesc = getText(descObj)// استخدام دالة getText الموحدة
+                    val fullDesc = getText(descObj)
                     if (fullDesc.isNotBlank()) {
                         plot += fullDesc
                     }
@@ -1323,7 +1323,7 @@ class YoutubeProvider(
                         if (!seenSubs.contains(vttUrl)) {
                             seenSubs.add(vttUrl)
                             val displayTitle = "$name ($lang)"
-                            subtitleCallback(SubtitleFile(displayTitle, vttUrl))
+                            subtitleCallback(newSubtitleFile(displayTitle, vttUrl))
                         }
                     }
 
@@ -1347,7 +1347,7 @@ class YoutubeProvider(
                             if (!seenSubs.contains(autoUrl)) {
                                 seenSubs.add(autoUrl)
                                 val displayName = "$baseLangCode → $targetLang"
-                                subtitleCallback(SubtitleFile(displayName, autoUrl))
+                                subtitleCallback(newSubtitleFile(displayName, autoUrl))
                             }
                         }
                     }
