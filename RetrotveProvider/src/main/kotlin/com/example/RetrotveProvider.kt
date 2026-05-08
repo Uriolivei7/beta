@@ -190,6 +190,30 @@ class RetrotveProvider : MainAPI() {
         }
     }
 
+    private suspend fun extractTokyoVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            val resp = app.get(url, referer = referer)
+            val doc = resp.document
+            Log.d("RetrotveProvider", "TokyoVideo: code=${resp.code}, len=${doc.html().length}")
+
+            val source = doc.selectFirst("video source[src]")
+            if (source != null) {
+                val videoUrl = source.attr("src")
+                Log.d("RetrotveProvider", "TokyoVideo: found $videoUrl")
+                callback(newExtractorLink("TokyoVideo", "TokyoVideo", videoUrl) {
+                    this.referer = "https://www.tokyvideo.com/"
+                    this.quality = 1080
+                })
+            } else {
+                Log.d("RetrotveProvider", "TokyoVideo: no source found, falling back to loadExtractor")
+                loadExtractor(url, referer, subtitleCallback, callback)
+            }
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "TokyoVideo error: ${e.message}")
+            loadExtractor(url, referer, subtitleCallback, callback)
+        }
+    }
+
     private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
             val resp = app.get(url, referer = referer)
@@ -345,6 +369,10 @@ class RetrotveProvider : MainAPI() {
                     fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
                         Log.d("RetrotveProvider", "-> VKVideo: using custom extractor for: $fixedSrc")
                         extractVKVideo(fixedSrc, playerUrl, subtitleCallback, callback)
+                    }
+                    fixedSrc.contains("tokyvideo.com") -> {
+                        Log.d("RetrotveProvider", "-> TokyoVideo: using custom extractor for: $fixedSrc")
+                        extractTokyoVideo(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
                         Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
