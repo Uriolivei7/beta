@@ -857,6 +857,23 @@ class YoutubeProvider(
         return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
     }
 
+    private fun translateDateToSpanish(text: String?): String? {
+        if (text == null) return null
+        return text
+            .replace(Regex("(\\d+)\\s*years?\\s*ago"), "hace $1 años")
+            .replace(Regex("(\\d+)\\s*months?\\s*ago"), "hace $1 meses")
+            .replace(Regex("(\\d+)\\s*weeks?\\s*ago"), "hace $1 semanas")
+            .replace(Regex("(\\d+)\\s*days?\\s*ago"), "hace $1 días")
+            .replace(Regex("(\\d+)\\s*hours?\\s*ago"), "hace $1 horas")
+            .replace(Regex("(\\d+)\\s*minutes?\\s*ago"), "hace $1 minutos")
+            .replace(Regex("(\\d+)\\s*seconds?\\s*ago"), "hace $1 segundos")
+            .replace("Streamed live", "Transmitido en vivo")
+            .replace("Premiered", "Estrenado")
+            .replace("Scheduled for", "Programado para")
+            .replace("Recommended", "Recomendado")
+            .trim()
+    }
+
     private fun safeGet(data: Any?, vararg keys: Any): Any? {
         var current = data
         for (key in keys) {
@@ -1013,8 +1030,8 @@ class YoutubeProvider(
                             collectTo.add(newEpisode(vidUrl) {
                                 this.name = finalName
                                 this.posterUrl = thumb
-                                this.runTime = durationSec ?: 0
-                                this.description = listOfNotNull(viewCount, publishedTime).joinToString(" • ")
+                                this.runTime = (durationSec ?: 0) / 60
+                                this.description = listOfNotNull(viewCount, translateDateToSpanish(publishedTime)).joinToString(" • ")
                             })
                         }
                     }
@@ -1129,8 +1146,8 @@ class YoutubeProvider(
                                 this.name = vidTitle
                                 this.episode = index + 1
                                 this.posterUrl = thumb
-                                this.runTime = durationSec ?: 0
-                                this.description = if (durationText != null) "Duration: $durationText" else null
+                                this.runTime = (durationSec ?: 0) / 60
+                                this.description = if (durationText != null) "Duración: $durationText" else null
                             })
                         }
                     }
@@ -1181,8 +1198,8 @@ class YoutubeProvider(
                     val t = extractTitle(primary["title"] as? Map<*, *>)
                     if (!t.isNullOrBlank()) title = t
 
-                    val dateText = extractTitle(primary["dateText"] as? Map<*, *>)
-                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText - "
+                    val dateText = translateDateToSpanish(extractTitle(primary["dateText"] as? Map<*, *>))
+                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText\n"
                     val lengthText = extractTitle(primary["lengthText"] as? Map<*, *>)
                         ?: extractTitle(primary["length"] as? Map<*, *>)
                     com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId lengthText=$lengthText primaryKeys=${primary.keys}")
