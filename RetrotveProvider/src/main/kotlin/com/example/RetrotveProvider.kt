@@ -195,11 +195,24 @@ class RetrotveProvider : MainAPI() {
             val resp = app.get(url, referer = referer)
             val page = resp.text
             Log.d("RetrotveProvider", "Filemoon: code=${resp.code}, url=${resp.url}, page len=${page.length}")
-            if (page.length < 500) Log.d("RetrotveProvider", "Filemoon: HTML=${page.take(1000)}")
+            if (page.length < 10000) Log.d("RetrotveProvider", "Filemoon: HTML=$page")
 
-            val sources = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").findAll(page).toList()
-            if (sources.isNotEmpty()) {
-                sources.forEach { match ->
+            val sources1 = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").findAll(page).toList()
+            if (sources1.isNotEmpty()) {
+                sources1.forEach { match ->
+                    val videoUrl = match.groupValues[1].replace("\\/", "/")
+                    Log.d("RetrotveProvider", "Filemoon: found $videoUrl")
+                    callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) {
+                        this.referer = "https://filemoon.to/"
+                        this.quality = 1080
+                    })
+                }
+                return
+            }
+
+            val sources2 = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*'([^']+)'\s*\}?\s*\]?""").findAll(page).toList()
+            if (sources2.isNotEmpty()) {
+                sources2.forEach { match ->
                     val videoUrl = match.groupValues[1].replace("\\/", "/")
                     Log.d("RetrotveProvider", "Filemoon: found $videoUrl")
                     callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) {
@@ -222,9 +235,12 @@ class RetrotveProvider : MainAPI() {
                 return
             }
 
-            Log.d("RetrotveProvider", "Filemoon: no URL found")
+            Log.d("RetrotveProvider", "Filemoon: SPA page, using loadExtractor")
+            val cleanUrl = url.substringBeforeLast("/")
+            loadExtractor(cleanUrl, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
+            loadExtractor(url, referer, subtitleCallback, callback)
         }
     }
 
@@ -234,36 +250,42 @@ class RetrotveProvider : MainAPI() {
             val page = resp.text
             Log.d("RetrotveProvider", "VKVideo: code=${resp.code}, page len=${page.length}")
 
-            val directUrls = Regex("""https?://[^"'\s<>]+\.(?:mp4|m3u8)[^"'\s<>]*""").findAll(page).toList()
-            if (directUrls.isNotEmpty()) {
-                directUrls.forEach { match ->
-                    Log.d("RetrotveProvider", "VKVideo: direct $match.value")
-                    callback(newExtractorLink("VKVideo", "VKVideo", match.value) {
-                        this.referer = "https://vk.com/"
-                        this.quality = 1080
-                    })
-                }
-                return
+            val mp4Match = Regex(""""mp4_720"\s*:\s*"([^"]+)"""").find(page)
+            if (mp4Match != null) {
+                val videoUrl = mp4Match.groupValues[1].replace("\\/", "/")
+                Log.d("RetrotveProvider", "VKVideo: mp4_720=$videoUrl")
+                callback(newExtractorLink("VKVideo", "VKVideo 720p", videoUrl) {
+                    this.referer = "https://vk.com/"
+                    this.quality = 720
+                })
             }
 
-            val videoUrls = Regex("""(?:video_url|url)\s*[:=]\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(page).toList()
-            if (videoUrls.isNotEmpty()) {
-                videoUrls.forEach { match ->
-                    val videoUrl = match.groupValues[1].replace("\\/", "/")
-                    Log.d("RetrotveProvider", "VKVideo: found $videoUrl")
-                    callback(newExtractorLink("VKVideo", "VKVideo", videoUrl) {
-                        this.referer = "https://vk.com/"
-                        this.quality = 1080
-                    })
-                }
-                return
+            val hlsMatch = Regex(""""hls_ondemand"\s*:\s*"([^"]+)"""").find(page)
+            if (hlsMatch != null) {
+                val hlsUrl = hlsMatch.groupValues[1].replace("\\/", "/")
+                Log.d("RetrotveProvider", "VKVideo: hls=$hlsUrl")
+                callback(newExtractorLink("VKVideo", "VKVideo HLS", hlsUrl) {
+                    this.referer = "https://vk.com/"
+                    this.quality = 1080
+                })
             }
 
-            Log.d("RetrotveProvider", "VKVideo: no URL found, trying loadExtractor")
-            loadExtractor(url, referer, subtitleCallback, callback)
+            val dashMatch = Regex(""""dash_ondemand"\s*:\s*"([^"]+)"""").find(page)
+            if (dashMatch != null) {
+                val dashUrl = dashMatch.groupValues[1].replace("\\/", "/")
+                Log.d("RetrotveProvider", "VKVideo: dash=$dashUrl")
+                callback(newExtractorLink("VKVideo", "VKVideo DASH", dashUrl) {
+                    this.referer = "https://vk.com/"
+                    this.quality = 1080
+                    this.type = ExtractorLinkType.DASH
+                })
+            }
+
+            if (mp4Match == null && hlsMatch == null) {
+                Log.d("RetrotveProvider", "VKVideo: no URL found")
+            }
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
-            loadExtractor(url, referer, subtitleCallback, callback)
         }
     }
 
