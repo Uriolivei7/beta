@@ -192,8 +192,10 @@ class RetrotveProvider : MainAPI() {
 
     private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            val page = app.get(url, referer = referer).text
-            Log.d("RetrotveProvider", "Filemoon: page len=${page.length}")
+            val resp = app.get(url, referer = referer)
+            val page = resp.text
+            Log.d("RetrotveProvider", "Filemoon: code=${resp.code}, url=${resp.url}, page len=${page.length}")
+            if (page.length < 500) Log.d("RetrotveProvider", "Filemoon: HTML=${page.take(1000)}")
 
             val sources = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").findAll(page).toList()
             if (sources.isNotEmpty()) {
@@ -208,9 +210,9 @@ class RetrotveProvider : MainAPI() {
                 return
             }
 
-            val directMp4 = Regex("""https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*""").findAll(page).toList()
-            if (directMp4.isNotEmpty()) {
-                directMp4.forEach { match ->
+            val directUrls = Regex("""https?://[^"'\s<>]+\.(?:mp4|m3u8)[^"'\s<>]*""").findAll(page).toList()
+            if (directUrls.isNotEmpty()) {
+                directUrls.forEach { match ->
                     Log.d("RetrotveProvider", "Filemoon: direct $match.value")
                     callback(newExtractorLink("Filemoon", "Filemoon", match.value) {
                         this.referer = "https://filemoon.to/"
@@ -220,20 +222,19 @@ class RetrotveProvider : MainAPI() {
                 return
             }
 
-            Log.d("RetrotveProvider", "Filemoon: no URL found, trying loadExtractor fallback")
-            loadExtractor(url, referer, subtitleCallback, callback)
+            Log.d("RetrotveProvider", "Filemoon: no URL found")
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
-            loadExtractor(url, referer, subtitleCallback, callback)
         }
     }
 
     private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            val page = app.get(url, referer = referer).text
-            Log.d("RetrotveProvider", "VKVideo: page len=${page.length}")
+            val resp = app.get(url, referer = referer, timeout = 60L)
+            val page = resp.text
+            Log.d("RetrotveProvider", "VKVideo: code=${resp.code}, page len=${page.length}")
 
-            val directUrls = Regex("""https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*""").findAll(page).toList()
+            val directUrls = Regex("""https?://[^"'\s<>]+\.(?:mp4|m3u8)[^"'\s<>]*""").findAll(page).toList()
             if (directUrls.isNotEmpty()) {
                 directUrls.forEach { match ->
                     Log.d("RetrotveProvider", "VKVideo: direct $match.value")
