@@ -26,7 +26,9 @@ class RetrotveProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "/category/animacion/?tr_post_type=2" to "Series Animadas",
-        "/category/animacion/?tr_post_type=1" to "Películas"
+        "/category/liveaction/" to "Series Live Action",
+        "/category/animacion/?tr_post_type=1" to "Películas Animadas",
+        "/peliculas/" to "Películas"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
