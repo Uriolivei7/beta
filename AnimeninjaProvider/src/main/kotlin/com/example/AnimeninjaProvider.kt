@@ -3,7 +3,6 @@ package com.example
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Document
 import android.util.Log
 import kotlinx.coroutines.delay
@@ -21,7 +20,6 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
-    private val cloudflareKiller = CloudflareKiller()
     private var cachedNonce: String? = null
 
     private val chromeHeaders = mapOf(
@@ -52,16 +50,12 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         "Referer" to "$mainUrl/search/?s="
     )
 
-    private suspend fun safeGet(url: String, timeoutMs: Long = 120000L, retries: Int = 3): String? {
+    private suspend fun safeGet(url: String, timeoutMs: Long = 60000L, retries: Int = 3): String? {
         Log.d("AnimeOnlineNinja", "Fetching URL: $url (timeout=${timeoutMs}ms, retries=$retries)")
         for (i in 0 until retries) {
             try {
-                val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs, interceptor = cloudflareKiller)
+                val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs)
                 val html = response.text
-                if (html.contains("challenge-platform") || html.contains("cf-turnstile")) {
-                    Log.w("AnimeOnlineNinja", "Cloudflare challenge detected at $url (attempt ${i + 1})")
-                    return null
-                }
                 Log.d("AnimeOnlineNinja", "Fetched ${html.length} bytes from $url (attempt ${i + 1})")
                 return html
             } catch (e: Exception) {
@@ -324,7 +318,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                     val apiUrl = "${apiBase}${postId}?type=${type}&source=${nume}"
                     Log.d("AnimeOnlineNinja", "loadLinks: calling API $apiUrl")
                     val apiHeaders = ajaxHeaders + ("Referer" to data)
-                    val response = app.get(apiUrl, headers = apiHeaders, interceptor = cloudflareKiller, timeout = 60000L)
+                    val response = app.get(apiUrl, headers = apiHeaders, timeout = 60000L)
                     val responseText = response.text
                     Log.d("AnimeOnlineNinja", "loadLinks: API response ${responseText.length} chars")
                     found = true
