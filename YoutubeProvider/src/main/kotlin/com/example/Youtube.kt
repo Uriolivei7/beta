@@ -1164,7 +1164,7 @@ class YoutubeProvider(
         var channelName = ""
         var channelId = ""
         var channelAvatar = ""
-        var singleVideoDurationSec = 0
+        var singleVideoDurationMin = 0
 
         val recommendations = mutableListOf<SearchResponse>()
         val seenRecIds = mutableSetOf<String>()
@@ -1182,14 +1182,14 @@ class YoutubeProvider(
                     if (!t.isNullOrBlank()) title = t
 
                     val dateText = extractTitle(primary["dateText"] as? Map<*, *>)
-                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText"
+                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText - "
                     val lengthText = extractTitle(primary["lengthText"] as? Map<*, *>)
                         ?: extractTitle(primary["length"] as? Map<*, *>)
                     com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId lengthText=$lengthText primaryKeys=${primary.keys}")
                     val lengthSec = parseDurationToSeconds(lengthText)
-                    if (lengthSec != null) singleVideoDurationSec = lengthSec
-                    if (lengthText != null) {
-                        plot = "⏱ $lengthText" + if (plot.isNotEmpty()) "\n$plot" else ""
+                    if (lengthSec != null) {
+                        singleVideoDurationMin = lengthSec / 60
+                        plot = "⏱ ${formatSecondsToDuration(lengthSec)}" + if (plot.isNotEmpty()) "\n$plot" else ""
                     }
                 }
 
@@ -1231,15 +1231,16 @@ class YoutubeProvider(
             plot = doc.selectFirst("meta[property=og:description]")?.attr("content") ?: plot
         }
 
-        if (singleVideoDurationSec == 0) {
+        if (singleVideoDurationMin == 0) {
             val durationMeta = response.document.selectFirst("meta[itemprop=duration]")?.attr("content")
                 ?: response.document.selectFirst("link[itemprop=duration]")?.attr("href")
             if (durationMeta != null) {
                 val sec = parseIsoDurationToSeconds(durationMeta)
                 com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId durationMeta=$durationMeta sec=$sec")
-                if (sec != null) singleVideoDurationSec = sec
-                val text = formatSecondsToDuration(sec)
-                if (text != null) plot = "⏱ $text" + if (plot.isNotEmpty()) "\n$plot" else ""
+                if (sec != null) {
+                    singleVideoDurationMin = sec / 60
+                    plot = "⏱ ${formatSecondsToDuration(sec)}" + if (plot.isNotEmpty()) "\n$plot" else ""
+                }
             }
         }
 
@@ -1265,7 +1266,7 @@ class YoutubeProvider(
         return newMovieLoadResponse(title, url, TvType.Movie, videoId) {
             this.posterUrl = poster
             this.plot = plot
-            this.duration = singleVideoDurationSec
+            this.duration = singleVideoDurationMin
 
             if (channelName.isNotBlank()) {
                 this.tags = listOf(channelName)
