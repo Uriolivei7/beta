@@ -839,6 +839,24 @@ class YoutubeProvider(
         }
     }
 
+    private fun parseIsoDurationToSeconds(iso: String?): Int? {
+        if (iso == null) return null
+        val regex = Regex("PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?")
+        val m = regex.matchEntire(iso) ?: return null
+        val h = m.groupValues[1].toIntOrNull() ?: 0
+        val min = m.groupValues[2].toIntOrNull() ?: 0
+        val s = m.groupValues[3].toIntOrNull() ?: 0
+        return h * 3600 + min * 60 + s
+    }
+
+    private fun formatSecondsToDuration(seconds: Int?): String? {
+        if (seconds == null) return null
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+    }
+
     private fun safeGet(data: Any?, vararg keys: Any): Any? {
         var current = data
         for (key in keys) {
@@ -1166,8 +1184,9 @@ class YoutubeProvider(
                     val dateText = extractTitle(primary["dateText"] as? Map<*, *>)
                     if (!dateText.isNullOrBlank()) plot += "📅 $dateText"
                     val lengthText = extractTitle(primary["lengthText"] as? Map<*, *>)
+                        ?: extractTitle(primary["length"] as? Map<*, *>)
+                    com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId lengthText=$lengthText primaryKeys=${primary.keys}")
                     val lengthSec = parseDurationToSeconds(lengthText)
-                    com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId lengthText=$lengthText durationSec=$lengthSec")
                     if (lengthSec != null) singleVideoDurationSec = lengthSec
                     if (lengthText != null) {
                         plot = "⏱ $lengthText" + if (plot.isNotEmpty()) "\n$plot" else ""
@@ -1210,6 +1229,18 @@ class YoutubeProvider(
             title = doc.selectFirst("meta[property=og:title]")?.attr("content") ?: title
             poster = doc.selectFirst("meta[property=og:image]")?.attr("content") ?: poster
             plot = doc.selectFirst("meta[property=og:description]")?.attr("content") ?: plot
+        }
+
+        if (singleVideoDurationSec == 0) {
+            val durationMeta = response.document.selectFirst("meta[itemprop=duration]")?.attr("content")
+                ?: response.document.selectFirst("link[itemprop=duration]")?.attr("href")
+            if (durationMeta != null) {
+                val sec = parseIsoDurationToSeconds(durationMeta)
+                com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId durationMeta=$durationMeta sec=$sec")
+                if (sec != null) singleVideoDurationSec = sec
+                val text = formatSecondsToDuration(sec)
+                if (text != null) plot = "⏱ $text" + if (plot.isNotEmpty()) "\n$plot" else ""
+            }
         }
 
 
