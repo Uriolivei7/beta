@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Document
 import android.util.Log
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
@@ -21,28 +22,79 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val cloudflareKiller = CloudflareKiller()
+    private var cachedNonce: String? = null
 
-    private val baseHeaders = mapOf(
+    private val chromeHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "sec-ch-ua" to "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\", \"Google Chrome\";v=\"126\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "sec-fetch-dest" to "document",
+        "sec-fetch-mode" to "navigate",
+        "sec-fetch-site" to "none",
+        "sec-fetch-user" to "?1",
+        "Referer" to mainUrl
     )
 
-    private suspend fun getHtml(url: String): String? {
-        Log.d("AnimeOnlineNinja", "Fetching URL: $url")
-        return try {
-            val response = app.get(url, headers = baseHeaders, timeout = 30, interceptor = cloudflareKiller)
-            val html = response.text
-            val len = html.length
-            if (html.contains("challenge-platform") || html.contains("cf-turnstile")) {
-                Log.w("AnimeOnlineNinja", "Cloudflare challenge detected at $url")
-                return null
+    private val ajaxHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept" to "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "X-Requested-With" to "XMLHttpRequest",
+        "sec-ch-ua" to "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\", \"Google Chrome\";v=\"126\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "same-origin",
+        "Referer" to "$mainUrl/search/?s="
+    )
+
+    private suspend fun safeGet(url: String, timeoutMs: Long = 120000L, retries: Int = 3): String? {
+        Log.d("AnimeOnlineNinja", "Fetching URL: $url (timeout=${timeoutMs}ms, retries=$retries)")
+        for (i in 0 until retries) {
+            try {
+                val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs, interceptor = cloudflareKiller)
+                val html = response.text
+                if (html.contains("challenge-platform") || html.contains("cf-turnstile")) {
+                    Log.w("AnimeOnlineNinja", "Cloudflare challenge detected at $url (attempt ${i + 1})")
+                    return null
+                }
+                Log.d("AnimeOnlineNinja", "Fetched ${html.length} bytes from $url (attempt ${i + 1})")
+                return html
+            } catch (e: Exception) {
+                Log.e("AnimeOnlineNinja", "Attempt ${i + 1}/$retries failed for $url: ${e.message}")
+                if (i < retries - 1) {
+                    kotlinx.coroutines.delay(3000L)
+                }
             }
-            Log.d("AnimeOnlineNinja", "Fetched $len bytes from $url")
-            html
-        } catch (e: Exception) {
-            Log.e("AnimeOnlineNinja", "Error fetching $url: ${e.message}")
-            null
         }
+        Log.e("AnimeOnlineNinja", "All $retries attempts failed for $url")
+        return null
+    }
+
+    private suspend fun getHtml(url: String): String? = safeGet(url)
+
+    private suspend fun getSearchNonce(): String? {
+        cachedNonce?.let { return it }
+        val html = getHtml("$mainUrl/") ?: return null
+        val patterns = listOf(
+            Regex("""dooplay[.\s]*ajax_nonce['"]?\s*[:=]\s*['"]([a-f0-9]+)['"]"""),
+            Regex("""nonce['"]?\s*[:=]\s*['"]([a-f0-9]+)['"]"""),
+            Regex("""id=["']dooplay_nonce["']\s+value=["']([a-f0-9]+)["']"""),
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(html)?.groupValues?.get(1)
+            if (match != null) {
+                cachedNonce = match
+                Log.d("AnimeOnlineNinja", "getSearchNonce: found nonce=$match via $pattern")
+                return match
+            }
+        }
+        Log.w("AnimeOnlineNinja", "getSearchNonce: no nonce found in main page")
+        return null
     }
 
     override val mainPage = mainPageOf(
@@ -98,15 +150,45 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/?s=${query.replace(" ", "+")}"
-        Log.d("AnimeOnlineNinja", "search: query=$query url=$url")
-        val html = getHtml(url) ?: run {
-            Log.w("AnimeOnlineNinja", "search: html=null for $url")
-            return emptyList()
+        val nonce = getSearchNonce()
+        if (nonce != null) {
+            val searchUrl = "$mainUrl/wp-json/dooplay/search/?keyword=${query.replace(" ", "%20")}&nonce=$nonce"
+            Log.d("AnimeOnlineNinja", "search: AJAX query='$query' url=$searchUrl")
+            val jsonStr = safeGet(searchUrl, timeoutMs = 60000L, retries = 2)
+            if (jsonStr != null) {
+                try {
+                    val json = JSONObject(jsonStr)
+                    val results = mutableListOf<SearchResponse>()
+                    for (key in json.keys()) {
+                        val item = json.getJSONObject(key)
+                        val title = item.optString("title", "").trim()
+                        val url = item.optString("url", "").trim()
+                        val img = item.optString("img", "").trim()
+                        if (title.isNotBlank() && url.isNotBlank()) {
+                            val type = if (url.contains("/pelicula/")) TvType.AnimeMovie else TvType.Anime
+                            val poster = img.ifBlank { null }
+                            results.add(
+                                when (type) {
+                                    TvType.AnimeMovie -> newMovieSearchResponse(title, url, TvType.AnimeMovie) { this.posterUrl = poster }
+                                    else -> newTvSeriesSearchResponse(title, url, TvType.Anime) { this.posterUrl = poster }
+                                }
+                            )
+                        }
+                    }
+                    Log.d("AnimeOnlineNinja", "search: AJAX returned ${results.size} results for '$query'")
+                    return results
+                } catch (e: Exception) {
+                    Log.e("AnimeOnlineNinja", "search: AJAX JSON parse error: ${e.message}")
+                }
+            }
         }
+
+        val fallbackUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
+        Log.d("AnimeOnlineNinja", "search: falling back to HTML $fallbackUrl")
+        val html = getHtml(fallbackUrl) ?: return emptyList()
         val document = Jsoup.parse(html)
         val results = document.select("article.item").mapNotNull { it.toSearchResult() }
-        Log.d("AnimeOnlineNinja", "search: ${results.size} results for '$query'")
+        Log.d("AnimeOnlineNinja", "search: ${results.size} HTML results for '$query'")
         return results
     }
 
@@ -239,9 +321,10 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
             if (postId.isNotBlank() && nume.isNotBlank()) {
                 try {
-                    val apiUrl = "${apiBase}${type}/${postId}/${nume}/"
+                    val apiUrl = "${apiBase}${postId}?type=${type}&source=${nume}"
                     Log.d("AnimeOnlineNinja", "loadLinks: calling API $apiUrl")
-                    val response = app.get(apiUrl, headers = baseHeaders, interceptor = cloudflareKiller, timeout = 15)
+                    val apiHeaders = ajaxHeaders + ("Referer" to data)
+                    val response = app.get(apiUrl, headers = apiHeaders, interceptor = cloudflareKiller, timeout = 60000L)
                     val responseText = response.text
                     Log.d("AnimeOnlineNinja", "loadLinks: API response ${responseText.length} chars")
                     found = true
@@ -249,16 +332,12 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                     try {
                         val json = JSONObject(responseText)
                         val embedUrl = json.optString("embed_url", "")
-                        val videoUrl = json.optString("url", "")
-                        Log.d("AnimeOnlineNinja", "loadLinks: JSON parsed - embed_url='${embedUrl.take(100)}' url='${videoUrl.take(100)}'")
+                        Log.d("AnimeOnlineNinja", "loadLinks: JSON parsed - embed_url='${embedUrl.take(100)}'")
                         if (embedUrl.isNotBlank()) {
                             Log.d("AnimeOnlineNinja", "loadLinks: loading extractor from embed_url=$embedUrl")
                             loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-                        } else if (videoUrl.isNotBlank()) {
-                            Log.d("AnimeOnlineNinja", "loadLinks: loading extractor from url=$videoUrl")
-                            loadExtractor(videoUrl, mainUrl, subtitleCallback, callback)
                         } else {
-                            Log.w("AnimeOnlineNinja", "loadLinks: JSON has no embed_url or url")
+                            Log.w("AnimeOnlineNinja", "loadLinks: JSON has no embed_url")
                         }
                     } catch (e: Exception) {
                         Log.d("AnimeOnlineNinja", "loadLinks: response is not JSON, parsing as HTML: ${e.message}")
