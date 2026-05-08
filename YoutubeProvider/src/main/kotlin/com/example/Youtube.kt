@@ -2,6 +2,7 @@ package com.example
 
 import org.json.JSONObject
 import android.content.SharedPreferences
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.mvvm.logError
@@ -987,12 +988,14 @@ class YoutubeProvider(
                             val viewCount = formatViews(safeGet(videoRenderer, "viewCountText", "simpleText") as? String)
                             val publishedTime = extractTitle(safeGet(videoRenderer, "publishedTimeText") as? Map<*, *>)
                             val durationText = extractTitle(safeGet(videoRenderer, "lengthText") as? Map<*, *>)
+                            val durationSec = parseDurationToSeconds(durationText)
+                            Log.d("YoutubeProvider", "Video $vId lengthText=$durationText durationSec=$durationSec")
                             val finalName = if (durationText != null) "{$durationText} $vidTitle" else vidTitle
 
                             collectTo.add(newEpisode(vidUrl) {
                                 this.name = finalName
                                 this.posterUrl = thumb
-                                this.runTime = parseDurationToSeconds(durationText) ?: 0
+                                this.runTime = durationSec ?: 0
                                 this.description = listOfNotNull(viewCount, publishedTime).joinToString(" • ")
                             })
                         }
@@ -1102,11 +1105,13 @@ class YoutubeProvider(
                             val thumb = getBestThumbnail(renderer["thumbnail"]) ?: buildThumbnailFromId(vId)
                             val vidUrl = "$mainUrl/watch?v=$vId"
                             val durationText = extractTitle(safeGet(renderer, "lengthText") as? Map<*, *>)
+                            val durationSec = parseDurationToSeconds(durationText)
+                            com.lagradost.api.Log.d("YoutubeProvider", "Playlist video $vId lengthText=$durationText durationSec=$durationSec")
                             episodes.add(newEpisode(vidUrl) {
                                 this.name = vidTitle
                                 this.episode = index + 1
                                 this.posterUrl = thumb
-                                this.runTime = parseDurationToSeconds(durationText) ?: 0
+                                this.runTime = durationSec ?: 0
                                 this.description = if (durationText != null) "Duration: $durationText" else null
                             })
                         }
