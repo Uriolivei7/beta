@@ -976,11 +976,12 @@ class YoutubeProvider(
                             val viewCount = formatViews(safeGet(videoRenderer, "viewCountText", "simpleText") as? String)
                             val publishedTime = extractTitle(safeGet(videoRenderer, "publishedTimeText") as? Map<*, *>)
                             val durationText = extractTitle(safeGet(videoRenderer, "lengthText") as? Map<*, *>)
+                            val finalName = if (durationText != null) "{$durationText} $vidTitle" else vidTitle
 
                             collectTo.add(newEpisode(vidUrl) {
-                                this.name = vidTitle
+                                this.name = finalName
                                 this.posterUrl = thumb
-                                this.description = listOfNotNull(durationText, viewCount, publishedTime).joinToString(" • ")
+                                this.description = listOfNotNull(viewCount, publishedTime).joinToString(" • ")
                             })
                         }
                     }
