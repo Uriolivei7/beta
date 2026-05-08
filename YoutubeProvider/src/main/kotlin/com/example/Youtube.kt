@@ -827,6 +827,17 @@ class YoutubeProvider(
         }
     }
 
+    private fun parseDurationToSeconds(durationText: String?): Int? {
+        if (durationText == null) return null
+        val parts = durationText.split(":").mapNotNull { it.toIntOrNull() }
+        return when (parts.size) {
+            3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+            2 -> parts[0] * 60 + parts[1]
+            1 -> parts[0]
+            else -> null
+        }
+    }
+
     private fun safeGet(data: Any?, vararg keys: Any): Any? {
         var current = data
         for (key in keys) {
@@ -981,6 +992,7 @@ class YoutubeProvider(
                             collectTo.add(newEpisode(vidUrl) {
                                 this.name = finalName
                                 this.posterUrl = thumb
+                                this.runTime = parseDurationToSeconds(durationText) ?: 0
                                 this.description = listOfNotNull(viewCount, publishedTime).joinToString(" • ")
                             })
                         }
@@ -1094,6 +1106,7 @@ class YoutubeProvider(
                                 this.name = vidTitle
                                 this.episode = index + 1
                                 this.posterUrl = thumb
+                                this.runTime = parseDurationToSeconds(durationText) ?: 0
                                 this.description = if (durationText != null) "Duration: $durationText" else null
                             })
                         }
