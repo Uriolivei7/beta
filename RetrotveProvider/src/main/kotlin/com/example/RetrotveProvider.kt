@@ -246,7 +246,9 @@ class RetrotveProvider : MainAPI() {
 
     private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            val resp = app.get(url, referer = referer, timeout = 60L)
+            val fixedUrl = url.replace("vkvideo.ru", "vk.com")
+            if (fixedUrl != url) Log.d("RetrotveProvider", "VKVideo: rewritten $url -> $fixedUrl")
+            val resp = app.get(fixedUrl, referer = referer, timeout = 60L)
             val page = resp.text
             Log.d("RetrotveProvider", "VKVideo: code=${resp.code}, page len=${page.length}")
 
