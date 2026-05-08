@@ -1199,7 +1199,7 @@ class YoutubeProvider(
                     if (!t.isNullOrBlank()) title = t
 
                     val dateText = translateDateToSpanish(extractTitle(primary["dateText"] as? Map<*, *>))
-                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText\n"
+                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText - \n"
                     val lengthText = extractTitle(primary["lengthText"] as? Map<*, *>)
                         ?: extractTitle(primary["length"] as? Map<*, *>)
                     com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId lengthText=$lengthText primaryKeys=${primary.keys}")
