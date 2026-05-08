@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.ar.youtube
+package com.example
 
 import org.json.JSONObject
 import android.content.SharedPreferences
@@ -12,7 +12,7 @@ import okhttp3.Response
 import java.net.URLEncoder
 import com.lagradost.cloudstream3.AcraApplication
 import androidx.preference.PreferenceManager
-import com.lagradost.cloudstream3.ar.youtube.YoutubeProvider.Config.SLEEP_BETWEEN
+import com.example.YoutubeProvider.Config.SLEEP_BETWEEN
 
 class YoutubeProvider(
     private val sharedPref: SharedPreferences? = null
@@ -23,7 +23,7 @@ class YoutubeProvider(
     data class CustomSection(
         @JsonProperty("name") var name: String = "",
         @JsonProperty("url") var url: String = "",
-        @JsonProperty("isEnabled") var isEnabled: Boolean = true // المتغير الجديد لحالة التفعيل
+        @JsonProperty("isEnabled") var isEnabled: Boolean = true
     )
     object Config {
         const val SLEEP_BETWEEN = 1
@@ -521,7 +521,7 @@ class YoutubeProvider(
             val isEn = lang == "en"
 
             if (sharedPref?.getBoolean("show_trending_home", true) == true) {
-                list.add(MainPageData(if (isEn) "Trending" else "الرئيسية (Trending)", "Home"))
+                list.add(MainPageData(if (isEn) "Tendencias" else "Principal (Tendencias)", "Home"))
             }
 
             val customSections = getCustomHomepages()
@@ -870,7 +870,7 @@ class YoutubeProvider(
 
             return newTvSeriesLoadResponse("Shorts Feed", url, TvType.TvSeries, targetEpisodes) {
                 this.posterUrl = poster
-                this.plot = "قائمة تشغيل تلقائية من الشورتس (${targetEpisodes.size} فيديو)"
+                this.plot = "Lista de reproducción automática de cortos (${targetEpisodes.size} Video)"
                 this.tags = listOf("Shorts", "Feed")
             }
         }
@@ -1064,7 +1064,9 @@ class YoutubeProvider(
                     ?: response.document.selectFirst("title")?.text()?.substringBefore(" - YouTube")?.trim()
                     ?: "YouTube Playlist"
                 val ownerObj = safeGet(header, "ownerText") as? Map<*, *>
-                val author = extractTitle(ownerObj) ?: "Canal Desconocido"
+                val author = extractTitle(ownerObj)
+                    ?: response.document.selectFirst("a[href^='/channel/']")?.text()
+                    ?: "Canal Desconocido"
                 val description = extractTitle(safeGet(header, "description") as? Map<*, *>)
 
                 val episodes = mutableListOf<Episode>()
@@ -1099,7 +1101,7 @@ class YoutubeProvider(
 
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                     this.posterUrl = playlistPoster
-                    val finalDescription = if (description.isNullOrBlank()) ": $author" else "Canal: $author\n\n$description"
+                    val finalDescription = if (description.isNullOrBlank()) "Canal: $author" else "Canal: $author\n\n$description"
                     this.plot = finalDescription
                     this.tags = listOf(author)
                 }
