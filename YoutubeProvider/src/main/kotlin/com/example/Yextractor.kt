@@ -141,7 +141,7 @@ open class YoutubeExtractor : ExtractorApi() {
 
                                 if (localLink != null) {
 
-                                    val finalName = "${this.name} ${video.label}"
+                                    val finalName = if (lang != "DEFAULT") "${this.name} ${video.label} ($lang)" else "${this.name} ${video.label}"
 
                                     builtLinks.add(
                                         newExtractorLink(
