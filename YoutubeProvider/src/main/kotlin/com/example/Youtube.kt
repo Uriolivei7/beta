@@ -1146,6 +1146,7 @@ class YoutubeProvider(
         var channelName = ""
         var channelId = ""
         var channelAvatar = ""
+        var singleVideoDurationSec = 0
 
         val recommendations = mutableListOf<SearchResponse>()
         val seenRecIds = mutableSetOf<String>()
@@ -1163,7 +1164,14 @@ class YoutubeProvider(
                     if (!t.isNullOrBlank()) title = t
 
                     val dateText = extractTitle(primary["dateText"] as? Map<*, *>)
-                    if (!dateText.isNullOrBlank()) plot += "$dateText\n\n"
+                    if (!dateText.isNullOrBlank()) plot += "📅 $dateText"
+                    val lengthText = extractTitle(primary["lengthText"] as? Map<*, *>)
+                    val lengthSec = parseDurationToSeconds(lengthText)
+                    com.lagradost.api.Log.d("YoutubeProvider", "Single video $videoId lengthText=$lengthText durationSec=$lengthSec")
+                    if (lengthSec != null) singleVideoDurationSec = lengthSec
+                    if (lengthText != null) {
+                        plot = "⏱ $lengthText" + if (plot.isNotEmpty()) "\n$plot" else ""
+                    }
                 }
 
                 val secondary = m?.get("videoSecondaryInfoRenderer") as? Map<*, *>
@@ -1226,6 +1234,7 @@ class YoutubeProvider(
         return newMovieLoadResponse(title, url, TvType.Movie, videoId) {
             this.posterUrl = poster
             this.plot = plot
+            this.duration = singleVideoDurationSec
 
             if (channelName.isNotBlank()) {
                 this.tags = listOf(channelName)
