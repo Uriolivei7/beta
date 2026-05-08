@@ -281,8 +281,6 @@ class YoutubeSettingsBottomSheet(private val sharedPref: SharedPreferences) : Bo
         }
     }
 
-
-
     class CustomSectionsDialog(private val sharedPref: SharedPreferences) : DialogFragment() {
 
         private val mapper = jacksonObjectMapper()

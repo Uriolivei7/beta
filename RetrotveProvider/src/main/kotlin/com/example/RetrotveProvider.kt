@@ -190,6 +190,82 @@ class RetrotveProvider : MainAPI() {
         }
     }
 
+    private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            val page = app.get(url, referer = referer).text
+            Log.d("RetrotveProvider", "Filemoon: page len=${page.length}")
+
+            val sources = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").findAll(page).toList()
+            if (sources.isNotEmpty()) {
+                sources.forEach { match ->
+                    val videoUrl = match.groupValues[1].replace("\\/", "/")
+                    Log.d("RetrotveProvider", "Filemoon: found $videoUrl")
+                    callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) {
+                        this.referer = "https://filemoon.to/"
+                        this.quality = 1080
+                    })
+                }
+                return
+            }
+
+            val directMp4 = Regex("""https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*""").findAll(page).toList()
+            if (directMp4.isNotEmpty()) {
+                directMp4.forEach { match ->
+                    Log.d("RetrotveProvider", "Filemoon: direct $match.value")
+                    callback(newExtractorLink("Filemoon", "Filemoon", match.value) {
+                        this.referer = "https://filemoon.to/"
+                        this.quality = 1080
+                    })
+                }
+                return
+            }
+
+            Log.d("RetrotveProvider", "Filemoon: no URL found, trying loadExtractor fallback")
+            loadExtractor(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
+            loadExtractor(url, referer, subtitleCallback, callback)
+        }
+    }
+
+    private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        try {
+            val page = app.get(url, referer = referer).text
+            Log.d("RetrotveProvider", "VKVideo: page len=${page.length}")
+
+            val directUrls = Regex("""https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*""").findAll(page).toList()
+            if (directUrls.isNotEmpty()) {
+                directUrls.forEach { match ->
+                    Log.d("RetrotveProvider", "VKVideo: direct $match.value")
+                    callback(newExtractorLink("VKVideo", "VKVideo", match.value) {
+                        this.referer = "https://vk.com/"
+                        this.quality = 1080
+                    })
+                }
+                return
+            }
+
+            val videoUrls = Regex("""(?:video_url|url)\s*[:=]\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(page).toList()
+            if (videoUrls.isNotEmpty()) {
+                videoUrls.forEach { match ->
+                    val videoUrl = match.groupValues[1].replace("\\/", "/")
+                    Log.d("RetrotveProvider", "VKVideo: found $videoUrl")
+                    callback(newExtractorLink("VKVideo", "VKVideo", videoUrl) {
+                        this.referer = "https://vk.com/"
+                        this.quality = 1080
+                    })
+                }
+                return
+            }
+
+            Log.d("RetrotveProvider", "VKVideo: no URL found, trying loadExtractor")
+            loadExtractor(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
+            loadExtractor(url, referer, subtitleCallback, callback)
+        }
+    }
+
     private suspend fun processPlayerPage(
         playerUrl: String,
         referer: String,
@@ -234,16 +310,16 @@ class RetrotveProvider : MainAPI() {
                         extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        Log.d("RetrotveProvider", "-> Filemoon: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Filemoon: using custom extractor for: $fixedSrc")
+                        extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
                         Log.d("RetrotveProvider", "-> OK.RU: using loadExtractor for: $fixedSrc")
                         loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
-                        Log.d("RetrotveProvider", "-> VKVideo: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> VKVideo: using custom extractor for: $fixedSrc")
+                        extractVKVideo(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
                         Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
