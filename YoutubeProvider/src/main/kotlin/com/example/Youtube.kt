@@ -520,11 +520,12 @@ class YoutubeProvider(
             val list = mutableListOf<MainPageData>()
             val isEn = lang == "en"
 
-            if (sharedPref?.getBoolean("show_trending_home", true) == true) {
+            val customSections = getCustomHomepages()
+            val hasEnabledSections = customSections.any { it.isEnabled }
+
+            if (!hasEnabledSections && sharedPref?.getBoolean("show_trending_home", true) == true) {
                 list.add(MainPageData(if (isEn) "Tendencias" else "Principal (Tendencias)", "Home"))
             }
-
-            val customSections = getCustomHomepages()
 
             customSections.filter { it.isEnabled }.forEach { section ->
                 var title = section.name
@@ -974,11 +975,12 @@ class YoutubeProvider(
                             val vidUrl = "$mainUrl/watch?v=$vId"
                             val viewCount = formatViews(safeGet(videoRenderer, "viewCountText", "simpleText") as? String)
                             val publishedTime = extractTitle(safeGet(videoRenderer, "publishedTimeText") as? Map<*, *>)
+                            val durationText = extractTitle(safeGet(videoRenderer, "lengthText") as? Map<*, *>)
 
                             collectTo.add(newEpisode(vidUrl) {
                                 this.name = vidTitle
                                 this.posterUrl = thumb
-                                this.description = listOfNotNull(viewCount, publishedTime).joinToString(" • ")
+                                this.description = listOfNotNull(durationText, viewCount, publishedTime).joinToString(" • ")
                             })
                         }
                     }
