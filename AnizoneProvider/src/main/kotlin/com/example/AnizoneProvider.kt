@@ -64,12 +64,27 @@ class AnizoneProvider : MainAPI() {
         private var resolving = false
     }
 
+    private fun isWvAlive(): Boolean {
+        val view = wv ?: return false
+        return !view.isDestroyedCompat()
+    }
+
+    private fun WebView.isDestroyedCompat(): Boolean {
+        return try { javaClass.getMethod("isDestroyed").invoke(this) as Boolean } catch (_: Exception) { false }
+    }
+
+    private fun destroyWv() {
+        try { wv?.destroy() } catch (_: Exception) {}
+        wv = null
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private suspend fun ensureWebView(): Boolean {
-        if (wv != null) return true
+        if (isWvAlive()) return true
+        destroyWv()
         val ctx = pluginContext ?: return false
         if (resolving) {
-            for (i in 1..60) { if (wv != null) return true; delay(1000) }
+            for (i in 1..60) { if (isWvAlive()) return true; delay(1000) }
             return false
         }
         resolving = true
@@ -95,7 +110,7 @@ class AnizoneProvider : MainAPI() {
                     val dialog = AlertDialog.Builder(ctx)
                         .setTitle("AniZone - Resuelve Cloudflare")
                         .setView(layout)
-                        .setNegativeButton("Cancelar") { _, _ -> try { webView.destroy() } catch (_: Exception) {}; done(false) }
+                        .setNegativeButton("Cancelar") { _, _ -> destroyWv(); done(false) }
                         .setCancelable(false)
                         .create()
 
@@ -109,6 +124,9 @@ class AnizoneProvider : MainAPI() {
                                 view.evaluateJavascript("document.querySelector('div[wire\\\\:key]') !== null") { r ->
                                     if (r == "true") {
                                         wv = view
+                                        CookieManager.getInstance().getCookie("$mainUrl/images")?.let {
+                                            this@AnizoneProvider.syncCookies(it)
+                                        }
                                         dialog.dismiss()
                                         done(true)
                                     }
@@ -126,18 +144,37 @@ class AnizoneProvider : MainAPI() {
         }
     }
 
+    private fun syncCookies(cookieStr: String) {
+        for (part in cookieStr.split(";")) {
+            val t = part.trim(); val i = t.indexOf('=')
+            if (i > 0) {
+                val name = t.substring(0, i)
+                val value = t.substring(i + 1)
+                CookieManager.getInstance().setCookie("$mainUrl/", "$name=$value; domain=.anizone.to; path=/")
+            }
+        }
+        CookieManager.getInstance().flush()
+    }
+
     private suspend fun wvGet(url: String): Document {
-        val view = wv ?: throw Exception("WebView no disponible")
+        if (!isWvAlive()) throw Exception("WebView destruido")
+        val view = wv!!
         return withContext(Dispatchers.Main) {
             suspendCoroutine { cont ->
                 var resumed = false
+                var timeout = true
+                val timer = android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (!resumed) { resumed = true; timeout = true; cont.resume(Jsoup.parse("<html><body></body></html>", url)) }
+                }, 15000)
                 view.stopLoading()
                 view.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(v: WebView, u: String) {
                         if (resumed) return
+                        android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacksAndMessages(null)
                         v.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { html ->
                             if (!resumed) {
                                 resumed = true
+                                timeout = false
                                 val decoded = try {
                                     JSONObject("{\"h\":$html}").getString("h")
                                 } catch (e: Exception) {
@@ -153,29 +190,9 @@ class AnizoneProvider : MainAPI() {
         }
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        if (!ensureWebView()) return newHomePageResponse(HomePageList(request.name, emptyList()), false)
-        return try {
-            val url = "$mainUrl/${request.data}"
-            val doc = wvGet(url)
-            val items = doc.select("div[wire:key]")
-            items.take(3).forEachIndexed { i, el ->
-                Log.d("AniZone", "getMainPage item[$i]: html=${el.html().take(300)}")
-                Log.d("AniZone", "getMainPage item[$i]: img=${el.selectFirst("img")} a=${el.selectFirst("a")?.attr("href")}")
-            }
-            newHomePageResponse(HomePageList(request.name, items.map { toResult(it) }),
-                hasNext = false)
-        } catch (e: Exception) {
-            Log.e("AniZone", "getMainPage: ${e.message}")
-            newHomePageResponse(HomePageList(request.name, emptyList()), false)
-        }
-    }
-
     private fun imgSrc(img: Element?): String? {
         if (img == null) return null
-        val src = img.attr("src").ifEmpty { img.attr("data-src").ifEmpty { img.attr("data-lazy-src") } }.ifEmpty { null }
-        Log.d("AniZone", "imgSrc: src='${img.attr("src")}' data-src='${img.attr("data-src")}' data-lazy-src='${img.attr("data-lazy-src")}' -> '$src'")
-        return src
+        return img.attr("src").ifEmpty { img.attr("data-src").ifEmpty { img.attr("data-lazy-src") } }.ifEmpty { null }
     }
 
     private fun toResult(post: Element) = newMovieSearchResponse(
@@ -184,57 +201,72 @@ class AnizoneProvider : MainAPI() {
         TvType.Movie
     ) { this.posterUrl = imgSrc(post.selectFirst("img")) }
 
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        try { if (!ensureWebView()) return newHomePageResponse(HomePageList(request.name, emptyList()), false) }
+        catch (e: Exception) { Log.e("AniZone", "getMainPage ensure: ${e.message}"); return newHomePageResponse(HomePageList(request.name, emptyList()), false) }
+        return try {
+            val doc = wvGet("$mainUrl/${request.data}")
+            newHomePageResponse(HomePageList(request.name, doc.select("div[wire:key]").map { toResult(it) }), hasNext = false)
+        } catch (e: Exception) {
+            Log.e("AniZone", "getMainPage: ${e.message}")
+            destroyWv()
+            newHomePageResponse(HomePageList(request.name, emptyList()), false)
+        }
+    }
+
     override suspend fun quickSearch(query: String) = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (!ensureWebView()) return emptyList()
+        try { if (!ensureWebView()) return emptyList() }
+        catch (e: Exception) { Log.e("AniZone", "search ensure: ${e.message}"); return emptyList() }
         return try {
             val doc = wvGet("$mainUrl/anime?search=$query")
-            val items = doc.select("div[wire:key]")
-            items.take(3).forEachIndexed { i, el ->
-                Log.d("AniZone", "search item[$i]: html=${el.html().take(300)}")
-                Log.d("AniZone", "search item[$i]: img=${el.selectFirst("img")?.let { "alt=${it.attr("alt")} src=${it.attr("src")}" }} a=${el.selectFirst("a")?.attr("href")}")
-            }
-            if (items.isEmpty()) Log.w("AniZone", "search: 0 items para query='$query'")
-            items.mapNotNull { toResult(it) }
+            doc.select("div[wire:key]").mapNotNull { toResult(it) }
         } catch (e: Exception) {
             Log.e("AniZone", "search: ${e.message}")
+            destroyWv()
             emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
+        try { if (!ensureWebView()) throw Exception("No WebView") }
+        catch (e: Exception) { throw e }
         val doc = wvGet(url)
         val title = doc.selectFirst("h1")?.text() ?: throw NotImplementedError("No title")
-        val imdbId = doc.selectFirst("a[href*='imdb.com']")?.attr("href")?.substringAfter("title/")?.trimEnd('/', ' ', '?')
-            ?.let { if (it.startsWith("tt") && it.length > 2) it else "tt0000000" } ?: "tt0000000"
 
-        val episodes = doc.select("li[x-data]").map { elt ->
-            newEpisode(data = elt.selectFirst("a")?.attr("href") ?: "") {
+        val poster = imgSrc(doc.selectFirst("meta[property=og:image]"))
+            ?: imgSrc(doc.selectFirst("main img, .poster img, .card img"))
+            ?: imgSrc(doc.selectFirst("img[src*='/storage/'], img[src*='/images/anime/']"))
+
+        val eps = doc.select("li[x-data]").mapNotNull { elt ->
+            val a = elt.selectFirst("a") ?: return@mapNotNull null
+            newEpisode(data = a.attr("href")) {
                 this.name = elt.selectFirst("h3")?.text()?.substringAfter(":")?.trim()
-                this.season = 0; this.posterUrl = elt.selectFirst("img")?.attr("src")
-                this.data = "${elt.selectFirst("a")?.attr("href")}|||$imdbId"
-                this.date = elt.selectFirst("span[title]")?.selectFirst("span.line-clamp-1")?.text()?.trim()
+                this.season = 0; this.posterUrl = imgSrc(elt.selectFirst("img"))
+                this.data = "${a.attr("href")}|||"
+                this.date = elt.selectFirst("span[title] span.line-clamp-1")?.text()?.trim()
                     ?.replace(Regex("\\s+"), "")?.ifEmpty { null }?.let {
                     try { SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).parse(it)?.time } catch (e: Exception) { null }
                 } ?: 0L
             }
         }
+
         return newAnimeLoadResponse(title, url, TvType.Anime) {
-            val posterEl = doc.selectFirst("main img, .poster img, img[alt*='$title'], img[src*='/storage/']")
-            this.posterUrl = imgSrc(posterEl)
-            Log.d("AniZone", "load poster: selectors found=$posterEl, url=${this.posterUrl}")
+            this.posterUrl = poster
             this.plot = doc.selectFirst(".sr-only + div")?.text() ?: ""
             this.tags = doc.select("a[wire:navigate][wire:key]").map { it.text() }
             this.year = doc.select("span.inline-block").map { it.text() }.getOrNull(3)?.toIntOrNull()
             this.showStatus = when (doc.select("span.inline-block").map { it.text() }.getOrNull(1)) {
                 "Completed" -> ShowStatus.Completed; "Ongoing" -> ShowStatus.Ongoing; else -> null
             }
-            addEpisodes(DubStatus.None, episodes)
+            addEpisodes(DubStatus.None, eps)
         }
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+        try { if (!ensureWebView()) return false }
+        catch (e: Exception) { return false }
         val episodeUrl = data.split("|||")[0]
         val doc = wvGet(episodeUrl)
         val sourceName = doc.selectFirst("span.truncate")?.text() ?: ""
