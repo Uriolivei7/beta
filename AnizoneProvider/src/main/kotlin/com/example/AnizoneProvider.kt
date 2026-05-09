@@ -34,6 +34,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -55,13 +57,14 @@ class AnizoneProvider : MainAPI() {
     override val hasDownloadSupport = true
     override val usesWebView = true
     override val mainPage = mainPageOf(
-        "anime" to "Animes", "peliculas" to "Películas", "mas-contenido" to "Más Contenido"
+        "anime" to "Animes"
     )
 
     companion object {
         var pluginContext: Context? = null
         private var wv: WebView? = null
         private var resolving = false
+        private val wvMutex = Mutex()
     }
 
     private fun destroyWv() {
@@ -69,9 +72,32 @@ class AnizoneProvider : MainAPI() {
         wv = null
     }
 
+    private suspend fun tryDirectGet(url: String): Document? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val doc = Jsoup.connect(url)
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "en-US,en;q=0.5")
+                    .timeout(8000)
+                    .followRedirects(true)
+                    .get()
+                if (doc.title().contains("anizone", ignoreCase = true) || doc.select("div[wire\\:key]").isNotEmpty() || doc.selectFirst("h1") != null) {
+                    Log.e("AniZone", "tryDirectGet OK: ${url.take(60)}... (${doc.text().length} chars)")
+                    doc
+                } else { Log.e("AniZone", "tryDirectGet: contenido inesperado para $url"); null }
+            } catch (e: Exception) {
+                Log.e("AniZone", "tryDirectGet fallo para ${url.take(60)}: ${e.message}")
+                null
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private suspend fun ensureWebView(): Boolean {
         if (wv != null) { Log.e("AniZone", "ensureWebView: wv existe"); return true }
+        val directTest = tryDirectGet("$mainUrl/anime")
+        if (directTest != null) { Log.e("AniZone", "ensureWebView: acceso directo OK, sin Cloudflare"); return true }
         val ctx = pluginContext ?: run { Log.e("AniZone", "ensureWebView: pluginContext null"); return false }
         if (resolving) {
             Log.e("AniZone", "ensureWebView: esperando resolucion...")
@@ -137,40 +163,60 @@ class AnizoneProvider : MainAPI() {
 
     private suspend fun wvGet(url: String): Document {
         Log.e("AniZone", "wvGet: $url")
-        val view = wv ?: throw Exception("WebView null")
-        return withContext(Dispatchers.Main) {
-            suspendCoroutine { cont ->
-                var resumed = false
-                val timeoutRunnable = Runnable {
-                    if (!resumed) { resumed = true; Log.e("AniZone", "wvGet timeout: $url"); cont.resume(Jsoup.parse("<html><body></body></html>", url)) }
-                }
-                val handler = android.os.Handler(android.os.Looper.getMainLooper())
-                handler.postDelayed(timeoutRunnable, 15000)
-                try {
-                    view.stopLoading()
-                    view.webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(v: WebView, u: String) {
-                            if (resumed) return
-                            handler.removeCallbacks(timeoutRunnable)
-                            v.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { html ->
-                                if (!resumed) {
-                                    resumed = true
-                                    val decoded = try {
-                                        JSONObject("{\"h\":$html}").getString("h")
-                                    } catch (e: Exception) {
-                                        html?.removeSurrounding("\"")?.replace("\\\"", "\"")?.replace("\\n", "\n") ?: ""
+        val direct = tryDirectGet(url)
+        if (direct != null) return direct
+        Log.e("AniZone", "wvGet: usando WebView como fallback para $url")
+        val view = wv ?: throw Exception("WebView null (directo tambien fallo)")
+        return wvMutex.withLock {
+            withContext(Dispatchers.Main) {
+                suspendCoroutine { cont ->
+                    var resumed = false
+                    val timeoutRunnable = Runnable {
+                        if (!resumed) {
+                            resumed = true; Log.e("AniZone", "wvGet timeout: $url"); cont.resume(
+                                Jsoup.parse("<html><body></body></html>", url)
+                            )
+                        }
+                    }
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                    handler.postDelayed(timeoutRunnable, 15000)
+                    try {
+                        view.stopLoading()
+                        view.webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(v: WebView, u: String) {
+                                if (resumed) return
+                                handler.removeCallbacks(timeoutRunnable)
+                                v.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { html ->
+                                    if (!resumed) {
+                                        resumed = true
+                                        val decoded = try {
+                                            JSONObject("{\"h\":$html}").getString("h")
+                                        } catch (e: Exception) {
+                                            html?.removeSurrounding("\"")?.replace("\\\"", "\"")
+                                                ?.replace("\\n", "\n") ?: ""
+                                        }
+                                        Log.e(
+                                            "AniZone",
+                                            "wvGet OK: ${url.take(60)}... (${decoded.length} chars)"
+                                        )
+                                        cont.resume(Jsoup.parse(decoded, url))
                                     }
-                                    Log.e("AniZone", "wvGet OK: ${url.take(60)}... (${decoded.length} chars)")
-                                    cont.resume(Jsoup.parse(decoded, url))
                                 }
                             }
                         }
+                        view.loadUrl(url)
+                    } catch (e: Exception) {
+                        handler.removeCallbacks(timeoutRunnable)
+                        if (!resumed) {
+                            resumed = true; cont.resume(
+                                Jsoup.parse(
+                                    "<html><body></body></html>",
+                                    url
+                                )
+                            )
+                        }
+                        throw e
                     }
-                    view.loadUrl(url)
-                } catch (e: Exception) {
-                    handler.removeCallbacks(timeoutRunnable)
-                    if (!resumed) { resumed = true; cont.resume(Jsoup.parse("<html><body></body></html>", url)) }
-                    throw e
                 }
             }
         }
