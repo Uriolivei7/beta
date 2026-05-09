@@ -84,25 +84,30 @@ class AnizoneProvider : MainAPI() {
         resolving = true
         return withContext(Dispatchers.Main) {
             suspendCoroutine { cont ->
+                var resumed = false
+                fun done(v: Boolean) { if (!resumed) { resumed = true; resolving = !v; cont.resume(v) } }
                 try {
-                    val webView = WebView(ctx.applicationContext)
-                    webView.settings.javaScriptEnabled = true
-                    webView.settings.domStorageEnabled = true
-                    webView.settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    val webView = WebView(ctx.applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    }
 
-                    val prog = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal)
-                    prog.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8)
+                    val prog = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8)
+                    }
 
-                    val layout = LinearLayout(ctx)
-                    layout.orientation = LinearLayout.VERTICAL
-                    layout.addView(prog)
-                    layout.addView(webView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    val layout = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(prog)
+                        addView(webView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    }
 
                     val dialog = AlertDialog.Builder(ctx)
                         .setTitle("AniZone - Resuelve Cloudflare")
                         .setView(layout)
-                        .setNegativeButton("Cancelar") { _, _ -> try { webView.destroy() } catch (_: Exception) {}; cont.resume(false) }
+                        .setNegativeButton("Cancelar") { _, _ -> try { webView.destroy() } catch (_: Exception) {}; done(false) }
                         .setCancelable(false)
                         .create()
 
@@ -111,6 +116,7 @@ class AnizoneProvider : MainAPI() {
                     }
                     webView.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView, url: String) {
+                            if (resumed) return
                             if (url.contains("anizone.to") && !url.contains("/cdn-cgi/")) {
                                 view.evaluateJavascript("document.querySelector('main div[wire\\\\:snapshot]') !== null") { r ->
                                     if (r == "true") {
@@ -123,8 +129,7 @@ class AnizoneProvider : MainAPI() {
                                             }
                                         }
                                         dialog.dismiss()
-                                        resolving = false
-                                        cont.resume(true)
+                                        done(true)
                                     }
                                 }
                             }
@@ -134,8 +139,7 @@ class AnizoneProvider : MainAPI() {
                     dialog.show()
                 } catch (e: Exception) {
                     Log.e("AniZone", "Error WebView: ${e.message}")
-                    resolving = false
-                    cont.resume(false)
+                    done(false)
                 }
             }
         }
@@ -145,16 +149,21 @@ class AnizoneProvider : MainAPI() {
         val view = getWv() ?: throw Exception("WebView no disponible")
         return withContext(Dispatchers.Main) {
             suspendCoroutine { cont ->
+                var resumed = false
                 view.stopLoading()
                 view.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(v: WebView, u: String) {
+                        if (resumed) return
                         v.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { html ->
-                            val decoded = try {
-                                JSONObject("{\"h\":$html}").getString("h")
-                            } catch (e: Exception) {
-                                html?.removeSurrounding("\"")?.replace("\\\"", "\"")?.replace("\\n", "\n") ?: ""
+                            if (!resumed) {
+                                resumed = true
+                                val decoded = try {
+                                    JSONObject("{\"h\":$html}").getString("h")
+                                } catch (e: Exception) {
+                                    html?.removeSurrounding("\"")?.replace("\\\"", "\"")?.replace("\\n", "\n") ?: ""
+                                }
+                                cont.resume(Jsoup.parse(decoded, url))
                             }
-                            cont.resume(Jsoup.parse(decoded, url))
                         }
                     }
                 }
@@ -167,13 +176,17 @@ class AnizoneProvider : MainAPI() {
         val view = getWv() ?: throw Exception("WebView no disponible")
         return withContext(Dispatchers.Main) {
             suspendCoroutine { cont ->
+                var resumed = false
                 view.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { html ->
-                    val decoded = try {
-                        JSONObject("{\"h\":$html}").getString("h")
-                    } catch (e: Exception) {
-                        html?.removeSurrounding("\"")?.replace("\\\"", "\"")?.replace("\\n", "\n") ?: ""
+                    if (!resumed) {
+                        resumed = true
+                        val decoded = try {
+                            JSONObject("{\"h\":$html}").getString("h")
+                        } catch (e: Exception) {
+                            html?.removeSurrounding("\"")?.replace("\\\"", "\"")?.replace("\\n", "\n") ?: ""
+                        }
+                        cont.resume(Jsoup.parse(decoded, view.url ?: mainUrl))
                     }
-                    cont.resume(Jsoup.parse(decoded, view.url ?: mainUrl))
                 }
             }
         }
@@ -184,6 +197,7 @@ class AnizoneProvider : MainAPI() {
         val encoded = URLEncoder.encode(jsonBody, "UTF-8")
         return withContext(Dispatchers.Main) {
             suspendCoroutine { cont ->
+                var resumed = false
                 view.evaluateJavascript(
                     "fetch('$url', {" +
                     "  method: 'POST'," +
@@ -193,14 +207,20 @@ class AnizoneProvider : MainAPI() {
                     ".catch(e => { window.__wvR = 'ERROR:' + e; window.__wvD = true; })"
                 ) {
                     fun poll(n: Int) {
-                        if (n <= 0) { cont.resume(""); return }
+                        if (resumed) return
+                        if (n <= 0) { resumed = true; cont.resume(""); return }
                         view.evaluateJavascript("window.__wvD") { d ->
-                            if (d == "true") {
-                                view.evaluateJavascript("window.__wvR") { r ->
-                                    cont.resume(r?.removeSurrounding("\"")?.replace("\\\"", "\"") ?: "")
+                            if (!resumed) {
+                                if (d == "true") {
+                                    view.evaluateJavascript("window.__wvR") { r ->
+                                        if (!resumed) {
+                                            resumed = true
+                                            cont.resume(r?.removeSurrounding("\"")?.replace("\\\"", "\"") ?: "")
+                                        }
+                                    }
+                                } else {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ poll(n - 1) }, 500)
                                 }
-                            } else {
-                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ poll(n - 1) }, 500)
                             }
                         }
                     }
