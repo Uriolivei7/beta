@@ -7,6 +7,7 @@ import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -109,21 +110,37 @@ class AnizoneProvider : MainAPI() {
                     webView.settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     webView.settings.userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.83 Mobile Safari/537.36"
 
-                    webView.loadUrl(url)
-
+                    var autoClosed = false
                     val dialog = AlertDialog.Builder(ctx)
-                        .setTitle("Cloudflare - Resuelve el desafío")
-                        .setMessage("Resuelve el captcha en el navegador y presiona Listo")
+                        .setTitle("AniZone - Cloudflare")
+                        .setMessage("Resolvé el desafío en el navegador. Se cerrará solo automáticamente.")
                         .setView(webView)
-                        .setPositiveButton("Listo") { _, _ ->
-                            captureCookiesFromWebView(url)
-                            cont.resume(Unit)
+                        .setNegativeButton("Cancelar") { d, _ ->
+                            if (!autoClosed) { autoClosed = true; d.dismiss(); cont.resume(Unit) }
                         }
-                        .setNegativeButton("Cancelar") { _, _ ->
-                            cont.resume(Unit)
-                        }
-                        .setOnCancelListener { cont.resume(Unit) }
+                        .setCancelable(false)
                         .create()
+
+                    webView.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String) {
+                            if (autoClosed) return
+                            if (!url.contains("/cdn-cgi/") && !url.contains("challenges.cloudflare.com")) {
+                                view.evaluateJavascript(
+                                    "document.querySelector('main div[wire\\\\:snapshot]') !== null",
+                                ) { result ->
+                                    if (result == "true" && !autoClosed) {
+                                        autoClosed = true
+                                        Log.d("AniZone", "WebView: desafío resuelto")
+                                        captureCookiesFromWebView(url)
+                                        dialog.dismiss()
+                                        cont.resume(Unit)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    webView.loadUrl(url)
                     dialog.show()
                 } catch (e: Exception) {
                     Log.e("AniZone", "Error WebView: ${e.message}")
