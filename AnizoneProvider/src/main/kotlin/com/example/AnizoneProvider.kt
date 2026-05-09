@@ -62,62 +62,74 @@ class AnizoneProvider : MainAPI() {
     )
 
     private suspend fun fetchWithCF(url: String): NiceResponse {
-        val cached = cachedCookies
-
-        // First try without CloudflareKiller in case IP is already whitelisted
-        val firstTry = app.get(url,
-            cookies = cached ?: emptyMap(),
+        val response = app.get(url,
+            interceptor = cloudflareKiller,
+            cookies = cachedCookies ?: emptyMap(),
             headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         )
-        val snippet = firstTry.text.take(500)
-        Log.d("AniZoneCF", "First try (no CFKiller): HTTP ${firstTry.code}, starts with: ${snippet.take(100)}")
-        if (!snippet.contains("Just a moment", ignoreCase = true) && snippet.contains("wire:snapshot", ignoreCase = true)) {
-            cachedCookies = firstTry.cookies
-            return firstTry
+        if (response.cookies.isNotEmpty()) {
+            cachedCookies = response.cookies
         }
-
-        // Fallback: try with CloudflareKiller interceptor
-        val response = app.get(url, interceptor = cloudflareKiller,
-            cookies = cached ?: emptyMap(),
-            headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        )
-        val snippet2 = response.text.take(500)
-        Log.d("AniZoneCF", "Second try (CFKiller): HTTP ${response.code}, starts with: ${snippet2.take(100)}")
-        cachedCookies = response.cookies
         return response
     }
 
     companion object {
         var cachedCookies: Map<String, String>? = null
+
+        fun setCookiesFromCurl(cookieHeader: String) {
+            cachedCookies = cookieHeader.split(";").associate { part ->
+                val trimmed = part.trim()
+                val idx = trimmed.indexOf('=')
+                if (idx == -1) trimmed to "" else trimmed.substring(0, idx) to trimmed.substring(idx + 1)
+            }
+            Log.d("AniZoneCF", "Cookies inyectadas: ${cachedCookies?.keys}")
+        }
     }
+
+    private fun isCloudflareChallenge(text: String): Boolean =
+        text.contains("Just a moment", ignoreCase = true) ||
+        text.contains("/cdn-cgi/challenge-platform", ignoreCase = true)
+
     private suspend fun initializeLiveWire(): Boolean {
         if (!wireData["wireSnapshot"].isNullOrBlank()) return true
 
-        try {
-            val initReq = fetchWithCF("$mainUrl/anime")
+        var cfDetected = false
+        for (attempt in 1..30) {
+            try {
+                val initReq = fetchWithCF("$mainUrl/anime")
+                val doc = initReq.document
+                val csrfToken = doc.select("script[data-csrf]").attr("data-csrf")
+                val snapshot = getSnapshot(doc)
 
-            val doc = initReq.document
+                if (csrfToken.isNotBlank() && snapshot.isNotBlank()) {
+                    this.cookies = initReq.cookies.toMutableMap()
+                    wireData["token"] = csrfToken
+                    wireData["wireSnapshot"] = snapshot
+                    sortAnimeLatest()
+                    Log.d("AniZone Init", "LiveWire inicializado OK en intento $attempt")
+                    return true
+                }
 
-            val csrfToken = doc.select("script[data-csrf]").attr("data-csrf")
-            val snapshot = getSnapshot(doc)
+                val htmlPreview = initReq.text.take(500)
 
-            if (csrfToken.isBlank() || snapshot.isBlank()) {
-                val htmlPreview = initReq.text.take(1000)
-                Log.e("AniZone Init", "Fallo la inicialización: token o snapshot vacíos. HTML recibido (primeros 1000 chars):\n$htmlPreview")
-                return false
+                if (isCloudflareChallenge(htmlPreview)) {
+                    if (!cfDetected) {
+                        cfDetected = true
+                        Log.w("AniZone Init", "Cloudflare detectado. Si ves un WebView, resolve el desafío. Reintentando cada 5s...")
+                    }
+                    Log.d("AniZone Init", "Cloudflare - intento $attempt/30, esperando 5s...")
+                    delay(5000)
+                } else {
+                    Log.e("AniZone Init", "HTML inesperado (no Cloudflare ni LiveWire): $htmlPreview")
+                    return false
+                }
+            } catch (e: Exception) {
+                Log.e("AniZone Init", "Intento $attempt - Error: ${e.message}")
+                delay(3000)
             }
-
-            this.cookies = initReq.cookies.toMutableMap()
-            wireData["token"] = csrfToken
-            wireData["wireSnapshot"] = snapshot
-
-            sortAnimeLatest()
-            return true
-
-        } catch (e: Exception) {
-            Log.e("AniZone Init", "Error fatal durante initializeLiveWire: ${e.message}")
-            return false
         }
+        Log.e("AniZone Init", "No se pudo inicializar LiveWire después de 30 intentos.")
+        return false
     }
 
     private suspend fun sortAnimeLatest() {
@@ -127,7 +139,6 @@ class AnizoneProvider : MainAPI() {
             Log.e("AniZone Init", "Error al ejecutar sortAnimeLatest (Livewire): ${e.message}")
         }
     }
-
 
     private fun getSnapshot(doc : Document) : String {
         return doc.select("main div[wire:snapshot]")
@@ -182,7 +193,6 @@ class AnizoneProvider : MainAPI() {
         if (bodyString.trim().startsWith("<!DOCTYPE", ignoreCase = true) ||
             bodyString.trim().startsWith("<html", ignoreCase = true)) {
             Log.e("AniZone", "Respuesta inesperada: Recibido HTML/<!DOCTYPE en lugar de JSON. El sitio podría estar bloqueando el acceso o mostrando un CAPTCHA/error.")
-
             throw Exception("Livewire no devolvió JSON. Código de estado HTTP: ${req.code}. URL: ${req.url}")
         }
 
@@ -246,16 +256,13 @@ class AnizoneProvider : MainAPI() {
         return newMovieSearchResponse(title, url, TvType.Movie) {
             this.posterUrl = post.selectFirst("img")
                 ?.attr("src")
-
         }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-
         initializeLiveWire()
-
         val doc = getHtmlFromWire(liveWireBuilder(mapOf("search" to query),mutableListOf(), this.cookies,
             this.wireData,false))
         return doc.select("div[wire:key]").mapNotNull { toResult(it) }
@@ -329,7 +336,6 @@ class AnizoneProvider : MainAPI() {
                     ?.ifEmpty { null }
                     ?.let { dateText ->
                         Log.d("AniZone", "Fecha encontrada para ${this.name}: $dateText")
-
                         try {
                             val parsedTime = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).parse(dateText)?.time
                             Log.d("AniZone", "Parseo exitoso para ${this.name}: $parsedTime")
@@ -361,8 +367,6 @@ class AnizoneProvider : MainAPI() {
         val parts = data.split("|||")
         val episodeUrl = parts[0]
 
-        Log.d("AniZoneSub", "-> Iniciando loadLinks para: $episodeUrl")
-
         val webReq = fetchWithCF(episodeUrl)
         val web = webReq.document
         val cookie = webReq.cookies
@@ -370,10 +374,7 @@ class AnizoneProvider : MainAPI() {
         val mediaPlayer = web.selectFirst("media-player")
         val m3U8 = mediaPlayer?.attr("src") ?: ""
 
-        Log.d("AniZoneSub", "-> Source: $sourceName, M3U8: $m3U8")
-
         mediaPlayer?.select("track")?.forEach {
-            Log.d("AniZoneSub", "-> [AniZone] Subtítulo encontrado: ${it.attr("label")}")
             subtitleCallback.invoke(
                 newSubtitleFile(
                     it.attr("label"),
