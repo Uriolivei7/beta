@@ -17,12 +17,13 @@ import com.lagradost.cloudstream3.newAnimeLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.delay
 import org.json.JSONObject
-import org.jsoup.Connection
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -32,6 +33,7 @@ import android.util.Log
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import com.lagradost.cloudstream3.newSubtitleFile
+import com.lagradost.nicehttp.NiceResponse
 
 class AnizoneProvider : MainAPI() {
 
@@ -46,21 +48,37 @@ class AnizoneProvider : MainAPI() {
     override val hasMainPage = true
     override val hasQuickSearch = true
     override val hasDownloadSupport = true
+    override val usesWebView = true
     override val mainPage = mainPageOf(
         "2" to "Animes",
         "4" to "Películas",
         "6" to "Más Contenido"
     )
+    private val cloudflareKiller = CloudflareKiller()
     private var cookies = mutableMapOf<String, String>()
     private var wireData = mutableMapOf(
         "wireSnapshot" to "",
         "token" to ""
     )
+
+    private suspend fun fetchWithCF(url: String): NiceResponse {
+        val cached = cachedCookies
+        val response = app.get(url, interceptor = cloudflareKiller,
+            cookies = cached ?: emptyMap(),
+            headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        )
+        cachedCookies = response.cookies
+        return response
+    }
+
+    companion object {
+        var cachedCookies: Map<String, String>? = null
+    }
     private suspend fun initializeLiveWire(): Boolean {
         if (!wireData["wireSnapshot"].isNullOrBlank()) return true
 
         try {
-            val initReq = app.get("$mainUrl/anime")
+            val initReq = fetchWithCF("$mainUrl/anime")
 
             val doc = initReq.document
 
@@ -227,12 +245,11 @@ class AnizoneProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val r = Jsoup.connect(url)
-            .method(Connection.Method.GET).execute()
-        val doc = Jsoup.parse(r.body())
-        val cookie = r.cookies()
+        val r = fetchWithCF(url)
+        val doc = r.document
+        val cookie = r.cookies.toMutableMap()
         val wireData = mutableMapOf(
-            "wireSnapshot" to getSnapshot(doc=r.parse()),
+            "wireSnapshot" to getSnapshot(doc),
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
         )
         val title = doc.selectFirst("h1")?.text()
@@ -329,7 +346,7 @@ class AnizoneProvider : MainAPI() {
 
         Log.d("AniZoneSub", "-> Iniciando loadLinks para: $episodeUrl")
 
-        val webReq = app.get(episodeUrl)
+        val webReq = fetchWithCF(episodeUrl)
         val web = webReq.document
         val cookie = webReq.cookies
         val sourceName = web.selectFirst("span.truncate")?.text() ?: ""
