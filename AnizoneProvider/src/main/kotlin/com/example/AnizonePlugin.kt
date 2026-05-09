@@ -7,6 +7,10 @@ import android.content.Context
 @CloudstreamPlugin
 class AnizonePlugin: Plugin() {
     override fun load(context: Context) {
+        // Cookies de sesión (cuando expiren, reemplazar desde curl -b)
+        AnizoneProvider.setCookiesFromCurl(
+            "cf_clearance=ecMwjcfqU6IJuWmUiX.38EPXuKXo4zeofxJTmnep0Yw-1778352425-1.2.1.1-Vgr9NLzTYGobBDkcjP0EcDuHKZPIXDaJVFXVNlS.6nDnqpeQj6nbvV4Oht4eYnUdKn1kzeiGNyRESS6PpHGBJjvV_wPqNg9QWfXLfyeX1ek3oC0cWS9J8KWe8G9fwTvbDDlxfQGqYc62161MRa_imzDj1ogHrURXKK219tl1GC3JUWUNDvtqGNROhO9.XF8ClI6RUdhvKprC6S51VXh51DuG2YVbjd_9YjxQfIqHLFKQcBkwscHA.RxicZ_WsE5ito8G8EyZUXqtzesPgp1CCZJfDsqERAJGoWYG833Dm5MUbY_38buqgdumPgjqgEsClERYUO_hKLDLBvZ3YZSw.A; XSRF-TOKEN=eyJpdiI6InJCTG1JZ3NSbThwWmVkbDdWV1ovRFE9PSIsInZhbHVlIjoieUtsT1J3ZUpHbW1uVXNVREhUWTlNSTlDWXFDcnQ5bFVKYURpOHJtL0t5R1F6eGFyV1lEdFZMcFNvOXc3KzlCS1pvOE5IOHcvQUM2TmdISXlEQXlJaUR5TnNhTndtT2Mrb0xYSStpVEY0RE1TWVRvRE1JSXJ1QW1ETW9mUm4wdW4iLCJtYWMiOiI4NWExM2Y4M2QzOTRiZGFiOTliYjAzNzM5ZmEzNDYwNmY5NzllZGY4MjA5MDFmMjFlNTE2ZGQ4MDA0OTJjYmExIiwidGFnIjoiIn0%3D; anizone_session=eyJpdiI6ImpnK1VLUW1uNWFKbll3SUM4dk9WUEE9PSIsInZhbHVlIjoiUW9XdnNxR2gvQ3ZWYnVoL1JUZTZiQmMvMFdRUUFvUmNxVElqTFFRYTdPWk9uS1hFckRmQ1JvcmN4WjEzSFlERUlQU1Y4ckE1bFVvcXl2NVhSb3AzaHZ0Sm5ZY2V5THR1eWc3MVRqb25tdG9aN0JmV3gzenRQNW9iSGFhaGVMVmQiLCJtYWMiOiI2YTU1ZmQwN2YxMDVkOWM1MmQyNzY5ZjliZDYwNDIyYzRkNzY3ZDgxNThiZTlmYjI1ODA2NzEwNmVhOGI4Yzc1IiwidGFnIjoiIn0%3D"
+        )
         registerMainAPI(AnizoneProvider())
     }
 }

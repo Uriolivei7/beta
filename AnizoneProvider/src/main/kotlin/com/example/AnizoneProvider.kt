@@ -17,7 +17,6 @@ import com.lagradost.cloudstream3.newAnimeLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -54,7 +53,6 @@ class AnizoneProvider : MainAPI() {
         "4" to "Películas",
         "6" to "Más Contenido"
     )
-    private val cloudflareKiller = CloudflareKiller()
     private var cookies = mutableMapOf<String, String>()
     private var wireData = mutableMapOf(
         "wireSnapshot" to "",
@@ -63,7 +61,6 @@ class AnizoneProvider : MainAPI() {
 
     private suspend fun fetchWithCF(url: String): NiceResponse {
         val response = app.get(url,
-            interceptor = cloudflareKiller,
             cookies = cachedCookies ?: emptyMap(),
             headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         )
