@@ -63,10 +63,26 @@ class AnizoneProvider : MainAPI() {
 
     private suspend fun fetchWithCF(url: String): NiceResponse {
         val cached = cachedCookies
+
+        // First try without CloudflareKiller in case IP is already whitelisted
+        val firstTry = app.get(url,
+            cookies = cached ?: emptyMap(),
+            headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        )
+        val snippet = firstTry.text.take(500)
+        Log.d("AniZoneCF", "First try (no CFKiller): HTTP ${firstTry.code}, starts with: ${snippet.take(100)}")
+        if (!snippet.contains("Just a moment", ignoreCase = true) && snippet.contains("wire:snapshot", ignoreCase = true)) {
+            cachedCookies = firstTry.cookies
+            return firstTry
+        }
+
+        // Fallback: try with CloudflareKiller interceptor
         val response = app.get(url, interceptor = cloudflareKiller,
             cookies = cached ?: emptyMap(),
             headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         )
+        val snippet2 = response.text.take(500)
+        Log.d("AniZoneCF", "Second try (CFKiller): HTTP ${response.code}, starts with: ${snippet2.take(100)}")
         cachedCookies = response.cookies
         return response
     }
@@ -86,7 +102,8 @@ class AnizoneProvider : MainAPI() {
             val snapshot = getSnapshot(doc)
 
             if (csrfToken.isBlank() || snapshot.isBlank()) {
-                Log.e("AniZone Init", "Fallo la inicialización: token o snapshot vacíos. Esto puede ser un error de HTML/CAPTCHA en la página inicial.")
+                val htmlPreview = initReq.text.take(1000)
+                Log.e("AniZone Init", "Fallo la inicialización: token o snapshot vacíos. HTML recibido (primeros 1000 chars):\n$htmlPreview")
                 return false
             }
 
