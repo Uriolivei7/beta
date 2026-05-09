@@ -158,7 +158,12 @@ class AnizoneProvider : MainAPI() {
         return try {
             val url = "$mainUrl/${request.data}"
             val doc = wvGet(url)
-            newHomePageResponse(HomePageList(request.name, doc.select("div[wire:key]").map { toResult(it) }),
+            val items = doc.select("div[wire:key]")
+            items.take(3).forEachIndexed { i, el ->
+                Log.d("AniZone", "getMainPage item[$i]: html=${el.html().take(300)}")
+                Log.d("AniZone", "getMainPage item[$i]: img=${el.selectFirst("img")} a=${el.selectFirst("a")?.attr("href")}")
+            }
+            newHomePageResponse(HomePageList(request.name, items.map { toResult(it) }),
                 hasNext = false)
         } catch (e: Exception) {
             Log.e("AniZone", "getMainPage: ${e.message}")
@@ -168,11 +173,13 @@ class AnizoneProvider : MainAPI() {
 
     private fun imgSrc(img: Element?): String? {
         if (img == null) return null
-        return img.attr("src").ifEmpty { img.attr("data-src").ifEmpty { img.attr("data-lazy-src") } }.ifEmpty { null }
+        val src = img.attr("src").ifEmpty { img.attr("data-src").ifEmpty { img.attr("data-lazy-src") } }.ifEmpty { null }
+        Log.d("AniZone", "imgSrc: src='${img.attr("src")}' data-src='${img.attr("data-src")}' data-lazy-src='${img.attr("data-lazy-src")}' -> '$src'")
+        return src
     }
 
     private fun toResult(post: Element) = newMovieSearchResponse(
-        post.selectFirst("img")?.attr("alt") ?: "",
+        post.selectFirst("img")?.attr("alt") ?: post.selectFirst("a")?.text() ?: "",
         post.selectFirst("a")?.attr("href") ?: "",
         TvType.Movie
     ) { this.posterUrl = imgSrc(post.selectFirst("img")) }
@@ -183,7 +190,13 @@ class AnizoneProvider : MainAPI() {
         if (!ensureWebView()) return emptyList()
         return try {
             val doc = wvGet("$mainUrl/anime?search=$query")
-            doc.select("div[wire:key]").mapNotNull { toResult(it) }
+            val items = doc.select("div[wire:key]")
+            items.take(3).forEachIndexed { i, el ->
+                Log.d("AniZone", "search item[$i]: html=${el.html().take(300)}")
+                Log.d("AniZone", "search item[$i]: img=${el.selectFirst("img")?.let { "alt=${it.attr("alt")} src=${it.attr("src")}" }} a=${el.selectFirst("a")?.attr("href")}")
+            }
+            if (items.isEmpty()) Log.w("AniZone", "search: 0 items para query='$query'")
+            items.mapNotNull { toResult(it) }
         } catch (e: Exception) {
             Log.e("AniZone", "search: ${e.message}")
             emptyList()
@@ -208,7 +221,9 @@ class AnizoneProvider : MainAPI() {
             }
         }
         return newAnimeLoadResponse(title, url, TvType.Anime) {
-            this.posterUrl = imgSrc(doc.selectFirst("main img, .poster img, img[alt*='$title'], img[src*='/storage/']"))
+            val posterEl = doc.selectFirst("main img, .poster img, img[alt*='$title'], img[src*='/storage/']")
+            this.posterUrl = imgSrc(posterEl)
+            Log.d("AniZone", "load poster: selectors found=$posterEl, url=${this.posterUrl}")
             this.plot = doc.selectFirst(".sr-only + div")?.text() ?: ""
             this.tags = doc.select("a[wire:navigate][wire:key]").map { it.text() }
             this.year = doc.select("span.inline-block").map { it.text() }.getOrNull(3)?.toIntOrNull()
