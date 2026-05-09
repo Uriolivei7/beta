@@ -4,7 +4,7 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Context
 import android.util.Log
-import android.webkit.JavascriptInterface
+import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -59,39 +59,26 @@ class AnizoneProvider : MainAPI() {
     override val mainPage = mainPageOf(
         "2" to "Animes", "4" to "Películas", "6" to "Más Contenido"
     )
+    private var cookies = mutableMapOf<String, String>()
     private var wireData = mutableMapOf("wireSnapshot" to "", "token" to "")
 
     companion object {
         var pluginContext: Context? = null
-        var persistentWebView: WebView? = null
-        var cfResolved = false
-        var resolving = false
+        var cfCookies: Map<String, String>? = null
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private suspend fun resolveCloudflare(): Boolean {
-        if (cfResolved && persistentWebView != null) return true
-        if (resolving) {
-            // Ya hay una resolución en curso, esperar
-            for (i in 1..30) {
-                if (cfResolved) return true
-                delay(1000)
-            }
-            return cfResolved
-        }
-        resolving = true
+        if (cfCookies != null) return true
 
         val ctx = pluginContext ?: return false
         return withContext(Dispatchers.Main) {
             suspendCoroutine { cont ->
                 try {
-                    val webView = WebView(ctx)
+                    val webView = WebView(ctx.applicationContext)
                     webView.settings.javaScriptEnabled = true
                     webView.settings.domStorageEnabled = true
                     webView.settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    webView.settings.userAgentString = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.83 Mobile Safari/537.36"
-                    webView.settings.builtInZoomControls = true
-                    webView.settings.displayZoomControls = false
 
                     val layout = LinearLayout(ctx)
                     layout.orientation = LinearLayout.VERTICAL
@@ -112,11 +99,18 @@ class AnizoneProvider : MainAPI() {
                                 view.evaluateJavascript("document.querySelector('main div[wire\\\\:snapshot]') !== null") { result ->
                                     if (result == "true" && !resolved) {
                                         resolved = true
-                                        Log.d("AniZone", "Cloudflare resuelto")
-                                        persistentWebView = webView.also { (it.parent as? ViewGroup)?.removeView(it) }
-                                        cfResolved = true
+                                        val cookies = CookieManager.getInstance().getCookie("$mainUrl/anime")
+                                        if (cookies != null) {
+                                            cfCookies = cookies.split(";").associate { part ->
+                                                val t = part.trim(); val i = t.indexOf('=')
+                                                if (i == -1) t to "" else t.substring(0, i) to t.substring(i + 1)
+                                            }
+                                            Log.d("AniZone", "Cookies OK: ${cfCookies?.keys}")
+                                        } else {
+                                            Log.w("AniZone", "No se encontraron cookies")
+                                        }
                                         dialog.dismiss()
-                                        cont.resume(true)
+                                        cont.resume(cfCookies != null)
                                     }
                                 }
                             }
@@ -125,97 +119,45 @@ class AnizoneProvider : MainAPI() {
                     webView.loadUrl("$mainUrl/anime")
                     dialog.show()
                 } catch (e: Exception) {
-                    Log.e("AniZone", "Error: ${e.message}")
-                    resolving = false
+                    Log.e("AniZone", "Error en dialogo: ${e.message}")
                     cont.resume(false)
                 }
             }
         }
     }
 
-    private fun decodeHtmlFromJs(jsResult: String?): String? {
-        if (jsResult == null) return null
-        return try {
-            JSONObject("{\"h\":$jsResult}").getString("h")
-        } catch (e: Exception) {
-            Log.e("AniZone", "Error decodificando HTML: ${e.message}")
-            null
+    private suspend fun fetchWithCF(url: String): Document {
+        val headers = mutableMapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.83 Mobile Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "es-ES,es;q=0.9"
+        )
+        val c = cfCookies
+        if (c != null && c.isNotEmpty()) {
+            headers["Cookie"] = c.map { "${it.key}=${it.value}" }.joinToString("; ")
         }
+        val resp = app.get(url, headers = headers)
+        if (resp.cookies.isNotEmpty()) cookies.putAll(resp.cookies)
+        return resp.document
     }
 
-    private suspend fun wvGet(url: String): Document? {
-        val wv = persistentWebView ?: return null
-        return withContext(Dispatchers.Main) {
-            suspendCoroutine { cont ->
-                wv.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView, url: String) {
-                        view.evaluateJavascript("document.documentElement.outerHTML") { html ->
-                            val raw = decodeHtmlFromJs(html)
-                            cont.resume(if (raw != null) Jsoup.parse(raw) else null)
-                        }
-                    }
-                }
-                wv.loadUrl(url)
-            }
-        }
-    }
-
-    private suspend fun wvPost(url: String, jsonBody: String, csrfToken: String): Document? {
-        val wv = persistentWebView ?: return null
-        val encodedBody = java.net.URLEncoder.encode(jsonBody, "UTF-8")
-        return withContext(Dispatchers.Main) {
-            suspendCoroutine { cont ->
-                val jsCode = """
-                    fetch('$url', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json', 'X-CSRF-TOKEN': '$csrfToken', 'Accept': 'application/json'},
-                        body: decodeURIComponent('$encodedBody')
-                    }).then(r => r.text()).then(t => Android.onResult(t));
-                """.trimIndent()
-
-                wv.addJavascriptInterface(object {
-                    @JavascriptInterface
-                    fun onResult(text: String) {
-                        cont.resume(Jsoup.parse(text))
-                    }
-                }, "Android")
-
-                wv.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView, url: String) {
-                        view.evaluateJavascript(jsCode, null)
-                    }
-                }
-                wv.loadDataWithBaseURL(url, "<html><body></body></html>", "text/html", "UTF-8", null)
-            }
-        }
-    }
-
-    private suspend fun fetchPage(url: String): Document? {
-        if (cfResolved && persistentWebView != null) return wvGet(url)
-        return app.get(url, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
-            "Accept" to "text/html,*/*"
-        )).document
-    }
-
-    private suspend fun ensureInitialized(): Boolean {
+    private suspend fun initializeLiveWire(): Boolean {
         if (!wireData["wireSnapshot"].isNullOrBlank()) return true
         val ok = resolveCloudflare()
         if (!ok) return false
 
         for (attempt in 1..5) {
             try {
-                val doc = fetchPage("$mainUrl/anime") ?: continue
-                val csrfToken = doc.select("script[data-csrf]").attr("data-csrf")
-                val snapshot = doc.select("main div[wire:snapshot]").attr("wire:snapshot").replace("&quot;", "\"")
-                if (csrfToken.isNotBlank() && snapshot.isNotBlank()) {
-                    wireData["token"] = csrfToken
-                    wireData["wireSnapshot"] = snapshot
+                val doc = fetchWithCF("$mainUrl/anime")
+                val csrf = doc.select("script[data-csrf]").attr("data-csrf")
+                val snap = doc.select("main div[wire:snapshot]").attr("wire:snapshot").replace("&quot;", "\"")
+                if (csrf.isNotBlank() && snap.isNotBlank()) {
+                    wireData["token"] = csrf
+                    wireData["wireSnapshot"] = snap
                     sortAnimeLatest()
-                    Log.d("AniZone", "Initialized OK")
                     return true
                 }
-                Log.w("AniZone", "Intento $attempt: snapshot='${snapshot.take(40)}' token='${csrfToken.take(20)}'")
+                Log.w("AniZone", "Intento $attempt: token/snapshot vacios. HTTP=${fetchWithCF("$mainUrl/anime")::class.simpleName}")
                 delay(2000)
             } catch (e: Exception) {
                 Log.e("AniZone", "Intento $attempt: ${e.message}")
@@ -226,47 +168,45 @@ class AnizoneProvider : MainAPI() {
     }
 
     private suspend fun sortAnimeLatest() {
-        try { postToLiveWire(mapOf("sort" to "release-desc"), emptyList(), true) }
-        catch (e: Exception) { Log.e("AniZone", "sortAnimeLatest: ${e.message}") }
+        try { liveWireBuilder(mapOf("sort" to "release-desc"), emptyList(), true) }
+        catch (e: Exception) { Log.e("AniZone", "sort: ${e.message}") }
     }
 
-    private suspend fun postToLiveWire(updates: Map<String, String>, calls: List<Map<String, Any>>, remember: Boolean): JSONObject {
+    private suspend fun liveWireBuilder(updates: Map<String, String>, calls: List<Map<String, Any>>, remember: Boolean): JSONObject {
         val payload = mapOf("_token" to wireData["token"], "components" to listOf(
             mapOf("snapshot" to wireData["wireSnapshot"], "updates" to updates, "calls" to calls)
         ))
         val jsonStr = payload.toJson()
         val token = wireData["token"]!!
 
-        if (cfResolved && persistentWebView != null) {
-            val doc = wvPost("$mainUrl/livewire/update", jsonStr, token)
-            if (doc != null) {
-                val json = JSONObject(doc.text())
-                if (remember) wireData["wireSnapshot"] = json.getJSONArray("components").getJSONObject(0).getString("snapshot")
-                return json
-            }
-            throw Exception("wvPost falló")
-        }
+        val headers = mutableMapOf("X-CSRF-TOKEN" to token, "Content-Type" to "application/json")
+        val c = cfCookies
+        if (c != null && c.isNotEmpty()) headers["Cookie"] = c.map { "${it.key}=${it.value}" }.joinToString("; ")
 
         val req = app.post("$mainUrl/livewire/update",
             requestBody = jsonStr.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
-            headers = mapOf("X-CSRF-TOKEN" to token),
-            cookies = mapOf(), referer = "$mainUrl/anime"
+            headers = headers, cookies = cookies, referer = "$mainUrl/anime"
         )
         val body = req.text
         if (body.isBlank() || body.trim().startsWith("<!DOCTYPE") || body.trim().startsWith("<html"))
-            throw Exception("Livewire no devolvió JSON")
+            throw Exception("Livewire no devolvió JSON. HTTP=${req.code}")
         val json = JSONObject(body)
-        if (remember) wireData["wireSnapshot"] = json.getJSONArray("components").getJSONObject(0).getString("snapshot")
+        if (remember) {
+            wireData["wireSnapshot"] = json.getJSONArray("components").getJSONObject(0).getString("snapshot")
+            cookies.putAll(req.cookies)
+        }
         return json
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        if (!ensureInitialized()) return newHomePageResponse(HomePageList(request.name, emptyList()), false)
+        if (!initializeLiveWire()) return newHomePageResponse(HomePageList(request.name, emptyList()), false)
         return try {
-            var doc = getHtmlFromWire(postToLiveWire(mapOf("type" to request.data), emptyList(), true))
+            var doc = Jsoup.parse(liveWireBuilder(mapOf("type" to request.data), emptyList(), true)
+                .getJSONArray("components").getJSONObject(0).getJSONObject("effects").getString("html"))
             for (i in 1 until page) {
                 if (doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") == null) break
-                doc = getHtmlFromWire(postToLiveWire(emptyMap(), listOf(mapOf("path" to "", "method" to "loadMore", "params" to emptyList<String>())), true))
+                doc = Jsoup.parse(liveWireBuilder(emptyMap(), listOf(mapOf("path" to "", "method" to "loadMore", "params" to emptyList<String>())), true)
+                    .getJSONArray("components").getJSONObject(0).getJSONObject("effects").getString("html"))
             }
             newHomePageResponse(HomePageList(request.name, doc.select("div[wire:key]").map { toResult(it) }),
                 hasNext = doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") != null)
@@ -283,13 +223,14 @@ class AnizoneProvider : MainAPI() {
     override suspend fun quickSearch(query: String) = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (!ensureInitialized()) return emptyList()
-        return getHtmlFromWire(postToLiveWire(mapOf("search" to query), emptyList(), false))
+        if (!initializeLiveWire()) return emptyList()
+        return Jsoup.parse(liveWireBuilder(mapOf("search" to query), emptyList(), false)
+            .getJSONArray("components").getJSONObject(0).getJSONObject("effects").getString("html"))
             .select("div[wire:key]").mapNotNull { toResult(it) }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = fetchPage(url) ?: throw NotImplementedError("No se pudo cargar la página")
+        val doc = fetchWithCF(url)
         val wd = mutableMapOf(
             "wireSnapshot" to doc.select("main div[wire:snapshot]").attr("wire:snapshot").replace("&quot;", "\""),
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
@@ -302,7 +243,8 @@ class AnizoneProvider : MainAPI() {
         var attempt = 0
         while (currentDoc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") != null && attempt < 100) {
             attempt++
-            try { currentDoc = getHtmlFromWire(postToLiveWire(emptyMap(), listOf(mapOf("path" to "", "method" to "loadMore", "params" to emptyList<String>())), true)) }
+            try { currentDoc = Jsoup.parse(liveWireBuilder(emptyMap(), listOf(mapOf("path" to "", "method" to "loadMore", "params" to emptyList<String>())), true)
+                .getJSONArray("components").getJSONObject(0).getJSONObject("effects").getString("html")) }
             catch (e: Exception) { break }
         }
         val episodes = currentDoc.select("li[x-data]").map { elt ->
@@ -330,7 +272,7 @@ class AnizoneProvider : MainAPI() {
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val episodeUrl = data.split("|||")[0]
-        val doc = fetchPage(episodeUrl) ?: return false
+        val doc = fetchWithCF(episodeUrl)
         val sourceName = doc.selectFirst("span.truncate")?.text() ?: ""
         val mediaPlayer = doc.selectFirst("media-player")
         val m3U8 = mediaPlayer?.attr("src") ?: ""
@@ -340,7 +282,4 @@ class AnizoneProvider : MainAPI() {
         })
         return true
     }
-
-    private fun getHtmlFromWire(json: JSONObject) =
-        Jsoup.parse(json.getJSONArray("components").getJSONObject(0).getJSONObject("effects").getString("html"))
 }
