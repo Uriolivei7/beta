@@ -166,9 +166,16 @@ class AnizoneProvider : MainAPI() {
         }
     }
 
+    private fun imgSrc(img: Element?): String? {
+        if (img == null) return null
+        return img.attr("src").ifEmpty { img.attr("data-src").ifEmpty { img.attr("data-lazy-src") } }.ifEmpty { null }
+    }
+
     private fun toResult(post: Element) = newMovieSearchResponse(
-        post.selectFirst("img")?.attr("alt") ?: "", post.selectFirst("a")?.attr("href") ?: "", TvType.Movie
-    ) { this.posterUrl = post.selectFirst("img")?.attr("src") }
+        post.selectFirst("img")?.attr("alt") ?: "",
+        post.selectFirst("a")?.attr("href") ?: "",
+        TvType.Movie
+    ) { this.posterUrl = imgSrc(post.selectFirst("img")) }
 
     override suspend fun quickSearch(query: String) = search(query)
 
@@ -201,7 +208,7 @@ class AnizoneProvider : MainAPI() {
             }
         }
         return newAnimeLoadResponse(title, url, TvType.Anime) {
-            this.posterUrl = doc.selectFirst("main img")?.attr("src")
+            this.posterUrl = imgSrc(doc.selectFirst("main img, .poster img, img[alt*='$title'], img[src*='/storage/']"))
             this.plot = doc.selectFirst(".sr-only + div")?.text() ?: ""
             this.tags = doc.select("a[wire:navigate][wire:key]").map { it.text() }
             this.year = doc.select("span.inline-block").map { it.text() }.getOrNull(3)?.toIntOrNull()
