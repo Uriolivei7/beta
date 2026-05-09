@@ -21,9 +21,22 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
+    companion object {
+        var cfClearance: String = ""
+    }
+
     private val cloudflareKiller = CloudflareKiller()
     private var cachedNonce: String? = null
     private var cachedCookies: Map<String, String>? = null
+
+    private fun buildCookies(): Map<String, String> {
+        val base = cachedCookies?.toMutableMap() ?: mutableMapOf()
+        if (cfClearance.isNotBlank() && !base.containsKey("cf_clearance")) {
+            base["cf_clearance"] = cfClearance
+            Log.d("AnimeOnlineNinja", "Using user-provided cf_clearance cookie")
+        }
+        return base
+    }
 
     private val chromeHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -55,14 +68,14 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
     private suspend fun safeGet(url: String, timeoutMs: Long = 60000L, retries: Int = 3): String? {
         Log.d("AnimeOnlineNinja", "Fetching URL: $url (timeout=${timeoutMs}ms, retries=$retries)")
-        val cfCookies = cachedCookies
-        if (cfCookies != null) {
-            Log.d("AnimeOnlineNinja", "Using cached cf_clearance cookies: ${cfCookies.keys}")
+        val requestCookies = buildCookies()
+        if (requestCookies.isNotEmpty()) {
+            Log.d("AnimeOnlineNinja", "Using cookies: ${requestCookies.keys}")
         }
         for (i in 0 until retries) {
             try {
                 val response = app.get(url, headers = chromeHeaders, timeout = timeoutMs,
-                    interceptor = cloudflareKiller, cookies = cfCookies ?: emptyMap())
+                    interceptor = cloudflareKiller, cookies = requestCookies)
                 val respCookies = response.cookies
                 if (respCookies.isNotEmpty()) {
                     cachedCookies = respCookies
@@ -70,8 +83,19 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                 }
                 val html = response.text
                 Log.d("AnimeOnlineNinja", "Fetched ${html.length} bytes from $url (attempt ${i + 1})")
+
+                if (html.contains("One moment, please") && html.contains("wsidchk")) {
+                    Log.w("AnimeOnlineNinja", "VRF challenge detected, attempting to solve...")
+                    val solved = solveVrfChallenge(html, url)
+                    if (solved != null) {
+                        Log.d("AnimeOnlineNinja", "VRF challenge solved, ${solved.length} bytes")
+                        return solved
+                    }
+                    Log.w("AnimeOnlineNinja", "VRF challenge solve failed")
+                }
+
                 if (html.contains("Just a moment") && html.contains("challenges.cloudflare.com")) {
-                    Log.w("AnimeOnlineNinja", "Cloudflare JS challenge at $url (attempt ${i + 1})")
+                    Log.w("AnimeOnlineNinja", "Cloudflare Turnstile challenge at $url (attempt ${i + 1})")
                     if (i < retries - 1) {
                         delay(5000L)
                         continue
@@ -91,6 +115,43 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         }
         Log.e("AnimeOnlineNinja", "All $retries attempts failed for $url")
         return null
+    }
+
+    private suspend fun solveVrfChallenge(html: String, originalUrl: String): String? {
+        return try {
+            val doc = Jsoup.parse(html)
+            val script = doc.selectFirst("script:containsData(west=)") ?: return null
+            val js = script.data()
+            val west = js.substringAfter("west=").substringBefore(",").trim()
+            val east = js.substringAfter("east=").substringBefore(",").trim()
+            val formAction = doc.selectFirst("form#wsidchk-form")?.attr("action") ?: return null
+            val result = simpleEval(west, east) ?: return null
+            val host = originalUrl.let { Regex("https?://[^/]+").find(it)?.value ?: mainUrl }
+            val solveUrl = "$host$formAction?wsidchk=$result"
+            Log.d("AnimeOnlineNinja", "VRF solve URL: $solveUrl")
+            val resp = app.get(solveUrl, headers = chromeHeaders, timeout = 30000L)
+            val cookies = resp.cookies
+            if (cookies.isNotEmpty()) {
+                cachedCookies = cookies
+                Log.d("AnimeOnlineNinja", "VRF saved cookies: ${cookies.keys}")
+            }
+            resp.text
+        } catch (e: Exception) {
+            Log.e("AnimeOnlineNinja", "VRF solve error: ${e.message}")
+            null
+        }
+    }
+
+    private fun simpleEval(west: String, east: String): String? {
+        return try {
+            val w = west.removeSurrounding("\"").toLongOrNull()
+            val e = east.removeSurrounding("\"").toLongOrNull()
+            if (w != null && e != null) (w + e).toString()
+            else (west + east).replace("\"", "")
+        } catch (e: Exception) {
+            Log.e("AnimeOnlineNinja", "simpleEval error: ${e.message}")
+            null
+        }
     }
 
     private suspend fun getHtml(url: String): String? = safeGet(url)
@@ -349,7 +410,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                     Log.d("AnimeOnlineNinja", "loadLinks: calling API $apiUrl")
                     val apiHeaders = ajaxHeaders + ("Referer" to data)
                     val response = app.get(apiUrl, headers = apiHeaders, timeout = 60000L,
-                        interceptor = cloudflareKiller, cookies = cachedCookies ?: emptyMap())
+                        interceptor = cloudflareKiller, cookies = buildCookies())
                     val responseText = response.text
                     Log.d("AnimeOnlineNinja", "loadLinks: API response ${responseText.length} chars")
                     found = true

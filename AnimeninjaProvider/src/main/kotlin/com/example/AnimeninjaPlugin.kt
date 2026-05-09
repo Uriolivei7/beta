@@ -7,6 +7,8 @@ import android.content.Context
 @CloudstreamPlugin
 class AnimeninjaPlugin: Plugin() {
     override fun load(context: Context) {
+        // Pon aquí tu cf_clearance del curl:
+        // AnimeOnlineNinjaProvider.cfClearance = "MP4dN_e..."
         registerMainAPI(AnimeOnlineNinjaProvider())
     }
 }
