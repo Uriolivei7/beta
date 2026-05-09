@@ -6,10 +6,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.jsoup.Jsoup
 
@@ -528,17 +527,16 @@ class MhdflixProvider : MainAPI() {
             }
         }
 
-        // Process extractor links in parallel
+        // Process extractor links in parallel, emit as each completes
         if (extractorLinks.isNotEmpty()) {
             coroutineScope {
                 extractorLinks.map { (item, videoUrl) ->
-                    async {
+                    launch {
                         val serverName = item.server?.name ?: item.serverName ?: "Server"
                         val languageName = item.language?.name ?: item.languageName ?: "Latino"
                         val linkName = "$serverName - $languageName"
-                        var ok = false
                         try {
-                            withTimeout(10000L) {
+                            val ok = withTimeout(20000L) {
                                 loadExtractor(videoUrl, referer, subtitleCallback) { link ->
                                     if (link.url.isNotBlank()) {
                                         @Suppress("DEPRECATION")
@@ -552,20 +550,21 @@ class MhdflixProvider : MainAPI() {
                                         )
                                         videoLink.headers = link.headers
                                         callback.invoke(videoLink)
+                                        found = true
                                     }
-                                }.also { ok = it }
+                                }
                             }
+                            item.subtitles?.forEach { sub ->
+                                sub.url?.let { subtitleCallback.invoke(createSubtitleFile(sub.name ?: languageName, fixUrl(it))) }
+                            }
+                            if (ok) Log.d("Mhdflix-Links", "Extractor OK: $serverName")
                         } catch (e: TimeoutCancellationException) {
-                            Log.w("Mhdflix-Links", "Extractor timed out (10s): $videoUrl")
+                            Log.w("Mhdflix-Links", "Extractor timed out (20s): $serverName - $videoUrl")
                         } catch (e: Exception) {
-                            Log.e("Mhdflix-Links", "Extractor failed: $videoUrl - ${e.message}")
+                            Log.e("Mhdflix-Links", "Extractor failed: $serverName - ${e.message}")
                         }
-                        item.subtitles?.forEach { sub ->
-                            sub.url?.let { subtitleCallback.invoke(createSubtitleFile(sub.name ?: languageName, fixUrl(it))) }
-                        }
-                        ok
                     }
-                }.awaitAll().forEach { if (it) found = true }
+                }
             }
         }
 
