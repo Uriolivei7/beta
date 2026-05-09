@@ -231,6 +231,49 @@ class AnizoneProvider : MainAPI() {
         }
     }
 
+    private suspend fun downloadImageAsDataUri(imageUrl: String): String? {
+        val view = wv ?: return null
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resumed = false
+                val safeUrl = imageUrl.replace("'", "\\'")
+                view.evaluateJavascript(
+                    "(function(){" +
+                    "var i=new Image();" +
+                    "i.crossOrigin='anonymous';" +
+                    "i.onload=function(){" +
+                    "var c=document.createElement('canvas');c.width=i.width;c.height=i.height;" +
+                    "c.getContext('2d').drawImage(i,0,0);" +
+                    "window.__p=c.toDataURL('image/jpeg',80);window.__pd=true};" +
+                    "i.onerror=function(){window.__pd=true;window.__p=''};" +
+                    "i.src='$safeUrl';" +
+                    "})()"
+                ) {
+                    fun poll(n: Int) {
+                        if (!resumed) {
+                            if (n <= 0) { resumed = true; cont.resume(null); return }
+                            view.evaluateJavascript("window.__pd") { d ->
+                                if (!resumed) {
+                                    if (d == "true") {
+                                        view.evaluateJavascript("window.__p") { data ->
+                                            if (!resumed) {
+                                                resumed = true
+                                                cont.resume(data?.removeSurrounding("\"")?.ifEmpty { null })
+                                            }
+                                        }
+                                    } else {
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ poll(n - 1) }, 200)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    poll(50)
+                }
+            }
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse {
         Log.e("AniZone", "load: $url")
         try { if (!ensureWebView()) throw Exception("No WebView") }
@@ -239,10 +282,15 @@ class AnizoneProvider : MainAPI() {
         val title = doc.selectFirst("h1")?.text() ?: throw NotImplementedError("No title")
         Log.e("AniZone", "load: title=$title")
 
-        val poster = imgSrc(doc.selectFirst("meta[property=og:image]"))
+        var poster = imgSrc(doc.selectFirst("meta[property=og:image]"))
             ?: imgSrc(doc.selectFirst("main img, .poster img, .card img"))
             ?: imgSrc(doc.selectFirst("img[src*='/storage/'], img[src*='/images/anime/']"))
-        Log.e("AniZone", "load poster: $poster")
+        if (poster != null && poster.startsWith("$mainUrl/")) {
+            Log.e("AniZone", "load: descargando poster via WebView...")
+            val dataUri = downloadImageAsDataUri(poster)
+            if (dataUri != null) { poster = dataUri; Log.e("AniZone", "load: poster como data URI (${dataUri.take(50)}...)") }
+        }
+        Log.e("AniZone", "load poster final: ${poster?.take(60)}")
 
         val eps = doc.select("li[x-data]").mapNotNull { elt ->
             val a = elt.selectFirst("a") ?: return@mapNotNull null
