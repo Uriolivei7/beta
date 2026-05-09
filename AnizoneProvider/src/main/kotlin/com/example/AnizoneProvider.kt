@@ -47,7 +47,7 @@ class AnizoneProvider : MainAPI() {
     override val hasMainPage = true
     override val hasQuickSearch = true
     override val hasDownloadSupport = true
-    override val usesWebView = true
+    override val usesWebView = false
     override val mainPage = mainPageOf(
         "2" to "Animes",
         "4" to "Películas",
@@ -90,8 +90,7 @@ class AnizoneProvider : MainAPI() {
     private suspend fun initializeLiveWire(): Boolean {
         if (!wireData["wireSnapshot"].isNullOrBlank()) return true
 
-        var cfDetected = false
-        for (attempt in 1..30) {
+        for (attempt in 1..5) {
             try {
                 val initReq = fetchWithCF("$mainUrl/anime")
                 val doc = initReq.document
@@ -108,24 +107,14 @@ class AnizoneProvider : MainAPI() {
                 }
 
                 val htmlPreview = initReq.text.take(500)
-
-                if (isCloudflareChallenge(htmlPreview)) {
-                    if (!cfDetected) {
-                        cfDetected = true
-                        Log.w("AniZone Init", "Cloudflare detectado. Si ves un WebView, resolve el desafío. Reintentando cada 5s...")
-                    }
-                    Log.d("AniZone Init", "Cloudflare - intento $attempt/30, esperando 5s...")
-                    delay(5000)
-                } else {
-                    Log.e("AniZone Init", "HTML inesperado (no Cloudflare ni LiveWire): $htmlPreview")
-                    return false
-                }
+                Log.w("AniZone Init", "Intento $attempt/5: Cloudflare detectado. Las cookies pueden haber expirado.")
+                delay(2000)
             } catch (e: Exception) {
                 Log.e("AniZone Init", "Intento $attempt - Error: ${e.message}")
-                delay(3000)
+                delay(2000)
             }
         }
-        Log.e("AniZone Init", "No se pudo inicializar LiveWire después de 30 intentos.")
+        Log.e("AniZone Init", "No se pudo inicializar LiveWire después de 5 intentos.")
         return false
     }
 
