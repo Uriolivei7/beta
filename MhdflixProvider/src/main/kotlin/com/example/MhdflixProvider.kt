@@ -9,6 +9,8 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import org.jsoup.Jsoup
 
 class MhdflixProvider : MainAPI() {
@@ -536,15 +538,25 @@ class MhdflixProvider : MainAPI() {
                         val linkName = "$serverName - $languageName"
                         var ok = false
                         try {
-                            @Suppress("DEPRECATION")
-                            loadExtractor(videoUrl, referer, subtitleCallback) { link ->
-                                if (link.url.isNotBlank()) {
-                                    callback.invoke(createExtractorLink(
-                                        "${link.name} [$languageName]", linkName, link.url,
-                                        link.referer, link.quality, link.type
-                                    ))
-                                }
-                            }.also { ok = it }
+                            withTimeout(10000L) {
+                                loadExtractor(videoUrl, referer, subtitleCallback) { link ->
+                                    if (link.url.isNotBlank()) {
+                                        @Suppress("DEPRECATION")
+                                        val videoLink = ExtractorLink(
+                                            source = linkName,
+                                            name = "${link.name} [$languageName]",
+                                            url = link.url,
+                                            referer = link.referer.ifBlank { "" },
+                                            quality = link.quality,
+                                            type = link.type
+                                        )
+                                        videoLink.headers = link.headers
+                                        callback.invoke(videoLink)
+                                    }
+                                }.also { ok = it }
+                            }
+                        } catch (e: TimeoutCancellationException) {
+                            Log.w("Mhdflix-Links", "Extractor timed out (10s): $videoUrl")
                         } catch (e: Exception) {
                             Log.e("Mhdflix-Links", "Extractor failed: $videoUrl - ${e.message}")
                         }
