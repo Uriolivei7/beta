@@ -126,20 +126,7 @@ class TvenvivoProvider : MainAPI() {
             }
         }
 
-        val grouped = channelResults.groupBy { getCategory(it.name) }
-
-        val sections = mutableListOf<HomePageList>()
-        sections.add(HomePageList("Todos los Canales", channelResults))
-
-        val categoryOrder = listOf("Deportes", "Entretenimiento", "Noticias", "Peliculas", "Infantil", "Educacion", "Latino", "Canales")
-        for (cat in categoryOrder) {
-            val items = grouped[cat]
-            if (!items.isNullOrEmpty()) {
-                sections.add(HomePageList(cat, items))
-            }
-        }
-
-        return newHomePageResponse(sections, false)
+        return newHomePageResponse(listOf(HomePageList("Todos los Canales", channelResults)), false)
     }
 
     private fun extractChannelsFromHtml(html: String): List<Triple<String, String, String>> {
