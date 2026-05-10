@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -71,70 +73,51 @@ class DoramasLatinoXExtractor : ExtractorApi() {
             withContext(Dispatchers.Main) {
                 suspendCoroutine<String?> { cont ->
                     var resumed = false
+                    var interceptedUrl: String? = null
                     val handler = Handler(Looper.getMainLooper())
                     val view = getOrCreateWebView(ctx)
 
                     val timeoutRunnable = Runnable {
                         if (!resumed) {
                             resumed = true
-                            Log.e("DoramasLX", "WebView timeout: $playerUrl")
-                            cont.resume(null)
+                            Log.d("DoramasLX", "timeout, intercepted=$interceptedUrl")
+                            cont.resume(interceptedUrl)
                         }
                     }
-                    handler.postDelayed(timeoutRunnable, 25000)
+                    handler.postDelayed(timeoutRunnable, 30000)
 
-                    view.stopLoading()
                     view.webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView,
+                            request: WebResourceRequest
+                        ): WebResourceResponse? {
+                            val reqUrl = request.url.toString()
+                            if (interceptedUrl == null &&
+                                (reqUrl.contains(".m3u8", true) || reqUrl.contains(".mp4", true))
+                            ) {
+                                interceptedUrl = reqUrl
+                                Log.d("DoramasLX", "intercepted: ${reqUrl.take(80)}")
+                            }
+                            return null
+                        }
+
                         override fun onPageFinished(v: WebView, u: String) {
                             if (resumed) return
                             Log.d("DoramasLX", "onPageFinished: ${u.take(60)}")
-
-                            pollForVideo(v, 0, handler) { result ->
-                                if (!resumed) {
-                                    resumed = true
-                                    handler.removeCallbacks(timeoutRunnable)
-                                    Log.d("DoramasLX", "videoUrl: ${result?.take(80)}")
-                                    cont.resume(result)
-                                }
-                            }
+                            pollLoop(v)
                         }
-                    }
-                    view.loadUrl(playerUrl)
-                }
-            }
-        } ?: run {
-            Log.e("DoramasLX", "No se obtuvo video URL")
-            return
-        }
 
-        Log.d("DoramasLX", "Video URL final: $videoUrl")
-        callback.invoke(
-            newExtractorLink(
-                this.name,
-                this.name,
-                videoUrl,
-                type = if (videoUrl.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-            ) {
-                this.referer = playerUrl
-                this.quality = getQualityFromName(videoUrl)
-            }
-        )
-    }
+                        fun pollLoop(wv: WebView) {
+                            if (resumed) return
+                            interceptedUrl?.let {
+                                resumed = true
+                                handler.removeCallbacks(timeoutRunnable)
+                                cont.resume(it)
+                                return
+                            }
 
-    private fun pollForVideo(
-        view: WebView,
-        attempt: Int,
-        handler: Handler,
-        onResult: (String?) -> Unit
-    ) {
-        if (attempt > 40) {
-            Log.e("DoramasLX", "pollForVideo: max attempts")
-            onResult(null)
-            return
-        }
-
-        view.evaluateJavascript(
-            """(function() {
+                            wv.evaluateJavascript(
+                                """(function() {
   try {
     if (typeof jwplayer !== 'undefined') {
       var jw = jwplayer();
@@ -164,31 +147,56 @@ class DoramasLatinoXExtractor : ExtractorApi() {
     }
     var iframes = document.querySelectorAll('iframe');
     for (var i = 0; i < iframes.length; i++) {
-      var s = iframes[i].src || '';
-      if (s.match(/\.(m3u8|mp4)/i)) return s;
-    }
-    var scripts = document.querySelectorAll('script:not([src])');
-    for (var i = 0; i < scripts.length; i++) {
-      var text = scripts[i].textContent || '';
-      var m = text.match(/["'](?:file|src|url)["']\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
-      if (m) return m[1].replace(/\\\//g, '/');
+      try {
+        var doc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+        if (doc) {
+          var vs = doc.querySelectorAll('video');
+          for (var j = 0; j < vs.length; j++) {
+            if (vs[j].src) return vs[j].src;
+          }
+        }
+      } catch(e) {}
     }
   } catch(e) {}
   return '';
 })()"""
-        ) { result ->
-            val decoded = result?.removeSurrounding("\"")
-                ?.replace("\\\"", "\"")
-                ?.replace("\\n", "\n")
-                ?.replace("\\/", "/")
-                ?.trim() ?: ""
-
-            if (decoded.isNotBlank() && decoded != "null") {
-                Log.d("DoramasLX", "poll $attempt OK: ${decoded.take(80)}")
-                onResult(decoded)
-            } else {
-                handler.postDelayed({ pollForVideo(view, attempt + 1, handler, onResult) }, 500)
+                            ) { result: String? ->
+                                if (resumed) return@evaluateJavascript
+                                val decoded = result?.removeSurrounding("\"")
+                                    ?.replace("\\\"", "\"")
+                                    ?.replace("\\n", "\n")
+                                    ?.replace("\\/", "/")
+                                    ?.trim() ?: ""
+                                if (decoded.isNotBlank() && decoded != "null") {
+                                    resumed = true
+                                    handler.removeCallbacks(timeoutRunnable)
+                                    Log.d("DoramasLX", "JS OK: ${decoded.take(80)}")
+                                    cont.resume(decoded)
+                                } else {
+                                    handler.postDelayed({ pollLoop(wv) }, 500)
+                                }
+                            }
+                        }
+                    }
+                    view.loadUrl(playerUrl)
+                }
             }
+        } ?: run {
+            Log.e("DoramasLX", "No se obtuvo video URL")
+            return
         }
+
+        Log.d("DoramasLX", "Video URL final: $videoUrl")
+        callback.invoke(
+            newExtractorLink(
+                this.name,
+                this.name,
+                videoUrl,
+                type = if (videoUrl.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            ) {
+                this.referer = playerUrl
+                this.quality = getQualityFromName(videoUrl)
+            }
+        )
     }
 }
