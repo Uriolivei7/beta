@@ -221,31 +221,43 @@ class TvenvivoProvider : MainAPI() {
         val html = safeAppGet(url) ?: return null
         val doc = Jsoup.parse(html)
 
-        val title = doc.selectFirst("h1.text-3xl.font-bold")?.text()?.replace(" EN VIVO", "")?.trim()
-            ?: doc.selectFirst("meta[property='og:title']")?.attr("content")?.replace(" EN VIVO", "")?.trim()
+        val title = doc.selectFirst("h1.font-bold")?.text()
+            ?: doc.selectFirst("h1")?.text()
+            ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("title")?.text()
             ?: "Canal Desconocido"
 
-        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: doc.selectFirst("img[alt*='logo'][src]")?.attr("src")
+        val cleanTitle = title
+            .replace(Regex("\\s+EN\\s+VIVO\\s*HD?", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s+EN\\s+VIVO", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*\\|\\s*.*"), "")
+            .trim()
+
+        val poster = doc.selectFirst("section img[src*='/imge/']")?.attr("src")
+            ?: doc.selectFirst("div.bg-\\[var\\(--bg-card\\)\\] img")?.attr("src")
+            ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
+            ?: doc.selectFirst("img[src*='logo']")?.attr("src")
             ?: ""
 
-        val description = doc.selectFirst("div.info.text-sm.leading-relaxed")?.text() ?: ""
+        val description = doc.selectFirst("p.text-sm.leading-relaxed")?.text()
+            ?: doc.selectFirst("div.info.text-sm.leading-relaxed")?.text()
+            ?: ""
 
         val episodes = listOf(
             newEpisode(data = url) {
                 this.name = "En Vivo"
-                this.posterUrl = fixUrl(poster)
+                this.posterUrl = fixUrlNull(poster)
             }
         )
 
         return newTvSeriesLoadResponse(
-            name = title,
+            name = cleanTitle,
             url = url,
             type = TvType.Live,
             episodes = episodes
         ) {
-            this.posterUrl = fixUrl(poster)
-            this.backgroundPosterUrl = fixUrl(poster)
+            this.posterUrl = fixUrlNull(poster)
+            this.backgroundPosterUrl = fixUrlNull(poster)
             this.plot = description
         }
     }
