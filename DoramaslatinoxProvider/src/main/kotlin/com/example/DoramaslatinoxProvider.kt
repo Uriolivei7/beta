@@ -3,7 +3,6 @@
 package com.example
 
 import android.util.Log
-import com.fasterxml.jackson.annotation.JsonProperty
 import org.json.JSONObject
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
@@ -298,7 +297,7 @@ class DoramaslatinoxProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (depth > 3) return false // prevenir loop infinito
+        if (depth > 4) return false
         Log.d("DoramasLX", "followRedirectChain depth=$depth: $startUrl")
 
         // Probar extractor directo
@@ -311,15 +310,28 @@ class DoramaslatinoxProvider : MainAPI() {
             if (extractWithTracking(foxUrl, startUrl, subtitleCallback, callback)) return true
         }
 
-        // Cargar página y buscar redirect/m3u8/iframe
+        // Cargar página
         val doc = try { app.get(startUrl, referer = referer).document } catch (_: Exception) { return false }
         val html = doc.html()
 
-        // m3u8 directo
-        val m3u8s = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(html)
-            .map { it.value.replace("\\/", "/") }.toList()
+        // Buscar TODAS las URLs en la página y probar cada una
+        val allUrls = Regex("""https?://[^"'\s<>)]+""").findAll(html)
+            .map { it.value.replace("\\/", "/") }.distinct().toList()
+        Log.d("DoramasLX", "URLs encontradas en depth=$depth: ${allUrls.size}")
+        for (url in allUrls) {
+            if (extractWithTracking(url, startUrl, subtitleCallback, callback)) return true
+            // También probar foxUrl desde cada URL
+            val uh = url.substringAfterLast("/").substringBefore("?")
+            if (uh.isNotBlank() && uh.length < 100) {
+                val fUrl = "https://doramasfoxito.p2pplay.online/#/$uh"
+                if (fUrl != url && extractWithTracking(fUrl, url, subtitleCallback, callback)) return true
+            }
+        }
+
+        // Buscar m3u8 directo
+        val m3u8s = allUrls.filter { it.contains(".m3u8", ignoreCase = true) }
         if (m3u8s.isNotEmpty()) {
-            Log.d("DoramasLX", "m3u8 encontrado en depth=$depth: ${m3u8s.size}")
+            Log.d("DoramasLX", "m3u8 en depth=$depth: ${m3u8s.size}")
             m3u8s.forEach { url ->
                 callback(newExtractorLink(name, name, url, ExtractorLinkType.M3U8) {
                     this.referer = startUrl; this.quality = getQualityFromName(url)
@@ -328,14 +340,14 @@ class DoramaslatinoxProvider : MainAPI() {
             return true
         }
 
-        // iframe
+        // Buscar iframe y seguirlo
         val iframeSrc = doc.selectFirst("iframe")?.attr("src")
         if (!iframeSrc.isNullOrBlank()) {
-            Log.d("DoramasLX", "iframe en depth=$depth: $iframeSrc")
+            Log.d("DoramasLX", "iframe depth=$depth: $iframeSrc")
             if (followRedirectChain(iframeSrc, startUrl, depth + 1, subtitleCallback, callback)) return true
         }
 
-        // JS redirect
+        // Buscar JS redirect y seguirlo
         val redirectRegex = Regex("""(?:location\.href|window\.location)\s*=\s*['"]([^'"]+)['"]""")
         for (m in redirectRegex.findAll(html)) {
             val ru = m.groupValues[1].replace("\\/", "/")
@@ -343,10 +355,22 @@ class DoramaslatinoxProvider : MainAPI() {
             if (followRedirectChain(ru, startUrl, depth + 1, subtitleCallback, callback)) return true
         }
 
+        // Buscar base64 encodeado que podría tener URLs de video
+        val b64Regex = Regex("""[A-Za-z0-9+/]{40,}={0,2}""")
+        for (m in b64Regex.findAll(html)) {
+            try {
+                val decoded = java.net.URLDecoder.decode(
+                    String(android.util.Base64.decode(m.value, android.util.Base64.DEFAULT)),
+                    "UTF-8"
+                )
+                val decodedUrls = Regex("""https?://[^"'\s<>)]+""").findAll(decoded)
+                    .map { it.value.replace("\\/", "/") }.toList()
+                for (url in decodedUrls) {
+                    if (extractWithTracking(url, startUrl, subtitleCallback, callback)) return true
+                }
+            } catch (_: Exception) { }
+        }
+
         return false
     }
-
-    data class EmbedResponse(
-        @JsonProperty("embed_url") val embedUrl: String? = null
-    )
 }
