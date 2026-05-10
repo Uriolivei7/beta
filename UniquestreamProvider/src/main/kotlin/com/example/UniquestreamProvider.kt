@@ -325,6 +325,8 @@ class UniqueStreamProvider : MainAPI() {
         val lines = content.lines()
         var currentQuality = ""
 
+        val queryParams = if (baseUrl.contains("?")) baseUrl.substringAfter("?") else ""
+
         for (i in lines.indices) {
             val line = lines[i].trim()
 
@@ -339,9 +341,12 @@ class UniqueStreamProvider : MainAPI() {
                     else -> if (height > 0) "${height}p" else "Auto"
                 }
             } else if (!line.startsWith("#") && line.isNotEmpty() && currentQuality.isNotEmpty()) {
-                val variantUrl = if (line.startsWith("http")) line else {
-                    val base = baseUrl.substringBeforeLast("/")
-                    "$base/$line"
+                val variantUrl = if (line.startsWith("http")) {
+                    line
+                } else {
+                    val base = baseUrl.substringBeforeLast("/").substringBefore("?")
+                    val resolved = "$base/$line"
+                    if (queryParams.isNotEmpty()) "$resolved?$queryParams" else resolved
                 }
                 val qualityValue = when (currentQuality) {
                     "1080p" -> Qualities.P1080.value
