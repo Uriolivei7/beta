@@ -92,11 +92,16 @@ class DoramasLatinoXExtractor : ExtractorApi() {
                             request: WebResourceRequest
                         ): WebResourceResponse? {
                             val reqUrl = request.url.toString()
-                            if (interceptedUrl == null &&
-                                (reqUrl.contains(".m3u8", true) || reqUrl.contains(".mp4", true))
-                            ) {
-                                interceptedUrl = reqUrl
-                                Log.d("DoramasLX", "intercepted: ${reqUrl.take(80)}")
+                            if (request.isForMainFrame) {
+                                Log.d("DoramasLX", "main frame: ${reqUrl.take(100)}")
+                            }
+                            if (interceptedUrl == null) {
+                                if (reqUrl.contains(".m3u8", true) || reqUrl.contains(".mp4", true)) {
+                                    interceptedUrl = reqUrl
+                                    Log.d("DoramasLX", ">>> VIDEO: ${reqUrl.take(80)}")
+                                } else if (reqUrl.contains("short.icu") || reqUrl.contains("abyss.to")) {
+                                    Log.d("DoramasLX", "relevant: ${reqUrl.take(100)}")
+                                }
                             }
                             return null
                         }
