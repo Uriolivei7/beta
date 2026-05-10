@@ -2,8 +2,10 @@ package com.example
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.serialization.*
+import java.io.File
 
 class UniqueStreamProvider : MainAPI() {
     override var mainUrl = "https://anime.uniquestream.net"
@@ -249,78 +251,77 @@ class UniqueStreamProvider : MainAPI() {
                                         }
 
                                         val masterText = masterResp.text
-                                        val baseUrl = hlsVersion.playlist.substringBeforeLast("/").substringBefore("?")
+                                        val masterBase = hlsVersion.playlist.substringBeforeLast("/").substringBefore("?")
 
-                                        // Extraer líneas de variante (no #EXT-X-STREAM-INF)
+                                        // Extraer líneas de variante
                                         val variantLines = masterText.lines().filter { line ->
                                             !line.startsWith("#") && line.isNotBlank() && !line.startsWith("http")
                                         }
 
                                         if (variantLines.isEmpty()) {
-                                            // Fallback: enviar master URL directo
-                                            Log.d(TAG, "${hlsVersion.locale}: sin variantes, enviando master directo")
+                                            Log.w(TAG, "${hlsVersion.locale}: sin variantes en master")
+                                            continue
+                                        }
+
+                                        for (variantLine in variantLines) {
+                                            val variantUrl = "$masterBase/$variantLine"
+                                            val quality = when {
+                                                variantLine.contains("1920") -> "1080p"
+                                                variantLine.contains("1280") -> "720p"
+                                                else -> "Auto"
+                                            }
+                                            val qualityValue = when (quality) {
+                                                "1080p" -> Qualities.P1080.value
+                                                "720p" -> Qualities.P720.value
+                                                else -> Qualities.Unknown.value
+                                            }
+
+                                            Log.d(TAG, "Descargando variant playlist: $variantUrl")
+                                            val variantResp = app.get(variantUrl, headers = mapOf(
+                                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                                "Accept" to "*/*",
+                                                "Origin" to mainUrl,
+                                                "Referer" to "$mainUrl/"
+                                            ), timeout = 20L)
+
+                                            if (variantResp.code != 200) {
+                                                Log.w(TAG, "Variant ${hlsVersion.locale} $quality falló: ${variantResp.code}")
+                                                continue
+                                            }
+
+                                            // Reescribir playlist con URLs absolutos
+                                            val variantBase = variantUrl.substringBeforeLast("/")
+                                            val variantText = variantResp.text
+                                            val rewrittenPlaylist = variantText.lines().joinToString("\n") { line ->
+                                                val trimmed = line.trim()
+                                                if (!trimmed.startsWith("#") && trimmed.isNotBlank()) {
+                                                    if (trimmed.startsWith("http")) trimmed else "$variantBase/$trimmed"
+                                                } else {
+                                                    line
+                                                }
+                                            }
+
+                                            // Guardar en caché local
+                                            val cacheDir = context?.cacheDir ?: continue
+                                            val cacheFile = File(cacheDir, "pl_${hlsVersion.locale}_$quality.m3u8")
+                                            cacheFile.writeText(rewrittenPlaylist)
+                                            val localUrl = cacheFile.toURI().toString()
+
+                                            Log.d(TAG, "✓ Playlist local: $localUrl")
                                             callback(newExtractorLink(
                                                 source = this.name,
-                                                name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                                                url = hlsVersion.playlist,
+                                                name = "${this.name} - ${hlsVersion.locale.uppercase()} - $quality",
+                                                url = localUrl,
                                                 type = ExtractorLinkType.M3U8
                                             ) {
-                                                this.quality = Qualities.Unknown.value
+                                                this.quality = qualityValue
                                                 this.referer = "$mainUrl/"
-                                                this.headers = mapOf(
-                                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                                    "Accept" to "*/*",
-                                                    "Origin" to mainUrl,
-                                                    "Referer" to "$mainUrl/"
-                                                )
                                             })
                                             linksEnviados++
-                                        } else {
-                                            // Enviar cada variante como link M3U8 directo
-                                            for (variantLine in variantLines) {
-                                                val variantUrl = if (variantLine.startsWith("http")) {
-                                                    variantLine
-                                                } else {
-                                                    "$baseUrl/$variantLine"
-                                                }
-
-                                                val quality = when {
-                                                    variantLine.contains("1920") -> "1080p"
-                                                    variantLine.contains("1280") -> "720p"
-                                                    variantLine.contains("854") -> "480p"
-                                                    variantLine.contains("640") -> "360p"
-                                                    else -> "Auto"
-                                                }
-                                                val qualityValue = when (quality) {
-                                                    "1080p" -> Qualities.P1080.value
-                                                    "720p" -> Qualities.P720.value
-                                                    "480p" -> Qualities.P480.value
-                                                    "360p" -> Qualities.P360.value
-                                                    else -> Qualities.Unknown.value
-                                                }
-
-                                                Log.d(TAG, "  → ${hlsVersion.locale} $quality: ${variantUrl.take(120)}")
-                                                callback(newExtractorLink(
-                                                    source = this.name,
-                                                    name = "${this.name} - ${hlsVersion.locale.uppercase()} - $quality",
-                                                    url = variantUrl,
-                                                    type = ExtractorLinkType.M3U8
-                                                ) {
-                                                    this.quality = qualityValue
-                                                    this.referer = "$mainUrl/"
-                                                    this.headers = mapOf(
-                                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                                        "Accept" to "*/*",
-                                                        "Origin" to mainUrl,
-                                                        "Referer" to "$mainUrl/"
-                                                    )
-                                                })
-                                                linksEnviados++
-                                            }
-                                            Log.d(TAG, "✓ ${hlsVersion.locale}: ${variantLines.size} variantes")
                                         }
                                     } catch (e: Exception) {
                                         Log.w(TAG, "Error procesando ${hlsVersion.locale}: ${e.message}")
+                                        Log.w(TAG, Log.getStackTraceString(e))
                                     }
                                 }
                             }
