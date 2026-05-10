@@ -2,7 +2,9 @@
 
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
+import org.json.JSONObject
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -19,21 +21,21 @@ class DoramaslatinoxProvider : MainAPI() {
     //Movie, AnimeMovie, TvSeries, Cartoon, Anime, OVA, Torrent, Documentary, AsianDrama, Live, NSFW, Others, Music, AudioBook, CustomMedia, Audio, Podcast,
 
     override val mainPage = mainPageOf(
-        "https://doramaslatinox.com/movies/" to "Todas las Películas",
-        "https://doramaslatinox.com/estado/completo/" to "Completos",
-        "https://doramaslatinox.com/estado/emision/" to "En Emision",
-        "https://doramaslatinox.com/audio/latino/" to "Latino",
-        "https://doramaslatinox.com/audio/subtitulado" to "Subtitulado",
-        "https://doramaslatinox.com/tipo/dorama/" to "Doramas",
-        "https://doramaslatinox.com/tipo/serie/" to "Series",
-        "https://doramaslatinox.com/pais/corea-del-sur/" to "Corea del Sur",
-        "https://doramaslatinox.com/pais/china/" to "China",
-        "https://doramaslatinox.com/pais/japon/" to "Japón",
-        "https://doramaslatinox.com/pais/tailandia/" to "Tailandia",
-        "https://doramaslatinox.com/pais/taiwan/" to "Taiwán",
-        "https://doramaslatinox.com/pais/singapur/" to "Singapur",
-        "https://doramaslatinox.com/pais/estados-unidos/" to "Estados Unidos",
-        "https://doramaslatinox.com/series/" to "Todas las Series"
+        "$mainUrl/movies/" to "Todas las Películas",
+        "$mainUrl/estado/completo/" to "Completos",
+        "$mainUrl/estado/emision/" to "En Emision",
+        "$mainUrl/audio/latino/" to "Latino",
+        "$mainUrl/audio/subtitulado" to "Subtitulado",
+        "$mainUrl/tipo/dorama/" to "Doramas",
+        "$mainUrl/tipo/serie/" to "Series",
+        "$mainUrl/pais/corea-del-sur/" to "Corea del Sur",
+        "$mainUrl/pais/china/" to "China",
+        "$mainUrl/pais/japon/" to "Japón",
+        "$mainUrl/pais/tailandia/" to "Tailandia",
+        "$mainUrl/pais/taiwan/" to "Taiwán",
+        "$mainUrl/pais/singapur/" to "Singapur",
+        "$mainUrl/pais/estados-unidos/" to "Estados Unidos",
+        "$mainUrl/series/" to "Todas las Series"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -127,7 +129,7 @@ class DoramaslatinoxProvider : MainAPI() {
 
         if (isTvSeries) {
             val episodes = document.select("ul.episodios a").mapNotNull {
-                val href = it.attr("href") ?: return@mapNotNull null
+                val href = fixUrlNull(it.attr("href")) ?: return@mapNotNull null
                 val numText = it.selectFirst("div.numerando")?.text() ?: ""
                 val season = numText.split("-").firstOrNull()?.trim()?.toIntOrNull() ?: 1
                 val episode = numText.split("-").lastOrNull()?.trim()?.toIntOrNull() ?: 1
@@ -185,26 +187,60 @@ class DoramaslatinoxProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        var found = false
+        val document = try {
+            app.get(data).document
+        } catch (e: Exception) {
+            Log.e("DoramasLX", "Error loading page: ${e.message}")
+            return false
+        }
+
         document.select("li.dooplay_player_option").forEach { option ->
             val post = option.attr("data-post")
             val type = option.attr("data-type")
             val nume = option.attr("data-nume")
+            if (post.isEmpty()) return@forEach
 
-            if (post.isNotEmpty()) {
-                val apiUrl = "$mainUrl/wp-json/dooplayer/v2/$post/$type/$nume"
+            val apiUrl = "$mainUrl/wp-json/dooplayer/v2/$post/$type/$nume"
+            try {
                 val response = app.get(apiUrl).text
-                val embedUrl =
-                    AppUtils.parseJson<EmbedResponse>(response).embedUrl?.replace("\\/", "/")
+                val embedUrl = JSONObject(response)
+                    .optString("embed_url", "")
+                    .replace("\\/", "/")
+                if (embedUrl.isBlank()) return@forEach
 
-                if (!embedUrl.isNullOrEmpty()) {
-                    val iframe = app.get(embedUrl, referer = data).document.selectFirst("iframe")
-                        ?.attr("src")
-                    loadExtractor(iframe ?: embedUrl, embedUrl, subtitleCallback, callback)
+                // Intentar directo con extractores (ej: DoramasLatinoXExtractor)
+                if (loadExtractor(embedUrl, data, subtitleCallback, callback)) {
+                    found = true
+                    return@forEach
                 }
+
+                // Si no funcionó, buscar iframe en la página embed
+                val iframe = try {
+                    app.get(embedUrl, referer = data)
+                        .document.selectFirst("iframe")?.attr("src")
+                } catch (_: Exception) { null }
+
+                val targetUrl = if (!iframe.isNullOrBlank()) {
+                    // Probar iframe directo
+                    if (!loadExtractor(iframe, embedUrl, subtitleCallback, callback)) {
+                        // Fallback: si short.ink, probar short.icu
+                        val altUrl = iframe.replace("short.ink", "short.icu")
+                        if (altUrl != iframe) {
+                            loadExtractor(altUrl, embedUrl, subtitleCallback, callback)
+                        } else false
+                    } else true
+                } else false
+
+                if (targetUrl) {
+                    found = true
+                    return@forEach
+                }
+            } catch (e: Exception) {
+                Log.e("DoramasLX", "Error en opción $nume: ${e.message}")
             }
         }
-        return true
+        return found
     }
 
     data class EmbedResponse(
