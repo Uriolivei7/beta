@@ -12,7 +12,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class MediaCacheExtractor : ExtractorApi() {
     override val name = "MediaCache"
-    override val mainUrl = "https://get2.mediacache.cc"
+    override val mainUrl = "https://get.mediacache.cc"
     override val requiresReferer = true
 
     private val TAG = "MediaCacheExtractor"
