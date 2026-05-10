@@ -10,6 +10,23 @@ import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
+import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.content.Context
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class AnimeOnlineNinjaProvider : MainAPI() {
     override var mainUrl = "https://ww3.animeonline.ninja"
@@ -23,6 +40,93 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
     companion object {
         var cfClearance: String = ""
+        var pluginContext: Context? = null
+        private var wv: WebView? = null
+        private var resolving = false
+        private val wvMutex = Mutex()
+    }
+
+    private fun destroyWv() {
+        try { wv?.destroy() } catch (_: Exception) {}
+        wv = null
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun resolveTurnstileWithWebView(url: String): Boolean {
+        Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: $url")
+        if (wv != null) { Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: wv existe"); return true }
+        val ctx = pluginContext ?: run { Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView: pluginContext null"); return false }
+        if (resolving) {
+            Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: esperando resolucion...")
+            for (i in 1..60) { if (wv != null) { Log.d("AnimeOnlineNinja", "resuelto por otro hilo"); return true }; delay(1000) }
+            Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView: timeout esperando")
+            return false
+        }
+        resolving = true
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resumed = false
+                fun done(v: Boolean) { if (!resumed) { resumed = true; resolving = false; cont.resume(v) } }
+                try {
+                    Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: creando WebView dialog...")
+                    val webView = WebView(ctx.applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    }
+                    val progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8)
+                    }
+                    val layout = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(progressBar)
+                        addView(webView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    }
+                    val dialog = AlertDialog.Builder(ctx)
+                        .setTitle("AnimeOnlineNinja - Resuelve Cloudflare")
+                        .setView(layout)
+                        .setNegativeButton("Cancelar") { _, _ -> destroyWv(); done(false) }
+                        .setCancelable(false)
+                        .create()
+
+                    webView.webChromeClient = object : WebChromeClient() {
+                        override fun onProgressChanged(v: WebView, p: Int) { progressBar.progress = p }
+                    }
+                    webView.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, u: String) {
+                            if (resumed) return
+                            if (u.startsWith(mainUrl) && !u.contains("/cdn-cgi/")) {
+                                view.evaluateJavascript(
+                                    "(function(){return document.querySelector('iframe[src*=challenges]') === null && document.body && document.body.innerHTML.length > 500})()"
+                                ) { r ->
+                                    if (r == "true") {
+                                        Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: Turnstile ausente, pagina cargada")
+                                        val cookies = CookieManager.getInstance().getCookie(mainUrl)
+                                        Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: cookies=$cookies")
+                                        if (cookies != null) {
+                                            val cf = cookies.split(";").map { it.trim() }.firstOrNull { it.startsWith("cf_clearance=") }
+                                            if (cf != null) {
+                                                cfClearance = cf.removePrefix("cf_clearance=")
+                                                Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: cf_clearance obtenido")
+                                            }
+                                        }
+                                        wv = view
+                                        dialog.dismiss()
+                                        done(true)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    webView.loadUrl(url)
+                    dialog.show()
+                } catch (e: Exception) {
+                    Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView error: ${e.message}")
+                    done(false)
+                }
+            }
+        }
     }
 
     private val cloudflareKiller = CloudflareKiller()
@@ -96,6 +200,13 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
                 if (html.contains("Just a moment") && html.contains("challenges.cloudflare.com")) {
                     Log.w("AnimeOnlineNinja", "Cloudflare Turnstile challenge at $url (attempt ${i + 1})")
+                    if (cfClearance.isBlank()) {
+                        Log.d("AnimeOnlineNinja", "safeGet: attempting WebView Turnstile resolution")
+                        if (resolveTurnstileWithWebView(url)) {
+                            Log.d("AnimeOnlineNinja", "safeGet: WebView resolvio Turnstile, reintentando con cookie")
+                            continue
+                        }
+                    }
                     if (i < retries - 1) {
                         delay(5000L)
                         continue
