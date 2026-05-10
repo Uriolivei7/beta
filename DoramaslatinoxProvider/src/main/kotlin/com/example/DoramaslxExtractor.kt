@@ -74,6 +74,8 @@ class DoramasLatinoXExtractor : ExtractorApi() {
                 suspendCoroutine<String?> { cont ->
                     var resumed = false
                     var interceptedUrl: String? = null
+                    var iframeUrl: String? = null
+                    var onSoTrym = false
                     val handler = Handler(Looper.getMainLooper())
                     val view = getOrCreateWebView(ctx)
 
@@ -93,14 +95,14 @@ class DoramasLatinoXExtractor : ExtractorApi() {
                         ): WebResourceResponse? {
                             val reqUrl = request.url.toString()
                             if (request.isForMainFrame) {
-                                Log.d("DoramasLX", "main frame: ${reqUrl.take(100)}")
+                                Log.d("DoramasLX", "main frame: ${reqUrl.take(80)}")
                             }
                             if (interceptedUrl == null) {
                                 if (reqUrl.contains(".m3u8", true) || reqUrl.contains(".mp4", true)) {
                                     interceptedUrl = reqUrl
                                     Log.d("DoramasLX", ">>> VIDEO: ${reqUrl.take(80)}")
                                 } else if (reqUrl.contains("short.icu") || reqUrl.contains("abyss.to")) {
-                                    Log.d("DoramasLX", "relevant: ${reqUrl.take(100)}")
+                                    Log.d("DoramasLX", "req: ${reqUrl.take(80)}")
                                 }
                             }
                             return null
@@ -108,8 +110,34 @@ class DoramasLatinoXExtractor : ExtractorApi() {
 
                         override fun onPageFinished(v: WebView, u: String) {
                             if (resumed) return
-                            Log.d("DoramasLX", "onPageFinished: ${u.take(60)}")
-                            pollLoop(v)
+                            Log.d("DoramasLX", "onPageFinished: ${u.take(60)} onSoTrym=$onSoTrym")
+
+                            if (u.contains("abyss.to") && !onSoTrym) {
+                                // We're on abyss.to — find the iframe URL and navigate there
+                                v.evaluateJavascript(
+                                    """(function() {
+  var f = document.querySelector('iframe');
+  return f ? f.src : '';
+})()"""
+                                ) { result: String? ->
+                                    if (resumed) return@evaluateJavascript
+                                    val src = result?.removeSurrounding("\"")?.trim() ?: ""
+                                    if (src.isNotBlank() && src.contains("short.icu")) {
+                                        iframeUrl = src
+                                        Log.d("DoramasLX", "iframe src: $src")
+                                        onSoTrym = true
+                                        v.loadUrl(src, mapOf("Referer" to "https://abyss.to"))
+                                    }
+                                }
+                                return
+                            }
+
+                            if (u.contains("short.icu") || onSoTrym) {
+                                onSoTrym = true
+                                pollLoop(v)
+                            } else {
+                                pollLoop(v)
+                            }
                         }
 
                         fun pollLoop(wv: WebView) {
