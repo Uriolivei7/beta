@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Document
 import android.util.Log
 import kotlinx.coroutines.delay
+import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
@@ -133,6 +134,155 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                 } catch (e: Exception) {
                     Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView error: ${e.message}")
                     done(false)
+                }
+            }
+        }
+    }
+
+    private suspend fun wvGet(url: String): Document? {
+        Log.d("AnimeOnlineNinja", "wvGet: $url")
+        val view = wv ?: run { Log.e("AnimeOnlineNinja", "wvGet: wv is null"); return null }
+        return wvMutex.withLock {
+            withContext(Dispatchers.Main) {
+                suspendCoroutine { cont ->
+                    var resumed = false
+                    val timeoutRunnable = Runnable {
+                        if (!resumed) {
+                            resumed = true
+                            Log.e("AnimeOnlineNinja", "wvGet timeout: $url")
+                            cont.resume(null)
+                        }
+                    }
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                    handler.postDelayed(timeoutRunnable, 20000)
+                    try {
+                        view.stopLoading()
+                        view.webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(v: WebView, u: String) {
+                                if (resumed) return
+                                handler.removeCallbacks(timeoutRunnable)
+                                v.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { html ->
+                                    if (!resumed) {
+                                        resumed = true
+                                        val decoded = try {
+                                            JSONObject("{\"h\":$html}").getString("h")
+                                        } catch (e: Exception) {
+                                            html?.removeSurrounding("\"")?.replace("\\\"", "\"")
+                                                ?.replace("\\n", "\n") ?: ""
+                                        }
+                                        Log.d("AnimeOnlineNinja", "wvGet OK: ${url.take(60)}... (${decoded.length} chars)")
+                                        cont.resume(Jsoup.parse(decoded, url))
+                                    }
+                                }
+                            }
+                        }
+                        view.loadUrl(url)
+                    } catch (e: Exception) {
+                        handler.removeCallbacks(timeoutRunnable)
+                        if (!resumed) { resumed = true; cont.resume(null) }
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun extractPosterDataUris(urls: List<String>): Map<String, String> {
+        if (urls.isEmpty()) return emptyMap()
+        val view = wv ?: return emptyMap()
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resumed = false
+                val jsonUrls = JSONArray(urls).toString()
+                view.evaluateJavascript(
+                    "(function(){" +
+                    "var u = JSON.parse('${jsonUrls.replace("'", "\\'")}');" +
+                    "var r = {}; var p = u.length;" +
+                    "u.forEach(function(s){" +
+                    "  function done(d, ok){" +
+                    "    if(ok){" +
+                    "      try{var c=document.createElement('canvas');c.width=d.naturalWidth;c.height=d.naturalHeight;c.getContext('2d').drawImage(d,0,0);r[s]=c.toDataURL('image/jpeg',80);}catch(e){r[s]=''}" +
+                    "    } else {r[s]=''}" +
+                    "    p--; if(p===0){window.__pd=true;window.__p=JSON.stringify(r)}" +
+                    "  }" +
+                    "  var i=document.querySelector('img[src=\"'+s+'\"]');" +
+                    "  if(i&&i.complete&&i.naturalWidth>0){done(i,true)}" +
+                    "  else if(i){i.onload=function(){done(i,true)};i.onerror=function(){done(null,false)}}" +
+                    "  else{done(null,false)}" +
+                    "});" +
+                    "})()"
+                ) {
+                    fun poll(n: Int) {
+                        if (!resumed) {
+                            if (n <= 0) { resumed = true; cont.resume(emptyMap()); return }
+                            view.evaluateJavascript("window.__pd") { d ->
+                                if (!resumed) {
+                                    if (d == "true") {
+                                        view.evaluateJavascript("window.__p") { data ->
+                                            if (!resumed) {
+                                                resumed = true
+                                                val json = data?.removeSurrounding("\"")?.replace("\\\"", "\"")
+                                                val map = if (json != null) try {
+                                                    val obj = JSONObject(json)
+                                                    urls.mapNotNull { url ->
+                                                        val v = obj.optString(url, "")
+                                                        if (v.isNotEmpty()) url to v else null
+                                                    }.toMap()
+                                                } catch (e: Exception) { emptyMap() } else emptyMap()
+                                                Log.d("AnimeOnlineNinja", "extractPosterDataUris: ${map.size} data URIs")
+                                                cont.resume(map)
+                                            }
+                                        }
+                                    } else {
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ poll(n - 1) }, 200)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    poll(50)
+                }
+            }
+        }
+    }
+
+    private suspend fun downloadImageAsDataUri(imageUrl: String): String? {
+        val view = wv ?: return null
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resumed = false
+                val safeUrl = imageUrl.replace("'", "\\'")
+                view.evaluateJavascript(
+                    "(function(){" +
+                    "var i=new Image();" +
+                    "i.crossOrigin='anonymous';" +
+                    "i.onload=function(){" +
+                    "var c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;" +
+                    "c.getContext('2d').drawImage(i,0,0);" +
+                    "window.__p=c.toDataURL('image/jpeg',80);window.__pd=true};" +
+                    "i.onerror=function(){window.__pd=true;window.__p=''};" +
+                    "i.src='$safeUrl';" +
+                    "})()"
+                ) {
+                    fun poll(n: Int) {
+                        if (!resumed) {
+                            if (n <= 0) { resumed = true; cont.resume(null); return }
+                            view.evaluateJavascript("window.__pd") { d ->
+                                if (!resumed) {
+                                    if (d == "true") {
+                                        view.evaluateJavascript("window.__p") { data ->
+                                            if (!resumed) {
+                                                resumed = true
+                                                cont.resume(data?.removeSurrounding("\"")?.ifEmpty { null })
+                                            }
+                                        }
+                                    } else {
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ poll(n - 1) }, 200)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    poll(50)
                 }
             }
         }
@@ -283,6 +433,8 @@ class AnimeOnlineNinjaProvider : MainAPI() {
             Regex("""dooplay[.\s]*ajax_nonce['"]?\s*[:=]\s*['"]([a-f0-9]+)['"]"""),
             Regex("""nonce['"]?\s*[:=]\s*['"]([a-f0-9]+)['"]"""),
             Regex("""id=["']dooplay_nonce["']\s+value=["']([a-f0-9]+)["']"""),
+            Regex("""ajax_nonce["']?\s*:\s*["']([a-f0-9]+)["']"""),
+            Regex("""var\s+dooplay\s*=\s*\{[^}]*?nonce["']?\s*[:=]\s*["']([a-f0-9]+)["']"""),
         )
         for (pattern in patterns) {
             val match = pattern.find(html)?.groupValues?.get(1)
@@ -316,27 +468,49 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         }
         val document = Jsoup.parse(html)
 
-        val items = document.select("article.item").mapNotNull { it.toSearchResult() }
+        var items = document.select("article.item").mapNotNull { it.toSearchResult() }
         if (items.isEmpty()) {
-            Log.d("AnimeOnlineNinja", "getMainPage: 0 items, HTML snippet: ${document.text().take(300)}")
+            Log.d("AnimeOnlineNinja", "getMainPage: 0 items via article.item, logging HTML classes...")
+            document.select("article, div[class], li[class]").take(5).forEach { el ->
+                Log.d("AnimeOnlineNinja", "  candidate: <${el.tagName()} class='${el.className()}'>")
+            }
         }
-        val hasNext = document.selectFirst(".pagination .next, .pagination a.next.page-numbers, a.next.page-numbers") != null
-        Log.d("AnimeOnlineNinja", "getMainPage: ${items.size} items, hasNext=$hasNext")
+        if (items.isEmpty()) {
+            Log.d("AnimeOnlineNinja", "getMainPage: HTML snippet: ${document.text().take(300)}")
+        }
 
+        val posterUrls = items.mapNotNull { it.posterUrl }
+        val posterMap = if (posterUrls.isNotEmpty() && wv != null) {
+            wvGet(url)
+            extractPosterDataUris(posterUrls.filter { it.startsWith(mainUrl) })
+        } else emptyMap()
+
+        val finalItems = items.map { resp ->
+            val newPoster = posterMap[resp.posterUrl] ?: resp.posterUrl
+            when (resp) {
+                is TvSeriesSearchResponse -> newTvSeriesSearchResponse(resp.name, resp.url, TvType.Anime) { this.posterUrl = newPoster }
+                is MovieSearchResponse -> newMovieSearchResponse(resp.name, resp.url, TvType.AnimeMovie) { this.posterUrl = newPoster }
+                else -> resp
+            }
+        }
+
+        val hasNext = document.selectFirst(".pagination .next, .pagination a.next.page-numbers, a.next.page-numbers") != null
+        Log.d("AnimeOnlineNinja", "getMainPage: ${finalItems.size} items, hasNext=$hasNext")
         return newHomePageResponse(
-            list = HomePageList(name = request.name, list = items, isHorizontalImages = false),
+            list = HomePageList(name = request.name, list = finalItems, isHorizontalImages = false),
             hasNext = hasNext
         )
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
+    private fun Element.toSearchResult(posterMap: Map<String, String> = emptyMap()): SearchResponse? {
         val linkEl = this.selectFirst(".data h3 a") ?: return null
         val href = linkEl.attr("abs:href").ifBlank { return null }
         val title = linkEl.text().trim()
         if (title.isBlank()) return null
 
         val img = this.selectFirst(".poster img")
-        val poster = img?.attr("data-src")?.ifBlank { img.attr("src") }?.ifBlank { null }
+        val src = img?.attr("data-src")?.ifBlank { img.attr("src") }?.ifBlank { null }
+        val poster = posterMap[src] ?: src
 
         val type = when {
             href.contains("/pelicula/") || this.hasClass("movies") -> TvType.AnimeMovie
@@ -389,9 +563,24 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         Log.d("AnimeOnlineNinja", "search: falling back to HTML $fallbackUrl")
         val html = getHtml(fallbackUrl) ?: return emptyList()
         val document = Jsoup.parse(html)
-        val results = document.select("article.item").mapNotNull { it.toSearchResult() }
+        var results = document.select("article.item").mapNotNull { it.toSearchResult() }
         if (results.isEmpty()) {
-            Log.d("AnimeOnlineNinja", "search: 0 HTML results, snippet: ${document.text().take(300)}")
+            Log.d("AnimeOnlineNinja", "search: 0 via article.item, logging candidates...")
+            document.select("article, div[class], li[class]").take(8).forEach { el ->
+                Log.d("AnimeOnlineNinja", "  candidate: <${el.tagName()} class='${el.className()}'> text='${el.text().take(60)}'")
+            }
+            results = document.select("article, div.post, div.entry, li").mapNotNull { alt ->
+                val a = alt.selectFirst("a[href*='/online/'], a[href*='/pelicula/'], a[href*='/temporada/']") ?: return@mapNotNull null
+                val t = a.text().trim().ifBlank { return@mapNotNull null }
+                val img = alt.selectFirst("img")
+                val src = img?.attr("data-src")?.ifBlank { img.attr("src") }?.ifBlank { null }
+                val href = a.attr("abs:href")
+                val type = if (href.contains("/pelicula/")) TvType.AnimeMovie else TvType.Anime
+                when (type) {
+                    TvType.AnimeMovie -> newMovieSearchResponse(t, href, TvType.AnimeMovie) { this.posterUrl = src }
+                    else -> newTvSeriesSearchResponse(t, href, TvType.Anime) { this.posterUrl = src }
+                }
+            }
         }
         Log.d("AnimeOnlineNinja", "search: ${results.size} HTML results for '$query'")
         return results
@@ -422,6 +611,26 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         Log.d("AnimeOnlineNinja", "load: year=$year")
 
         val episodes = extractEpisodes(document, poster)
+        if (episodes.isNotEmpty() && wv != null) {
+            wvGet(url)
+            val epPosterUrls = episodes.mapNotNull { it.posterUrl }.filter { it.startsWith(mainUrl) }.distinct()
+            if (epPosterUrls.isNotEmpty()) {
+                val posterMap = extractPosterDataUris(epPosterUrls)
+                if (posterMap.isNotEmpty()) {
+                    val indexed = episodes.map { ep ->
+                        val newPoster = posterMap[ep.posterUrl] ?: ep.posterUrl
+                        newEpisode(ep.data) {
+                            this.name = ep.name; this.episode = ep.episode; this.season = ep.season
+                            this.posterUrl = newPoster; this.date = ep.date
+                        }
+                    }
+                    return newAnimeLoadResponse(title, url, TvType.Anime) {
+                        addEpisodes(DubStatus.Subbed, indexed)
+                        this.posterUrl = poster; this.plot = description; this.year = year; this.tags = tags
+                    }
+                }
+            }
+        }
         Log.d("AnimeOnlineNinja", "load: ${episodes.size} episodes extracted")
 
         return if (episodes.isNotEmpty()) {
@@ -542,6 +751,26 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                         if (embedUrl.isNotBlank()) {
                             Log.d("AnimeOnlineNinja", "loadLinks: loading extractor from embed_url=$embedUrl")
                             loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
+                            try {
+                                val embedHtml = app.get(embedUrl, headers = chromeHeaders, timeout = 15000L,
+                                    cookies = buildCookies()).text
+                                val embedDoc = Jsoup.parse(embedHtml)
+                                val sources = embedDoc.select("video source[src], source[src], iframe[src]")
+                                Log.d("AnimeOnlineNinja", "loadLinks: embed page has ${sources.size} sources")
+                                sources.forEach { srcEl ->
+                                    val src = srcEl.attr("abs:src").ifBlank { return@forEach }
+                                    if (srcEl.tagName() == "iframe") {
+                                        loadExtractor(src, mainUrl, subtitleCallback, callback)
+                                    } else {
+                                        callback(newExtractorLink(serverName, titleName, src) {
+                                            this.referer = embedUrl; this.quality = Qualities.Unknown.value
+                                            this.type = if (src.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                        })
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("AnimeOnlineNinja", "loadLinks: embed fetch error: ${e.message}")
+                            }
                         } else {
                             Log.w("AnimeOnlineNinja", "loadLinks: JSON has no embed_url")
                         }
