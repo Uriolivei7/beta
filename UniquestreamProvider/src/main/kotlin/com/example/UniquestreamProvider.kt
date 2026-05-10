@@ -3,7 +3,6 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import kotlinx.serialization.*
 
 class UniqueStreamProvider : MainAPI() {
@@ -230,29 +229,98 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — usar M3u8Helper (usa el mismo HTTP client con cookies)
+                        // HLS — descargar master y enviar variantes directo a ExoPlayer
                         if (hlsVersions.isNotEmpty()) {
-                            Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS con M3u8Helper")
-                            hlsVersions.forEach { hlsVersion ->
+                            Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
+                            for (hlsVersion in hlsVersions) {
                                 if (hlsVersion.playlist.isNotBlank()) {
                                     try {
-                                        val results = generateM3u8(
-                                            source = this.name,
-                                            streamUrl = hlsVersion.playlist,
-                                            referer = "$mainUrl/",
-                                            name = hlsVersion.locale.uppercase(),
-                                            headers = mapOf(
-                                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                                "Accept" to "*/*",
-                                                "Origin" to mainUrl,
-                                                "Referer" to "$mainUrl/"
-                                            )
-                                        )
-                                        results.forEach { link -> callback(link) }
-                                        linksEnviados += results.size
-                                        Log.d(TAG, "✓ ${hlsVersion.locale}: ${results.size} links via M3u8Helper")
+                                        // Descargar master.m3u8 para obtener las variantes
+                                        val masterResp = app.get(hlsVersion.playlist, headers = mapOf(
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                            "Accept" to "*/*",
+                                            "Origin" to mainUrl,
+                                            "Referer" to "$mainUrl/"
+                                        ), timeout = 20L)
+
+                                        if (masterResp.code != 200) {
+                                            Log.w(TAG, "Master ${hlsVersion.locale} falló: ${masterResp.code}")
+                                            continue
+                                        }
+
+                                        val masterText = masterResp.text
+                                        val baseUrl = hlsVersion.playlist.substringBeforeLast("/").substringBefore("?")
+
+                                        // Extraer líneas de variante (no #EXT-X-STREAM-INF)
+                                        val variantLines = masterText.lines().filter { line ->
+                                            !line.startsWith("#") && line.isNotBlank() && !line.startsWith("http")
+                                        }
+
+                                        if (variantLines.isEmpty()) {
+                                            // Fallback: enviar master URL directo
+                                            Log.d(TAG, "${hlsVersion.locale}: sin variantes, enviando master directo")
+                                            callback(newExtractorLink(
+                                                source = this.name,
+                                                name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                                                url = hlsVersion.playlist,
+                                                type = ExtractorLinkType.M3U8
+                                            ) {
+                                                this.quality = Qualities.Unknown.value
+                                                this.referer = "$mainUrl/"
+                                                this.headers = mapOf(
+                                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                                    "Accept" to "*/*",
+                                                    "Origin" to mainUrl,
+                                                    "Referer" to "$mainUrl/"
+                                                )
+                                            })
+                                            linksEnviados++
+                                        } else {
+                                            // Enviar cada variante como link M3U8 directo
+                                            for (variantLine in variantLines) {
+                                                val variantUrl = if (variantLine.startsWith("http")) {
+                                                    variantLine
+                                                } else {
+                                                    "$baseUrl/$variantLine"
+                                                }
+
+                                                val quality = when {
+                                                    variantLine.contains("1920") -> "1080p"
+                                                    variantLine.contains("1280") -> "720p"
+                                                    variantLine.contains("854") -> "480p"
+                                                    variantLine.contains("640") -> "360p"
+                                                    else -> "Auto"
+                                                }
+                                                val qualityValue = when (quality) {
+                                                    "1080p" -> Qualities.P1080.value
+                                                    "720p" -> Qualities.P720.value
+                                                    "480p" -> Qualities.P480.value
+                                                    "360p" -> Qualities.P360.value
+                                                    else -> Qualities.Unknown.value
+                                                }
+
+                                                Log.d(TAG, "  → ${hlsVersion.locale} $quality: ${variantUrl.take(120)}")
+                                                callback(newExtractorLink(
+                                                    source = this.name,
+                                                    name = "${this.name} - ${hlsVersion.locale.uppercase()} - $quality",
+                                                    url = variantUrl,
+                                                    type = ExtractorLinkType.M3U8
+                                                ) {
+                                                    this.quality = qualityValue
+                                                    this.referer = "$mainUrl/"
+                                                    this.headers = mapOf(
+                                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                                        "Accept" to "*/*",
+                                                        "Origin" to mainUrl,
+                                                        "Referer" to "$mainUrl/"
+                                                    )
+                                                })
+                                                linksEnviados++
+                                            }
+                                            Log.d(TAG, "✓ ${hlsVersion.locale}: ${variantLines.size} variantes")
+                                        }
                                     } catch (e: Exception) {
-                                        Log.w(TAG, "Error M3u8Helper para ${hlsVersion.locale}: ${e.message}")
+                                        Log.w(TAG, "Error procesando ${hlsVersion.locale}: ${e.message}")
                                     }
                                 }
                             }
