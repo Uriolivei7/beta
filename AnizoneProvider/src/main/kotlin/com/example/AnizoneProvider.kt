@@ -301,7 +301,7 @@ class AnizoneProvider : MainAPI() {
                     "u.forEach(function(s){" +
                     "  function done(d, ok){" +
                     "    if(ok){" +
-                    "      try{var c=document.createElement('canvas');c.width=d.width;c.height=d.height;c.getContext('2d').drawImage(d,0,0);r[s]=c.toDataURL('image/jpeg',80);}catch(e){r[s]=''}" +
+                    "      try{var c=document.createElement('canvas');c.width=d.naturalWidth;c.height=d.naturalHeight;c.getContext('2d').drawImage(d,0,0);r[s]=c.toDataURL('image/jpeg',80);}catch(e){r[s]=''}" +
                     "    } else {r[s]=''}" +
                     "    p--; if(p===0){window.__pd=true;window.__p=JSON.stringify(r)}" +
                     "  }" +
