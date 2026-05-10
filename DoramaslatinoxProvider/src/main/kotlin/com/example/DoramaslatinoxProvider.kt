@@ -251,12 +251,23 @@ class DoramaslatinoxProvider : MainAPI() {
                     }
                 }
 
-                // 3) Cargar página embed, buscar iframe + m3u8 directo
+                // 3) Probar construir URL de doramasfoxito con el hash del embed
+                val hash = embedUrl.substringAfterLast("/").substringBefore("?")
+                if (hash.isNotBlank()) {
+                    val foxUrl = "https://doramasfoxito.p2pplay.online/#/$hash"
+                    Log.d("DoramasLX", "Probando foxUrl directa: $foxUrl")
+                    if (tryExtract(foxUrl, data, subtitleCallback, callback)) {
+                        found = true; return@forEach
+                    }
+                }
+
+                // 4) Cargar página embed, buscar iframe + m3u8 directo + redirects JS
                 for (pageUrl in listOf(embedUrl, icuUrl).distinct()) {
                     Log.d("DoramasLX", "Cargando página embed: $pageUrl")
-                    val pageText = try { app.get(pageUrl, referer = data).text } catch (e: Exception) {
+                    val pageResp = try { app.get(pageUrl, referer = data) } catch (e: Exception) {
                         Log.e("DoramasLX", "Error cargando $pageUrl: ${e.message}"); null
                     } ?: continue
+                    val pageText = pageResp.text
 
                     // Buscar iframe
                     val iframeSrc = try {
@@ -268,6 +279,25 @@ class DoramaslatinoxProvider : MainAPI() {
                         for (src in listOf(iframeSrc, iframeSrc.replace("short.ink", "short.icu")).distinct()) {
                             Log.d("DoramasLX", "Probando iframe src: $src")
                             if (tryExtract(src, pageUrl, subtitleCallback, callback)) {
+                                found = true; return@forEach
+                            }
+                        }
+                    }
+
+                    // Buscar redirect en JS (window.location, location.href, etc)
+                    val redirectRegex = Regex("""(?:location\.href|window\.location)\s*=\s*['"]([^'"]+)['"]""")
+                    for (match in redirectRegex.findAll(pageText)) {
+                        val redirectUrl = match.groupValues[1].replace("\\/", "/")
+                        Log.d("DoramasLX", "Redirect JS encontrado: $redirectUrl")
+                        if (tryExtract(redirectUrl, pageUrl, subtitleCallback, callback)) {
+                            found = true; return@forEach
+                        }
+                        // También probar construir foxUrl desde redirect
+                        val rhash = redirectUrl.substringAfterLast("/").substringBefore("?")
+                        if (rhash.isNotBlank()) {
+                            val rFoxUrl = "https://doramasfoxito.p2pplay.online/#/$rhash"
+                            Log.d("DoramasLX", "Probando foxUrl desde redirect: $rFoxUrl")
+                            if (tryExtract(rFoxUrl, pageUrl, subtitleCallback, callback)) {
                                 found = true; return@forEach
                             }
                         }
