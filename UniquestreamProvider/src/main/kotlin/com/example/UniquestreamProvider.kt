@@ -1,6 +1,5 @@
 package com.example
 
-import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -198,17 +197,17 @@ class UniqueStreamProvider : MainAPI() {
                         Log.d(TAG, "DEBUG - Cantidad DASH: ${videoData.versions?.dash?.size ?: 0}")
                         Log.d(TAG, "DEBUG - Cantidad HLS: ${videoData.versions?.hls?.size ?: 0}")
 
-                        // Intentar DASH primero, pero también agregar opción web
                         val dashVersions = videoData.versions?.dash ?: emptyList()
+                        val hlsVersions = mutableListOf<HlsVersion>()
+                        videoData.versions?.hls?.let { hlsVersions.addAll(it) }
+                        videoData.hls?.let { hlsVersions.add(it) }
 
+                        // DASH
                         if (dashVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${dashVersions.size} versiones DASH")
-
-                            // Agregar links DASH directos
-                            dashVersions.take(3).forEach { dashVersion ->
+                            dashVersions.forEach { dashVersion ->
                                 if (dashVersion.playlist.isNotBlank()) {
                                     Log.d(TAG, "✓ DASH ${dashVersion.locale}")
-
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
@@ -228,48 +227,33 @@ class UniqueStreamProvider : MainAPI() {
                                     linksEnviados++
                                 }
                             }
-
-                            Log.d(TAG, "Nota: Si los links DASH no funcionan, abre el episodio en el navegador: $watchUrl")
                         }
 
-                        // Fallback a HLS si no hay DASH
-                        if (linksEnviados == 0) {
-                            Log.w(TAG, "No hay DASH disponible, usando página web embebida")
-
-                            // Crear un HTML que embeba el reproductor del sitio
-                            val embedHtml = """
-                                <!DOCTYPE html>
-                                <html>
-                                <head>
-                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                    <style>
-                                        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-                                        iframe { width: 100%; height: 100%; border: none; }
-                                    </style>
-                                </head>
-                                <body>
-                                    <iframe src="$watchUrl" allowfullscreen></iframe>
-                                </body>
-                                </html>
-                            """.trimIndent()
-
-                            // Codificar en base64
-                            val encodedHtml = android.util.Base64.encodeToString(
-                                embedHtml.toByteArray(),
-                                android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
-                            )
-
-                            callback(
-                                newExtractorLink(
-                                    source = this.name,
-                                    name = "${this.name} - Web Player",
-                                    url = "data:text/html;base64,$encodedHtml",
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.quality = Qualities.Unknown.value
+                        // HLS
+                        if (hlsVersions.isNotEmpty()) {
+                            Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
+                            hlsVersions.forEach { hlsVersion ->
+                                if (hlsVersion.playlist.isNotBlank()) {
+                                    Log.d(TAG, "✓ HLS ${hlsVersion.locale}")
+                                    callback(
+                                        newExtractorLink(
+                                            source = this.name,
+                                            name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                                            url = hlsVersion.playlist,
+                                            type = ExtractorLinkType.M3U8
+                                        ) {
+                                            this.quality = Qualities.Unknown.value
+                                            this.referer = "$mainUrl/"
+                                            this.headers = mapOf(
+                                                "Accept" to "*/*",
+                                                "Origin" to mainUrl,
+                                                "Referer" to "$mainUrl/"
+                                            )
+                                        }
+                                    )
+                                    linksEnviados++
                                 }
-                            )
-                            linksEnviados++
+                            }
                         }
 
                         if (linksEnviados > 0) break
@@ -342,7 +326,8 @@ class UniqueStreamProvider : MainAPI() {
 
     @Serializable
     data class VideoResponse(
-        val versions: Versions? = null
+        val versions: Versions? = null,
+        val hls: HlsVersion? = null
     )
 
     @Serializable
@@ -355,7 +340,8 @@ class UniqueStreamProvider : MainAPI() {
     data class HlsVersion(
         val locale: String,
         val playlist: String,
-        val subtitles: List<SubtitleItem>? = null
+        val subtitles: List<SubtitleItem>? = null,
+        val hard_subs: List<HardSubItem>? = null
     )
 
     @Serializable
