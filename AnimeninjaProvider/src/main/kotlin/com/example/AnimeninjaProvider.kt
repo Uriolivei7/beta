@@ -58,7 +58,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         val ctx = pluginContext ?: run { Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView: pluginContext null"); return false }
         if (resolving) {
             Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: esperando resolucion...")
-            for (i in 1..60) { if (wv != null) { Log.d("AnimeOnlineNinja", "resuelto por otro hilo"); return true }; delay(1000) }
+            for (i in 1..90) { if (wv != null) { Log.d("AnimeOnlineNinja", "resuelto por otro hilo"); return true }; delay(1000) }
             Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView: timeout esperando")
             return false
         }
@@ -69,6 +69,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                 fun done(v: Boolean) { if (!resumed) { resumed = true; resolving = false; cont.resume(v) } }
                 try {
                     Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: creando WebView dialog...")
+                    CookieManager.getInstance().setAcceptCookie(true)
                     val webView = WebView(ctx.applicationContext).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
@@ -95,32 +96,40 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                     }
                     webView.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView, u: String) {
-                            if (resumed) return
-                            if (u.startsWith(mainUrl) && !u.contains("/cdn-cgi/")) {
-                                view.evaluateJavascript(
-                                    "(function(){return document.querySelector('iframe[src*=challenges]') === null && document.body && document.body.innerHTML.length > 500})()"
-                                ) { r ->
-                                    if (r == "true") {
-                                        Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: Turnstile ausente, pagina cargada")
-                                        val cookies = CookieManager.getInstance().getCookie(mainUrl)
-                                        Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: cookies=$cookies")
-                                        if (cookies != null) {
-                                            val cf = cookies.split(";").map { it.trim() }.firstOrNull { it.startsWith("cf_clearance=") }
-                                            if (cf != null) {
-                                                cfClearance = cf.removePrefix("cf_clearance=")
-                                                Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: cf_clearance obtenido")
-                                            }
-                                        }
-                                        wv = view
-                                        dialog.dismiss()
-                                        done(true)
-                                    }
-                                }
-                            }
+                            // just logging, cookie polling handles resolution
+                            Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: onPageFinished $u")
                         }
                     }
+
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                    val cookiePoll = object : Runnable {
+                        var attempts = 0
+                        override fun run() {
+                            if (resumed) return
+                            if (attempts++ > 120) {
+                                Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView: timeout esperando cookie")
+                                done(false)
+                                return
+                            }
+                            val cookies = CookieManager.getInstance().getCookie(mainUrl)
+                            if (cookies != null && cookies.contains("cf_clearance")) {
+                                val cf = cookies.split(";").map { it.trim() }.firstOrNull { it.startsWith("cf_clearance=") }
+                                if (cf != null) {
+                                    cfClearance = cf.removePrefix("cf_clearance=")
+                                    Log.d("AnimeOnlineNinja", "resolveTurnstileWithWebView: cf_clearance obtenido")
+                                }
+                                wv = webView
+                                dialog.dismiss()
+                                done(true)
+                                return
+                            }
+                            handler.postDelayed(this, 500)
+                        }
+                    }
+
                     webView.loadUrl(url)
                     dialog.show()
+                    handler.post(cookiePoll)
                 } catch (e: Exception) {
                     Log.e("AnimeOnlineNinja", "resolveTurnstileWithWebView error: ${e.message}")
                     done(false)
