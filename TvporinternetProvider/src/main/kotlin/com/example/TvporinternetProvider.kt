@@ -116,62 +116,60 @@ class TvporinternetProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val html = safeAppGet(mainUrl) ?: return null
-        val categoryMap = mutableMapOf<String, MutableList<SearchResponse>>()
-
         val channels = extractChannelsFromHtml(html)
 
-        channels.forEach { (titleRaw, link, img) ->
+        val uniqueChannels = channels.distinctBy { (_, link, _) -> link }
+
+        val channelResults = uniqueChannels.mapNotNull { (titleRaw, link, img) ->
             val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
-
-            if (nowAllowed.any { title.contains(it, ignoreCase = true) }) return@forEach
-
-            val channelResponse = newTvSeriesSearchResponse(
-                name = title,
-                url = fixUrl(link)
-            ) {
+            if (nowAllowed.any { title.contains(it, ignoreCase = true) }) return@mapNotNull null
+            newTvSeriesSearchResponse(name = title, url = fixUrl(link)) {
                 this.type = TvType.Live
                 this.posterUrl = fixUrl(img)
             }
-
-            val category = getCategory(title)
-            categoryMap.getOrPut(category) { ArrayList() }.add(channelResponse)
         }
 
-        val homePageList = categoryMap.entries
-            .sortedByDescending { it.value.size }
-            .map { (category, items) ->
-                HomePageList(category, items)
-            }
+        val grouped = channelResults.groupBy { getCategory(it.name) }
 
-        return newHomePageResponse(homePageList, false)
+        val sections = mutableListOf<HomePageList>()
+        sections.add(HomePageList("Todos los Canales", channelResults))
+
+        val categoryOrder = listOf("Deportes", "Entretenimiento", "Noticias", "Peliculas", "Infantil", "Educacion", "Latino", "Canales")
+        for (cat in categoryOrder) {
+            val items = grouped[cat]
+            if (!items.isNullOrEmpty()) {
+                sections.add(HomePageList(cat, items))
+            }
+        }
+
+        return newHomePageResponse(sections, false)
     }
 
     private fun extractChannelsFromHtml(html: String): List<Triple<String, String, String>> {
         val channels = mutableListOf<Triple<String, String, String>>()
 
-        val homeChannelsMatch = Regex("""const\s+homeChannels\s*=\s*`([^`]*)`""", RegexOption.DOT_MATCHES_ALL).find(html)
+        for (varName in listOf("homeChannels", "showChannels")) {
+            val match = Regex("""const\s+$varName\s*=\s*`([^`]*)`""", RegexOption.DOT_MATCHES_ALL).find(html)
+            if (match != null) {
+                val channelDoc = Jsoup.parse(match.groupValues[1])
+                channelDoc.select("a.channel-card").forEach { channelCard ->
+                    val link = channelCard.attr("href")
+                    val imgElement = channelCard.selectFirst("img")
+                    val pElement = channelCard.selectFirst("p")
+                    val titleRaw = if (imgElement?.attr("alt")?.isNotBlank() == true) {
+                        imgElement.attr("alt")
+                    } else if (pElement?.text()?.isNotBlank() == true) {
+                        pElement.text()
+                    } else {
+                        ""
+                    }
+                    val img = imgElement?.attr("src") ?: ""
 
-        if (homeChannelsMatch != null) {
-            val channelsHtml = homeChannelsMatch.groupValues[1]
-            val channelDoc = Jsoup.parse(channelsHtml)
+                    Log.d("TvporInternet", "Extract: link=$link, title='$titleRaw', img='$img'")
 
-            channelDoc.select("a.channel-card").forEach { channelCard ->
-                val link = channelCard.attr("href")
-                val imgElement = channelCard.selectFirst("img")
-                val pElement = channelCard.selectFirst("p")
-                val titleRaw = if (imgElement?.attr("alt")?.isNotBlank() == true) {
-                    imgElement.attr("alt")
-                } else if (pElement?.text()?.isNotBlank() == true) {
-                    pElement.text()
-                } else {
-                    ""
-                }
-                val img = imgElement?.attr("src") ?: ""
-
-                Log.d("TvporInternet", "Extract: link=$link, title='$titleRaw', img='$img'")
-                
-                if (titleRaw.isNotBlank() && link.isNotBlank()) {
-                    channels.add(Triple(titleRaw, link, img))
+                    if (titleRaw.isNotBlank() && link.isNotBlank()) {
+                        channels.add(Triple(titleRaw, link, img))
+                    }
                 }
             }
         }
@@ -224,15 +222,26 @@ class TvporinternetProvider : MainAPI() {
         val html = safeAppGet(url) ?: return null
         val doc = Jsoup.parse(html)
 
-        val title = doc.selectFirst("h1.text-3xl.font-bold")?.text()?.replace(" EN VIVO", "")?.trim()
-            ?: doc.selectFirst("meta[property='og:title']")?.attr("content")?.replace(" EN VIVO", "")?.trim()
+        val title = doc.selectFirst("h1.font-bold")?.text()
+            ?: doc.selectFirst("h1")?.text()
+            ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("title")?.text()
             ?: "Canal Desconocido"
 
-        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: doc.selectFirst("img[alt*='logo'][src]")?.attr("src")
+        val cleanTitle = title
+            .replace("Ver ", "")
+            .replace(" en vivo", "")
+            .replace(Regex("\\s*\\|\\s*.*"), "")
+            .trim()
+
+        val poster = doc.selectFirst("div.flex.justify-between img[src]")?.attr("src")
+            ?: doc.selectFirst("section img[src*='/imge/']")?.attr("src")
+            ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
             ?: ""
 
-        val description = doc.selectFirst("div.info.text-sm.leading-relaxed")?.text() ?: ""
+        val description = doc.selectFirst("div.info.text-sm.leading-relaxed")?.text()
+            ?: doc.selectFirst("p.text-sm.leading-relaxed")?.text()
+            ?: ""
 
         val episodes = listOf(
             newEpisode(data = url) {
@@ -242,7 +251,7 @@ class TvporinternetProvider : MainAPI() {
         )
 
         return newTvSeriesLoadResponse(
-            name = title,
+            name = cleanTitle,
             url = url,
             type = TvType.Live,
             episodes = episodes
