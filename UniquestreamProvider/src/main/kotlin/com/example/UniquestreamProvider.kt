@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import kotlinx.serialization.*
 
 class UniqueStreamProvider : MainAPI() {
@@ -18,12 +19,6 @@ class UniqueStreamProvider : MainAPI() {
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept" to "application/json"
-    )
-
-    data class M3U8Variant(
-        val url: String,
-        val quality: String,
-        val qualityValue: Int
     )
 
     private fun SeriesItem.toSearchResponse(): SearchResponse {
@@ -235,65 +230,29 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — descargar master.m3u8 y parsear variantes
+                        // HLS — usar M3u8Helper (usa el mismo HTTP client con cookies)
                         if (hlsVersions.isNotEmpty()) {
-                            Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
+                            Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS con M3u8Helper")
                             hlsVersions.forEach { hlsVersion ->
                                 if (hlsVersion.playlist.isNotBlank()) {
                                     try {
-                                        Log.d(TAG, "Descargando master.m3u8 para ${hlsVersion.locale}")
-                                        val masterResponse = app.get(hlsVersion.playlist, headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                            "Accept" to "*/*",
-                                            "Origin" to mainUrl,
-                                            "Referer" to "$mainUrl/"
-                                        ), timeout = 20L)
-
-                                        if (masterResponse.code == 200) {
-                                            val variants = parseM3U8Variants(masterResponse.text, hlsVersion.playlist)
-                                            Log.d(TAG, "✓ ${hlsVersion.locale}: ${variants.size} variantes")
-
-                                            variants.forEach { variant ->
-                                                callback(
-                                                    newExtractorLink(
-                                                        source = this.name,
-                                                        name = "${this.name} - ${hlsVersion.locale.uppercase()} - ${variant.quality}",
-                                                        url = variant.url,
-                                                        type = ExtractorLinkType.M3U8
-                                                    ) {
-                                                        this.quality = variant.qualityValue
-                                                        this.referer = "$mainUrl/"
-                                                        this.headers = mapOf(
-                                                            "Accept" to "*/*",
-                                                            "Origin" to mainUrl,
-                                                            "Referer" to "$mainUrl/"
-                                                        )
-                                                    }
-                                                )
-                                                linksEnviados++
-                                            }
-                                        } else {
-                                            Log.w(TAG, "Fallback a master URL para ${hlsVersion.locale} (código ${masterResponse.code})")
-                                            callback(
-                                                newExtractorLink(
-                                                    source = this.name,
-                                                    name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                                                    url = hlsVersion.playlist,
-                                                    type = ExtractorLinkType.M3U8
-                                                ) {
-                                                    this.quality = Qualities.Unknown.value
-                                                    this.referer = "$mainUrl/"
-                                                    this.headers = mapOf(
-                                                        "Accept" to "*/*",
-                                                        "Origin" to mainUrl,
-                                                        "Referer" to "$mainUrl/"
-                                                    )
-                                                }
+                                        val results = generateM3u8(
+                                            source = this.name,
+                                            streamUrl = hlsVersion.playlist,
+                                            referer = "$mainUrl/",
+                                            name = hlsVersion.locale.uppercase(),
+                                            headers = mapOf(
+                                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                                "Accept" to "*/*",
+                                                "Origin" to mainUrl,
+                                                "Referer" to "$mainUrl/"
                                             )
-                                            linksEnviados++
-                                        }
+                                        )
+                                        results.forEach { link -> callback(link) }
+                                        linksEnviados += results.size
+                                        Log.d(TAG, "✓ ${hlsVersion.locale}: ${results.size} links via M3u8Helper")
                                     } catch (e: Exception) {
-                                        Log.w(TAG, "Error descargando master para ${hlsVersion.locale}: ${e.message}")
+                                        Log.w(TAG, "Error M3u8Helper para ${hlsVersion.locale}: ${e.message}")
                                     }
                                 }
                             }
@@ -318,48 +277,6 @@ class UniqueStreamProvider : MainAPI() {
             e.printStackTrace()
             false
         }
-    }
-
-    private fun parseM3U8Variants(content: String, baseUrl: String): List<M3U8Variant> {
-        val variants = mutableListOf<M3U8Variant>()
-        val lines = content.lines()
-        var currentQuality = ""
-
-        val queryParams = if (baseUrl.contains("?")) baseUrl.substringAfter("?") else ""
-
-        for (i in lines.indices) {
-            val line = lines[i].trim()
-
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                val resMatch = Regex("RESOLUTION=(\\d+)x(\\d+)").find(line)
-                val height = resMatch?.groupValues?.get(2)?.toIntOrNull() ?: 0
-                currentQuality = when {
-                    height >= 1080 -> "1080p"
-                    height >= 720 -> "720p"
-                    height >= 480 -> "480p"
-                    height >= 360 -> "360p"
-                    else -> if (height > 0) "${height}p" else "Auto"
-                }
-            } else if (!line.startsWith("#") && line.isNotEmpty() && currentQuality.isNotEmpty()) {
-                val variantUrl = if (line.startsWith("http")) {
-                    line
-                } else {
-                    val base = baseUrl.substringBeforeLast("/").substringBefore("?")
-                    val resolved = "$base/$line"
-                    if (queryParams.isNotEmpty()) "$resolved?$queryParams" else resolved
-                }
-                val qualityValue = when (currentQuality) {
-                    "1080p" -> Qualities.P1080.value
-                    "720p" -> Qualities.P720.value
-                    "480p" -> Qualities.P480.value
-                    "360p" -> Qualities.P360.value
-                    else -> Qualities.Unknown.value
-                }
-                variants.add(M3U8Variant(url = variantUrl, quality = currentQuality, qualityValue = qualityValue))
-                currentQuality = ""
-            }
-        }
-        return variants
     }
 
     @Serializable
