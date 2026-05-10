@@ -447,7 +447,13 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         }
     }
 
-    private suspend fun getHtml(url: String): String? = safeGet(url)
+    private suspend fun getHtml(url: String): String? {
+        return if (wv != null) {
+            wvGet(url)?.html()
+        } else {
+            safeGet(url)
+        }
+    }
 
     private suspend fun getSearchNonce(): String? {
         cachedNonce?.let { return it }
@@ -504,10 +510,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
         val posterUrls = items.mapNotNull { it.posterUrl }.filter { it.startsWith(mainUrl) }
         val posterMap = if (posterUrls.isNotEmpty() && wv != null) {
-            wvMutex.withLock {
-                wvGet(url)
-                extractPosterDataUris(posterUrls)
-            }
+            extractPosterDataUris(posterUrls)
         } else emptyMap()
 
         val finalItems = items.map { resp ->
@@ -670,10 +673,7 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         if (episodes.isNotEmpty() && wv != null) {
             val epPosterUrls = episodes.mapNotNull { it.posterUrl }.filter { it.startsWith(mainUrl) }.distinct()
             if (epPosterUrls.isNotEmpty()) {
-                val posterMap = wvMutex.withLock {
-                    wvGet(url)
-                    extractPosterDataUris(epPosterUrls)
-                }
+                val posterMap = extractPosterDataUris(epPosterUrls)
                 if (posterMap.isNotEmpty()) {
                     val indexed = episodes.map { ep ->
                         val newPoster = posterMap[ep.posterUrl] ?: ep.posterUrl
