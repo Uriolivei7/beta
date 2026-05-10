@@ -39,6 +39,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -229,11 +230,14 @@ class AnizoneProvider : MainAPI() {
         return src
     }
 
-    private fun toResult(post: Element) = newMovieSearchResponse(
+    private fun toResult(post: Element, posterMap: Map<String, String> = emptyMap()) = newMovieSearchResponse(
         post.selectFirst("img")?.attr("alt") ?: post.selectFirst("a")?.text() ?: "",
         post.selectFirst("a")?.attr("href") ?: "",
         TvType.Movie
-    ) { this.posterUrl = imgSrc(post.selectFirst("img")) }
+    ) {
+        val src = imgSrc(post.selectFirst("img"))
+        this.posterUrl = posterMap[src ?: ""] ?: src
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         Log.e("AniZone", "getMainPage: page=$page cat=${request.data}")
@@ -247,7 +251,10 @@ class AnizoneProvider : MainAPI() {
                 val img = el.selectFirst("img")
                 Log.e("AniZone", "item[$i]: img=$img src=${imgSrc(img)} a=${el.selectFirst("a")?.attr("href")}")
             }
-            newHomePageResponse(HomePageList(request.name, items.map { toResult(it) }), hasNext = false)
+            val posterUrls = items.mapNotNull { imgSrc(it.selectFirst("img")) }
+            val posterMap = if (posterUrls.isNotEmpty() && wv != null) extractPosterDataUris(posterUrls) else emptyMap()
+            Log.e("AniZone", "getMainPage: ${posterMap.size}/${posterUrls.size} posters como data URI")
+            newHomePageResponse(HomePageList(request.name, items.map { toResult(it, posterMap) }), hasNext = false)
         } catch (e: Exception) {
             Log.e("AniZone", "getMainPage error: ${e.message}")
             destroyWv()
@@ -269,11 +276,73 @@ class AnizoneProvider : MainAPI() {
                 val img = el.selectFirst("img")
                 Log.e("AniZone", "item[$i]: img=$img src=${imgSrc(img)} a=${el.selectFirst("a")?.attr("href")}")
             }
-            items.mapNotNull { toResult(it) }
+            val posterUrls = items.mapNotNull { imgSrc(it.selectFirst("img")) }
+            val posterMap = if (posterUrls.isNotEmpty() && wv != null) extractPosterDataUris(posterUrls) else emptyMap()
+            Log.e("AniZone", "search: ${posterMap.size}/${posterUrls.size} posters como data URI")
+            items.mapNotNull { toResult(it, posterMap) }
         } catch (e: Exception) {
             Log.e("AniZone", "search error: ${e.message}")
             destroyWv()
             emptyList()
+        }
+    }
+
+    private suspend fun extractPosterDataUris(urls: List<String>): Map<String, String> {
+        if (urls.isEmpty()) return emptyMap()
+        val view = wv ?: return emptyMap()
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resumed = false
+                val jsonUrls = JSONArray(urls).toString()
+                view.evaluateJavascript(
+                    "(function(){" +
+                    "var u = JSON.parse('${jsonUrls.replace("'", "\\'")}');" +
+                    "var r = {}; var p = u.length;" +
+                    "u.forEach(function(s){" +
+                    "  function done(d, ok){" +
+                    "    if(ok){" +
+                    "      try{var c=document.createElement('canvas');c.width=d.width;c.height=d.height;c.getContext('2d').drawImage(d,0,0);r[s]=c.toDataURL('image/jpeg',80);}catch(e){r[s]=''}" +
+                    "    } else {r[s]=''}" +
+                    "    p--; if(p===0){window.__pd=true;window.__p=JSON.stringify(r)}" +
+                    "  }" +
+                    "  var i=document.querySelector('img[src=\"'+s+'\"]');" +
+                    "  if(i&&i.complete&&i.naturalWidth>0){done(i,true)}" +
+                    "  else if(i){i.onload=function(){done(i,true)};i.onerror=function(){done(null,false)}}" +
+                    "  else{done(null,false)}" +
+                    "});" +
+                    "})()"
+                ) {
+                    fun poll(n: Int) {
+                        if (!resumed) {
+                            if (n <= 0) { resumed = true; cont.resume(emptyMap()); return }
+                            view.evaluateJavascript("window.__pd") { d ->
+                                if (!resumed) {
+                                    if (d == "true") {
+                                        view.evaluateJavascript("window.__p") { data ->
+                                            if (!resumed) {
+                                                resumed = true
+                                                val json = data?.removeSurrounding("\"")?.replace("\\\"", "\"")
+                                                val map = if (json != null) try {
+                                                    val obj = JSONObject(json)
+                                                    urls.mapNotNull { url ->
+                                                        val v = obj.optString(url, "")
+                                                        if (v.isNotEmpty()) url to v else null
+                                                    }.toMap()
+                                                } catch (e: Exception) { emptyMap() } else emptyMap()
+                                                if (map.isNotEmpty()) Log.e("AniZone", "extractPosterDataUris: ${map.size} data URIs")
+                                                cont.resume(map)
+                                            }
+                                        }
+                                    } else {
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ poll(n - 1) }, 200)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    poll(50)
+                }
+            }
         }
     }
 
