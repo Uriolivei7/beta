@@ -72,13 +72,19 @@ class DoramaslatinoxProvider : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = if (page == 1) {
-            "$mainUrl/?s=$query"
+            "$mainUrl/?s=$encoded"
         } else {
-            "$mainUrl/page/$page/?s=$query"
+            "$mainUrl/page/$page/?s=$encoded"
         }
 
-        val document = app.get(url).document
+        val document = try {
+            app.get(url, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")).document
+        } catch (e: Exception) {
+            Log.e("DoramasLX", "Search error: ${e.message}")
+            return newSearchResponseList(emptyList(), false)
+        }
         val results = document.select("div.result-item article").mapNotNull {
             val titleElement = it.selectFirst("div.details div.title a") ?: return@mapNotNull null
             val title = titleElement.text()
@@ -199,7 +205,6 @@ class DoramaslatinoxProvider : MainAPI() {
         val options = document.select("li.dooplay_player_option")
         Log.d("DoramasLX", "Opciones encontradas: ${options.size}")
         if (options.isEmpty()) {
-            // Si no hay opciones dooplay, intentar extraer link directo del HTML
             val html = document.html()
             val m3u8s = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(html)
                 .map { it.value.replace("\\/", "/") }.toList()
@@ -207,12 +212,10 @@ class DoramaslatinoxProvider : MainAPI() {
                 Log.d("DoramasLX", "m3u8 directo en página: ${m3u8s.size}")
                 m3u8s.forEach { url ->
                     callback(newExtractorLink(name, name, url, ExtractorLinkType.M3U8) {
-                        this.referer = data
-                        this.quality = getQualityFromName(url)
+                        this.referer = data; this.quality = getQualityFromName(url)
                     })
-                    found = true
                 }
-                return found
+                return true
             }
             return false
         }
@@ -231,90 +234,73 @@ class DoramaslatinoxProvider : MainAPI() {
                 Log.d("DoramasLX", "API respuesta: ${response.take(200)}")
                 val json = try { JSONObject(response) } catch (_: Exception) { null }
                 val embedUrl = json?.optString("embed_url", "")?.replace("\\/", "/") ?: ""
-                if (embedUrl.isBlank()) {
-                    Log.e("DoramasLX", "embed_url vacío o no encontrado en JSON")
-                    return@forEach
-                }
+                if (embedUrl.isBlank()) { Log.e("DoramasLX", "embed_url vacío"); return@forEach }
                 Log.d("DoramasLX", "embedUrl: $embedUrl")
 
-                // 1) Intentar embed URL directo con extractores
-                if (tryExtract(embedUrl, data, subtitleCallback, callback)) {
-                    found = true; return@forEach
-                }
-
-                // 2) Probar short.ink → short.icu
                 val icuUrl = embedUrl.replace("short.ink", "short.icu")
-                if (icuUrl != embedUrl) {
-                    Log.d("DoramasLX", "Probando icuUrl: $icuUrl")
-                    if (tryExtract(icuUrl, data, subtitleCallback, callback)) {
-                        found = true; return@forEach
-                    }
-                }
-
-                // 3) Probar construir URL de doramasfoxito con el hash del embed
                 val hash = embedUrl.substringAfterLast("/").substringBefore("?")
+
+                // Generar todas las URLs candidatas para esta opción
+                val candidates = mutableListOf<String>()
+                candidates.add(embedUrl)
+                if (icuUrl != embedUrl) candidates.add(icuUrl)
                 if (hash.isNotBlank()) {
-                    val foxUrl = "https://doramasfoxito.p2pplay.online/#/$hash"
-                    Log.d("DoramasLX", "Probando foxUrl directa: $foxUrl")
-                    if (tryExtract(foxUrl, data, subtitleCallback, callback)) {
+                    candidates.add("https://doramasfoxito.p2pplay.online/#/$hash")
+                    // También probar foxito sin hash (por si el ID es otro)
+                    candidates.add("https://doramasfoxito.p2pplay.online/#/$embedUrl")
+                }
+
+                // Probar cada candidato con extractores (trackeando links reales)
+                for (candidate in candidates.distinct()) {
+                    Log.d("DoramasLX", "Probando candidato: $candidate")
+                    if (extractWithTracking(candidate, data, subtitleCallback, callback)) {
                         found = true; return@forEach
                     }
                 }
 
-                // 4) Cargar página embed, buscar iframe + m3u8 directo + redirects JS
+                // Último recurso: cargar página embed y buscar iframe/m3u8/redirect
                 for (pageUrl in listOf(embedUrl, icuUrl).distinct()) {
                     Log.d("DoramasLX", "Cargando página embed: $pageUrl")
-                    val pageResp = try { app.get(pageUrl, referer = data) } catch (e: Exception) {
+                    val pageDoc = try { app.get(pageUrl, referer = data).document } catch (e: Exception) {
                         Log.e("DoramasLX", "Error cargando $pageUrl: ${e.message}"); null
                     } ?: continue
-                    val pageText = pageResp.text
+                    val pageText = pageDoc.html()
 
                     // Buscar iframe
-                    val iframeSrc = try {
-                        org.jsoup.Jsoup.parse(pageText).selectFirst("iframe")?.attr("src")
-                    } catch (_: Exception) { null }
-                    Log.d("DoramasLX", "iframe encontrado: ${iframeSrc ?: "ninguno"}")
-
+                    val iframeSrc = pageDoc.selectFirst("iframe")?.attr("src")
+                    Log.d("DoramasLX", "iframe: ${iframeSrc ?: "ninguno"}")
                     if (!iframeSrc.isNullOrBlank()) {
-                        for (src in listOf(iframeSrc, iframeSrc.replace("short.ink", "short.icu")).distinct()) {
-                            Log.d("DoramasLX", "Probando iframe src: $src")
-                            if (tryExtract(src, pageUrl, subtitleCallback, callback)) {
+                        for (s in listOf(iframeSrc, iframeSrc.replace("short.ink", "short.icu")).distinct()) {
+                            if (extractWithTracking(s, pageUrl, subtitleCallback, callback)) {
                                 found = true; return@forEach
                             }
                         }
                     }
 
-                    // Buscar redirect en JS (window.location, location.href, etc)
+                    // Buscar redirect JS
                     val redirectRegex = Regex("""(?:location\.href|window\.location)\s*=\s*['"]([^'"]+)['"]""")
-                    for (match in redirectRegex.findAll(pageText)) {
-                        val redirectUrl = match.groupValues[1].replace("\\/", "/")
-                        Log.d("DoramasLX", "Redirect JS encontrado: $redirectUrl")
-                        if (tryExtract(redirectUrl, pageUrl, subtitleCallback, callback)) {
-                            found = true; return@forEach
-                        }
-                        // También probar construir foxUrl desde redirect
-                        val rhash = redirectUrl.substringAfterLast("/").substringBefore("?")
-                        if (rhash.isNotBlank()) {
-                            val rFoxUrl = "https://doramasfoxito.p2pplay.online/#/$rhash"
-                            Log.d("DoramasLX", "Probando foxUrl desde redirect: $rFoxUrl")
-                            if (tryExtract(rFoxUrl, pageUrl, subtitleCallback, callback)) {
+                    for (m in redirectRegex.findAll(pageText)) {
+                        val ru = m.groupValues[1].replace("\\/", "/")
+                        Log.d("DoramasLX", "Redirect: $ru")
+                        for (s in listOf(ru, "https://doramasfoxito.p2pplay.online/#/${ru.substringAfterLast("/").substringBefore("?")}").distinct()) {
+                            if (extractWithTracking(s, pageUrl, subtitleCallback, callback)) {
                                 found = true; return@forEach
                             }
                         }
                     }
 
-                    // Buscar m3u8 directo en el HTML/JS
+                    // Buscar m3u8 directo
                     val m3u8Regex = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""")
-                    val directM3u8 = m3u8Regex.findAll(pageText).map { it.value.replace("\\/", "/") }.toList()
-                    Log.d("DoramasLX", "m3u8 directos en embed: ${directM3u8.size}")
-                    for (videoUrl in directM3u8) {
-                        callback(newExtractorLink(name, name, videoUrl, ExtractorLinkType.M3U8) {
-                            this.referer = pageUrl
-                            this.quality = getQualityFromName(videoUrl)
-                        })
-                        found = true
+                    val m3u8s = m3u8Regex.findAll(pageText).map { it.value.replace("\\/", "/") }.toList()
+                    if (m3u8s.isNotEmpty()) {
+                        Log.d("DoramasLX", "m3u8 directos: ${m3u8s.size}")
+                        m3u8s.forEach { url ->
+                            callback(newExtractorLink(name, name, url, ExtractorLinkType.M3U8) {
+                                this.referer = pageUrl; this.quality = getQualityFromName(url)
+                            })
+                        }
+                        found = true; return@forEach
                     }
-                    if (found) return@forEach
                 }
             } catch (e: Exception) {
                 Log.e("DoramasLX", "Error en opción $nume: ${e.message}")
@@ -324,18 +310,22 @@ class DoramaslatinoxProvider : MainAPI() {
         return found
     }
 
-    private suspend fun tryExtract(
+    /** Llama loadExtractor pero solo retorna true si el callback fue invocado */
+    private suspend fun extractWithTracking(
         url: String,
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            loadExtractor(url, referer, subtitleCallback, callback)
-        } catch (e: Exception) {
-            Log.e("DoramasLX", "tryExtract error: ${e.message}")
-            false
+        var produced = false
+        val trackingCallback: (ExtractorLink) -> Unit = { link ->
+            produced = true
+            callback(link)
         }
+        try {
+            loadExtractor(url, referer, subtitleCallback, trackingCallback)
+        } catch (_: Exception) { }
+        return produced
     }
 
     data class EmbedResponse(
