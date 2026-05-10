@@ -209,38 +209,65 @@ class DoramaslatinoxProvider : MainAPI() {
                     .replace("\\/", "/")
                 if (embedUrl.isBlank()) return@forEach
 
-                // Intentar directo con extractores (ej: DoramasLatinoXExtractor)
-                if (loadExtractor(embedUrl, data, subtitleCallback, callback)) {
-                    found = true
-                    return@forEach
+                // 1) Intentar embed URL directo con extractores
+                if (tryExtract(embedUrl, data, subtitleCallback, callback)) {
+                    found = true; return@forEach
                 }
 
-                // Si no funcionó, buscar iframe en la página embed
-                val iframe = try {
-                    app.get(embedUrl, referer = data)
-                        .document.selectFirst("iframe")?.attr("src")
-                } catch (_: Exception) { null }
+                // 2) Probar short.ink → short.icu
+                val icuUrl = embedUrl.replace("short.ink", "short.icu")
+                if (icuUrl != embedUrl && tryExtract(icuUrl, data, subtitleCallback, callback)) {
+                    found = true; return@forEach
+                }
 
-                val targetUrl = if (!iframe.isNullOrBlank()) {
-                    // Probar iframe directo
-                    if (!loadExtractor(iframe, embedUrl, subtitleCallback, callback)) {
-                        // Fallback: si short.ink, probar short.icu
-                        val altUrl = iframe.replace("short.ink", "short.icu")
-                        if (altUrl != iframe) {
-                            loadExtractor(altUrl, embedUrl, subtitleCallback, callback)
-                        } else false
-                    } else true
-                } else false
+                // 3) Cargar página embed, buscar iframe + m3u8 directo
+                for (pageUrl in listOf(embedUrl, icuUrl).distinct()) {
+                    val pageText = try { app.get(pageUrl, referer = data).text } catch (_: Exception) { null } ?: continue
 
-                if (targetUrl) {
-                    found = true
-                    return@forEach
+                    // Buscar iframe
+                    val iframeSrc = try {
+                        org.jsoup.Jsoup.parse(pageText).selectFirst("iframe")?.attr("src")
+                    } catch (_: Exception) { null }
+
+                    if (!iframeSrc.isNullOrBlank()) {
+                        for (src in listOf(iframeSrc, iframeSrc.replace("short.ink", "short.icu")).distinct()) {
+                            if (tryExtract(src, pageUrl, subtitleCallback, callback)) {
+                                found = true; return@forEach
+                            }
+                        }
+                    }
+
+                    // Buscar m3u8 directo en el HTML/JS
+                    val m3u8Regex = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""")
+                    for (match in m3u8Regex.findAll(pageText)) {
+                        val videoUrl = match.value.replace("\\/", "/")
+                        callback(newExtractorLink(name, name, videoUrl, ExtractorLinkType.M3U8) {
+                            this.referer = pageUrl
+                            this.quality = getQualityFromName(videoUrl)
+                        })
+                        found = true
+                    }
+                    if (found) return@forEach
                 }
             } catch (e: Exception) {
                 Log.e("DoramasLX", "Error en opción $nume: ${e.message}")
             }
         }
         return found
+    }
+
+    private suspend fun tryExtract(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            loadExtractor(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            Log.e("DoramasLX", "tryExtract error: ${e.message}")
+            false
+        }
     }
 
     data class EmbedResponse(
