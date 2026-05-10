@@ -193,21 +193,29 @@ class AnimeOnlineNinjaProvider : MainAPI() {
             suspendCoroutine { cont ->
                 var resumed = false
                 val jsonUrls = JSONArray(urls).toString()
+                val safeJson = jsonUrls.replace("'", "\\'").replace("\\", "\\\\")
                 view.evaluateJavascript(
                     "(function(){" +
-                    "var u = JSON.parse('${jsonUrls.replace("'", "\\'")}');" +
-                    "var r = {}; var p = u.length;" +
+                    "var u = JSON.parse('$safeJson');" +
+                    "var r = {}; var p = u.length; var loaded=0;" +
                     "u.forEach(function(s){" +
-                    "  function done(d, ok){" +
-                    "    if(ok){" +
-                    "      try{var c=document.createElement('canvas');c.width=d.naturalWidth;c.height=d.naturalHeight;c.getContext('2d').drawImage(d,0,0);r[s]=c.toDataURL('image/jpeg',80);}catch(e){r[s]=''}" +
+                    "  function toDataUri(img, ok){" +
+                    "    if(ok && img && img.naturalWidth>0){" +
+                    "      try{var c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);r[s]=c.toDataURL('image/jpeg',80);}catch(e){r[s]=''}" +
                     "    } else {r[s]=''}" +
-                    "    p--; if(p===0){window.__pd=true;window.__p=JSON.stringify(r)}" +
+                    "    loaded++; if(loaded===u.length){window.__pd=true;window.__p=JSON.stringify(r)}" +
                     "  }" +
-                    "  var i=document.querySelector('img[src=\"'+s+'\"]');" +
-                    "  if(i&&i.complete&&i.naturalWidth>0){done(i,true)}" +
-                    "  else if(i){i.onload=function(){done(i,true)};i.onerror=function(){done(null,false)}}" +
-                    "  else{done(null,false)}" +
+                    "  var img = document.querySelector('img[src=\"'+s+'\"], img[data-src=\"'+s+'\"]');" +
+                    "  if(img){" +
+                    "    if(!img.src && img.getAttribute('data-src')){img.src=img.getAttribute('data-src')}" +
+                    "    if(img.complete && img.naturalWidth>0){toDataUri(img,true)}" +
+                    "    else{img.onload=function(){toDataUri(img,true)};img.onerror=function(){toDataUri(null,false)}}" +
+                    "  } else {" +
+                    "    var ni=new Image();" +
+                    "    ni.onload=function(){toDataUri(ni,true)};" +
+                    "    ni.onerror=function(){toDataUri(null,false)};" +
+                    "    ni.src=s;" +
+                    "  }" +
                     "});" +
                     "})()"
                 ) {
@@ -253,14 +261,16 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                 val safeUrl = imageUrl.replace("'", "\\'")
                 view.evaluateJavascript(
                     "(function(){" +
-                    "var i=new Image();" +
+                    "var i=document.querySelector('img[src=\"'+s+'\"], img[data-src=\"'+s+'\"]');" +
+                    "if(!i){i=new Image()}" +
+                    "if(!i.src&&i.getAttribute('data-src')){i.src=i.getAttribute('data-src')}" +
                     "i.crossOrigin='anonymous';" +
                     "i.onload=function(){" +
                     "var c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;" +
                     "c.getContext('2d').drawImage(i,0,0);" +
                     "window.__p=c.toDataURL('image/jpeg',80);window.__pd=true};" +
                     "i.onerror=function(){window.__pd=true;window.__p=''};" +
-                    "i.src='$safeUrl';" +
+                    "if(!i.src){i.src='$safeUrl'}" +
                     "})()"
                 ) {
                     fun poll(n: Int) {
@@ -328,6 +338,19 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         "sec-fetch-site" to "same-origin",
         "Referer" to "$mainUrl/search/?s="
     )
+
+    private suspend fun tryDirectGet(url: String): Document? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val doc = Jsoup.connect(url)
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .timeout(8000)
+                    .followRedirects(true)
+                    .get()
+                if (doc.text().length > 10000) doc else null
+            } catch (_: Exception) { null }
+        }
+    }
 
     private suspend fun safeGet(url: String, timeoutMs: Long = 60000L, retries: Int = 3): String? {
         Log.d("AnimeOnlineNinja", "Fetching URL: $url (timeout=${timeoutMs}ms, retries=$retries)")
@@ -459,6 +482,9 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page > 1) "${request.data.trimEnd('/')}/page/$page/" else request.data
         Log.d("AnimeOnlineNinja", "getMainPage: page=$page name=${request.name} url=$url")
+        if (cfClearance.isBlank() && tryDirectGet(url) == null) {
+            resolveTurnstileWithWebView(url)
+        }
         val html = getHtml(url) ?: run {
             Log.w("AnimeOnlineNinja", "getMainPage: html=null for $url")
             return newHomePageResponse(
@@ -475,14 +501,13 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                 Log.d("AnimeOnlineNinja", "  candidate: <${el.tagName()} class='${el.className()}'>")
             }
         }
-        if (items.isEmpty()) {
-            Log.d("AnimeOnlineNinja", "getMainPage: HTML snippet: ${document.text().take(300)}")
-        }
 
-        val posterUrls = items.mapNotNull { it.posterUrl }
+        val posterUrls = items.mapNotNull { it.posterUrl }.filter { it.startsWith(mainUrl) }
         val posterMap = if (posterUrls.isNotEmpty() && wv != null) {
-            wvGet(url)
-            extractPosterDataUris(posterUrls.filter { it.startsWith(mainUrl) })
+            wvMutex.withLock {
+                wvGet(url)
+                extractPosterDataUris(posterUrls)
+            }
         } else emptyMap()
 
         val finalItems = items.map { resp ->
@@ -526,6 +551,10 @@ class AnimeOnlineNinjaProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
+        val searchCheckUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
+        if (cfClearance.isBlank() && tryDirectGet(searchCheckUrl) == null) {
+            resolveTurnstileWithWebView(searchCheckUrl)
+        }
         val nonce = getSearchNonce()
         if (nonce != null) {
             val searchUrl = "$mainUrl/wp-json/dooplay/search/?keyword=${query.replace(" ", "%20")}&nonce=$nonce"
@@ -563,22 +592,49 @@ class AnimeOnlineNinjaProvider : MainAPI() {
         Log.d("AnimeOnlineNinja", "search: falling back to HTML $fallbackUrl")
         val html = getHtml(fallbackUrl) ?: return emptyList()
         val document = Jsoup.parse(html)
-        var results = document.select("article.item").mapNotNull { it.toSearchResult() }
-        if (results.isEmpty()) {
-            Log.d("AnimeOnlineNinja", "search: 0 via article.item, logging candidates...")
-            document.select("article, div[class], li[class]").take(8).forEach { el ->
-                Log.d("AnimeOnlineNinja", "  candidate: <${el.tagName()} class='${el.className()}'> text='${el.text().take(60)}'")
+        var results = document.select("article.item").mapNotNull { it.toSearchResult() }.toMutableList()
+        if (results.isEmpty() && wv != null) {
+            Log.d("AnimeOnlineNinja", "search: usando WebView para search results...")
+            val wvDoc = wvGet(fallbackUrl)
+            if (wvDoc != null) {
+                results = wvDoc.select("article.item").mapNotNull { it.toSearchResult() }.toMutableList()
+                if (results.isEmpty()) {
+                    val resultLinks = mutableListOf<SearchResponse>()
+                    wvDoc.select("a[href*='/online/'], a[href*='/pelicula/'], a[href*='/temporada/']").forEach { a ->
+                        val href = a.attr("abs:href")
+                        val title = a.text().trim()
+                        if (title.length > 3 && href.isNotBlank() && resultLinks.none { it.url == href }) {
+                            val img = a.selectFirst("img") ?: a.parent()?.selectFirst("img")
+                            val src = img?.attr("src")?.ifBlank { img.attr("data-src") }?.ifBlank { null }
+                            val type = if (href.contains("/pelicula/")) TvType.AnimeMovie else TvType.Anime
+                            resultLinks.add(
+                                when (type) {
+                                    TvType.AnimeMovie -> newMovieSearchResponse(title, href, TvType.AnimeMovie) { this.posterUrl = src }
+                                    else -> newTvSeriesSearchResponse(title, href, TvType.Anime) { this.posterUrl = src }
+                                }
+                            )
+                        }
+                    }
+                    results = resultLinks
+                }
             }
-            results = document.select("article, div.post, div.entry, li").mapNotNull { alt ->
-                val a = alt.selectFirst("a[href*='/online/'], a[href*='/pelicula/'], a[href*='/temporada/']") ?: return@mapNotNull null
-                val t = a.text().trim().ifBlank { return@mapNotNull null }
-                val img = alt.selectFirst("img")
-                val src = img?.attr("data-src")?.ifBlank { img.attr("src") }?.ifBlank { null }
-                val href = a.attr("abs:href")
-                val type = if (href.contains("/pelicula/")) TvType.AnimeMovie else TvType.Anime
-                when (type) {
-                    TvType.AnimeMovie -> newMovieSearchResponse(t, href, TvType.AnimeMovie) { this.posterUrl = src }
-                    else -> newTvSeriesSearchResponse(t, href, TvType.Anime) { this.posterUrl = src }
+        }
+        if (results.isEmpty()) {
+            Log.d("AnimeOnlineNinja", "search: 0 via wv, trying broad HTTP fallback...")
+            document.select("li, div.item, article").forEach { alt ->
+                val a = alt.selectFirst("a[href*='/online/'], a[href*='/pelicula/'], a[href*='/temporada/']") ?: return@forEach
+                val t = a.text().trim()
+                if (t.length > 3 && results.none { it.url == a.attr("abs:href") }) {
+                    val img = alt.selectFirst("img")
+                    val src = img?.attr("data-src")?.ifBlank { img.attr("src") }?.ifBlank { null }
+                    val href = a.attr("abs:href")
+                    val type = if (href.contains("/pelicula/")) TvType.AnimeMovie else TvType.Anime
+                    results.add(
+                        when (type) {
+                            TvType.AnimeMovie -> newMovieSearchResponse(t, href, TvType.AnimeMovie) { this.posterUrl = src }
+                            else -> newTvSeriesSearchResponse(t, href, TvType.Anime) { this.posterUrl = src }
+                        }
+                    )
                 }
             }
         }
@@ -612,10 +668,12 @@ class AnimeOnlineNinjaProvider : MainAPI() {
 
         val episodes = extractEpisodes(document, poster)
         if (episodes.isNotEmpty() && wv != null) {
-            wvGet(url)
             val epPosterUrls = episodes.mapNotNull { it.posterUrl }.filter { it.startsWith(mainUrl) }.distinct()
             if (epPosterUrls.isNotEmpty()) {
-                val posterMap = extractPosterDataUris(epPosterUrls)
+                val posterMap = wvMutex.withLock {
+                    wvGet(url)
+                    extractPosterDataUris(epPosterUrls)
+                }
                 if (posterMap.isNotEmpty()) {
                     val indexed = episodes.map { ep ->
                         val newPoster = posterMap[ep.posterUrl] ?: ep.posterUrl
@@ -754,18 +812,43 @@ class AnimeOnlineNinjaProvider : MainAPI() {
                             try {
                                 val embedHtml = app.get(embedUrl, headers = chromeHeaders, timeout = 15000L,
                                     cookies = buildCookies()).text
-                                val embedDoc = Jsoup.parse(embedHtml)
-                                val sources = embedDoc.select("video source[src], source[src], iframe[src]")
-                                Log.d("AnimeOnlineNinja", "loadLinks: embed page has ${sources.size} sources")
-                                sources.forEach { srcEl ->
-                                    val src = srcEl.attr("abs:src").ifBlank { return@forEach }
-                                    if (srcEl.tagName() == "iframe") {
-                                        loadExtractor(src, mainUrl, subtitleCallback, callback)
-                                    } else {
+                                Log.d("AnimeOnlineNinja", "loadLinks: embed page ${embedHtml.length} chars")
+                                val urlPattern = Regex("""https?://[^"'\s<>]+?(?:\.m3u8|\.mp4|/playlist\.m3u8)[^"'\s<>]*""")
+                                val urls = urlPattern.findAll(embedHtml).map { it.value }.distinct().toList()
+                                if (urls.isNotEmpty()) {
+                                    Log.d("AnimeOnlineNinja", "loadLinks: found ${urls.size} video URLs via regex")
+                                    urls.forEach { src ->
                                         callback(newExtractorLink(serverName, titleName, src) {
                                             this.referer = embedUrl; this.quality = Qualities.Unknown.value
                                             this.type = if (src.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                                         })
+                                    }
+                                } else {
+                                    val embedDoc = Jsoup.parse(embedHtml)
+                                    val sources = embedDoc.select("video source[src], source[src], iframe[src]")
+                                    Log.d("AnimeOnlineNinja", "loadLinks: embed page has ${sources.size} HTML sources")
+                                    sources.forEach { srcEl ->
+                                        val src = srcEl.attr("abs:src").ifBlank { return@forEach }
+                                        if (srcEl.tagName() == "iframe") {
+                                            loadExtractor(src, mainUrl, subtitleCallback, callback)
+                                        } else {
+                                            callback(newExtractorLink(serverName, titleName, src) {
+                                                this.referer = embedUrl; this.quality = Qualities.Unknown.value
+                                                this.type = if (src.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                            })
+                                        }
+                                    }
+                                    for (script in embedDoc.select("script")) {
+                                        val scriptData = script.data()
+                                        val fileUrls = Regex("""["'](?:file|src|url)["']\s*[:=]\s*["']([^"']+(?:\.m3u8|\.mp4)[^"']*)["']""").findAll(scriptData)
+                                        fileUrls.forEach { m ->
+                                            val src = m.groupValues[1]
+                                            Log.d("AnimeOnlineNinja", "loadLinks: script src=$src")
+                                            callback(newExtractorLink(serverName, titleName, src) {
+                                                this.referer = embedUrl; this.quality = Qualities.Unknown.value
+                                                this.type = if (src.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                            })
+                                        }
                                     }
                                 }
                             } catch (e: Exception) {
