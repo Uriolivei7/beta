@@ -187,6 +187,7 @@ class DoramaslatinoxProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d("DoramasLX", "loadLinks llamado data=$data")
         var found = false
         val document = try {
             app.get(data).document
@@ -195,19 +196,46 @@ class DoramaslatinoxProvider : MainAPI() {
             return false
         }
 
-        document.select("li.dooplay_player_option").forEach { option ->
+        val options = document.select("li.dooplay_player_option")
+        Log.d("DoramasLX", "Opciones encontradas: ${options.size}")
+        if (options.isEmpty()) {
+            // Si no hay opciones dooplay, intentar extraer link directo del HTML
+            val html = document.html()
+            val m3u8s = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(html)
+                .map { it.value.replace("\\/", "/") }.toList()
+            if (m3u8s.isNotEmpty()) {
+                Log.d("DoramasLX", "m3u8 directo en página: ${m3u8s.size}")
+                m3u8s.forEach { url ->
+                    callback(newExtractorLink(name, name, url, ExtractorLinkType.M3U8) {
+                        this.referer = data
+                        this.quality = getQualityFromName(url)
+                    })
+                    found = true
+                }
+                return found
+            }
+            return false
+        }
+
+        options.forEach { option ->
             val post = option.attr("data-post")
             val type = option.attr("data-type")
             val nume = option.attr("data-nume")
+            Log.d("DoramasLX", "Opción: post=$post type=$type nume=$nume")
             if (post.isEmpty()) return@forEach
 
             val apiUrl = "$mainUrl/wp-json/dooplayer/v2/$post/$type/$nume"
+            Log.d("DoramasLX", "API URL: $apiUrl")
             try {
                 val response = app.get(apiUrl).text
-                val embedUrl = JSONObject(response)
-                    .optString("embed_url", "")
-                    .replace("\\/", "/")
-                if (embedUrl.isBlank()) return@forEach
+                Log.d("DoramasLX", "API respuesta: ${response.take(200)}")
+                val json = try { JSONObject(response) } catch (_: Exception) { null }
+                val embedUrl = json?.optString("embed_url", "")?.replace("\\/", "/") ?: ""
+                if (embedUrl.isBlank()) {
+                    Log.e("DoramasLX", "embed_url vacío o no encontrado en JSON")
+                    return@forEach
+                }
+                Log.d("DoramasLX", "embedUrl: $embedUrl")
 
                 // 1) Intentar embed URL directo con extractores
                 if (tryExtract(embedUrl, data, subtitleCallback, callback)) {
@@ -216,21 +244,29 @@ class DoramaslatinoxProvider : MainAPI() {
 
                 // 2) Probar short.ink → short.icu
                 val icuUrl = embedUrl.replace("short.ink", "short.icu")
-                if (icuUrl != embedUrl && tryExtract(icuUrl, data, subtitleCallback, callback)) {
-                    found = true; return@forEach
+                if (icuUrl != embedUrl) {
+                    Log.d("DoramasLX", "Probando icuUrl: $icuUrl")
+                    if (tryExtract(icuUrl, data, subtitleCallback, callback)) {
+                        found = true; return@forEach
+                    }
                 }
 
                 // 3) Cargar página embed, buscar iframe + m3u8 directo
                 for (pageUrl in listOf(embedUrl, icuUrl).distinct()) {
-                    val pageText = try { app.get(pageUrl, referer = data).text } catch (_: Exception) { null } ?: continue
+                    Log.d("DoramasLX", "Cargando página embed: $pageUrl")
+                    val pageText = try { app.get(pageUrl, referer = data).text } catch (e: Exception) {
+                        Log.e("DoramasLX", "Error cargando $pageUrl: ${e.message}"); null
+                    } ?: continue
 
                     // Buscar iframe
                     val iframeSrc = try {
                         org.jsoup.Jsoup.parse(pageText).selectFirst("iframe")?.attr("src")
                     } catch (_: Exception) { null }
+                    Log.d("DoramasLX", "iframe encontrado: ${iframeSrc ?: "ninguno"}")
 
                     if (!iframeSrc.isNullOrBlank()) {
                         for (src in listOf(iframeSrc, iframeSrc.replace("short.ink", "short.icu")).distinct()) {
+                            Log.d("DoramasLX", "Probando iframe src: $src")
                             if (tryExtract(src, pageUrl, subtitleCallback, callback)) {
                                 found = true; return@forEach
                             }
@@ -239,8 +275,9 @@ class DoramaslatinoxProvider : MainAPI() {
 
                     // Buscar m3u8 directo en el HTML/JS
                     val m3u8Regex = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""")
-                    for (match in m3u8Regex.findAll(pageText)) {
-                        val videoUrl = match.value.replace("\\/", "/")
+                    val directM3u8 = m3u8Regex.findAll(pageText).map { it.value.replace("\\/", "/") }.toList()
+                    Log.d("DoramasLX", "m3u8 directos en embed: ${directM3u8.size}")
+                    for (videoUrl in directM3u8) {
                         callback(newExtractorLink(name, name, videoUrl, ExtractorLinkType.M3U8) {
                             this.referer = pageUrl
                             this.quality = getQualityFromName(videoUrl)
@@ -253,6 +290,7 @@ class DoramaslatinoxProvider : MainAPI() {
                 Log.e("DoramasLX", "Error en opción $nume: ${e.message}")
             }
         }
+        Log.d("DoramasLX", "loadLinks finaliza found=$found")
         return found
     }
 

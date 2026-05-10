@@ -7,7 +7,6 @@ import android.content.Context
 @CloudstreamPlugin
 class AnizonePlugin: Plugin() {
     override fun load(context: Context) {
-        AnizoneProvider.pluginContext = context
         registerMainAPI(AnizoneProvider())
     }
 }
