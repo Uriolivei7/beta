@@ -5,6 +5,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.serialization.*
 import java.io.File
 
@@ -221,7 +222,7 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — descargar master y servir variantes directo desde CDN
+                        // HLS — usar M3u8Helper para crear enlaces proxy compatibles con ExoPlayer
                         if (hlsVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
                             val commonHeaders = mapOf(
@@ -233,51 +234,24 @@ class UniqueStreamProvider : MainAPI() {
                             for (hlsVersion in hlsVersions) {
                                 if (hlsVersion.playlist.isNotBlank()) {
                                     try {
-                                        // Usar la master URL directamente — ExoPlayer la parsea
                                         val masterUrl = hlsVersion.playlist
                                         Log.d(TAG, "Master URL: $masterUrl")
 
-                                        // Extraer calidad del nombre de ruta (v_1280x720, v_1920x1080)
-                                        // La master contiene variantes con distintas resoluciones
                                         val masterResp = app.get(masterUrl, headers = commonHeaders, timeout = 20L)
                                         if (masterResp.code != 200) {
                                             Log.w(TAG, "${hlsVersion.locale} master falló: ${masterResp.code}")
-                                            // Fallback: enviar la master URL directamente aunque falle
-                                            callback(newExtractorLink(
-                                                source = this.name,
-                                                name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                                                url = masterUrl,
-                                                type = ExtractorLinkType.M3U8
-                                            ) {
-                                                this.quality = Qualities.Unknown.value
-                                                this.referer = "$mainUrl/"
-                                                this.headers = commonHeaders
-                                            })
-                                            linksEnviados++
                                             continue
                                         }
 
                                         val masterText = masterResp.text
                                         val masterBase = masterUrl.substringBeforeLast("/").substringBefore("?")
 
-                                        // Extraer líneas de variante (rutas relativas como "v_1280x720/playlist.m3u8?...")
                                         val variantLines = masterText.lines().filter { line ->
                                             !line.startsWith("#") && line.isNotBlank() && !line.startsWith("http")
                                         }
 
                                         if (variantLines.isEmpty()) {
-                                            Log.w(TAG, "${hlsVersion.locale}: sin variantes en master — enviando master directa")
-                                            callback(newExtractorLink(
-                                                source = this.name,
-                                                name = "${this.name} - ${hlsVersion.locale.uppercase()}",
-                                                url = masterUrl,
-                                                type = ExtractorLinkType.M3U8
-                                            ) {
-                                                this.quality = Qualities.Unknown.value
-                                                this.referer = "$mainUrl/"
-                                                this.headers = commonHeaders
-                                            })
-                                            linksEnviados++
+                                            Log.w(TAG, "${hlsVersion.locale}: sin variantes en master")
                                             continue
                                         }
 
@@ -294,18 +268,17 @@ class UniqueStreamProvider : MainAPI() {
                                                 else -> Qualities.Unknown.value
                                             }
 
-                                            Log.d(TAG, "✓ Variante: $variantUrl ($quality)")
-                                            callback(newExtractorLink(
+                                            Log.d(TAG, "✓ Variante ($quality): $variantUrl")
+                                            M3u8Helper.generateM3u8(
                                                 source = this.name,
-                                                name = "${this.name} - ${hlsVersion.locale.uppercase()} - $quality",
-                                                url = variantUrl,
-                                                type = ExtractorLinkType.M3U8
-                                            ) {
-                                                this.quality = qualityValue
-                                                this.referer = "$mainUrl/"
-                                                this.headers = commonHeaders
-                                            })
-                                            linksEnviados++
+                                                streamUrl = variantUrl,
+                                                referer = "$mainUrl/",
+                                                headers = commonHeaders
+                                            ).forEach { link ->
+                                                link.quality = qualityValue
+                                                callback(link)
+                                                linksEnviados++
+                                            }
                                         }
                                     } catch (e: Exception) {
                                         Log.w(TAG, "Error con ${hlsVersion.locale}: ${e.message}")
