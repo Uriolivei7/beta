@@ -291,13 +291,33 @@ class UniqueStreamProvider : MainAPI() {
 
                                             // Reescribir playlist con URLs absolutos
                                             val variantBase = variantUrl.substringBeforeLast("/")
+                                            val variantDir = variantBase.substringBeforeLast("/")
                                             val variantText = variantResp.text
                                             val rewrittenPlaylist = variantText.lines().joinToString("\n") { line ->
                                                 val trimmed = line.trim()
-                                                if (!trimmed.startsWith("#") && trimmed.isNotBlank()) {
-                                                    if (trimmed.startsWith("http")) trimmed else "$variantBase/$trimmed"
-                                                } else {
-                                                    line
+                                                when {
+                                                    // Línea EXT-X-KEY con URI relativa
+                                                    trimmed.startsWith("#EXT-X-KEY:") && trimmed.contains("URI=") -> {
+                                                        val uriMatch = Regex("""URI=["']([^"']+)["']""").find(trimmed)
+                                                        if (uriMatch != null) {
+                                                            val keyUri = uriMatch.groupValues[1]
+                                                            val absoluteKey = if (keyUri.startsWith("http")) keyUri else {
+                                                                // Resolver ../ contra variantDir
+                                                                val resolvedKey = if (keyUri.startsWith("../")) {
+                                                                    variantDir + keyUri.removePrefix("..")
+                                                                } else {
+                                                                    "$variantBase/$keyUri"
+                                                                }
+                                                                resolvedKey
+                                                            }
+                                                            trimmed.replace(uriMatch.groupValues[0], "URI=\"$absoluteKey\"")
+                                                        } else trimmed
+                                                    }
+                                                    // Líneas de segmentos (no #, no blank)
+                                                    !trimmed.startsWith("#") && trimmed.isNotBlank() -> {
+                                                        if (trimmed.startsWith("http")) trimmed else "$variantBase/$trimmed"
+                                                    }
+                                                    else -> line
                                                 }
                                             }
 
