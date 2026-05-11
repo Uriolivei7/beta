@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
@@ -267,7 +268,11 @@ class TvenvivoProvider : MainAPI() {
                 "Upgrade-Insecure-Requests" to "1"
             )
 
-            val mainPageResponse = app.get(targetUrl, headers = mainHeaders)
+            val mainPageResponse = withTimeoutOrNull(15000L) { app.get(targetUrl, headers = mainHeaders) }
+                ?: run {
+                    Log.w("Tvenvivo", "Logs: Timeout al cargar página principal")
+                    return false
+                }
             val doc = Jsoup.parse(mainPageResponse.text)
 
             var optionLinks = doc.select("a[href*=/live], iframe[name=player], iframe[src*=/live]")
@@ -326,7 +331,11 @@ class TvenvivoProvider : MainAPI() {
                 put("Sec-Fetch-Site", "same-origin")
             }
 
-            val playerResponse = app.get(playerUrl, timeout = 5000L, headers = playerHeaders)
+            val playerResponse = withTimeoutOrNull(5000L) { app.get(playerUrl, headers = playerHeaders) }
+                ?: run {
+                    Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - 5s")
+                    return false
+                }
             val playerHtml = playerResponse.text
 
             if (playerHtml.isBlank()) return false
@@ -342,7 +351,11 @@ class TvenvivoProvider : MainAPI() {
             val finalHtml = if (internalIframe != null) {
                 val iframeUrl = fixUrl(internalIframe)
                 Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
-                app.get(iframeUrl, timeout = 5000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }).text
+                withTimeoutOrNull(5000L) { app.get(iframeUrl, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }) }?.text
+                    ?: run {
+                        Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} iframe timeout - 5s")
+                        return false
+                    }
             } else {
                 playerHtml
             }
