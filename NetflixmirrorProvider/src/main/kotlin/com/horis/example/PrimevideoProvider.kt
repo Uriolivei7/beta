@@ -80,7 +80,8 @@ class PrimevideoProvider : MainAPI() {
         val playbackId = data.main_id ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-        val rating = data.match?.replace("IMDb ", "")
+        val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
+        val rating = data.match?.replace("IMDb ", "") ?: imdbFromDetails
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val suggest = data.suggest?.map {

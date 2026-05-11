@@ -214,7 +214,8 @@ data class NewTvPostResponse(
     val suggest: List<NewTvSuggest>? = null,
     val age: String? = null,
     val certification: String? = null,
-    val ua: String? = null
+    val ua: String? = null,
+    val moredetails: List<NewTvMoredetail>? = null
 )
 
 data class NewTvApiEpisode(
@@ -238,6 +239,11 @@ data class NewTvSeason(
 
 data class NewTvSuggest(
     val id: String
+)
+
+data class NewTvMoredetail(
+    val k: String? = null,
+    val v: String? = null
 )
 
 data class NewTvEpisodesResponse(

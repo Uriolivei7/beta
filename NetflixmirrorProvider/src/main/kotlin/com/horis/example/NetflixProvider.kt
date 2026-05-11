@@ -65,13 +65,14 @@ class NetflixProvider : MainAPI() {
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).parsed<NewTvPostResponse>()
-        Log.d("Netflix", "ua=${data.ua}")
+        Log.d("Netflix", "ua=${data.ua} match=${data.match}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-        val rating = data.match?.replace("IMDb ", "")
+        val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
+        val rating = data.match?.replace("IMDb ", "") ?: imdbFromDetails
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val suggest = data.suggest?.map {
