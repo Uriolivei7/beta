@@ -294,7 +294,7 @@ class UniqueStreamProvider : MainAPI() {
                                             val variantBase = variantUrl.substringBeforeLast("/")
                                             val variantDir = variantBase.substringBeforeLast("/")
                                             val variantText = variantResp.text
-                                            val rewrittenPlaylist = variantText.lines().joinToString("\n") { line ->
+                                            var rewrittenPlaylist = variantText.lines().joinToString("\n") { line ->
                                                 val trimmed = line.trim()
                                                 when {
                                                     trimmed.startsWith("#EXT-X-KEY:") && trimmed.contains("URI=") -> {
@@ -324,6 +324,59 @@ class UniqueStreamProvider : MainAPI() {
 
                                             // Guardar en caché local
                                             val cacheDir = context?.cacheDir ?: continue
+
+                                            // Descargar key, decodificar y servir local
+                                            val keyUrlMatch = Regex("""URI="(https?://[^"]+)"""").find(rewrittenPlaylist)
+                                            if (keyUrlMatch != null) {
+                                                val keyUrl = keyUrlMatch.groupValues[1]
+                                                try {
+                                                    val keyResp = app.get(keyUrl, headers = mapOf(
+                                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                                        "Accept" to "*/*"
+                                                    ), timeout = 15L)
+                                                    if (keyResp.code == 200) {
+                                                        val keyBytes = keyResp.body?.bytes() ?: keyResp.text.toByteArray()
+                                                        Log.d(TAG, "Key descargado: ${keyBytes.size} bytes")
+
+                                                        val decodedKey = when {
+                                                            keyBytes.size == 16 || keyBytes.size == 32 -> keyBytes
+                                                            else -> {
+                                                                val text = keyBytes.decodeToString().trim()
+                                                                // Intentar hex
+                                                                val clean = text.filter { !it.isWhitespace() }
+                                                                if (clean.length % 2 == 0 && clean.all { it.isLetterOrDigit() }) {
+                                                                    clean.chunked(2).mapNotNull {
+                                                                        it.toIntOrNull(16)?.toByte()
+                                                                    }.toByteArray().takeIf { it.size == 16 || it.size == 32 }
+                                                                } else {
+                                                                    // Intentar base64
+                                                                    try {
+                                                                        val raw = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+                                                                        raw.takeIf { it.size == 16 || it.size == 32 }
+                                                                    } catch (_: Exception) { null }
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if (decodedKey != null) {
+                                                            Log.d(TAG, "Key decodificado: ${decodedKey.size} bytes")
+                                                            val hexDump = decodedKey.joinToString("") { "%02x".format(it) }
+                                                            Log.d(TAG, "Key hex: $hexDump")
+                                                            val keyFile = File(cacheDir, "key_${hlsVersion.locale}_$quality.bin")
+                                                            keyFile.writeBytes(decodedKey)
+                                                            val keyLocalUri = Uri.fromFile(keyFile).toString()
+                                                            rewrittenPlaylist = rewrittenPlaylist.replace(keyUrl, keyLocalUri)
+                                                            Log.d(TAG, "✓ Key local: $keyLocalUri")
+                                                        } else {
+                                                            Log.w(TAG, "No se pudo decodificar key (bytes=${keyBytes.size}, text='${keyBytes.decodeToString().trim().take(40)}')")
+                                                        }
+                                                    } else {
+                                                        Log.w(TAG, "Key HTTP ${keyResp.code}")
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.w(TAG, "Error descargando key: ${e.message}")
+                                                }
+                                            }
                                             val cacheFile = File(cacheDir, "pl_${hlsVersion.locale}_$quality.m3u8")
                                             cacheFile.writeText(rewrittenPlaylist)
                                             val localUri = Uri.fromFile(cacheFile)
@@ -342,7 +395,6 @@ class UniqueStreamProvider : MainAPI() {
                                             }
                                             Log.d(TAG, "  link class=${link::class.java.name} props: type=${link.type} quality=${link.quality}")
                                             callback(link)
-                                            linksEnviados++
                                             linksEnviados++
                                         }
                                     } catch (e: Exception) {
