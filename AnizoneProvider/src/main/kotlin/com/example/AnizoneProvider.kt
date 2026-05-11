@@ -334,9 +334,11 @@ class AnizoneProvider : MainAPI() {
         val cookie = webReq.cookies
         val sourceName = web.selectFirst("span.truncate")?.text() ?: ""
         val mediaPlayer = web.selectFirst("media-player")
-        val m3U8 = mediaPlayer?.attr("src") ?: ""
+        val masterUrl = mediaPlayer?.attr("src") ?: ""
 
-        Log.d("AniZoneSub", "-> Source: $sourceName, M3U8: $m3U8")
+        Log.d("AniZoneSub", "-> Source: $sourceName, M3U8: $masterUrl")
+
+        if (masterUrl.isBlank()) return false
 
         mediaPlayer?.select("track")?.forEach {
             Log.d("AniZoneSub", "-> [AniZone] Subtítulo encontrado: ${it.attr("label")}")
@@ -348,21 +350,59 @@ class AnizoneProvider : MainAPI() {
             )
         }
 
+        val baseHeaders = mapOf(
+            "Origin" to mainUrl,
+            "Accept" to "*/*",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Cookie" to cookie.map { "${it.key}=${it.value}" }.joinToString("; ")
+        )
+
+        var foundVariants = false
+        try {
+            val m3u8Response = app.get(masterUrl, timeout = 10000L, headers = baseHeaders + mapOf("Referer" to episodeUrl))
+            val m3u8Text = m3u8Response.text
+
+            if (m3u8Text.contains("#EXT-X-STREAM-INF", ignoreCase = true)) {
+                val variantRegex = Regex("""#EXT-X-STREAM-INF:.*?RESOLUTION=(\d+)x(\d+).*?\n(.*?)(?:\n|$)""", setOf(RegexOption.MULTILINE))
+                for (match in variantRegex.findAll(m3u8Text)) {
+                    val width = match.groupValues[1].toIntOrNull() ?: 0
+                    val height = match.groupValues[2].toIntOrNull() ?: 0
+                    var streamUrl = match.groupValues[3].trim()
+                    if (streamUrl.isNotBlank()) {
+                        if (!streamUrl.startsWith("http")) {
+                            streamUrl = masterUrl.substringBeforeLast("/") + "/" + streamUrl
+                        }
+                        callback.invoke(
+                            newExtractorLink(
+                                sourceName,
+                                "${sourceName} - ${height}p",
+                                streamUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = episodeUrl
+                                this.quality = height
+                                this.headers = baseHeaders
+                            }
+                        )
+                        foundVariants = true
+                        Log.d("AniZoneSub", "-> Variante ${height}p: $streamUrl")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AniZoneSub", "-> Error al obtener variantes M3U8: ${e.message}")
+        }
+
         callback.invoke(
             newExtractorLink(
                 sourceName,
-                name,
-                m3U8,
+                if (foundVariants) "${sourceName} - Original" else name,
+                masterUrl,
                 type = ExtractorLinkType.M3U8
             ) {
                 this.referer = episodeUrl
                 this.quality = 0
-                this.headers = mapOf(
-                    "Origin" to mainUrl,
-                    "Accept" to "*/*",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    "Cookie" to cookie.map { "${it.key}=${it.value}" }.joinToString("; ")
-                )
+                this.headers = baseHeaders
             }
         )
         return true
