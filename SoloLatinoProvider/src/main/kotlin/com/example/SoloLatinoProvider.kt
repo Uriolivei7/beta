@@ -368,14 +368,22 @@ class SoloLatinoProvider : MainAPI() {
                             null
                         }
                     scriptContent?.substringAfter("dataLink = ")?.substringBefore(";")?.let { dataLinkJson ->
-                        Log.d("SoloLatino", "[embed69] dataLink JSON: $dataLinkJson")
-                        tryParseJson<List<ServersByLang>>(dataLinkJson)?.forEach { lang ->
+                        Log.d("SoloLatino", "[embed69] dataLink JSON (raw): $dataLinkJson")
+                        val langs = tryParseJson<List<ServersByLang>>(dataLinkJson)
+                        if (langs.isNullOrEmpty()) {
+                            Log.e("SoloLatino", "[embed69] No se pudo parsear dataLink JSON")
+                            return@let
+                        }
+                        
+                        data class DecryptResult(val videoLanguage: String, val links: List<Link>?)
+                        
+                        val decryptResults = langs.mapNotNull { lang ->
                             Log.d("SoloLatino", "[embed69] Idioma: ${lang.videoLanguage}, Embeds: ${lang.sortedEmbeds.size}")
                             val encryptedLinks = lang.sortedEmbeds.mapNotNull {
                                 Log.d("SoloLatino", "[embed69] Embed: server=${it.servername}, link=${it.link}")
                                 it.link
                             }
-                            if (encryptedLinks.isEmpty()) return@forEach
+                            if (encryptedLinks.isEmpty()) return@mapNotNull null
                             val body = LinksRequest(encryptedLinks).toJson()
                                 .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                             val decryptedRes = app.post(
@@ -383,16 +391,21 @@ class SoloLatinoProvider : MainAPI() {
                                 requestBody = body,
                                 headers = embed69Headers
                             )
-                            Log.d("SoloLatino", "[embed69] Decrypt response: ${decryptedRes.text}")
+                            Log.d("SoloLatino", "[embed69] Decrypt response for ${lang.videoLanguage}: ${decryptedRes.text}")
                             val decrypted = tryParseJson<Loadlinks>(decryptedRes.text)
                             if (decrypted?.success == true && decrypted.links.isNotEmpty()) {
-                                decrypted.links.forEach { link ->
-                                    val finalLink = fixHostsLinks(link.link)
-                                    Log.d("SoloLatino", "[embed69] Link desencriptado: original=${link.link} -> final=$finalLink")
-                                    loadSourceNameExtractor(lang.videoLanguage ?: "Latino", finalLink, fixedSrc, subtitleCallback, callback)
-                                }
+                                DecryptResult(lang.videoLanguage ?: "Latino", decrypted.links)
                             } else {
-                                Log.e("SoloLatino", "[embed69] Decrypt falló o links vacíos")
+                                Log.e("SoloLatino", "[embed69] Decrypt falló o links vacíos para ${lang.videoLanguage}")
+                                null
+                            }
+                        }
+                        
+                        decryptResults.forEach { result ->
+                            result.links?.forEach { link ->
+                                val finalLink = fixHostsLinks(link.link)
+                                Log.d("SoloLatino", "[embed69] Procesando enlace: lang=${result.videoLanguage}, original=${link.link} -> final=$finalLink")
+                                loadSourceNameExtractor(result.videoLanguage, finalLink, fixedSrc, subtitleCallback, callback)
                             }
                         }
                     }
@@ -436,13 +449,30 @@ class SoloLatinoProvider : MainAPI() {
                         "Referer" to targetUrl,
                     )
                     try {
-                        val peliDoc = app.get(fixedSrc, headers = peliHeaders, timeout = 30000L).document
+                        val peliResponse = app.get(fixedSrc, headers = peliHeaders, timeout = 30000L)
+                        val peliHtml = peliResponse.text
+                        val peliDoc = peliResponse.document
+                        
+                        Regex("""["']([^"']*\.(?:vtt|srt|m3u8|mp4)(?:\?[^"']*)?)["']""", RegexOption.IGNORE_CASE).findAll(peliHtml).forEach { match ->
+                            val url = match.groupValues[1]
+                            Log.d("SoloLatino", "[pelisserieshoy] URL encontrada en HTML/JS: $url")
+                            if (url.contains(".vtt") || url.contains(".srt")) {
+                                subtitleCallback.invoke(SubtitleFile("Español", fixUrl(url)))
+                            } else if (url.contains(".m3u8") || url.contains(".mp4")) {
+                                val cleanUrl = fixHostsLinks(fixUrl(url))
+                                callback.invoke(newExtractorLink("Pelisserieshoy", "Pelisserieshoy", cleanUrl) {
+                                    this.referer = fixedSrc
+                                    this.quality = Qualities.Unknown.value
+                                    this.type = if (cleanUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                })
+                            }
+                        }
                         
                         peliDoc.select("track[src], source[src*=.vtt], source[src*=.srt], iframe[src], video > source, a[href$=.vtt], a[href$=.srt]").forEach { el ->
                             val subUrl = el.attr("src").ifBlank { el.attr("href") }
                             val subLang = el.attr("srclang").ifBlank { el.attr("label") }.ifBlank { el.attr("title") }.ifBlank { "Español" }
                             if (subUrl.isNotBlank() && (subUrl.contains(".vtt") || subUrl.contains(".srt"))) {
-                                Log.d("SoloLatino", "[pelisserieshoy] Sub encontrado: $subLang -> $subUrl")
+                                Log.d("SoloLatino", "[pelisserieshoy] Sub encontrado en DOM: $subLang -> $subUrl")
                                 subtitleCallback.invoke(SubtitleFile(subLang, fixUrl(subUrl)))
                             }
                         }
@@ -464,7 +494,7 @@ class SoloLatinoProvider : MainAPI() {
                                     this.type = if (cleanVideo.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                                 })
                             } else {
-                                Log.d("SoloLatino", "[pelisserieshoy] Sin iframe ni video, intentando loadExtractor genérico")
+                                Log.d("SoloLatino", "[pelisserieshoy] Sin iframe ni video en DOM, intentando loadExtractor genérico")
                                 val cleanUrl = fixHostsLinks(fixedSrc)
                                 loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
                             }
