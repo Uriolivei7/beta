@@ -41,9 +41,16 @@ class LegionanimeProvider : MainAPI() {
         return try {
             val offset = (page - 1) * 24
             val url = "$apiBase/v2/directories?studio=0&not_genre=&year=&orderBy=$orderBy&language=&type=&duration=&search=$query&letter=0&limit=24&genre=&season=&page=$offset&status="
-            val response = app.post(url, data = mapOf("apyki" to API_KEY), headers = apiHeaders)
-            val root = json.decodeFromString<JsonObject>(response.text)
-            val list = root["response"]?.jsonArray ?: return emptyList()
+            val httpResponse = app.post(url, data = mapOf("apyki" to API_KEY), headers = apiHeaders)
+            val rawJson = httpResponse.text
+            Log.d(TAG, "fetchDirectory response: $rawJson")
+            val root = json.decodeFromString<JsonObject>(rawJson)
+            val responseField = root["response"]
+            if (responseField !is JsonArray) {
+                Log.e(TAG, "response no es array, es: ${responseField?.let { it::class.simpleName }} = $responseField")
+                return emptyList()
+            }
+            val list = responseField
             list.map { item ->
                 val obj = item.jsonObject
                 val id = obj["id"]?.jsonPrimitive?.content ?: return@map null
@@ -64,9 +71,15 @@ class LegionanimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val response = app.get(url, headers = apiHeaders)
-        val root = json.decodeFromString<JsonObject>(response.text).get("response")?.jsonObject
-            ?: throw Exception("Respuesta inv\u00e1lida")
+        val httpResponse = app.get(url, headers = apiHeaders)
+        val rawJson = httpResponse.text
+        Log.d(TAG, "load response ($url): $rawJson")
+        val rootObj = json.decodeFromString<JsonObject>(rawJson).get("response")
+        if (rootObj !is JsonObject) {
+            Log.e(TAG, "load: response no es objeto, es: ${rootObj?.let { it::class.simpleName }} = $rootObj")
+            throw Exception("Respuesta inv\u00e1lida")
+        }
+        val root = rootObj
 
         val anime = root["anime"]?.jsonObject
             ?: throw Exception("No se encontr\u00f3 anime")
@@ -128,9 +141,14 @@ class LegionanimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val response = app.post(data, data = mapOf("apyki" to API_KEY), headers = apiHeaders)
-        val root = json.decodeFromString<JsonObject>(response.text)
-        val players = root["response"]?.jsonObject?.get("players")?.jsonArray ?: return false
+        val httpResponse = app.post(data, data = mapOf("apyki" to API_KEY), headers = apiHeaders)
+        val rawJson = httpResponse.text
+        Log.d(TAG, "loadLinks response ($data): $rawJson")
+        val root = json.decodeFromString<JsonObject>(rawJson)
+        val players = root["response"]?.jsonObject?.get("players")?.jsonArray ?: run {
+            Log.e(TAG, "loadLinks: no se encontraron players, response type: ${root["response"]?.let { it::class.simpleName }}")
+            return false
+        }
 
         players.forEach { player ->
             val p = player.jsonObject
