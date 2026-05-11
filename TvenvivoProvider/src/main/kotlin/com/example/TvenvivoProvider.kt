@@ -6,6 +6,9 @@ import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
@@ -24,6 +27,7 @@ class TvenvivoProvider : MainAPI() {
     override val hasDownloadSupport = true
 
     private val cfKiller = CloudflareKiller()
+    private val successfulOptionUrl = HashMap<String, String>()
     private val nowAllowed = listOf("Red Social", "Donacion", "Donar con Paypal", "Mundo Latam")
 
     private val infantilCat = setOf(
@@ -266,71 +270,115 @@ class TvenvivoProvider : MainAPI() {
             val mainPageResponse = app.get(targetUrl, headers = mainHeaders)
             val doc = Jsoup.parse(mainPageResponse.text)
 
-            val optionLinks = doc.select("a[href*=/live], iframe[name=player], iframe[src*=/live]")
+            var optionLinks = doc.select("a[href*=/live], iframe[name=player], iframe[src*=/live]")
                 .mapNotNull { if (it.tagName() == "iframe") it.attr("src") else it.attr("href") }
                 .filter { it.isNotBlank() && !it.contains("facebook") }
                 .distinct()
 
-            Log.d("Tvenvivo", "Logs: Opciones detectadas: ${optionLinks.size}")
-
-            var success = false
-
-            for ((index, rawPlayerUrl) in optionLinks.withIndex()) {
-                val playerUrl = fixUrl(rawPlayerUrl)
-                try {
-                    Log.d("Tvenvivo", "Logs: Entrando a Opción ${index + 1} -> $playerUrl")
-
-                    val playerHeaders = mainHeaders.toMutableMap().apply {
-                        put("Referer", targetUrl)
-                        put("Sec-Fetch-Site", "same-origin")
-                    }
-
-                    val playerResponse = app.get(playerUrl, headers = playerHeaders)
-                    val playerHtml = playerResponse.text
-
-                    val internalIframe = Regex("""iframe.*src=["']([^"']*saohgdasregions\.fun[^"']*)["']""").find(playerHtml)?.groupValues?.get(1)
-
-                    val finalHtml = if (internalIframe != null) {
-                        val iframeUrl = fixUrl(internalIframe)
-                        Log.d("Tvenvivo", "Logs: Iframe interno hallado: $iframeUrl")
-                        app.get(iframeUrl, headers = playerHeaders.apply { put("Referer", playerUrl) }).text
-                    } else {
-                        playerHtml
-                    }
-
-                    val m3u8Url = extractM3u8FromHtml(finalHtml)
-
-                    if (!m3u8Url.isNullOrEmpty()) {
-                        Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
-
-                        val streamingHeaders = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://regionales.saohgdasregions.fun",
-                            "Referer" to "https://regionales.saohgdasregions.fun/"
-                        )
-
-                        callback(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} - Opción ${index + 1}",
-                                url = m3u8Url,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.headers = streamingHeaders
-                            }
-                        )
-                        success = true
-                    } else {
-                        val title = Jsoup.parse(playerHtml).title()
-                        Log.w("Tvenvivo", "Logs: Falló Opción ${index + 1}. Título recibido: $title")
-                    }
-                } catch (e: Exception) {
-                    Log.e("Tvenvivo", "Logs: Error en opción $index: ${e.message}")
+            val cachedUrl = successfulOptionUrl[targetUrl]
+            if (cachedUrl != null) {
+                val cachedIdx = optionLinks.indexOf(cachedUrl)
+                if (cachedIdx > 0) {
+                    val link = optionLinks[cachedIdx]
+                    optionLinks = listOf(link) + optionLinks.filterIndexed { i, _ -> i != cachedIdx }
                 }
             }
-            return success
+
+            Log.d("Tvenvivo", "Logs: Opciones detectadas: ${optionLinks.size}")
+
+            if (optionLinks.isEmpty()) return false
+
+            return coroutineScope {
+                val deferreds = optionLinks.mapIndexed { displayIdx, rawUrl ->
+                    async {
+                        tryLoadOption(targetUrl, rawUrl, displayIdx, mainHeaders, callback)
+                    }
+                }
+                var success = false
+                for (d in deferreds) {
+                    if (d.await()) {
+                        success = true
+                        deferreds.forEach { if (!it.isCompleted) it.cancel() }
+                        break
+                    }
+                }
+                success
+            }
         } catch (e: Exception) {
             Log.e("Tvenvivo", "Logs: Error crítico: ${e.message}")
+            return false
+        }
+    }
+
+    private suspend fun tryLoadOption(
+        targetUrl: String,
+        rawPlayerUrl: String,
+        displayIndex: Int,
+        mainHeaders: Map<String, String>,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val playerUrl = fixUrl(rawPlayerUrl)
+        try {
+            Log.d("Tvenvivo", "Logs: Probando Opción ${displayIndex + 1} -> $playerUrl")
+
+            val playerHeaders = mainHeaders.toMutableMap().apply {
+                put("Referer", targetUrl)
+                put("Sec-Fetch-Site", "same-origin")
+            }
+
+            val playerResponse = app.get(playerUrl, timeout = 5000L, headers = playerHeaders)
+            val playerHtml = playerResponse.text
+
+            if (playerHtml.isBlank()) return false
+            val parsed = Jsoup.parse(playerHtml)
+            val pageTitle = parsed.title().lowercase()
+            if (pageTitle.contains("pagina no encontrada") || pageTitle.contains("página no encontrada") || pageTitle.contains("404")) {
+                Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} fail rápido - página no encontrada")
+                return false
+            }
+
+            val internalIframe = Regex("""iframe.*src=["']([^"']*saohgdasregions\.fun[^"']*)["']""").find(playerHtml)?.groupValues?.get(1)
+
+            val finalHtml = if (internalIframe != null) {
+                val iframeUrl = fixUrl(internalIframe)
+                Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
+                app.get(iframeUrl, timeout = 5000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }).text
+            } else {
+                playerHtml
+            }
+
+            val m3u8Url = extractM3u8FromHtml(finalHtml)
+
+            if (!m3u8Url.isNullOrEmpty()) {
+                Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
+
+                val streamingHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Origin" to "https://regionales.saohgdasregions.fun",
+                    "Referer" to "https://regionales.saohgdasregions.fun/"
+                )
+
+                callback(
+                    newExtractorLink(
+                        source = this.name,
+                        name = "${this.name} - Opción ${displayIndex + 1}",
+                        url = m3u8Url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.headers = streamingHeaders
+                    }
+                )
+
+                successfulOptionUrl[targetUrl] = rawPlayerUrl
+                return true
+            } else {
+                Log.w("Tvenvivo", "Logs: Falló Opción ${displayIndex + 1} - no se encontró M3U8")
+                return false
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("Tvenvivo", "Logs: Error opción ${displayIndex + 1}: ${e.message}")
             return false
         }
     }
