@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
-import com.lagradost.api.Log
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -61,13 +60,10 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val response = app.get(
+        val data = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        )
-        Log.d("Netflix", "FULL RESPONSE: ${response.text}")
-        val data = response.parsed<NewTvPostResponse>()
-        Log.d("Netflix", "ua=${data.ua} match=${data.match}")
+        ).parsed<NewTvPostResponse>()
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
