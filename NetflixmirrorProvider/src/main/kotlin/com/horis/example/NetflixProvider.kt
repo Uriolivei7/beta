@@ -61,10 +61,12 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val data = app.get(
+        val response = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        )
+        Log.d("Netflix", "FULL RESPONSE: ${response.text}")
+        val data = response.parsed<NewTvPostResponse>()
         Log.d("Netflix", "ua=${data.ua} match=${data.match}")
 
         val title = data.title ?: id
