@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
+import com.lagradost.api.Log
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -60,10 +61,13 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val data = app.get(
+        val rawResponse = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        )
+        Log.d("Netflix", "load raw response: ${rawResponse.text}")
+        val data = rawResponse.parsed<NewTvPostResponse>()
+        Log.d("Netflix", "age=${data.age} certification=${data.certification}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -87,6 +91,7 @@ class NetflixProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
+                contentRating = data.certification ?: data.age
             }
         }
 
@@ -133,6 +138,7 @@ class NetflixProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
+            contentRating = data.certification ?: data.age
         }
     }
 

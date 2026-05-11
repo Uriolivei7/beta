@@ -62,10 +62,13 @@ class PrimevideoProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
-        val data = app.get(
+        val rawResponse = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        )
+        Log.d("Primevideo", "load raw response: ${rawResponse.text}")
+        val data = rawResponse.parsed<NewTvPostResponse>()
+        Log.d("Primevideo", "age=${data.age} certification=${data.certification}")
 
         Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
         data.season?.forEachIndexed { i, s ->
@@ -97,6 +100,7 @@ class PrimevideoProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
+                contentRating = data.certification ?: data.age
             }
         }
 
@@ -189,6 +193,7 @@ class PrimevideoProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
+            contentRating = data.certification ?: data.age
         }
     }
 
