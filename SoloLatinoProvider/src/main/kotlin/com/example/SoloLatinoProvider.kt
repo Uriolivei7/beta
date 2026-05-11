@@ -520,6 +520,70 @@ class SoloLatinoProvider : MainAPI() {
     }
 }
 
+suspend fun tryExtractSubsFromM3u8(
+    m3u8Url: String,
+    referer: String?,
+    subtitleCallback: (SubtitleFile) -> Unit,
+) {
+    try {
+        val subHeaders = mutableMapOf<String, String>(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+        if (referer != null) subHeaders["Referer"] = referer
+        val manifest = app.get(m3u8Url, headers = subHeaders, timeout = 15000L).text
+        val baseUrl = m3u8Url.substringBeforeLast("/")
+        
+        Regex("""#EXT-X-MEDIA:TYPE=SUBTITLES[^#]*""", RegexOption.IGNORE_CASE).findAll(manifest).forEach { mediaBlock ->
+            val lang = Regex("""LANGUAGE\s*=\s*"([^"]*)""", RegexOption.IGNORE_CASE).find(mediaBlock.value)?.groupValues?.get(1) ?: "Español"
+            val uri = Regex("""URI\s*=\s*"([^"]*)""", RegexOption.IGNORE_CASE).find(mediaBlock.value)?.groupValues?.get(1)
+            if (uri != null) {
+                val subUrl = if (uri.startsWith("http")) uri else "$baseUrl/$uri"
+                Log.d("SoloLatino", "[M3u8Subs] Subtítulo encontrado en manifest: lang=$lang, url=$subUrl")
+                subtitleCallback.invoke(SubtitleFile(lang, subUrl))
+            }
+        }
+        
+        Regex("""#EXT-X-I-FRAME-STREAM-INF[^#]*""", RegexOption.IGNORE_CASE).findAll(manifest).forEach { block ->
+            val uri = Regex("""URI\s*=\s*"([^"]*)""", RegexOption.IGNORE_CASE).find(block.value)?.groupValues?.get(1)
+            if (uri != null) {
+                val subUrl = if (uri.startsWith("http")) uri else "$baseUrl/$uri"
+                if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
+                    Log.d("SoloLatino", "[M3u8Subs] Subtítulo encontrado en I-Frame: $subUrl")
+                    subtitleCallback.invoke(SubtitleFile("Español", subUrl))
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.d("SoloLatino", "[M3u8Subs] Error al parsear manifest: ${e.message}")
+    }
+}
+
+suspend fun scanPageForSubs(
+    pageUrl: String,
+    referer: String?,
+    subtitleCallback: (SubtitleFile) -> Unit,
+) {
+    try {
+        val scanHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        )
+        val html = app.get(pageUrl, headers = scanHeaders, timeout = 15000L).text
+        val base = pageUrl.substringBeforeLast("/")
+        
+        Regex("""["']([^"']*\.(?:vtt|srt)(?:\?[^"']*)?)["']""", RegexOption.IGNORE_CASE).findAll(html).forEach { match ->
+            val subUrl = match.groupValues[1]
+            if (subUrl.contains(".vtt") || subUrl.contains(".srt")) {
+                val cleanSubUrl = if (subUrl.startsWith("http")) subUrl else "$base/$subUrl"
+                Log.d("SoloLatino", "[PageSubs] Subtítulo encontrado en página $pageUrl: $cleanSubUrl")
+                subtitleCallback.invoke(SubtitleFile("Español", cleanSubUrl))
+            }
+        }
+    } catch (e: Exception) {
+        Log.d("SoloLatino", "[PageSubs] Error al escanear $pageUrl: ${e.message}")
+    }
+}
+
 suspend fun loadSourceNameExtractor(
     source: String,
     url: String,
@@ -527,6 +591,12 @@ suspend fun loadSourceNameExtractor(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit,
 ) {
+    Log.d("SoloLatino", "[loadSourceNameExtractor] Procesando: $url")
+    
+    CoroutineScope(Dispatchers.IO).launch {
+        scanPageForSubs(url, referer, subtitleCallback)
+    }
+    
     val wrappedSubCb: (SubtitleFile) -> Unit = { sub ->
         Log.d("SoloLatino", "[Subs-CB] subtitleCallback invoked: lang=${sub.lang}, url=${sub.url.take(100)}")
         subtitleCallback(sub)
@@ -534,6 +604,12 @@ suspend fun loadSourceNameExtractor(
     loadExtractor(url, referer, wrappedSubCb) { link ->
         CoroutineScope(Dispatchers.IO).launch {
             Log.d("SoloLatino", "[Subs] Extractor link: source=${link.source}, quality=${link.quality}, url=${link.url.take(80)}")
+            
+            if (link.type == ExtractorLinkType.M3U8 || link.url.contains("m3u8", ignoreCase = true) || link.url.contains("/hls", ignoreCase = true) || link.url.contains("/stream/", ignoreCase = true)) {
+                Log.d("SoloLatino", "[M3u8Subs] Intentando extraer subs de manifest: ${link.url.take(80)}")
+                tryExtractSubsFromM3u8(link.url, referer, wrappedSubCb)
+            }
+            
             callback.invoke(
                 newExtractorLink("$source[${link.source}]", "$source[${link.source}]", link.url) {
                     this.quality = link.quality
