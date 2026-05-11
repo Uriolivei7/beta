@@ -72,7 +72,14 @@ class NetflixProvider : MainAPI() {
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
-        val rating = data.match?.replace("IMDb ", "") ?: imdbFromDetails
+        val rating = when {
+            data.match?.startsWith("IMDb ") == true -> data.match?.replace("IMDb ", "")
+            data.match?.contains("%") == true -> {
+                val pct = data.match?.replace(Regex("[^0-9]"), "")?.toFloatOrNull()
+                if (pct != null) String.format("%.1f", pct / 10f) else null
+            }
+            else -> data.match ?: imdbFromDetails
+        }
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val suggest = data.suggest?.map {
