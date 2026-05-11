@@ -339,7 +339,8 @@ class UniqueStreamProvider : MainAPI() {
                                                         Log.d(TAG, "Key descargado: ${keyBytes.size} bytes")
 
                                                         val decodedKey = when {
-                                                            keyBytes.size == 16 || keyBytes.size == 32 -> keyBytes
+                                                            keyBytes.size == 16 -> keyBytes
+                                                            keyBytes.size == 32 -> keyBytes.copyOfRange(0, 16)
                                                             else -> {
                                                                 val text = keyBytes.decodeToString().trim()
                                                                 // Intentar hex
@@ -347,12 +348,12 @@ class UniqueStreamProvider : MainAPI() {
                                                                 if (clean.length % 2 == 0 && clean.all { it.isLetterOrDigit() }) {
                                                                     clean.chunked(2).mapNotNull {
                                                                         it.toIntOrNull(16)?.toByte()
-                                                                    }.toByteArray().takeIf { it.size == 16 || it.size == 32 }
+                                                                    }.toByteArray().let { if (it.size == 32) it.copyOfRange(0, 16) else it.takeIf { it.size == 16 } }
                                                                 } else {
                                                                     // Intentar base64
                                                                     try {
                                                                         val raw = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
-                                                                        raw.takeIf { it.size == 16 || it.size == 32 }
+                                                                        if (raw.size == 32) raw.copyOfRange(0, 16) else raw.takeIf { it.size == 16 }
                                                                     } catch (_: Exception) { null }
                                                                 }
                                                             }
