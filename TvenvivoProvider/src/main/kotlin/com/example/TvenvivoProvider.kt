@@ -9,7 +9,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.TimeoutCancellationException
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
@@ -323,7 +325,7 @@ class TvenvivoProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val playerUrl = fixUrl(rawPlayerUrl)
-        try {
+        return try {
             Log.d("Tvenvivo", "Logs: Probando Opción ${displayIndex + 1} -> $playerUrl")
 
             val playerHeaders = mainHeaders.toMutableMap().apply {
@@ -331,68 +333,69 @@ class TvenvivoProvider : MainAPI() {
                 put("Sec-Fetch-Site", "same-origin")
             }
 
-            val playerResponse = withTimeoutOrNull(15000L) { app.get(playerUrl, headers = playerHeaders) }
-                ?: run {
-                    Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - 15s")
-                    return false
+            try {
+                withTimeout(15000L) {
+                    val playerResponse = app.get(playerUrl, timeout = 30000L, headers = playerHeaders)
+                    val playerHtml = playerResponse.text
+
+                    if (playerHtml.isBlank()) return@withTimeout false
+                    val parsed = Jsoup.parse(playerHtml)
+                    val pageTitle = parsed.title().lowercase()
+                    if (pageTitle.contains("pagina no encontrada") || pageTitle.contains("página no encontrada") || pageTitle.contains("404")) {
+                        Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} fail rápido - página no encontrada")
+                        return@withTimeout false
+                    }
+
+                    val internalIframe = Regex("""iframe.*src=["']([^"']*saohgdasregions\.fun[^"']*)["']""").find(playerHtml)?.groupValues?.get(1)
+
+                    val finalHtml = if (internalIframe != null) {
+                        val iframeUrl = fixUrl(internalIframe)
+                        Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
+                        withTimeoutOrNull(15000L) {
+                            app.get(iframeUrl, timeout = 30000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) })
+                        }?.text ?: return@withTimeout false
+                    } else {
+                        playerHtml
+                    }
+
+                    val m3u8Url = extractM3u8FromHtml(finalHtml)
+
+                    if (!m3u8Url.isNullOrEmpty()) {
+                        Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
+
+                        val streamingHeaders = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Origin" to "https://regionales.saohgdasregions.fun",
+                            "Referer" to "https://regionales.saohgdasregions.fun/"
+                        )
+
+                        callback(
+                            newExtractorLink(
+                                source = this@TvenvivoProvider.name,
+                                name = "${this@TvenvivoProvider.name} - Opción ${displayIndex + 1}",
+                                url = m3u8Url,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.headers = streamingHeaders
+                            }
+                        )
+
+                        successfulOptionUrl[targetUrl] = rawPlayerUrl
+                        return@withTimeout true
+                    } else {
+                        Log.w("Tvenvivo", "Logs: Falló Opción ${displayIndex + 1} - no se encontró M3U8")
+                        return@withTimeout false
+                    }
                 }
-            val playerHtml = playerResponse.text
-
-            if (playerHtml.isBlank()) return false
-            val parsed = Jsoup.parse(playerHtml)
-            val pageTitle = parsed.title().lowercase()
-            if (pageTitle.contains("pagina no encontrada") || pageTitle.contains("página no encontrada") || pageTitle.contains("404")) {
-                Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} fail rápido - página no encontrada")
-                return false
-            }
-
-            val internalIframe = Regex("""iframe.*src=["']([^"']*saohgdasregions\.fun[^"']*)["']""").find(playerHtml)?.groupValues?.get(1)
-
-            val finalHtml = if (internalIframe != null) {
-                val iframeUrl = fixUrl(internalIframe)
-                Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
-                withTimeoutOrNull(15000L) { app.get(iframeUrl, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }) }?.text
-                    ?: run {
-                        Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} iframe timeout - 15s")
-                        return false
-                    }
-            } else {
-                playerHtml
-            }
-
-            val m3u8Url = extractM3u8FromHtml(finalHtml)
-
-            if (!m3u8Url.isNullOrEmpty()) {
-                Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
-
-                val streamingHeaders = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Origin" to "https://regionales.saohgdasregions.fun",
-                    "Referer" to "https://regionales.saohgdasregions.fun/"
-                )
-
-                callback(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "${this.name} - Opción ${displayIndex + 1}",
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.headers = streamingHeaders
-                    }
-                )
-
-                successfulOptionUrl[targetUrl] = rawPlayerUrl
-                return true
-            } else {
-                Log.w("Tvenvivo", "Logs: Falló Opción ${displayIndex + 1} - no se encontró M3U8")
-                return false
+            } catch (e: TimeoutCancellationException) {
+                Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - 15s")
+                false
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("Tvenvivo", "Logs: Error opción ${displayIndex + 1}: ${e.message}")
-            return false
+            false
         }
     }
 
