@@ -218,9 +218,9 @@ class TvenvivoProvider : MainAPI() {
             ?: "Canal Desconocido"
 
         val cleanTitle = title
-            .replace("Ver ", "")
-            .replace(" en vivo", "")
-            .replace(Regex("\\s*\\|\\s*.*"), "")
+            .replace(Regex("""(?i)\bVer\s+"""), "")
+            .replace(Regex("""(?i)\s*en\s+vivo(\s*hd)?"""), "")
+            .replace(Regex("""\s*\|\s*.*"""), "")
             .trim()
 
         val poster = doc.selectFirst("div.flex.justify-between img[src]")?.attr("src")
