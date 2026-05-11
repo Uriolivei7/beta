@@ -232,35 +232,63 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — descargar master y enviar variantes directo a ExoPlayer
+                        // HLS — descargar master y servir variantes directo desde CDN
                         if (hlsVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
+                            val commonHeaders = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Accept" to "*/*",
+                                "Origin" to mainUrl,
+                                "Referer" to "$mainUrl/"
+                            )
                             for (hlsVersion in hlsVersions) {
                                 if (hlsVersion.playlist.isNotBlank()) {
                                     try {
-                                        // Descargar master.m3u8 para obtener las variantes
-                                        val masterResp = app.get(hlsVersion.playlist, headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                            "Accept" to "*/*",
-                                            "Origin" to mainUrl,
-                                            "Referer" to "$mainUrl/"
-                                        ), timeout = 20L)
+                                        // Usar la master URL directamente — ExoPlayer la parsea
+                                        val masterUrl = hlsVersion.playlist
+                                        Log.d(TAG, "Master URL: $masterUrl")
 
+                                        // Extraer calidad del nombre de ruta (v_1280x720, v_1920x1080)
+                                        // La master contiene variantes con distintas resoluciones
+                                        val masterResp = app.get(masterUrl, headers = commonHeaders, timeout = 20L)
                                         if (masterResp.code != 200) {
-                                            Log.w(TAG, "Master ${hlsVersion.locale} falló: ${masterResp.code}")
+                                            Log.w(TAG, "${hlsVersion.locale} master falló: ${masterResp.code}")
+                                            // Fallback: enviar la master URL directamente aunque falle
+                                            callback(newExtractorLink(
+                                                source = this.name,
+                                                name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                                                url = masterUrl,
+                                                type = ExtractorLinkType.M3U8
+                                            ) {
+                                                this.quality = Qualities.Unknown.value
+                                                this.referer = "$mainUrl/"
+                                                this.headers = commonHeaders
+                                            })
+                                            linksEnviados++
                                             continue
                                         }
 
                                         val masterText = masterResp.text
-                                        val masterBase = hlsVersion.playlist.substringBeforeLast("/").substringBefore("?")
+                                        val masterBase = masterUrl.substringBeforeLast("/").substringBefore("?")
 
-                                        // Extraer líneas de variante
+                                        // Extraer líneas de variante (rutas relativas como "v_1280x720/playlist.m3u8?...")
                                         val variantLines = masterText.lines().filter { line ->
                                             !line.startsWith("#") && line.isNotBlank() && !line.startsWith("http")
                                         }
 
                                         if (variantLines.isEmpty()) {
-                                            Log.w(TAG, "${hlsVersion.locale}: sin variantes en master")
+                                            Log.w(TAG, "${hlsVersion.locale}: sin variantes en master — enviando master directa")
+                                            callback(newExtractorLink(
+                                                source = this.name,
+                                                name = "${this.name} - ${hlsVersion.locale.uppercase()}",
+                                                url = masterUrl,
+                                                type = ExtractorLinkType.M3U8
+                                            ) {
+                                                this.quality = Qualities.Unknown.value
+                                                this.referer = "$mainUrl/"
+                                                this.headers = commonHeaders
+                                            })
+                                            linksEnviados++
                                             continue
                                         }
 
@@ -277,130 +305,21 @@ class UniqueStreamProvider : MainAPI() {
                                                 else -> Qualities.Unknown.value
                                             }
 
-                                            Log.d(TAG, "Descargando variant playlist: $variantUrl")
-                                            val variantResp = app.get(variantUrl, headers = mapOf(
-                                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                                "Accept" to "*/*",
-                                                "Origin" to mainUrl,
-                                                "Referer" to "$mainUrl/"
-                                            ), timeout = 20L)
-
-                                            if (variantResp.code != 200) {
-                                                Log.w(TAG, "Variant ${hlsVersion.locale} $quality falló: ${variantResp.code}")
-                                                continue
-                                            }
-
-                                            // Reescribir playlist con URLs absolutos
-                                            val variantBase = variantUrl.substringBeforeLast("/")
-                                            val variantDir = variantBase.substringBeforeLast("/")
-                                            val variantText = variantResp.text
-                                            var rewrittenPlaylist = variantText.lines().joinToString("\n") { line ->
-                                                val trimmed = line.trim()
-                                                when {
-                                                    trimmed.startsWith("#EXT-X-KEY:") && trimmed.contains("URI=") -> {
-                                                        val uriMatch = Regex("""URI=["']([^"']+)["']""").find(trimmed)
-                                                        if (uriMatch != null) {
-                                                            val keyUri = uriMatch.groupValues[1]
-                                                            val absoluteKey = if (keyUri.startsWith("http")) keyUri else {
-                                                                if (keyUri.startsWith("../")) {
-                                                                    variantDir + keyUri.removePrefix("..")
-                                                                } else {
-                                                                    "$variantBase/$keyUri"
-                                                                }
-                                                            }
-                                                            trimmed.replace(uriMatch.groupValues[0], "URI=\"$absoluteKey\"")
-                                                        } else trimmed
-                                                    }
-                                                    !trimmed.startsWith("#") && trimmed.isNotBlank() -> {
-                                                        if (trimmed.startsWith("http")) trimmed else "$variantBase/$trimmed"
-                                                    }
-                                                    else -> line
-                                                }
-                                            }
-
-                                            // Log primeras líneas del playlist
-                                            Log.d(TAG, "Playlist reescrito (primeras 15 líneas):")
-                                            rewrittenPlaylist.lines().take(15).forEach { Log.d(TAG, "  | $it") }
-
-                                            // Guardar en caché local
-                                            val cacheDir = context?.cacheDir ?: continue
-
-                                            // Descargar key, decodificar y servir local
-                                            val keyUrlMatch = Regex("""URI="(https?://[^"]+)"""").find(rewrittenPlaylist)
-                                            if (keyUrlMatch != null) {
-                                                val keyUrl = keyUrlMatch.groupValues[1]
-                                                try {
-                                                    val keyResp = app.get(keyUrl, headers = mapOf(
-                                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                                        "Accept" to "*/*"
-                                                    ), timeout = 15L)
-                                                    if (keyResp.code == 200) {
-                                                        val keyBytes = keyResp.body?.bytes() ?: keyResp.text.toByteArray()
-                                                        Log.d(TAG, "Key descargado: ${keyBytes.size} bytes")
-
-                                                        val decodedKey = when {
-                                                            keyBytes.size == 16 -> keyBytes
-                                                            keyBytes.size == 32 -> keyBytes.copyOfRange(0, 16)
-                                                            else -> {
-                                                                val text = keyBytes.decodeToString().trim()
-                                                                // Intentar hex
-                                                                val clean = text.filter { !it.isWhitespace() }
-                                                                if (clean.length % 2 == 0 && clean.all { it.isLetterOrDigit() }) {
-                                                                    clean.chunked(2).mapNotNull {
-                                                                        it.toIntOrNull(16)?.toByte()
-                                                                    }.toByteArray().let { if (it.size == 32) it.copyOfRange(0, 16) else it.takeIf { it.size == 16 } }
-                                                                } else {
-                                                                    // Intentar base64
-                                                                    try {
-                                                                        val raw = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
-                                                                        if (raw.size == 32) raw.copyOfRange(0, 16) else raw.takeIf { it.size == 16 }
-                                                                    } catch (_: Exception) { null }
-                                                                }
-                                                            }
-                                                        }
-
-                                                        if (decodedKey != null) {
-                                                            Log.d(TAG, "Key decodificado: ${decodedKey.size} bytes")
-                                                            val hexDump = decodedKey.joinToString("") { "%02x".format(it) }
-                                                            Log.d(TAG, "Key hex: $hexDump")
-                                                            val keyFile = File(cacheDir, "key_${hlsVersion.locale}_$quality.bin")
-                                                            keyFile.writeBytes(decodedKey)
-                                                            val keyLocalUri = Uri.fromFile(keyFile).toString()
-                                                            rewrittenPlaylist = rewrittenPlaylist.replace(keyUrl, keyLocalUri)
-                                                            Log.d(TAG, "✓ Key local: $keyLocalUri")
-                                                        } else {
-                                                            Log.w(TAG, "No se pudo decodificar key (bytes=${keyBytes.size}, text='${keyBytes.decodeToString().trim().take(40)}')")
-                                                        }
-                                                    } else {
-                                                        Log.w(TAG, "Key HTTP ${keyResp.code}")
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Log.w(TAG, "Error descargando key: ${e.message}")
-                                                }
-                                            }
-                                            val cacheFile = File(cacheDir, "pl_${hlsVersion.locale}_$quality.m3u8")
-                                            cacheFile.writeText(rewrittenPlaylist)
-                                            val localUri = Uri.fromFile(cacheFile)
-                                            val localUrl = localUri.toString()
-
-                                            Log.d(TAG, "✓ Playlist local: $localUrl")
-                                            Log.d(TAG, "  Uri authority=${localUri.authority} path=${localUri.path} scheme=${localUri.scheme}")
-                                            val link = newExtractorLink(
+                                            Log.d(TAG, "✓ Variante: $variantUrl ($quality)")
+                                            callback(newExtractorLink(
                                                 source = this.name,
                                                 name = "${this.name} - ${hlsVersion.locale.uppercase()} - $quality",
-                                                url = localUrl,
+                                                url = variantUrl,
                                                 type = ExtractorLinkType.M3U8
                                             ) {
                                                 this.quality = qualityValue
                                                 this.referer = "$mainUrl/"
-                                            }
-                                            Log.d(TAG, "  link class=${link::class.java.name} props: type=${link.type} quality=${link.quality}")
-                                            callback(link)
+                                                this.headers = commonHeaders
+                                            })
                                             linksEnviados++
                                         }
                                     } catch (e: Exception) {
-                                        Log.w(TAG, "Error procesando ${hlsVersion.locale}: ${e.message}")
-                                        Log.w(TAG, Log.getStackTraceString(e))
+                                        Log.w(TAG, "Error con ${hlsVersion.locale}: ${e.message}")
                                     }
                                 }
                             }
