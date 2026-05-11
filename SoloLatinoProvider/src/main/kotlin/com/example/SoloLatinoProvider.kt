@@ -303,6 +303,15 @@ class SoloLatinoProvider : MainAPI() {
         val html = safeAppGet(targetUrl) ?: return false
         val doc = Jsoup.parse(html)
 
+        doc.select("a[href$=.srt], a[href$=.vtt], a[href*=.srt?], a[href*=.vtt?], a.subtitle, a[download]").forEach { subLink ->
+            val subUrl = subLink.attr("href")
+            val subLang = subLink.text().ifBlank { subLink.attr("title") }.ifBlank { "Espa\u00f1ol" }
+            if (subUrl.isNotBlank()) {
+                Log.d("SoloLatino", "Subt\u00edtulo encontrado: $subLang -> $subUrl")
+                subtitleCallback.invoke(SubtitleFile(subLang, fixUrl(subUrl)))
+            }
+        }
+
         val serverButtons = doc.select("button[data-server-url], .server-btn")
 
         val serverUrls = serverButtons.mapNotNull { it.attr("data-server-url") }.toMutableList()
@@ -333,7 +342,25 @@ class SoloLatinoProvider : MainAPI() {
                         "Accept" to "*/*",
                         "Referer" to fixedSrc,
                     )
-                    val embedDoc = app.get(fixedSrc, headers = embed69Headers, timeout = 30000L).document
+                    val embedResponse = app.get(fixedSrc, headers = embed69Headers, timeout = 30000L)
+                    val embedHtml = embedResponse.text
+                    val embedDoc = embedResponse.document
+                    
+                    Regex("""["']([^"']*\.(?:vtt|srt)(?:\?[^"']*)?)["']""", RegexOption.IGNORE_CASE).findAll(embedHtml).forEach { match ->
+                        val subUrl = match.groupValues[1]
+                        Log.d("SoloLatino", "[embed69] Sub encontrado en HTML/JS: $subUrl")
+                        subtitleCallback.invoke(SubtitleFile("Español", fixUrl(subUrl)))
+                    }
+                    
+                    embedDoc.select("track[src], source[src*=.vtt], source[src*=.srt], a[href$=.vtt], a[href$=.srt]").forEach { sub ->
+                        val subUrl = sub.attr("src").ifBlank { sub.attr("href") }
+                        val subLang = sub.attr("srclang").ifBlank { sub.attr("label") }.ifBlank { "Español" }
+                        if (subUrl.isNotBlank()) {
+                            Log.d("SoloLatino", "[embed69] Sub encontrado en DOM: $subLang -> $subUrl")
+                            subtitleCallback.invoke(SubtitleFile(subLang, fixUrl(subUrl)))
+                        }
+                    }
+                    
                     val scriptContent = embedDoc.select("script")
                         .firstOrNull { it.html().contains("dataLink = [") }?.html()
                         ?: run {
@@ -401,6 +428,54 @@ class SoloLatinoProvider : MainAPI() {
                     }
                 }
 
+                fixedSrc.contains("pelisserieshoy.com") || fixedSrc.contains("player.pelisserieshoy") -> {
+                    Log.d("SoloLatino", "BRANCH: pelisserieshoy.com")
+                    val peliHeaders = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Referer" to targetUrl,
+                    )
+                    try {
+                        val peliDoc = app.get(fixedSrc, headers = peliHeaders, timeout = 30000L).document
+                        
+                        peliDoc.select("track[src], source[src*=.vtt], source[src*=.srt], iframe[src], video > source, a[href$=.vtt], a[href$=.srt]").forEach { el ->
+                            val subUrl = el.attr("src").ifBlank { el.attr("href") }
+                            val subLang = el.attr("srclang").ifBlank { el.attr("label") }.ifBlank { el.attr("title") }.ifBlank { "Español" }
+                            if (subUrl.isNotBlank() && (subUrl.contains(".vtt") || subUrl.contains(".srt"))) {
+                                Log.d("SoloLatino", "[pelisserieshoy] Sub encontrado: $subLang -> $subUrl")
+                                subtitleCallback.invoke(SubtitleFile(subLang, fixUrl(subUrl)))
+                            }
+                        }
+                        
+                        val iframeSrc = peliDoc.selectFirst("iframe")?.attr("src")
+                        if (iframeSrc != null && iframeSrc.isNotBlank()) {
+                            Log.d("SoloLatino", "[pelisserieshoy] Iframe encontrado: $iframeSrc")
+                            val cleanIframe = fixHostsLinks(fixUrl(iframeSrc))
+                            loadExtractor(cleanIframe, fixedSrc, subtitleCallback, callback)
+                        } else {
+                            val videoSrc = peliDoc.selectFirst("video source")?.attr("src")
+                                ?: peliDoc.selectFirst("video")?.attr("src")
+                            if (videoSrc != null && videoSrc.isNotBlank()) {
+                                Log.d("SoloLatino", "[pelisserieshoy] Video directo: $videoSrc")
+                                val cleanVideo = fixHostsLinks(fixUrl(videoSrc))
+                                callback.invoke(newExtractorLink("Pelisserieshoy", "Pelisserieshoy", cleanVideo) {
+                                    this.referer = fixedSrc
+                                    this.quality = Qualities.Unknown.value
+                                    this.type = if (cleanVideo.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                })
+                            } else {
+                                Log.d("SoloLatino", "[pelisserieshoy] Sin iframe ni video, intentando loadExtractor genérico")
+                                val cleanUrl = fixHostsLinks(fixedSrc)
+                                loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SoloLatino", "[pelisserieshoy] Error: ${e.message}. Fallback a genérico.")
+                        val cleanUrl = fixHostsLinks(fixedSrc)
+                        loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
+                    }
+                }
+
                 else -> {
                     Log.d("SoloLatino", "BRANCH: Direct/Generic")
                     val cleanUrl = fixHostsLinks(fixedSrc)
@@ -422,8 +497,13 @@ suspend fun loadSourceNameExtractor(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit,
 ) {
-    loadExtractor(url, referer, subtitleCallback) { link ->
+    val wrappedSubCb: (SubtitleFile) -> Unit = { sub ->
+        Log.d("SoloLatino", "[Subs-CB] subtitleCallback invoked: lang=${sub.lang}, url=${sub.url.take(100)}")
+        subtitleCallback(sub)
+    }
+    loadExtractor(url, referer, wrappedSubCb) { link ->
         CoroutineScope(Dispatchers.IO).launch {
+            Log.d("SoloLatino", "[Subs] Extractor link: source=${link.source}, quality=${link.quality}, url=${link.url.take(80)}")
             callback.invoke(
                 newExtractorLink("$source[${link.source}]", "$source[${link.source}]", link.url) {
                     this.quality = link.quality
