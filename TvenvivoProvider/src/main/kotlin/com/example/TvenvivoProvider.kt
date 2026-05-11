@@ -331,9 +331,9 @@ class TvenvivoProvider : MainAPI() {
                 put("Sec-Fetch-Site", "same-origin")
             }
 
-            val playerResponse = withTimeoutOrNull(10000L) { app.get(playerUrl, headers = playerHeaders) }
+            val playerResponse = withTimeoutOrNull(15000L) { app.get(playerUrl, headers = playerHeaders) }
                 ?: run {
-                    Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - 10s")
+                    Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - 15s")
                     return false
                 }
             val playerHtml = playerResponse.text
@@ -351,9 +351,9 @@ class TvenvivoProvider : MainAPI() {
             val finalHtml = if (internalIframe != null) {
                 val iframeUrl = fixUrl(internalIframe)
                 Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
-                withTimeoutOrNull(10000L) { app.get(iframeUrl, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }) }?.text
+                withTimeoutOrNull(15000L) { app.get(iframeUrl, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }) }?.text
                     ?: run {
-                        Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} iframe timeout - 10s")
+                        Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} iframe timeout - 15s")
                         return false
                     }
             } else {
