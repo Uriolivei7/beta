@@ -3,56 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import kotlinx.serialization.*
 import kotlinx.serialization.json.*
-
-@Serializable
-data class DirectoryItem(
-    val id: String,
-    val nombre: String,
-    @SerialName("img_url") val imgUrl: String
-)
-
-@Serializable
-data class DirectoryResponse(val response: List<DirectoryItem>)
-
-@Serializable
-data class AnimeInfo(
-    val name: String,
-    val synopsis: String,
-    val genres: String,
-    val studios: String,
-    val status: String,
-    @SerialName("mal_id") val malId: String
-)
-
-@Serializable
-data class EpisodeItem(
-    val id: String,
-    val name: String,
-    @SerialName("release_date") val releaseDate: String
-)
-
-@Serializable
-data class EpisodeListData(
-    val anime: AnimeInfo,
-    val episodes: List<EpisodeItem>
-)
-
-@Serializable
-data class EpisodeListResponse(val response: EpisodeListData)
-
-@Serializable
-data class PlayerItem(
-    val option: String,
-    val name: String
-)
-
-@Serializable
-data class PlayersData(val players: List<PlayerItem>)
-
-@Serializable
-data class EpisodeLinksResponse(val response: PlayersData)
 
 class LegionanimeProvider : MainAPI() {
     override var mainUrl = "https://legionanime.club"
@@ -91,13 +42,17 @@ class LegionanimeProvider : MainAPI() {
             val offset = (page - 1) * 24
             val url = "$apiBase/v2/directories?studio=0&not_genre=&year=&orderBy=$orderBy&language=&type=&duration=&search=$query&letter=0&limit=24&genre=&season=&page=$offset&status="
             val response = app.post(url, data = mapOf("apyki" to API_KEY), headers = apiHeaders)
-            val text = response.text
-            val dirResponse = json.decodeFromString<DirectoryResponse>(text)
-            dirResponse.response.map { item ->
-                newAnimeSearchResponse(item.nombre, "$apiBase/v1/episodes/${item.id}", TvType.Anime) {
-                    this.posterUrl = AIP.random() + item.imgUrl
+            val root = json.decodeFromString<JsonObject>(response.text)
+            val list = root["response"]?.jsonArray ?: return emptyList()
+            list.map { item ->
+                val obj = item.jsonObject
+                val id = obj["id"]?.jsonPrimitive?.content ?: return@map null
+                val nombre = obj["nombre"]?.jsonPrimitive?.content ?: return@map null
+                val imgUrl = obj["img_url"]?.jsonPrimitive?.content ?: ""
+                newAnimeSearchResponse(nombre, "$apiBase/v1/episodes/$id", TvType.Anime) {
+                    this.posterUrl = AIP.random() + imgUrl
                 }
-            }
+            }.filterNotNull()
         } catch (e: Exception) {
             Log.e(TAG, "Error en fetchDirectory: ${e.message}")
             emptyList()
@@ -110,45 +65,58 @@ class LegionanimeProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val response = app.get(url, headers = apiHeaders)
-        val text = response.text
-        val epResponse = json.decodeFromString<EpisodeListResponse>(text)
-        val anime = epResponse.response.anime
-        val episodes = epResponse.response.episodes
+        val root = json.decodeFromString<JsonObject>(response.text).get("response")?.jsonObject
+            ?: throw Exception("Respuesta inv\u00e1lida")
 
-        val studioIds = anime.studios.split(",")
+        val anime = root["anime"]?.jsonObject
+            ?: throw Exception("No se encontr\u00f3 anime")
+        val episodes = root["episodes"]?.jsonArray ?: JsonArray(emptyList())
+
+        val title = anime["name"]?.jsonPrimitive?.content ?: ""
+        val synopsis = anime["synopsis"]?.jsonPrimitive?.content ?: ""
+        val genres = anime["genres"]?.jsonPrimitive?.content ?: ""
+        val studioStr = anime["studios"]?.jsonPrimitive?.content ?: ""
+        val statusStr = anime["status"]?.jsonPrimitive?.content ?: ""
+        val malId = anime["mal_id"]?.jsonPrimitive?.content ?: ""
+
+        val studioIds = studioStr.split(",")
         val studio = studioIds.mapNotNull { it.toIntOrNull() }
             .mapNotNull { id -> STUDIOS_MAP.filter { it.value == id }.keys.firstOrNull() }
 
         var poster: String? = null
-        try {
-            val malId = anime.malId
-            val jikanResponse = app.get("https://api.jikan.moe/v4/anime/$malId").text
-            val jikanJson = json.decodeFromString<JsonObject>(jikanResponse)
-            val images = jikanJson["data"]?.jsonObject?.get("images")?.jsonObject
-            val jpg = images?.get("jpg")?.jsonObject
-            poster = jpg?.get("large_image_url")?.jsonPrimitive?.content
-        } catch (e: Exception) {
-            Log.w(TAG, "Jikan API fall\u00f3 para poster: ${e.message}")
+        if (malId.isNotBlank()) {
+            try {
+                val jikanResponse = app.get("https://api.jikan.moe/v4/anime/$malId").text
+                val jikanJson = json.decodeFromString<JsonObject>(jikanResponse)
+                val images = jikanJson["data"]?.jsonObject?.get("images")?.jsonObject
+                val jpg = images?.get("jpg")?.jsonObject
+                poster = jpg?.get("large_image_url")?.jsonPrimitive?.content
+            } catch (e: Exception) {
+                Log.w(TAG, "Jikan API fall\u00f3 para poster: ${e.message}")
+            }
         }
 
-        val status = when (anime.status) {
+        val status = when (statusStr) {
             "En emisi\u00f3n" -> ShowStatus.Ongoing
             "Finalizado" -> ShowStatus.Completed
             else -> null
         }
 
         val epList = episodes.map { ep ->
-            val epNum = ep.name.filter { it.isDigit() }.toIntOrNull() ?: 1
-            newEpisode("$apiBase/v2/episode_links/${ep.id}") {
+            val epObj = ep.jsonObject
+            val epId = epObj["id"]?.jsonPrimitive?.content ?: ""
+            val epName = epObj["name"]?.jsonPrimitive?.content ?: ""
+            val epNum = epName.filter { it.isDigit() }.toIntOrNull() ?: 1
+            newEpisode("$apiBase/v2/episode_links/$epId") {
                 this.name = "Episodio $epNum"
                 this.episode = epNum
             }
         }
 
-        return newAnimeLoadResponse(anime.name, url, TvType.Anime) {
+        return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = poster
-            this.plot = anime.synopsis
-            this.tags = anime.genres.split(",").map { it.trim() } + studio
+            this.plot = synopsis
+            this.tags = genres.split(",").map { it.trim() } + studio
             this.showStatus = status
             addEpisodes(DubStatus.Subbed, epList)
         }
@@ -161,12 +129,13 @@ class LegionanimeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val response = app.post(data, data = mapOf("apyki" to API_KEY), headers = apiHeaders)
-        val text = response.text
-        val linksResponse = json.decodeFromString<EpisodeLinksResponse>(text)
+        val root = json.decodeFromString<JsonObject>(response.text)
+        val players = root["response"]?.jsonObject?.get("players")?.jsonArray ?: return false
 
-        linksResponse.response.players.forEach { player ->
-            val server = player.option
-            val preUrl = player.name
+        players.forEach { player ->
+            val p = player.jsonObject
+            val server = p["option"]?.jsonPrimitive?.content ?: return@forEach
+            val preUrl = p["name"]?.jsonPrimitive?.content ?: return@forEach
 
             val url = if (preUrl.startsWith("F-")) {
                 preUrl.substringAfter("-")
@@ -272,7 +241,7 @@ class LegionanimeProvider : MainAPI() {
             "Kenji Studio" to 390, "Khara" to 179, "Kigumi" to 365,
             "Kinema Citrus" to 103, "Kitty Films" to 214, "KJJ Animation" to 392,
             "Kung Fu Frog Animation" to 387, "Kyoto Animation" to 48,
-            "Kyotoma" to 323, "l-a-unch・BOX" to 141, "L²Studio" to 180,
+            "Kyotoma" to 323, "l-a-unch·BOX" to 141, "L²Studio" to 180,
             "LandQ studios" to 193, "Lapin Track" to 198,
             "Larx Entertainment" to 74, "Lay-duce" to 56, "Lerche" to 40,
             "Lesprit" to 158, "LEVELS" to 337, "LICO" to 378, "Lide" to 212,
