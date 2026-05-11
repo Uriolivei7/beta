@@ -62,13 +62,11 @@ class PrimevideoProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
-        val rawResponse = app.get(
+        val data = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        )
-        Log.d("Primevideo", "load raw response: ${rawResponse.text}")
-        val data = rawResponse.parsed<NewTvPostResponse>()
-        Log.d("Primevideo", "age=${data.age} certification=${data.certification}")
+        ).parsed<NewTvPostResponse>()
+        Log.d("Primevideo", "ua=${data.ua}")
 
         Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
         data.season?.forEachIndexed { i, s ->
@@ -93,14 +91,19 @@ class PrimevideoProvider : MainAPI() {
         }
 
         if (!isSeries) {
-            return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, playbackId).toJson()) {
+            return newMovieLoadResponse(
+                title,
+                url,
+                TvType.Movie,
+                NewTvLoadData(title, playbackId).toJson()
+            ) {
                 posterUrl = pvPoster(id)
                 backgroundPosterUrl = pvBg(id)
                 posterHeaders = mapOf("Referer" to apiBase)
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                contentRating = data.certification ?: data.age
+                contentRating = data.ua ?: data.certification ?: data.age
             }
         }
 
@@ -193,7 +196,7 @@ class PrimevideoProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            contentRating = data.certification ?: data.age
+            contentRating = data.ua ?: data.certification ?: data.age
         }
     }
 

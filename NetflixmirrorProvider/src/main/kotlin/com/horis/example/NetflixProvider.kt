@@ -61,13 +61,11 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val rawResponse = app.get(
+        val data = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        )
-        Log.d("Netflix", "load raw response: ${rawResponse.text}")
-        val data = rawResponse.parsed<NewTvPostResponse>()
-        Log.d("Netflix", "age=${data.age} certification=${data.certification}")
+        ).parsed<NewTvPostResponse>()
+        Log.d("Netflix", "ua=${data.ua}")
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -91,7 +89,7 @@ class NetflixProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                contentRating = data.certification ?: data.age
+                contentRating = data.ua ?: data.certification ?: data.age
             }
         }
 
@@ -138,7 +136,7 @@ class NetflixProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            contentRating = data.certification ?: data.age
+            contentRating = data.ua ?: data.certification ?: data.age
         }
     }
 

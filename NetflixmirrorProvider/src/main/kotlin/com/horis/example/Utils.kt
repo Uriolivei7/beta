@@ -213,7 +213,8 @@ data class NewTvPostResponse(
     val ep_poster: String? = null,
     val suggest: List<NewTvSuggest>? = null,
     val age: String? = null,
-    val certification: String? = null
+    val certification: String? = null,
+    val ua: String? = null
 )
 
 data class NewTvApiEpisode(
