@@ -1,5 +1,6 @@
 package com.example
 
+import android.net.Uri
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.AcraApplication.Companion.context
@@ -296,24 +297,20 @@ class UniqueStreamProvider : MainAPI() {
                                             val rewrittenPlaylist = variantText.lines().joinToString("\n") { line ->
                                                 val trimmed = line.trim()
                                                 when {
-                                                    // Línea EXT-X-KEY con URI relativa
                                                     trimmed.startsWith("#EXT-X-KEY:") && trimmed.contains("URI=") -> {
                                                         val uriMatch = Regex("""URI=["']([^"']+)["']""").find(trimmed)
                                                         if (uriMatch != null) {
                                                             val keyUri = uriMatch.groupValues[1]
                                                             val absoluteKey = if (keyUri.startsWith("http")) keyUri else {
-                                                                // Resolver ../ contra variantDir
-                                                                val resolvedKey = if (keyUri.startsWith("../")) {
+                                                                if (keyUri.startsWith("../")) {
                                                                     variantDir + keyUri.removePrefix("..")
                                                                 } else {
                                                                     "$variantBase/$keyUri"
                                                                 }
-                                                                resolvedKey
                                                             }
                                                             trimmed.replace(uriMatch.groupValues[0], "URI=\"$absoluteKey\"")
                                                         } else trimmed
                                                     }
-                                                    // Líneas de segmentos (no #, no blank)
                                                     !trimmed.startsWith("#") && trimmed.isNotBlank() -> {
                                                         if (trimmed.startsWith("http")) trimmed else "$variantBase/$trimmed"
                                                     }
@@ -321,14 +318,20 @@ class UniqueStreamProvider : MainAPI() {
                                                 }
                                             }
 
+                                            // Log primeras líneas del playlist
+                                            Log.d(TAG, "Playlist reescrito (primeras 15 líneas):")
+                                            rewrittenPlaylist.lines().take(15).forEach { Log.d(TAG, "  | $it") }
+
                                             // Guardar en caché local
                                             val cacheDir = context?.cacheDir ?: continue
                                             val cacheFile = File(cacheDir, "pl_${hlsVersion.locale}_$quality.m3u8")
                                             cacheFile.writeText(rewrittenPlaylist)
-                                            val localUrl = cacheFile.toURI().toString()
+                                            val localUri = Uri.fromFile(cacheFile)
+                                            val localUrl = localUri.toString()
 
                                             Log.d(TAG, "✓ Playlist local: $localUrl")
-                                            callback(newExtractorLink(
+                                            Log.d(TAG, "  Uri authority=${localUri.authority} path=${localUri.path} scheme=${localUri.scheme}")
+                                            val link = newExtractorLink(
                                                 source = this.name,
                                                 name = "${this.name} - ${hlsVersion.locale.uppercase()} - $quality",
                                                 url = localUrl,
@@ -336,7 +339,10 @@ class UniqueStreamProvider : MainAPI() {
                                             ) {
                                                 this.quality = qualityValue
                                                 this.referer = "$mainUrl/"
-                                            })
+                                            }
+                                            Log.d(TAG, "  link class=${link::class.java.name} props: type=${link.type} quality=${link.quality}")
+                                            callback(link)
+                                            linksEnviados++
                                             linksEnviados++
                                         }
                                     } catch (e: Exception) {
