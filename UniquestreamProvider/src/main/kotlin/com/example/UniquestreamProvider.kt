@@ -161,17 +161,6 @@ class UniqueStreamProvider : MainAPI() {
         Log.d(TAG, "========================================")
 
         return try {
-            val watchUrl = "$mainUrl/watch/$episodeId"
-
-            // Visitar página watch para obtener cookies
-            Log.d(TAG, "Visitando página watch...")
-            val watchHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-
-            app.get(watchUrl, headers = watchHeaders, timeout = 30L)
-
             // Probar diferentes locales
             val locales = listOf("es-419", "en-US", "ja-JP")
             var linksEnviados = 0
@@ -183,11 +172,11 @@ class UniqueStreamProvider : MainAPI() {
                     val apiHeaders = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         "Accept" to "*/*",
-                        "Referer" to watchUrl,
+                        "Referer" to "$mainUrl/",
                         "Origin" to mainUrl
                     )
 
-                    val response = app.get(mediaUrl, headers = apiHeaders, timeout = 30L)
+                    val response = app.get(mediaUrl, headers = apiHeaders, timeout = 15L)
 
                     if (response.code == 200) {
                         Log.d(TAG, "✓ API 200 para $locale")
