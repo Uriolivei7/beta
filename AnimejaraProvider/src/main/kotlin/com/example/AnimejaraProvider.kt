@@ -183,6 +183,7 @@ class AnimejaraProvider : MainAPI() {
                             val match = urlRegex.find(click)
                             if (match != null) {
                                 val serverUrl = match.groupValues[1]
+                                    .replace("ok.ru/videoembed/", "ok.ru/video/")
                                 totalExtractorCalls++
                                 Log.d(TAG, "[$langLabel] Calling loadExtractor #$totalExtractorCalls for: $serverUrl")
                                 loadExtractor(serverUrl, embedUrl, subtitleCallback) { link ->
