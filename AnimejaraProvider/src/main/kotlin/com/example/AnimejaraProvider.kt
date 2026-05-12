@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Element
@@ -153,60 +154,77 @@ class AnimejaraProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "loadLinks called with data: $data")
         var found = false
+        var totalExtractorCalls = 0
+        var totalLinksProduced = 0
         try {
-            val doc = app.get(data).document
-            val iframes = doc.select("#iframe-video, #iframe-video-movie")
-            Log.d(TAG, "Found ${iframes.size} iframe(s)")
-            iframes.forEach { container ->
-                val embedUrl = container.attr("src")
-                Log.d(TAG, "iframe src: $embedUrl")
-                if (embedUrl.isNotBlank()) {
-                    if (embedUrl.contains("streamhj.top")) {
-                        try {
-                            Log.d(TAG, "Fetching embed page: $embedUrl")
-                            val embedDoc = app.get(embedUrl, referer = data).document
-                            Log.d(TAG, "Embed page fetched")
-                            val serverRegex = Regex("""['"](https?://[^"']+)['"]""")
-                            embedDoc.select("li[onclick]").forEach { li ->
-                                val click = li.attr("onclick")
-                                Log.d(TAG, "li onclick: $click")
-                                val match = serverRegex.find(click)
-                                if (match != null) {
-                                    val serverUrl = match.groupValues[1]
-                                    Log.d(TAG, "Calling loadExtractor for: $serverUrl")
-                                    loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
-                                    found = true
+            val response = app.get(data)
+            val doc = response.document
+            val html = response.text
+
+            val enlacesRegex = Regex("""const\s+enlaces\s*=\s*(\[[\s\S]*?\]);""")
+            val enlacesMatch = enlacesRegex.find(html)
+            val langNames = doc.select(".boton-idioma .lang-name").map { it.text() }
+            Log.d(TAG, "Languages found: $langNames")
+
+            if (enlacesMatch != null) {
+                val enlacesArray = JSONArray(enlacesMatch.groupValues[1])
+                Log.d(TAG, "Enlaces array length: ${enlacesArray.length()}")
+                for (i in 0 until enlacesArray.length()) {
+                    val embedUrl = enlacesArray.getString(i).replace("\\/", "/")
+                    val langLabel = langNames.getOrElse(i) { "IDIOMA $i" }
+                    Log.d(TAG, "[$langLabel] Processing embed: $embedUrl")
+                    try {
+                        val embedDoc = app.get(embedUrl, referer = data).document
+                        val urlRegex = Regex("""['"](https?://[^"']+)['"]""")
+                        val serverElements = embedDoc.select("li[onclick]")
+                        Log.d(TAG, "[$langLabel] Found ${serverElements.size} server element(s)")
+                        serverElements.forEach { li ->
+                            val click = li.attr("onclick")
+                            val match = urlRegex.find(click)
+                            if (match != null) {
+                                val serverUrl = match.groupValues[1]
+                                totalExtractorCalls++
+                                Log.d(TAG, "[$langLabel] Calling loadExtractor #$totalExtractorCalls for: $serverUrl")
+                                loadExtractor(serverUrl, embedUrl, subtitleCallback) { link ->
+                                    totalLinksProduced++
+                                    Log.d(TAG, "[$langLabel] LINK PRODUCED #$totalLinksProduced: ${link.name} | url=${link.url.take(80)} | quality=${link.quality}")
+                                    runBlocking {
+                                        callback(newExtractorLink(
+                                            source = "[$langLabel] ${link.source}",
+                                            name = "[$langLabel] ${link.name}",
+                                            url = link.url,
+                                        ) {
+                                            this.referer = link.referer
+                                            this.quality = link.quality
+                                            this.type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                        })
+                                    }
                                 }
+                                found = true
+                            } else {
+                                Log.w(TAG, "[$langLabel] Could not extract URL from onclick: $click")
                             }
-                            if (!found) {
-                                Log.d(TAG, "No servers from li[onclick], trying regex on raw HTML")
-                                val rawHtml = app.get(embedUrl, referer = data).text
-                                val rawRegex = Regex("""playVideo\s*\(\s*&quot;([^&]+)&quot;""")
-                                rawRegex.findAll(rawHtml).forEach { match ->
-                                    val serverUrl = match.groupValues[1]
-                                    Log.d(TAG, "Raw fallback - loadExtractor for: $serverUrl")
-                                    loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
-                                    found = true
-                                }
-                                if (!found) {
-                                    Log.d(TAG, "Still no servers, direct loadExtractor on embedUrl")
-                                    loadExtractor(embedUrl, data, subtitleCallback, callback)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Embed page fetch failed: ${e.message}")
-                            loadExtractor(embedUrl, data, subtitleCallback, callback)
                         }
-                    } else {
-                        Log.d(TAG, "Non-streamhj iframe, direct loadExtractor")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[$langLabel] Embed fetch failed: ${e.message}")
+                    }
+                }
+            } else {
+                Log.w(TAG, "No enlaces JS array found in page")
+            }
+
+            if (!found) {
+                Log.d(TAG, "No enlaces found, trying iframe direct approach")
+                doc.select("#iframe-video, #iframe-video-movie").forEach { container ->
+                    val embedUrl = container.attr("src")
+                    if (embedUrl.isNotBlank()) {
+                        Log.d(TAG, "Direct iframe src: $embedUrl")
                         loadExtractor(embedUrl, data, subtitleCallback, callback)
                         found = true
                     }
-                } else {
-                    Log.d(TAG, "iframe src is blank, checking data- attributes")
                     val dataSrc = container.attr("data-src")
                     if (dataSrc.isNotBlank()) {
-                        Log.d(TAG, "Using data-src instead: $dataSrc")
+                        Log.d(TAG, "Direct data-src: $dataSrc")
                         loadExtractor(dataSrc, data, subtitleCallback, callback)
                         found = true
                     }
@@ -215,7 +233,7 @@ class AnimejaraProvider : MainAPI() {
         } catch (e: Exception) {
             Log.w(TAG, "loadLinks error: ${e.message}")
         }
-        Log.d(TAG, "loadLinks returning, found=$found")
+        Log.d(TAG, "loadLinks summary: extractorCalls=$totalExtractorCalls, linksProduced=$totalLinksProduced, found=$found")
         return found
     }
 }
