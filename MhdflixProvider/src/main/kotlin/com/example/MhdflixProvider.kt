@@ -306,7 +306,7 @@ class MhdflixProvider : MainAPI() {
                         val epId = ep.idEpisodios ?: continue
                         val epNum = ep.numEpisode ?: continue
                         val epTitle = ep.title?.takeIf { it.isNotBlank() } ?: "Episodio $epNum"
-                        val epPoster = ep.posterPath?.takeIf { it.isNotBlank() }?.let { fixUrlPath(it) } ?: ""
+                        val epPoster = ep.posterPath?.takeIf { it.isNotBlank() }?.let { fixUrlPath(it) } ?: "$mainUrl/_next/image?url=%2Fnone-image.png&w=640&q=75"
                         
                         episodes.add(newEpisode("$mainUrl/tvs/episode/$epId") {
                             this.name = epTitle
