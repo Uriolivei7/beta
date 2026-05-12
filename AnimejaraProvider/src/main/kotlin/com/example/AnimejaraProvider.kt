@@ -164,20 +164,34 @@ class AnimejaraProvider : MainAPI() {
                     if (embedUrl.contains("streamhj.top")) {
                         try {
                             Log.d(TAG, "Fetching embed page: $embedUrl")
-                            val embedHtml = app.get(embedUrl, referer = data).text
-                            Log.d(TAG, "Embed page length: ${embedHtml.length}")
-                            val serverRegex = Regex("""playVideo\s*\(\s*'([^']+)'""")
-                            val matches = serverRegex.findAll(embedHtml).toList()
-                            Log.d(TAG, "Found ${matches.size} server(s) in embed page")
-                            matches.forEach { match ->
-                                val serverUrl = match.groupValues[1]
-                                Log.d(TAG, "Calling loadExtractor for: $serverUrl")
-                                loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
-                                found = true
+                            val embedDoc = app.get(embedUrl, referer = data).document
+                            Log.d(TAG, "Embed page fetched")
+                            val serverRegex = Regex("""['"](https?://[^"']+)['"]""")
+                            embedDoc.select("li[onclick]").forEach { li ->
+                                val click = li.attr("onclick")
+                                Log.d(TAG, "li onclick: $click")
+                                val match = serverRegex.find(click)
+                                if (match != null) {
+                                    val serverUrl = match.groupValues[1]
+                                    Log.d(TAG, "Calling loadExtractor for: $serverUrl")
+                                    loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
+                                    found = true
+                                }
                             }
-                            if (matches.isEmpty()) {
-                                Log.d(TAG, "No playVideo matches, trying direct loadExtractor on embedUrl")
-                                loadExtractor(embedUrl, data, subtitleCallback, callback)
+                            if (!found) {
+                                Log.d(TAG, "No servers from li[onclick], trying regex on raw HTML")
+                                val rawHtml = app.get(embedUrl, referer = data).text
+                                val rawRegex = Regex("""playVideo\s*\(\s*&quot;([^&]+)&quot;""")
+                                rawRegex.findAll(rawHtml).forEach { match ->
+                                    val serverUrl = match.groupValues[1]
+                                    Log.d(TAG, "Raw fallback - loadExtractor for: $serverUrl")
+                                    loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
+                                    found = true
+                                }
+                                if (!found) {
+                                    Log.d(TAG, "Still no servers, direct loadExtractor on embedUrl")
+                                    loadExtractor(embedUrl, data, subtitleCallback, callback)
+                                }
                             }
                         } catch (e: Exception) {
                             Log.w(TAG, "Embed page fetch failed: ${e.message}")
