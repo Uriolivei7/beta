@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.json.JSONArray
@@ -7,6 +8,7 @@ import org.json.JSONObject
 import org.jsoup.nodes.Element
 
 class AnimejaraProvider : MainAPI() {
+    private val TAG = "AnimeJara"
     override var mainUrl = "https://animejara.com"
     override var name = "AnimeJara"
     override val hasMainPage = true
@@ -149,22 +151,57 @@ class AnimejaraProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
-        doc.select("#iframe-video, #iframe-video-movie").forEach { container ->
-            val embedUrl = container.attr("src")
-            if (embedUrl.isNotBlank()) {
-                if (embedUrl.contains("streamhj.top")) {
-                    val embedHtml = app.get(embedUrl, referer = data).text
-                    val serverRegex = Regex("""playVideo\s*\(\s*'([^']+)'""")
-                    serverRegex.findAll(embedHtml).forEach { match ->
-                        val serverUrl = match.groupValues[1]
-                        loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
+        Log.d(TAG, "loadLinks called with data: $data")
+        var found = false
+        try {
+            val doc = app.get(data).document
+            val iframes = doc.select("#iframe-video, #iframe-video-movie")
+            Log.d(TAG, "Found ${iframes.size} iframe(s)")
+            iframes.forEach { container ->
+                val embedUrl = container.attr("src")
+                Log.d(TAG, "iframe src: $embedUrl")
+                if (embedUrl.isNotBlank()) {
+                    if (embedUrl.contains("streamhj.top")) {
+                        try {
+                            Log.d(TAG, "Fetching embed page: $embedUrl")
+                            val embedHtml = app.get(embedUrl, referer = data).text
+                            Log.d(TAG, "Embed page length: ${embedHtml.length}")
+                            val serverRegex = Regex("""playVideo\s*\(\s*'([^']+)'""")
+                            val matches = serverRegex.findAll(embedHtml).toList()
+                            Log.d(TAG, "Found ${matches.size} server(s) in embed page")
+                            matches.forEach { match ->
+                                val serverUrl = match.groupValues[1]
+                                Log.d(TAG, "Calling loadExtractor for: $serverUrl")
+                                loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
+                                found = true
+                            }
+                            if (matches.isEmpty()) {
+                                Log.d(TAG, "No playVideo matches, trying direct loadExtractor on embedUrl")
+                                loadExtractor(embedUrl, data, subtitleCallback, callback)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Embed page fetch failed: ${e.message}")
+                            loadExtractor(embedUrl, data, subtitleCallback, callback)
+                        }
+                    } else {
+                        Log.d(TAG, "Non-streamhj iframe, direct loadExtractor")
+                        loadExtractor(embedUrl, data, subtitleCallback, callback)
+                        found = true
                     }
                 } else {
-                    loadExtractor(embedUrl, data, subtitleCallback, callback)
+                    Log.d(TAG, "iframe src is blank, checking data- attributes")
+                    val dataSrc = container.attr("data-src")
+                    if (dataSrc.isNotBlank()) {
+                        Log.d(TAG, "Using data-src instead: $dataSrc")
+                        loadExtractor(dataSrc, data, subtitleCallback, callback)
+                        found = true
+                    }
                 }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "loadLinks error: ${e.message}")
         }
-        return true
+        Log.d(TAG, "loadLinks returning, found=$found")
+        return found
     }
 }
