@@ -175,7 +175,7 @@ class AnimejaraProvider : MainAPI() {
                     Log.d(TAG, "[$langLabel] Processing embed: $embedUrl")
                     try {
                         val embedDoc = app.get(embedUrl, referer = data).document
-                        val urlRegex = Regex("""['"](https?://[^"']+)['"]""")
+                        val urlRegex = Regex("""['"]\s*(https?://[^"'\s]+)['"]""")
                         val serverElements = embedDoc.select("li[onclick]")
                         Log.d(TAG, "[$langLabel] Found ${serverElements.size} server element(s)")
                         serverElements.forEach { li ->
