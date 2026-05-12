@@ -146,6 +146,60 @@ class AnimejaraProvider : MainAPI() {
         }
     }
 
+    private suspend fun extractOkru(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        try {
+            val html = app.get(url, referer = referer).text
+            val videoUrlPattern = Regex("""(https?://[^"'\s<>]+(?:\.m3u8|\.mp4)[^"'\s<>]*)""")
+            val matches = videoUrlPattern.findAll(html).map { it.value }.distinct().toList()
+            if (matches.isNotEmpty()) {
+                matches.forEach { videoUrl ->
+                    runBlocking {
+                        callback(newExtractorLink("Ok.ru", "Ok.ru", videoUrl) {
+                            this.referer = url
+                            this.quality = Qualities.Unknown.value
+                            this.type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        })
+                    }
+                }
+                Log.d(TAG, "extractOkru: extracted ${matches.size} video URLs")
+                return
+            }
+
+            val dataNamePattern = Regex("""data-name\s*=\s*["']([^"']+)["']""")
+            val dataNameMatches = dataNamePattern.findAll(html)
+            for (m in dataNameMatches) {
+                val dataName = m.groupValues[1]
+                val apiUrl = "https://ok.ru/dk?cmd=videoPlayerMetadata&st.cmd=videoPlayerMetadata&st.videoId=$dataName"
+                try {
+                    val metadataHtml = app.get(apiUrl, referer = url).text
+                    val hdUrls = Regex("""(https?://[^"'\s<>]+(?:\.m3u8|\.mp4)[^"'\s<>]*)""").findAll(metadataHtml)
+                    hdUrls.forEach { vm ->
+                        runBlocking {
+                            callback(newExtractorLink("Ok.ru", "Ok.ru HD", vm.value) {
+                                this.referer = url
+                                this.quality = Qualities.Unknown.value
+                                this.type = if (vm.value.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            })
+                        }
+                    }
+                    if (hdUrls.any()) {
+                        Log.d(TAG, "extractOkru: extracted ${hdUrls.count()} video URLs via metadata API")
+                        return
+                    }
+                } catch (_: Exception) { }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "extractOkru failed: ${e.message}")
+        }
+        Log.d(TAG, "extractOkru: no video URLs found, falling back to loadExtractor")
+        loadExtractor(url, referer, subtitleCallback, callback)
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -184,6 +238,13 @@ class AnimejaraProvider : MainAPI() {
                             if (match != null) {
                                 val serverUrl = match.groupValues[1]
                                     .replace("ok.ru/videoembed/", "ok.ru/video/")
+                                if (serverUrl.contains("ok.ru")) {
+                                    totalExtractorCalls++
+                                    Log.d(TAG, "[$langLabel] Calling custom ok.ru extractor #$totalExtractorCalls for: $serverUrl")
+                                    extractOkru(serverUrl, data, subtitleCallback, callback)
+                                    found = true
+                                    return@forEach
+                                }
                                 totalExtractorCalls++
                                 Log.d(TAG, "[$langLabel] Calling loadExtractor #$totalExtractorCalls for: $serverUrl")
                                 loadExtractor(serverUrl, embedUrl, subtitleCallback) { link ->
