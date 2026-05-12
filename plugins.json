@@ -303,7 +303,7 @@
     "authors": ["Ranita"],
     "description": "Plugin para Doramas",
     "tvTypes": ["AsianDrama"],
-    "iconUrl": "https://doramasflix.co/favicon.ico",
+    "iconUrl": "https://img.icons8.com/?size=100&id=111065&format=png&color=FA5252",
     "language": "mx",
     "fileSize": 32000
   },
@@ -555,7 +555,7 @@
     "authors": ["Ranita"],
     "description": "Plugin para series, animes, doramas y peliculas en Latino, Subtitulado y Castellano",
     "tvTypes": ["TvSeries","Movie","Anime","AsianDrama"],
-    "iconUrl": "https://ww1.mhdflix.com/favicon.ico",
+    "iconUrl": "https://ww1.mhdflix.com/cdn/favicon.ico",
     "language": "mx",
     "fileSize": 65000
   },
