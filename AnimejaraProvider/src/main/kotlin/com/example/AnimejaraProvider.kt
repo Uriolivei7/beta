@@ -151,9 +151,18 @@ class AnimejaraProvider : MainAPI() {
     ): Boolean {
         val doc = app.get(data).document
         doc.select("#iframe-video, #iframe-video-movie").forEach { container ->
-            val videoUrl = container.attr("src")
-            if (videoUrl.isNotBlank()) {
-                loadExtractor(videoUrl, data, subtitleCallback, callback)
+            val embedUrl = container.attr("src")
+            if (embedUrl.isNotBlank()) {
+                if (embedUrl.contains("streamhj.top")) {
+                    val embedHtml = app.get(embedUrl, referer = data).text
+                    val serverRegex = Regex("""playVideo\s*\(\s*'([^']+)'""")
+                    serverRegex.findAll(embedHtml).forEach { match ->
+                        val serverUrl = match.groupValues[1]
+                        loadExtractor(serverUrl, embedUrl, subtitleCallback, callback)
+                    }
+                } else {
+                    loadExtractor(embedUrl, data, subtitleCallback, callback)
+                }
             }
         }
         return true
