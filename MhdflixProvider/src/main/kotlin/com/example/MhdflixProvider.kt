@@ -174,14 +174,16 @@ class MhdflixProvider : MainAPI() {
         
         val idFromUrl = Regex("""/(?:movies|tvs)/(\d+)/""").find(url)?.groupValues?.get(1)?.toLongOrNull()
         val typeFromUrl = if (url.contains("/movies/")) "movie" else "tv"
-        
-        Log.d("Mhdflix-Load", "title: $title, poster: $poster, idFromUrl: $idFromUrl, type: $typeFromUrl")
+
+        val score = doc.selectFirst("div.rounded-full.border-4 span")?.text()?.toIntOrNull()
+        val year = doc.select("div.flex.flex-row.gap-2 p.text-sm.text-gray-500").firstOrNull { it.text().contains(Regex("""\d{4}""")) }?.text()?.substringBefore("-")?.takeIf { it.length == 4 }?.toIntOrNull()
+        val genresFromPage = doc.select("div.flex.flex-wrap.gap-2 a[href^='/genres?genre=']").mapNotNull { it.text().takeIf { t -> t.isNotBlank() } }.takeIf { it.isNotEmpty() }
+
+        Log.d("Mhdflix-Load", "title: $title, poster: $poster, idFromUrl: $idFromUrl, type: $typeFromUrl, score: $score, year: $year, genres: $genresFromPage")
 
         val tvType = if (typeFromUrl == "movie") TvType.Movie else TvType.TvSeries
 
-        val tags = try {
-            val mediaType = if (typeFromUrl == "movie") "movie" else "tv"
-            val genreUrl = "$mainUrl/api/medias?type=$mediaType&page=1&limit=1"
+        val apiTags = try {
             val genreResponse = app.get(
                 "$mainUrl/api/search?query=$idFromUrl&page=1&limit=1",
                 headers = mapOf(
@@ -196,6 +198,7 @@ class MhdflixProvider : MainAPI() {
             Log.d("Mhdflix-Load", "Failed to fetch genres: ${e.message}")
             null
         }
+        val tags = genresFromPage ?: apiTags
 
         val recommendations = doc.select("h2:containsOwn(Recomendaciones) + div.grid > div.relative > a")
             .mapNotNull { card ->
@@ -223,6 +226,8 @@ class MhdflixProvider : MainAPI() {
                 this.plot = description
                 this.tags = tags
                 this.recommendations = recommendations
+                this.score = score?.let { Score.from10(it) }
+                if (year != null) this.year = year
             }
         } else {
             val episodes = loadEpisodesFromApi(idFromUrl, url)
@@ -233,6 +238,8 @@ class MhdflixProvider : MainAPI() {
                     this.plot = description
                     this.tags = tags
                     this.recommendations = recommendations
+                    this.score = score?.let { Score.from10(it) }
+                    if (year != null) this.year = year
                 }
             }
             
@@ -244,6 +251,8 @@ class MhdflixProvider : MainAPI() {
                 this.plot = description
                 this.tags = tags
                 this.recommendations = recommendations
+                this.score = score?.let { Score.from10(it) }
+                if (year != null) this.year = year
             }
         }
     }
