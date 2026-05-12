@@ -177,7 +177,7 @@ class MhdflixProvider : MainAPI() {
 
         val score = doc.selectFirst("div.rounded-full.border-4 span")?.text()?.toIntOrNull()
         val year = doc.select("div.flex.flex-row.gap-2 p.text-sm.text-gray-500").firstOrNull { it.text().contains(Regex("""\d{4}""")) }?.text()?.substringBefore("-")?.takeIf { it.length == 4 }?.toIntOrNull()
-        val genresFromPage = doc.select("div.flex.flex-wrap.gap-2 a[href^='/genres?genre=']").mapNotNull { it.text().takeIf { t -> t.isNotBlank() } }.takeIf { it.isNotEmpty() }
+        val genresFromPage = doc.selectFirst("div.rounded-full.border-4")?.parent()?.selectFirst("div.flex.flex-wrap.gap-2")?.select("a[href^='/genres?genre=']")?.mapNotNull { it.text().takeIf { t -> t.isNotBlank() } }?.takeIf { it.isNotEmpty() }
 
         Log.d("Mhdflix-Load", "title: $title, poster: $poster, idFromUrl: $idFromUrl, type: $typeFromUrl, score: $score, year: $year, genres: $genresFromPage")
 
