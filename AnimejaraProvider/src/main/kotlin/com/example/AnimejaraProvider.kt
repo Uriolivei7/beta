@@ -154,90 +154,76 @@ class AnimejaraProvider : MainAPI() {
     ) {
         val videoId = Regex("""ok\.ru/(?:video|videoembed)/(\d+)""").find(url)?.groupValues?.getOrNull(1)
         if (videoId == null) { Log.w(TAG, "extractOkru: no video ID in url=$url"); return }
-        Log.d(TAG, "extractOkru: videoId=$videoId, trying /videoembed/ format")
+        Log.d(TAG, "extractOkru: videoId=$videoId")
+        val embedUrl = "https://ok.ru/videoembed/$videoId"
         try {
-            val embedUrl = "https://ok.ru/videoembed/$videoId"
-            val html = app.get(embedUrl, referer = referer).text
-            Log.d(TAG, "extractOkru: embed HTML length=${html.length}, firstChars=${html.take(300)}")
+            val doc = app.get(embedUrl, referer = referer).document
+            val html = doc.html()
+            Log.d(TAG, "extractOkru: embed HTML length=${html.length}")
 
-            val sourcePattern = Regex("""<source[^>]+src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-            val sourceMatches = sourcePattern.findAll(html).map { it.value }.toList()
-            Log.d(TAG, "extractOkru: <source> matches: ${sourceMatches.size}")
-            for (s in sourceMatches) {
-                val src = Regex("""src\s*=\s*["']([^"']+)["']""").find(s)?.groupValues?.getOrNull(1) ?: continue
-                val finalSrc = if (src.startsWith("//")) "https:$src" else src
-                runBlocking {
-                    callback(newExtractorLink("Ok.ru", "Ok.ru", finalSrc) {
-                        this.referer = embedUrl
-                        this.quality = Qualities.Unknown.value
-                        this.type = if (finalSrc.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    })
-                }
-                Log.d(TAG, "extractOkru: found src=$finalSrc")
-            }
-
-            val m3u8Pattern = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
-            val m3u8Matches = m3u8Pattern.findAll(html).map { it.value }.distinct().toList()
-            Log.d(TAG, "extractOkru: m3u8 matches: ${m3u8Matches.size}")
-            if (m3u8Matches.isNotEmpty()) {
-                m3u8Matches.forEach { videoUrl ->
-                    runBlocking {
-                        callback(newExtractorLink("Ok.ru", "Ok.ru HLS", videoUrl) {
-                            this.referer = embedUrl
-                            this.quality = Qualities.Unknown.value
-                            this.type = ExtractorLinkType.M3U8
-                        })
+            val scriptContents = doc.select("script").map { it.data() }.filter { it.isNotBlank() }
+            Log.d(TAG, "extractOkru: scriptTags=${scriptContents.size}")
+            scriptContents.forEachIndexed { idx, s ->
+                val snippet = s.take(200).replace('\n', ' ')
+                Log.d(TAG, "extractOkru: script[$idx] start=$snippet")
+                val urls = Regex("""https?://[^"'\s<>]+(?:\.m3u8|\.mp4)[^"'\s<>]*""").findAll(s).map { it.value }.distinct().toList()
+                if (urls.isNotEmpty()) {
+                    Log.d(TAG, "extractOkru: found ${urls.size} URLs in script[$idx]")
+                    urls.forEach { videoUrl ->
+                        runBlocking {
+                            callback(newExtractorLink("Ok.ru", "Ok.ru", videoUrl) {
+                                this.referer = embedUrl
+                                this.quality = Qualities.Unknown.value
+                                this.type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            })
+                        }
                     }
                 }
-                return
             }
 
-            val vuidPattern = Regex("""data-video-vuid\s*=\s*["']?([a-zA-Z0-9]+)["']?""")
-            val vuid = vuidPattern.find(html)?.groupValues?.getOrNull(1)
-            Log.d(TAG, "extractOkru: vuid=$vuid")
-            if (vuid != null) {
-                val apiUrl = "https://ok.ru/dk?cmd=linkVideo&vuid=$vuid"
+            val jsonScripts = scriptContents.filter { it.trimStart().startsWith("{") || it.trimStart().startsWith("[") }
+            Log.d(TAG, "extractOkru: jsonScripts=${jsonScripts.size}")
+            jsonScripts.forEachIndexed { idx, s ->
+                val snippet = s.take(300).replace('\n', ' ')
+                Log.d(TAG, "extractOkru: jsonScript[$idx] start=$snippet")
+            }
+
+            val allDataAttrs = mutableListOf<String>()
+            doc.select("*").forEach { el ->
+                el.attributes().forEach { attr ->
+                    if (attr.key.startsWith("data-")) {
+                        allDataAttrs.add("${attr.key}=${attr.value.take(100)}")
+                    }
+                }
+            }
+            Log.d(TAG, "extractOkru: data- attrs count=${allDataAttrs.size}, samples=${allDataAttrs.take(20).joinToString(" | ")}")
+
+            val allInputs = doc.select("input[type=hidden]").map { "${it.attr("name")}=${it.attr("value").take(100)}" }
+            Log.d(TAG, "extractOkru: hidden inputs=${allInputs.joinToString(" | ")}")
+
+            val apiUrls = listOf(
+                "https://ok.ru/dk?cmd=linkVideo&vuid=$videoId",
+                "https://ok.ru/dk?cmd=videoPlayerMetadata&st.cmd=videoPlayerMetadata&st.videoId=$videoId",
+                "https://ok.ru/dk?cmd=linkVideo&st.cmd=linkVideo&st.vuid=",
+                "https://m.ok.ru/video/$videoId?st.cmd=mvideosPlay&st.videoId=$videoId"
+            )
+            apiUrls.forEach { apiUrl ->
                 try {
                     val apiText = app.get(apiUrl, referer = embedUrl).text
-                    Log.d(TAG, "extractOkru: linkVideo API (first 500): ${apiText.take(500)}")
-                    val apiUrls = Regex("""https?://[^"'\s<>]+""").findAll(apiText).map { it.value }.toList()
-                    apiUrls.forEach { u ->
+                    Log.d(TAG, "extractOkru: API ${apiUrl.take(80)} => ${apiText.take(300)}")
+                    val found = Regex("""https?://[^"'\s<>]+(?:\.m3u8|\.mp4)[^"'\s<>]*""").findAll(apiText)
+                    found.forEach { m ->
                         runBlocking {
-                            callback(newExtractorLink("Ok.ru", "Ok.ru", u) {
+                            callback(newExtractorLink("Ok.ru", "Ok.ru", m.value) {
                                 this.referer = embedUrl
                                 this.quality = Qualities.Unknown.value
-                                this.type = if (u.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                this.type = if (m.value.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             })
                         }
                     }
-                    if (apiUrls.isNotEmpty()) { Log.d(TAG, "extractOkru: ${apiUrls.size} from linkVideo API"); return }
-                } catch (e: Exception) { Log.w(TAG, "extractOkru: linkVideo API failed: ${e.message}") }
+                    if (found.any()) { Log.d(TAG, "extractOkru: got URLs from API ${apiUrl.take(80)}"); return }
+                } catch (e: Exception) { Log.w(TAG, "extractOkru: API ${apiUrl.take(80)} failed: ${e.message}") }
             }
-
-            val flashvars = Regex("""movieId["']?\s*[:=]\s*["']?(\d+)["']?""").find(html)
-            val movieId = flashvars?.groupValues?.getOrNull(1)
-            Log.d(TAG, "extractOkru: movieId=$movieId")
-            if (movieId != null) {
-                val metaUrl = "https://ok.ru/dk?cmd=videoPlayerMetadata&st.cmd=videoPlayerMetadata&st.videoId=$movieId"
-                try {
-                    val metaText = app.get(metaUrl, referer = embedUrl).text
-                    Log.d(TAG, "extractOkru: metadata API (first 500): ${metaText.take(500)}")
-                    val metaUrls = Regex("""https?://[^"'\s<>]+""").findAll(metaText).map { it.value }.toList()
-                    metaUrls.forEach { u ->
-                        runBlocking {
-                            callback(newExtractorLink("Ok.ru", "Ok.ru", u) {
-                                this.referer = embedUrl
-                                this.quality = Qualities.Unknown.value
-                                this.type = if (u.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            })
-                        }
-                    }
-                    if (metaUrls.isNotEmpty()) { Log.d(TAG, "extractOkru: ${metaUrls.size} from metadata API"); return }
-                } catch (e: Exception) { Log.w(TAG, "extractOkru: metadata API failed: ${e.message}") }
-            }
-
-            val anyVid = Regex("""data-video\s*=\s*["']?(\d+)["']?""").find(html)
-            Log.d(TAG, "extractOkru: data-video=${anyVid?.groupValues?.getOrNull(1)}")
         } catch (e: Exception) {
             Log.w(TAG, "extractOkru failed: ${e.message}")
         }
