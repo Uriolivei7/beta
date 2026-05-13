@@ -140,12 +140,13 @@ class PrimevideoProvider : MainAPI() {
                 .filterNotNull()
                 .distinctBy { it.id }
                 .map { ep ->
+                    Log.d("Primevideo", "main ep id=${ep.id} t=${ep.t} timeVal=${ep.timeVal} time=${ep.time}")
                     newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
                         name = ep.t
                         episode = ep.ep?.toIntOrNull() ?: ep.epNum?.replace("E", "").orEmpty().toIntOrNull()
                         season = selectedSeasonNum ?: extractSeasonNumber(ep.s)
                         posterUrl = pvEpPoster(ep.id.orEmpty())
-                        this.runTime = ep.timeVal?.replace("m", "").orEmpty().toIntOrNull()
+                        this.runTime = (ep.timeVal ?: ep.time)?.replace("m", "")?.toIntOrNull()
                         description = ep.ep_desc
                     }
                 }
@@ -231,12 +232,13 @@ class PrimevideoProvider : MainAPI() {
                 if (ep.id.isNullOrBlank()) return@forEach
                 if (ep.id in seenIds) return@forEach
                 seenIds.add(ep.id)
+                Log.d("Primevideo", "getEpisodes id=${ep.id} t=${ep.t} timeVal=${ep.timeVal} time=${ep.time}")
                 episodes.add(newEpisode(NewTvLoadData(title, ep.id.orEmpty())) {
                     name = ep.t
                     episode = ep.ep?.toIntOrNull() ?: ep.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = seasonNumber ?: extractSeasonNumber(ep.s) ?: extractSeasonNumber(ep.sNum)
                     posterUrl = pvEpPoster(ep.id.orEmpty())
-                    this.runTime = ep.timeVal?.replace("m", "").orEmpty().toIntOrNull()
+                    this.runTime = (ep.timeVal ?: ep.time)?.replace("m", "")?.toIntOrNull()
                     description = ep.ep_desc
                 })
             }

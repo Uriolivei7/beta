@@ -1,5 +1,6 @@
 package com.horis.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -109,12 +110,13 @@ class NetflixProvider : MainAPI() {
             val selectedSeasonNumber = selectedSeasonIdx?.plus(1)
 
             data.episodes.filterNotNull().mapTo(episodes) {
+                Log.d("NetflixProvider", "episode id=${it.id} t=${it.t} timeVal=${it.timeVal} time=${it.time}")
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
-                    this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
+                    this.runTime = (it.timeVal ?: it.time)?.replace("m", "")?.toIntOrNull()
                     description = it.ep_desc
                 }
             }
@@ -161,12 +163,13 @@ class NetflixProvider : MainAPI() {
             ).parsed<NewTvEpisodesResponse>()
 
             data.episodes.orEmpty().mapTo(episodes) {
+                Log.d("NetflixProvider", "getEpisodes id=${it.id} t=${it.t} timeVal=${it.timeVal} time=${it.time}")
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = buildPosterUrl(epPoster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
-                    this.runTime = it.timeVal?.replace("m", "").orEmpty().toIntOrNull()
+                    this.runTime = (it.timeVal ?: it.time)?.replace("m", "")?.toIntOrNull()
                     description = it.ep_desc
                 }
             }
