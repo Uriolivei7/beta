@@ -296,11 +296,21 @@ class CinemacityProvider : MainAPI() {
 
         val playerJson = JSONObject(playerJsonStr)
         Log.d("CinemacityLoad", "playerJson keys: ${playerJson.names()}")
+        Log.d("CinemacityLoad", "FULL playerJson: $playerJsonStr")
+        val hlsConfig = playerJson.optJSONObject("hlsconfig")
+        if (hlsConfig != null) {
+            Log.d("CinemacityLoad", "hlsconfig keys: ${hlsConfig.names()}, toString: $hlsConfig")
+        }
+        // Check if there's a file URL in any nested field
+        for (key in playerJson.keys()) {
+            val v = playerJson.opt(key)
+            Log.d("CinemacityLoad", "  key[$key] = ${v?.toString()?.take(200)} (${v?.javaClass?.simpleName})")
+        }
 
         val rawFile = playerJson.opt("file")
         Log.d("CinemacityLoad", "rawFile value: '$rawFile' (type: ${rawFile?.javaClass?.simpleName})")
         if (rawFile == null) {
-            Log.e("CinemacityLoad", "PlayerJS: missing file field. Full JSON: $playerJsonStr")
+            Log.e("CinemacityLoad", "PlayerJS: missing file field")
             error("PlayerJS: missing file field")
         }
 
