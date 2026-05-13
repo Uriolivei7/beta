@@ -81,6 +81,8 @@ class PrimevideoProvider : MainAPI() {
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val languages = data.moredetails?.find { it.k.equals("Audio", true) || it.k.equals("Language", true) || it.k.equals("Idioma", true) }?.v
+        val maturityReason = data.moredetails?.find { it.k == "Maturity Reason" }?.v
+        val maturityDesc = data.moredetails?.find { it.k == "Maturity Desc" }?.v
         data.moredetails?.forEach { Log.d("Primevideo", "moredetail: key=${it.k} value=${it.v}") }
         val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
         val rating = when {
@@ -118,7 +120,10 @@ class PrimevideoProvider : MainAPI() {
                 plot = data.desc; year = data.year?.toIntOrNull(); this.tags = tags
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                contentRating = data.ua ?: data.certification ?: data.age
+                contentRating = buildString {
+                    append(data.ua ?: data.certification ?: data.age ?: "")
+                    if (!maturityReason.isNullOrBlank()) append(" - $maturityReason")
+                }.takeIf { it.isNotBlank() }
             }
         }
 
@@ -211,7 +216,10 @@ class PrimevideoProvider : MainAPI() {
             plot = data.desc; year = data.year?.toIntOrNull(); this.tags = tags
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            contentRating = data.ua ?: data.certification ?: data.age
+            contentRating = buildString {
+                append(data.ua ?: data.certification ?: data.age ?: "")
+                if (!maturityReason.isNullOrBlank()) append(" - $maturityReason")
+            }.takeIf { it.isNotBlank() }
         }
     }
 
