@@ -155,47 +155,37 @@ class CinemacityProvider : MainAPI() {
 
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        return try {
-            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
+        var results: List<SearchResponse>? = null
 
-            // Strategy 1: Quick GET attempt with short timeout (Cloudflare may block)
-            val getUrl = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
-            Log.d("CinemacitySearch", "Trying quick GET: $getUrl")
-            val quickGet = app.get(
-                getUrl,
-                headers = protectionHeaders + ("Referer" to "$mainUrl/"),
+        // Strategy 1: POST to main URL (mimics search form submission, bypasses Cloudflare)
+        try {
+            Log.d("CinemacitySearch", "Trying POST to mainUrl")
+            val resp = app.post(
+                mainUrl,
+                headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
                 cookies = dynamicCookies,
                 interceptor = cfKiller,
-                timeout = 15L
-            )
-            Log.d("CinemacitySearch", "Quick GET Status: ${quickGet.code}")
-            var resp: NiceResponse = quickGet
-
-            // Strategy 2: POST to main URL (mimics search form submission, bypasses Cloudflare)
-            if (resp.code != 200) {
-                Log.d("CinemacitySearch", "GET failed ($resp.code), trying POST to mainUrl")
-                resp = app.post(
-                    mainUrl,
-                    headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
-                    cookies = dynamicCookies,
-                    interceptor = cfKiller,
-                    timeout = 120L,
-                    data = formData
-                ).also {
-                    if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
-                }
-                Log.d("CinemacitySearch", "POST(mainUrl) Status: ${resp.code}")
+                timeout = 120L,
+                data = formData
+            ).also {
+                if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
             }
+            Log.d("CinemacitySearch", "POST(mainUrl) Status: ${resp.code}")
+            if (resp.code == 200) {
+                results = resp.document.select("div.dar-short_item, div.short-story, div.short, div.search-item, .search-result").mapNotNull { it.toSearchResult() }
+                Log.d("CinemacitySearch", "Results found: ${results?.size}")
+            }
+        } catch (e: Exception) {
+            Log.e("CinemacitySearch", "POST failed: ${e.message}")
+        }
 
-            // Parse results
-            val results = resp.document.select("div.dar-short_item, div.short-story, div.short, div.search-item, .search-result").mapNotNull { it.toSearchResult() }
-            Log.d("CinemacitySearch", "Results found: ${results.size}, doc length: ${resp.document.text().length}")
+        if (!results.isNullOrEmpty()) return results
 
-            if (results.isNotEmpty()) return results
-
-            // Strategy 3: Try search suggest API (different endpoint, may bypass Cloudflare)
-            Log.d("CinemacitySearch", "No HTML results, trying search suggest API")
+        // Strategy 2: Try search suggest API (different endpoint, may bypass Cloudflare)
+        try {
+            Log.d("CinemacitySearch", "Trying search suggest API")
             val suggestUrl = "$mainUrl/engine/ajax/search_find.php?q=$encoded"
             val suggestResp = app.get(
                 suggestUrl,
@@ -208,7 +198,7 @@ class CinemacityProvider : MainAPI() {
             }
             Log.d("CinemacitySearch", "Suggest Status: ${suggestResp.code}")
             if (suggestResp.code == 200) {
-                val suggestResults = suggestResp.document.select("a").mapNotNull { a ->
+                results = suggestResp.document.select("a").mapNotNull { a ->
                     val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
                     if (!href.contains("/movies/") && !href.contains("/tv-series/")) return@mapNotNull null
                     val title = a.text().trim().substringBefore("(").trim()
@@ -216,15 +206,13 @@ class CinemacityProvider : MainAPI() {
                     if (isTv) newTvSeriesSearchResponse(title, href, TvType.TvSeries)
                     else newMovieSearchResponse(title, href, TvType.Movie)
                 }
-                Log.d("CinemacitySearch", "Suggest results: ${suggestResults.size}")
-                if (suggestResults.isNotEmpty()) return suggestResults
+                Log.d("CinemacitySearch", "Suggest results: ${results?.size}")
             }
-
-            emptyList()
         } catch (e: Exception) {
-            Log.e("CinemacitySearch", "Search failed: ${e.message}", e)
-            null
+            Log.e("CinemacitySearch", "Suggest failed: ${e.message}")
         }
+
+        return results?.ifEmpty { null }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
