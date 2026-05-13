@@ -262,11 +262,13 @@ class TvenvivoProvider : MainAPI() {
 
         try {
             val mainHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Sec-Fetch-Dest" to "document",
+                "Accept-Language" to "es-ES,es;q=0.9",
+                "Sec-Fetch-Dest" to "iframe",
                 "Sec-Fetch-Mode" to "navigate",
-                "Sec-Fetch-Site" to "none",
+                "Sec-Fetch-Site" to "same-origin",
+                "Sec-Fetch-User" to "?1",
                 "Upgrade-Insecure-Requests" to "1"
             )
 
@@ -317,20 +319,12 @@ class TvenvivoProvider : MainAPI() {
             if (optionLinks.isEmpty()) return false
 
             return coroutineScope {
-                val deferreds = optionLinks.mapIndexed { displayIdx, rawUrl ->
-                    async {
-                        tryLoadOption(targetUrl, rawUrl, displayIdx, mainHeaders, mainCookies, callback)
+                for ((displayIdx, rawUrl) in optionLinks.withIndex()) {
+                    if (tryLoadOption(targetUrl, rawUrl, displayIdx, mainHeaders, mainCookies, callback)) {
+                        return@coroutineScope true
                     }
                 }
-                var success = false
-                for (d in deferreds) {
-                    if (d.await()) {
-                        success = true
-                        deferreds.forEach { if (!it.isCompleted) it.cancel() }
-                        break
-                    }
-                }
-                success
+                false
             }
         } catch (e: Exception) {
             Log.e("Tvenvivo", "Logs: Error crítico: ${e.message}")
@@ -355,15 +349,26 @@ class TvenvivoProvider : MainAPI() {
                 put("Sec-Fetch-Site", "same-origin")
             }
 
+            val isPhpUrl = playerUrl.contains(".php")
+            val requestTimeout = if (isPhpUrl) 30000L else 20000L
             try {
-                withTimeout(20000L) {
-                    val playerResponse = app.get(
-                        playerUrl,
-                        timeout = 20000L,
-                        headers = playerHeaders,
-                        cookies = mainCookies,
-                        interceptor = cfKiller
-                    )
+                withTimeout(requestTimeout) {
+                    val playerResponse = if (isPhpUrl) {
+                        app.get(
+                            playerUrl,
+                            timeout = requestTimeout,
+                            headers = playerHeaders,
+                            cookies = mainCookies
+                        )
+                    } else {
+                        app.get(
+                            playerUrl,
+                            timeout = requestTimeout,
+                            headers = playerHeaders,
+                            cookies = mainCookies,
+                            interceptor = cfKiller
+                        )
+                    }
                     val playerHtml = playerResponse.text
 
                     if (playerHtml.isBlank()) return@withTimeout false
@@ -422,7 +427,7 @@ class TvenvivoProvider : MainAPI() {
                     }
                 }
             } catch (e: TimeoutCancellationException) {
-                Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - 20s")
+                Log.w("Tvenvivo", "Logs: Opción ${displayIndex + 1} timeout - ${requestTimeout}ms")
                 false
             }
         } catch (e: CancellationException) {
@@ -438,13 +443,15 @@ class TvenvivoProvider : MainAPI() {
             listOf(
                 """["'](https?[:\/\/\\]+[^"']+\.m3u8[^"']*)["']""",
                 """source\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
-                """file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']"""
+                """file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
+                """var\s+src\s*=\s*["']([^"']+\.m3u8[^"']*)["']"""
             )
         } else {
             listOf(
                 """["'](https?[:\/\/\\]+[^"']+\.m3u8[^"']*)["']""",
                 """source\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
                 """file\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
+                """var\s+src\s*=\s*["']([^"']+\.m3u8[^"']*)["']""",
                 """(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""",
                 """['"]([^"']+\.m3u8[^"']*)['"]"""
             )
