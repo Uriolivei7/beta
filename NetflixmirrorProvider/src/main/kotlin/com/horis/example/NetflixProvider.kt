@@ -95,9 +95,10 @@ class NetflixProvider : MainAPI() {
             if (!studio.isNullOrBlank()) add("Studio: $studio")
         }.takeIf { it.isNotEmpty() }?.joinToString("\n")
         val fullPlot = listOfNotNull(data.desc, extraPlot).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+        val languagesTag = if (!languages.isNullOrEmpty()) "Audio: ${languages.joinToString(", ")}" else null
         val tags = buildList {
             if (!genre.isNullOrEmpty()) addAll(genre)
-            if (!languages.isNullOrEmpty()) addAll(languages)
+            if (languagesTag != null) add(languagesTag)
             if (!thisMovieIs.isNullOrBlank()) add(thisMovieIs)
         }.takeIf { it.isNotEmpty() }
 
