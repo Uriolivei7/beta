@@ -73,19 +73,6 @@ class CinemacityProvider : MainAPI() {
         }
     }
 
-    private suspend fun doPost(url: String, data: Map<String, String>): NiceResponse {
-        return app.post(
-            url,
-            headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
-            cookies = dynamicCookies,
-            interceptor = cfKiller,
-            timeout = 120L,
-            data = data
-        ).also {
-            if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
-        }
-    }
-
     companion object {
         private const val TMDBIMAGEBASEURL = "https://image.tmdb.org/t/p/original"
         private const val cinemeta_url = "https://aiometadata.elfhosted.com/stremio/b7cb164b-074b-41d5-b458-b3a834e197bb/meta"
@@ -172,24 +159,33 @@ class CinemacityProvider : MainAPI() {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
 
-            // Strategy 1: GET to index.php (standard DLE search URL)
+            // Strategy 1: Quick GET attempt with short timeout (Cloudflare may block)
             val getUrl = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
-            Log.d("CinemacitySearch", "Trying GET: $getUrl")
-            var resp = doRequest(getUrl)
-            Log.d("CinemacitySearch", "GET Status: ${resp.code}")
+            Log.d("CinemacitySearch", "Trying quick GET: $getUrl")
+            val quickGet = app.get(
+                getUrl,
+                headers = protectionHeaders + ("Referer" to "$mainUrl/"),
+                cookies = dynamicCookies,
+                interceptor = cfKiller,
+                timeout = 15L
+            )
+            Log.d("CinemacitySearch", "Quick GET Status: ${quickGet.code}")
+            var resp: NiceResponse = quickGet
 
-            // Strategy 2: POST to main URL (mimics search form submission on home page)
+            // Strategy 2: POST to main URL (mimics search form submission, bypasses Cloudflare)
             if (resp.code != 200) {
                 Log.d("CinemacitySearch", "GET failed ($resp.code), trying POST to mainUrl")
-                resp = doPost(mainUrl, formData)
+                resp = app.post(
+                    mainUrl,
+                    headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
+                    cookies = dynamicCookies,
+                    interceptor = cfKiller,
+                    timeout = 120L,
+                    data = formData
+                ).also {
+                    if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
+                }
                 Log.d("CinemacitySearch", "POST(mainUrl) Status: ${resp.code}")
-            }
-
-            // Strategy 3: POST to index.php (more direct DLE routing)
-            if (resp.code != 200) {
-                Log.d("CinemacitySearch", "POST(mainUrl) failed, trying POST to index.php")
-                resp = doPost("$mainUrl/index.php", formData)
-                Log.d("CinemacitySearch", "POST(index.php) Status: ${resp.code}")
             }
 
             // Parse results
@@ -198,10 +194,18 @@ class CinemacityProvider : MainAPI() {
 
             if (results.isNotEmpty()) return results
 
-            // Strategy 4: Try search suggest API (JSON-based, may bypass Cloudflare)
+            // Strategy 3: Try search suggest API (different endpoint, may bypass Cloudflare)
             Log.d("CinemacitySearch", "No HTML results, trying search suggest API")
             val suggestUrl = "$mainUrl/engine/ajax/search_find.php?q=$encoded"
-            val suggestResp = doRequest(suggestUrl)
+            val suggestResp = app.get(
+                suggestUrl,
+                headers = protectionHeaders + ("Referer" to "$mainUrl/"),
+                cookies = dynamicCookies,
+                interceptor = cfKiller,
+                timeout = 30L
+            ).also {
+                if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
+            }
             Log.d("CinemacitySearch", "Suggest Status: ${suggestResp.code}")
             if (suggestResp.code == 200) {
                 val suggestResults = suggestResp.document.select("a").mapNotNull { a ->
@@ -541,7 +545,7 @@ class CinemacityProvider : MainAPI() {
             responseData?.meta?.name ?: title,
             url,
             TvType.Movie,
-            moviejson
+            moviejson ?: "{}"
         ) {
             this.backgroundPosterUrl = background ?: bgposter
             this.posterUrl = poster
@@ -571,7 +575,14 @@ class CinemacityProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("CinemacityLinks", "loadLinks data length: ${data.length}, preview: ${data.take(200)}")
-        val obj = JSONObject(data)
+        if (data.isBlank() || data == "null" || data == "{}") {
+            Log.w("CinemacityLinks", "data is empty, no streams available")
+            return false
+        }
+        val obj = try { JSONObject(data) } catch (e: Exception) {
+            Log.e("CinemacityLinks", "Failed to parse data JSON: ${e.message}")
+            return false
+        }
 
         obj.optJSONArray("subtitleTracks")?.let { subs ->
             for (i in 0 until subs.length()) {
