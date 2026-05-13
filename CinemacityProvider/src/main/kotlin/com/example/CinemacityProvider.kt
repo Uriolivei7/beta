@@ -138,14 +138,11 @@ class CinemacityProvider : MainAPI() {
     }
 
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
+    override suspend fun search(query: String): List<SearchResponse>? {
         val doc = doRequest(
-            "$mainUrl/index.php?do=search&subaction=search&search_start=$page&full_search=0&story=$query"
+            "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$query"
         ).document
-        val results = doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
-        val hasNext = doc.select(".pnext, a:contains(Next), a[href*='search_start=']").isNotEmpty()
-                || results.size >= 10
-        return newSearchResponseList(results, hasNext)
+        return doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
