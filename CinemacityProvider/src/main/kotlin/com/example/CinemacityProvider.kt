@@ -139,10 +139,19 @@ class CinemacityProvider : MainAPI() {
 
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        val doc = doRequest(
-            "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$query"
-        ).document
-        return doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+        return try {
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
+            Log.d("CinemacitySearch", "Search URL: $url")
+            val resp = doRequest(url)
+            Log.d("CinemacitySearch", "Status: ${resp.code}, doc length: ${resp.document.text().length}")
+            val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+            Log.d("CinemacitySearch", "Results found: ${results.size}")
+            results
+        } catch (e: Exception) {
+            Log.e("CinemacitySearch", "Search failed: ${e.message}", e)
+            null
+        }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
