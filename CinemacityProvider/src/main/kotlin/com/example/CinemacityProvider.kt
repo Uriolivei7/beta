@@ -3,7 +3,6 @@ package com.example
 import android.util.Log
 import com.google.gson.Gson
 import com.lagradost.cloudstream3.Actor
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.HomePageResponse
@@ -15,7 +14,6 @@ import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.Score
 import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.addDate
@@ -23,7 +21,6 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.base64Decode
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.fixUrlNull
-import com.lagradost.cloudstream3.getQualityFromString
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
@@ -32,7 +29,6 @@ import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
-import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.Qualities
@@ -54,8 +50,10 @@ class CinemacityProvider : MainAPI() {
         TvType.Movie, TvType.TvSeries, TvType.Cartoon, TvType.AsianDrama
     )
 
-    private var dynamicCookies: Map<String, String> = emptyMap()
-    private val cfKiller = CloudflareKiller()
+    private var dynamicCookies: Map<String, String> = mapOf(
+        "dle_user_id" to "32729",
+        "dle_password" to "894171c6a8dab18ee594d5c652009a35"
+    )
 
     private val protectionHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -65,9 +63,7 @@ class CinemacityProvider : MainAPI() {
         return app.get(
             url,
             headers = protectionHeaders + ("Referer" to "$mainUrl/"),
-            cookies = dynamicCookies,
-            interceptor = cfKiller,
-            timeout = 120L
+            cookies = dynamicCookies
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
@@ -102,41 +98,26 @@ class CinemacityProvider : MainAPI() {
     override suspend fun getMainPage(
         page: Int, request: MainPageRequest
     ): HomePageResponse {
-        return try {
-            val base = request.data.trimEnd('/')
-            val url = if (page > 1) "$base/page/$page/" else "$base/"
-            Log.d("CinemacityMP", "getMainPage url: $url")
-            val resp = doRequest(url)
-            Log.d("CinemacityMP", "Status: ${resp.code}, doc length: ${resp.document.text().length}")
-            val home = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
-            Log.d("CinemacityMP", "Items found: ${home.size}")
-            val hasNext = resp.document.select("a[href*='/page/'], .pnext, .next").isNotEmpty()
-            Log.d("CinemacityMP", "Has next page: $hasNext")
-            newHomePageResponse(request.name, home, hasNext)
-        } catch (e: Exception) {
-            Log.e("CinemacityMP", "getMainPage failed: ${e.message}", e)
-            throw e
-        }
+        val base = request.data.trimEnd('/')
+        val url = if (page > 1) "$base/page/$page/" else "$base/"
+        val doc = doRequest(url).document
+        val home = doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+        val hasNext = doc.select("a[href*='/page/'], .pnext, .next").isNotEmpty()
+        return newHomePageResponse(request.name, home, hasNext)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
         val link = this.select("a").firstOrNull {
             val h = it.attr("href")
             (h.contains("/movies/") || h.contains("/tv-series/")) && !h.contains(Regex("\\.(webp|jpg|png)"))
-        } ?: this.selectFirst("h2 a, h3 a, div.title a, span.title a")?.takeIf {
-            val h = it.attr("href")
-            h.contains("/movies/") || h.contains("/tv-series/")
         } ?: return null
 
-        val rawTitle = link.text().trim()
-        if (rawTitle.isBlank()) return null
-        val title = rawTitle.split(" (", " S0", " -")[0].trim()
+        val title = link.text().split(" (", " S0", " -")[0].trim()
         val href = fixUrlNull(link.attr("href")) ?: return null
         val poster = fixUrlNull(this.selectFirst("img")?.attr("src"))
         val isTv = href.contains("/tv-series/")
-        val score = this.selectFirst("span.rating-color, .rating")?.text()
+        val score = this.selectFirst("span.rating-color")?.text()
         val date  = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
-            ?: Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
 
         return if (isTv) {
             newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
@@ -157,94 +138,29 @@ class CinemacityProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
-        var results: List<SearchResponse>? = null
 
-        // Strategy 1: POST to main URL (mimics search form submission, bypasses Cloudflare)
-        try {
-            Log.d("CinemacitySearch", "Trying POST to mainUrl")
-            val resp = app.post(
-                mainUrl,
-                headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
-                cookies = dynamicCookies,
-                interceptor = cfKiller,
-                timeout = 120L,
-                data = formData
-            ).also {
-                if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
-            }
-            Log.d("CinemacitySearch", "POST(mainUrl) Status: ${resp.code}")
-            if (resp.code == 200) {
-                results = resp.document.select("div.dar-short_item, div.short-story, div.short, div.search-item, .search-result").mapNotNull { it.toSearchResult() }
-                Log.d("CinemacitySearch", "Results found: ${results?.size}")
-            }
-        } catch (e: Exception) {
-            Log.e("CinemacitySearch", "POST failed: ${e.message}")
+        // POST to main page URL (mimics search form submission, bypasses Cloudflare)
+        val resp = app.post(
+            mainUrl,
+            headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
+            cookies = dynamicCookies,
+            data = formData,
+            timeout = 120L
+        ).also {
+            if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
 
-        if (!results.isNullOrEmpty()) return results
+        if (resp.code != 200) return null
 
-        // Strategy 2: Try search suggest API (different endpoint, may bypass Cloudflare)
-        try {
-            Log.d("CinemacitySearch", "Trying search suggest API")
-            val suggestUrl = "$mainUrl/engine/ajax/search_find.php?q=$encoded"
-            val suggestResp = app.get(
-                suggestUrl,
-                headers = protectionHeaders + ("Referer" to "$mainUrl/"),
-                cookies = dynamicCookies,
-                interceptor = cfKiller,
-                timeout = 30L
-            ).also {
-                if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
-            }
-            Log.d("CinemacitySearch", "Suggest Status: ${suggestResp.code}")
-            if (suggestResp.code == 200) {
-                results = suggestResp.document.select("a").mapNotNull { a ->
-                    val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
-                    if (!href.contains("/movies/") && !href.contains("/tv-series/")) return@mapNotNull null
-                    val title = a.text().trim().substringBefore("(").trim()
-                    val isTv = href.contains("/tv-series/")
-                    if (isTv) newTvSeriesSearchResponse(title, href, TvType.TvSeries)
-                    else newMovieSearchResponse(title, href, TvType.Movie)
-                }
-                Log.d("CinemacitySearch", "Suggest results: ${results?.size}")
-            }
-        } catch (e: Exception) {
-            Log.e("CinemacitySearch", "Suggest failed: ${e.message}")
-        }
-
-        return results?.ifEmpty { null }
+        return resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d("CinemacityLoad", "load url: $url")
         val page = doRequest(url)
         val doc = page.document
-        Log.d("CinemacityLoad", "Status: ${page.code}, doc length: ${doc.text().length}")
-        Log.d("CinemacityLoad", "og:title: ${doc.selectFirst("meta[property=og:title]")?.attr("content")}")
-        Log.d("CinemacityLoad", "iframes: ${doc.select("iframe").size}")
-        doc.select("iframe").forEachIndexed { i, f ->
-            Log.d("CinemacityLoad", "  iframe[$i] src=${f.attr("src")}")
-        }
-        // Check for video containers with data attributes
-        val playerDivs = doc.select("[id*=player], [class*=player], [data-player], [data-file]")
-        Log.d("CinemacityLoad", "player divs: ${playerDivs.size}")
-        playerDivs.forEachIndexed { i, d ->
-            Log.d("CinemacityLoad", "  playerDiv[$i] html=${d.html().take(300)}")
-            Log.d("CinemacityLoad", "  playerDiv[$i] data-attrs: ${d.attributes().filter { it.key.startsWith("data-") }}")
-        }
-        // Check for video/embed tags
-        Log.d("CinemacityLoad", "video tags: ${doc.select("video").size}")
-        Log.d("CinemacityLoad", "embed tags: ${doc.select("embed").size}")
-        Log.d("CinemacityLoad", "source tags: ${doc.select("source").size}")
-        // Check for links with video extensions
-        val videoLinks = doc.select("a[href$=.mp4], a[href$=.m3u8], a[href*=.mp4], a[href*=.m3u8]")
-        Log.d("CinemacityLoad", "direct video links: ${videoLinks.size}")
-        videoLinks.forEachIndexed { i, a ->
-            Log.d("CinemacityLoad", "  videoLink[$i] href=${a.attr("href")}")
-        }
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
         val title = ogTitle.substringBefore("(").trim()
@@ -340,42 +256,24 @@ class CinemacityProvider : MainAPI() {
                 ?.associateBy { "${it.season}:${it.episode}" }
                 ?: emptyMap()
 
-        // Try to extract Playerjs from atob scripts (standard path)
         val atobScripts = doc.select("script:containsData(atob)")
-        Log.d("CinemacityLoad", "atob scripts found: ${atobScripts.size}")
-        atobScripts.forEachIndexed { i, s ->
-            Log.d("CinemacityLoad", "atob[$i] data length: ${s.data()?.length}, preview: ${s.data()?.take(100)}")
-        }
-
         val playerScript = atobScripts.getOrNull(1)?.data()
-        Log.d("CinemacityLoad", "playerScript found: ${playerScript != null}, length: ${playerScript?.length}")
 
-        val fileArray: JSONArray
-        val parsedSubtitles: JSONArray
-
-        if (playerScript != null) {
+        val fileArray: JSONArray = if (playerScript != null) {
             val b64 = playerScript.substringAfter("atob(\"").substringBefore("\")")
-            Log.d("CinemacityLoad", "base64 string length: ${b64.length}, preview: ${b64.take(50)}")
             val decodedPlayer = base64Decode(b64)
-            Log.d("CinemacityLoad", "decoded length: ${decodedPlayer?.length}, preview: ${decodedPlayer?.take(200)}")
 
             val playerJsonStr = decodedPlayer
                 ?.substringAfter("new Playerjs(")
                 ?.substringBeforeLast(");")
-            Log.d("CinemacityLoad", "playerJsonStr length: ${playerJsonStr?.length}, preview: ${playerJsonStr?.take(200)}")
 
             if (playerJsonStr.isNullOrBlank()) {
-                Log.w("CinemacityLoad", "Playerjs parse failed; fallback to iframe detection. decoded: ${decodedPlayer?.take(300)}")
-                fileArray = JSONArray()
-                parsedSubtitles = JSONArray()
+                JSONArray()
             } else {
                 val playerJson = JSONObject(playerJsonStr)
-                Log.d("CinemacityLoad", "playerJson keys: ${playerJson.names()}")
-
                 val rawFile = playerJson.opt("file")
-                Log.d("CinemacityLoad", "rawFile value: '$rawFile' (type: ${rawFile?.javaClass?.simpleName})")
 
-                fileArray = when {
+                when {
                     rawFile is JSONArray -> rawFile
                     rawFile is String && rawFile.isNotBlank() -> {
                         val value = rawFile.trim()
@@ -385,46 +283,28 @@ class CinemacityProvider : MainAPI() {
                             else -> JSONArray().apply { put(JSONObject().apply { put("file", value) }) }
                         }
                     }
-                    else -> {
-                        Log.w("CinemacityLoad", "Playerjs file is empty/null")
-                        JSONArray()
-                    }
+                    else -> JSONArray()
                 }
-
-                parsedSubtitles = parseSubtitles(
-                    when {
-                        playerJson.opt("subtitle") is String ->
-                            playerJson.optString("subtitle")
-                        fileArray.optJSONObject(0)?.opt("subtitle") is String ->
-                            fileArray.optJSONObject(0)?.optString("subtitle")
-                        else -> null
-                    }
-                )
             }
         } else {
-            Log.w("CinemacityLoad", "No atob Playerjs script found; checking iframe alternatives")
-            fileArray = JSONArray()
-            parsedSubtitles = JSONArray()
+            JSONArray()
         }
 
-        // Fallback: extract video URLs from iframes
+        // Fallback: try iframes and direct video sources if Playerjs had no file
         if (fileArray.length() == 0) {
             doc.select("iframe").forEach { iframe ->
                 val src = iframe.attr("src")
                 if (src.isNotBlank()) {
-                    Log.d("CinemacityLoad", "Found iframe src: $src")
                     fileArray.put(JSONObject().apply { put("file", src) })
                 }
             }
             doc.select("video source, source[src*=m3u8], source[src*=mp4]").forEach { source ->
                 val src = source.attr("src")
                 if (src.isNotBlank()) {
-                    Log.d("CinemacityLoad", "Found direct video source: $src")
                     fileArray.put(JSONObject().apply { put("file", src) })
                 }
             }
         }
-
 
         val seasonRegex = Regex("Season\\s*(\\d+)", RegexOption.IGNORE_CASE)
         val episodeRegex = Regex("Episode\\s*(\\d+)", RegexOption.IGNORE_CASE)
@@ -432,14 +312,33 @@ class CinemacityProvider : MainAPI() {
         val episodeList = mutableListOf<Episode>()
 
         val movieHrefs: String? = fileArray.optJSONObject(0)
-                ?.takeIf { !it.has("folder") }
-                ?.optString("file")
-                ?.takeIf { it.isNotBlank() }
+            ?.takeIf { !it.has("folder") }
+            ?.optString("file")
+            ?.takeIf { it.isNotBlank() }
+
+        val movieSubtitleTracks = parseSubtitles(
+            when {
+                playerScript != null -> {
+                    val decodedPlayer = base64Decode(
+                        playerScript.substringAfter("atob(\"").substringBefore("\")")
+                    ) ?: ""
+                    val str = decodedPlayer
+                        .substringAfter("new Playerjs(")
+                        .substringBeforeLast(");")
+                    if (str.isNotBlank()) {
+                        val pj = JSONObject(str)
+                        pj.optString("subtitle").takeIf { it.isNotBlank() }
+                            ?: fileArray.optJSONObject(0)?.optString("subtitle")?.takeIf { it.isNotBlank() }
+                    } else null
+                }
+                else -> null
+            }
+        )
 
         val moviejson = movieHrefs?.let {
             JSONObject().apply {
                 put("streamUrl", it)
-                put("subtitleTracks", parsedSubtitles)
+                put("subtitleTracks", movieSubtitleTracks)
             }.toString()
         }
 
@@ -499,7 +398,6 @@ class CinemacityProvider : MainAPI() {
                     }
                 }
             }
-            Log.d("CinemacityLoad", "Returning TV series: ${responseData?.meta?.name ?: title}, episodes: ${episodeList.size}")
             return newTvSeriesLoadResponse(
                 responseData?.meta?.name ?: title,
                 url,
@@ -508,7 +406,6 @@ class CinemacityProvider : MainAPI() {
             ) {
                 this.backgroundPosterUrl = background ?: bgposter
                 this.posterUrl = poster
-                //try { this.logoUrl = logoPath } catch(_:Throwable){}
                 this.year = year ?: responseData?.meta?.year?.toIntOrNull()
                 this.plot = buildString {
                     append(description ?: descriptions)
@@ -527,8 +424,6 @@ class CinemacityProvider : MainAPI() {
             }
         }
 
-        Log.d("CinemacityLoad", "Returning movie: ${responseData?.meta?.name ?: title}")
-
         return newMovieLoadResponse(
             responseData?.meta?.name ?: title,
             url,
@@ -537,7 +432,6 @@ class CinemacityProvider : MainAPI() {
         ) {
             this.backgroundPosterUrl = background ?: bgposter
             this.posterUrl = poster
-            //try { this.logoUrl = logoPath } catch(_:Throwable){}
             this.year = year ?: responseData?.meta?.year?.toIntOrNull()
             this.plot = buildString {
                 append(description ?: descriptions)
@@ -562,15 +456,9 @@ class CinemacityProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("CinemacityLinks", "loadLinks data length: ${data.length}, preview: ${data.take(200)}")
-        if (data.isBlank() || data == "null" || data == "{}") {
-            Log.w("CinemacityLinks", "data is empty, no streams available")
-            return false
-        }
-        val obj = try { JSONObject(data) } catch (e: Exception) {
-            Log.e("CinemacityLinks", "Failed to parse data JSON: ${e.message}")
-            return false
-        }
+        if (data.isBlank() || data == "null" || data == "{}") return false
+
+        val obj = JSONObject(data)
 
         obj.optJSONArray("subtitleTracks")?.let { subs ->
             for (i in 0 until subs.length()) {
