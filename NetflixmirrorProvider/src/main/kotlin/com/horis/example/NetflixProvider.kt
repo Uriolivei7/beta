@@ -72,6 +72,12 @@ class NetflixProvider : MainAPI() {
         val playbackId = data.main_id ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+        val languages = data.lang?.map { it.l.orEmpty() }?.filter { it.isNotBlank() }?.distinct()
+        val director = data.moredetails?.find { it.k == "Director" }?.v
+        val studio = data.moredetails?.find { it.k == "Studio" }?.v
+        val writer = data.moredetails?.find { it.k == "Writer" }?.v
+        val thisMovieIs = data.moredetails?.find { it.k == "This Movie Is" }?.v
+        Log.d("NetflixProvider", "lang=${languages} director=${director} studio=${studio} writer=${writer} thisMovieIs=${thisMovieIs}")
         val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
         val rating = when {
             data.match?.startsWith("IMDb ") == true -> data.match?.replace("IMDb ", "")
@@ -83,6 +89,18 @@ class NetflixProvider : MainAPI() {
         }
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
+        val extraPlot = buildList {
+            if (!director.isNullOrBlank()) add("Director: $director")
+            if (!writer.isNullOrBlank()) add("Writer: $writer")
+            if (!studio.isNullOrBlank()) add("Studio: $studio")
+        }.takeIf { it.isNotEmpty() }?.joinToString("\n")
+        val fullPlot = listOfNotNull(data.desc, extraPlot).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+        val tags = buildList {
+            if (!genre.isNullOrEmpty()) addAll(genre)
+            if (!languages.isNullOrEmpty()) addAll(languages)
+            if (!thisMovieIs.isNullOrBlank()) add(thisMovieIs)
+        }.takeIf { it.isNotEmpty() }
+
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
                 posterUrl = buildVerticalPosterUrl(it.id, ott)
@@ -95,7 +113,7 @@ class NetflixProvider : MainAPI() {
                 posterUrl = buildVerticalPosterUrl(id, ott)
                 backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
                 posterHeaders = mapOf("Referer" to apiBase)
-                plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
+                plot = fullPlot; year = data.year?.toIntOrNull(); this.tags = tags
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
                 contentRating = data.ua ?: data.certification ?: data.age
@@ -112,13 +130,13 @@ class NetflixProvider : MainAPI() {
             val selectedSeasonNumber = selectedSeasonIdx?.plus(1)
 
             data.episodes.filterNotNull().mapTo(episodes) {
-                Log.d("NetflixProvider", "episode id=${it.id} t=${it.t} timeVal=${it.timeVal} time=${it.time}")
+                Log.d("NetflixProvider", "episode id=${it.id} t=${it.t} info=${it.info}")
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     this.name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
-                    this.runTime = (it.timeVal ?: it.time)?.replace("m", "")?.toIntOrNull()
+                    this.runTime = it.info?.getOrNull(2)?.replace("m", "")?.toIntOrNull()
                     description = it.ep_desc
                 }
             }
@@ -143,7 +161,7 @@ class NetflixProvider : MainAPI() {
             posterUrl = buildVerticalPosterUrl(id, ott)
             backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
             posterHeaders = mapOf("Referer" to apiBase)
-            plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
+            plot = fullPlot; year = data.year?.toIntOrNull(); this.tags = tags
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
             contentRating = data.ua ?: data.certification ?: data.age
@@ -167,13 +185,13 @@ class NetflixProvider : MainAPI() {
             val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
 
             data.episodes.orEmpty().mapTo(episodes) {
-                Log.d("NetflixProvider", "getEpisodes id=${it.id} t=${it.t} timeVal=${it.timeVal} time=${it.time}")
+                Log.d("NetflixProvider", "getEpisodes id=${it.id} t=${it.t} info=${it.info}")
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
                     name = it.t
                     episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
                     season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
                     posterUrl = buildPosterUrl(epPoster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
-                    this.runTime = (it.timeVal ?: it.time)?.replace("m", "")?.toIntOrNull()
+                    this.runTime = it.info?.getOrNull(2)?.replace("m", "")?.toIntOrNull()
                     description = it.ep_desc
                 }
             }
