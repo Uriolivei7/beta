@@ -61,10 +61,12 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val data = app.get(
+        val rawResponse = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        ).text
+        Log.d("NetflixProvider", "RAW post response: $rawResponse")
+        val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -156,11 +158,13 @@ class NetflixProvider : MainAPI() {
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
-            val data = app.get(
+            val rawEp = app.get(
                 "$apiBase/newtv/episodes.php",
                 params = mapOf("id" to sid, "page" to pg.toString()),
                 headers = buildNewTvHeaders(ott)
-            ).parsed<NewTvEpisodesResponse>()
+            ).text
+            Log.d("NetflixProvider", "RAW episodes page=$pg: $rawEp")
+            val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
 
             data.episodes.orEmpty().mapTo(episodes) {
                 Log.d("NetflixProvider", "getEpisodes id=${it.id} t=${it.t} timeVal=${it.timeVal} time=${it.time}")

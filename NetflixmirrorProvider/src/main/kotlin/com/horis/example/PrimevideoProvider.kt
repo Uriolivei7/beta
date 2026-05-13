@@ -62,10 +62,12 @@ class PrimevideoProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
-        val data = app.get(
+        val rawResponse = app.get(
             "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        ).text
+        Log.d("Primevideo", "RAW post response: $rawResponse")
+        val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
         Log.d("Primevideo", "ua=${data.ua}")
 
         Log.d("Primevideo", "Seasons count: ${data.season?.size ?: 0}")
@@ -217,11 +219,13 @@ class PrimevideoProvider : MainAPI() {
         val seenIds = mutableSetOf<String>()
         var pg = page
         while (true) {
-            val data = app.get(
+            val rawEp = app.get(
                 "$apiBase/newtv/episodes.php",
                 params = mapOf("id" to sid, "page" to pg.toString()),
                 headers = buildNewTvHeaders(ott)
-            ).parsed<NewTvEpisodesResponse>()
+            ).text
+            Log.d("Primevideo", "RAW episodes page=$pg: $rawEp")
+            val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
 
             Log.d("Primevideo", "getEpisodes: sid=$sid page=$pg got=${data.episodes?.size ?: 0}")
             data.episodes?.forEach { e ->
