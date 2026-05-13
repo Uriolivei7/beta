@@ -80,10 +80,6 @@ class PrimevideoProvider : MainAPI() {
         val playbackId = data.main_id ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-        val languages = data.moredetails?.find { it.k.equals("Audio", true) || it.k.equals("Language", true) || it.k.equals("Idioma", true) }?.v
-        val maturityReason = data.moredetails?.find { it.k == "Maturity Reason" }?.v
-        val maturityDesc = data.moredetails?.find { it.k == "Maturity Desc" }?.v
-        data.moredetails?.forEach { Log.d("Primevideo", "moredetail: key=${it.k} value=${it.v}") }
         val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
         val rating = when {
             data.match?.startsWith("IMDb ") == true -> data.match?.replace("IMDb ", "")
@@ -95,11 +91,6 @@ class PrimevideoProvider : MainAPI() {
         }
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
-        val tags = buildList {
-            if (!genre.isNullOrEmpty()) addAll(genre)
-            if (!languages.isNullOrBlank()) add(languages)
-        }.takeIf { it.isNotEmpty() }
-
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
                 posterUrl = pvPoster(it.id)
@@ -117,13 +108,10 @@ class PrimevideoProvider : MainAPI() {
                 posterUrl = pvPoster(id)
                 backgroundPosterUrl = pvBg(id)
                 posterHeaders = mapOf("Referer" to apiBase)
-                plot = data.desc; year = data.year?.toIntOrNull(); this.tags = tags
+                plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
-                contentRating = buildString {
-                    append(data.ua ?: data.certification ?: data.age ?: "")
-                    if (!maturityReason.isNullOrBlank()) append(" - $maturityReason")
-                }.takeIf { it.isNotBlank() }
+                contentRating = data.ua ?: data.certification ?: data.age
             }
         }
 
@@ -213,13 +201,10 @@ class PrimevideoProvider : MainAPI() {
             posterUrl = pvPoster(id)
             backgroundPosterUrl = pvBg(id)
             posterHeaders = mapOf("Referer" to apiBase)
-            plot = data.desc; year = data.year?.toIntOrNull(); this.tags = tags
+            plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
-            contentRating = buildString {
-                append(data.ua ?: data.certification ?: data.age ?: "")
-                if (!maturityReason.isNullOrBlank()) append(" - $maturityReason")
-            }.takeIf { it.isNotBlank() }
+            contentRating = data.ua ?: data.certification ?: data.age
         }
     }
 
