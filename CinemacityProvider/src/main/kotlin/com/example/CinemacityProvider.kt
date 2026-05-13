@@ -73,6 +73,19 @@ class CinemacityProvider : MainAPI() {
         }
     }
 
+    private suspend fun doPost(url: String, data: Map<String, String>): NiceResponse {
+        return app.post(
+            url,
+            headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
+            cookies = dynamicCookies,
+            interceptor = cfKiller,
+            timeout = 120L,
+            data = data
+        ).also {
+            if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
+        }
+    }
+
     companion object {
         private const val TMDBIMAGEBASEURL = "https://image.tmdb.org/t/p/original"
         private const val cinemeta_url = "https://aiometadata.elfhosted.com/stremio/b7cb164b-074b-41d5-b458-b3a834e197bb/meta"
@@ -123,14 +136,20 @@ class CinemacityProvider : MainAPI() {
         val link = this.select("a").firstOrNull {
             val h = it.attr("href")
             (h.contains("/movies/") || h.contains("/tv-series/")) && !h.contains(Regex("\\.(webp|jpg|png)"))
+        } ?: this.selectFirst("h2 a, h3 a, div.title a, span.title a")?.takeIf {
+            val h = it.attr("href")
+            h.contains("/movies/") || h.contains("/tv-series/")
         } ?: return null
 
-        val title = link.text().split(" (", " S0", " -")[0].trim()
+        val rawTitle = link.text().trim()
+        if (rawTitle.isBlank()) return null
+        val title = rawTitle.split(" (", " S0", " -")[0].trim()
         val href = fixUrlNull(link.attr("href")) ?: return null
         val poster = fixUrlNull(this.selectFirst("img")?.attr("src"))
-        val isTv = href.contains("/tv-series/") || link.text().contains(" S0", true)
-        val score = this.selectFirst("span.rating-color")?.text()
+        val isTv = href.contains("/tv-series/")
+        val score = this.selectFirst("span.rating-color, .rating")?.text()
         val date  = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
+            ?: Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
 
         return if (isTv) {
             newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
@@ -151,13 +170,53 @@ class CinemacityProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         return try {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
-            Log.d("CinemacitySearch", "Search URL: $url")
-            val resp = doRequest(url)
-            Log.d("CinemacitySearch", "Status: ${resp.code}, doc length: ${resp.document.text().length}")
-            val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
-            Log.d("CinemacitySearch", "Results found: ${results.size}")
-            results
+            val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
+
+            // Strategy 1: GET to index.php (standard DLE search URL)
+            val getUrl = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
+            Log.d("CinemacitySearch", "Trying GET: $getUrl")
+            var resp = doRequest(getUrl)
+            Log.d("CinemacitySearch", "GET Status: ${resp.code}")
+
+            // Strategy 2: POST to main URL (mimics search form submission on home page)
+            if (resp.code != 200) {
+                Log.d("CinemacitySearch", "GET failed ($resp.code), trying POST to mainUrl")
+                resp = doPost(mainUrl, formData)
+                Log.d("CinemacitySearch", "POST(mainUrl) Status: ${resp.code}")
+            }
+
+            // Strategy 3: POST to index.php (more direct DLE routing)
+            if (resp.code != 200) {
+                Log.d("CinemacitySearch", "POST(mainUrl) failed, trying POST to index.php")
+                resp = doPost("$mainUrl/index.php", formData)
+                Log.d("CinemacitySearch", "POST(index.php) Status: ${resp.code}")
+            }
+
+            // Parse results
+            val results = resp.document.select("div.dar-short_item, div.short-story, div.short, div.search-item, .search-result").mapNotNull { it.toSearchResult() }
+            Log.d("CinemacitySearch", "Results found: ${results.size}, doc length: ${resp.document.text().length}")
+
+            if (results.isNotEmpty()) return results
+
+            // Strategy 4: Try search suggest API (JSON-based, may bypass Cloudflare)
+            Log.d("CinemacitySearch", "No HTML results, trying search suggest API")
+            val suggestUrl = "$mainUrl/engine/ajax/search_find.php?q=$encoded"
+            val suggestResp = doRequest(suggestUrl)
+            Log.d("CinemacitySearch", "Suggest Status: ${suggestResp.code}")
+            if (suggestResp.code == 200) {
+                val suggestResults = suggestResp.document.select("a").mapNotNull { a ->
+                    val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
+                    if (!href.contains("/movies/") && !href.contains("/tv-series/")) return@mapNotNull null
+                    val title = a.text().trim().substringBefore("(").trim()
+                    val isTv = href.contains("/tv-series/")
+                    if (isTv) newTvSeriesSearchResponse(title, href, TvType.TvSeries)
+                    else newMovieSearchResponse(title, href, TvType.Movie)
+                }
+                Log.d("CinemacitySearch", "Suggest results: ${suggestResults.size}")
+                if (suggestResults.isNotEmpty()) return suggestResults
+            }
+
+            emptyList()
         } catch (e: Exception) {
             Log.e("CinemacitySearch", "Search failed: ${e.message}", e)
             null
@@ -173,6 +232,27 @@ class CinemacityProvider : MainAPI() {
         val doc = page.document
         Log.d("CinemacityLoad", "Status: ${page.code}, doc length: ${doc.text().length}")
         Log.d("CinemacityLoad", "og:title: ${doc.selectFirst("meta[property=og:title]")?.attr("content")}")
+        Log.d("CinemacityLoad", "iframes: ${doc.select("iframe").size}")
+        doc.select("iframe").forEachIndexed { i, f ->
+            Log.d("CinemacityLoad", "  iframe[$i] src=${f.attr("src")}")
+        }
+        // Check for video containers with data attributes
+        val playerDivs = doc.select("[id*=player], [class*=player], [data-player], [data-file]")
+        Log.d("CinemacityLoad", "player divs: ${playerDivs.size}")
+        playerDivs.forEachIndexed { i, d ->
+            Log.d("CinemacityLoad", "  playerDiv[$i] html=${d.html().take(300)}")
+            Log.d("CinemacityLoad", "  playerDiv[$i] data-attrs: ${d.attributes().filter { it.key.startsWith("data-") }}")
+        }
+        // Check for video/embed tags
+        Log.d("CinemacityLoad", "video tags: ${doc.select("video").size}")
+        Log.d("CinemacityLoad", "embed tags: ${doc.select("embed").size}")
+        Log.d("CinemacityLoad", "source tags: ${doc.select("source").size}")
+        // Check for links with video extensions
+        val videoLinks = doc.select("a[href$=.mp4], a[href$=.m3u8], a[href*=.mp4], a[href*=.m3u8]")
+        Log.d("CinemacityLoad", "direct video links: ${videoLinks.size}")
+        videoLinks.forEachIndexed { i, a ->
+            Log.d("CinemacityLoad", "  videoLink[$i] href=${a.attr("href")}")
+        }
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
         val title = ogTitle.substringBefore("(").trim()
@@ -268,75 +348,89 @@ class CinemacityProvider : MainAPI() {
                 ?.associateBy { "${it.season}:${it.episode}" }
                 ?: emptyMap()
 
+        // Try to extract Playerjs from atob scripts (standard path)
         val atobScripts = doc.select("script:containsData(atob)")
         Log.d("CinemacityLoad", "atob scripts found: ${atobScripts.size}")
         atobScripts.forEachIndexed { i, s ->
             Log.d("CinemacityLoad", "atob[$i] data length: ${s.data()?.length}, preview: ${s.data()?.take(100)}")
         }
+
         val playerScript = atobScripts.getOrNull(1)?.data()
         Log.d("CinemacityLoad", "playerScript found: ${playerScript != null}, length: ${playerScript?.length}")
-        if (playerScript == null) {
-            Log.e("CinemacityLoad", "PlayerJS not found; doc snippet: ${doc.text().take(500)}")
-            error("PlayerJS not found; only torrent links available")
-        }
 
-        val b64 = playerScript.substringAfter("atob(\"").substringBefore("\")")
-        Log.d("CinemacityLoad", "base64 string length: ${b64.length}, preview: ${b64.take(50)}")
-        val decodedPlayer = base64Decode(b64)
-        Log.d("CinemacityLoad", "decoded length: ${decodedPlayer?.length}, preview: ${decodedPlayer?.take(200)}")
+        val fileArray: JSONArray
+        val parsedSubtitles: JSONArray
 
-        val playerJsonStr = decodedPlayer
-            ?.substringAfter("new Playerjs(")
-            ?.substringBeforeLast(");")
-        Log.d("CinemacityLoad", "playerJsonStr length: ${playerJsonStr?.length}, preview: ${playerJsonStr?.take(200)}")
-        if (playerJsonStr.isNullOrBlank()) {
-            Log.e("CinemacityLoad", "Failed to parse Playerjs JSON. decoded: ${decodedPlayer?.take(500)}")
-            error("PlayerJS: cannot parse player JSON")
-        }
+        if (playerScript != null) {
+            val b64 = playerScript.substringAfter("atob(\"").substringBefore("\")")
+            Log.d("CinemacityLoad", "base64 string length: ${b64.length}, preview: ${b64.take(50)}")
+            val decodedPlayer = base64Decode(b64)
+            Log.d("CinemacityLoad", "decoded length: ${decodedPlayer?.length}, preview: ${decodedPlayer?.take(200)}")
 
-        val playerJson = JSONObject(playerJsonStr)
-        Log.d("CinemacityLoad", "playerJson keys: ${playerJson.names()}")
-        Log.d("CinemacityLoad", "FULL playerJson: $playerJsonStr")
-        val hlsConfig = playerJson.optJSONObject("hlsconfig")
-        if (hlsConfig != null) {
-            Log.d("CinemacityLoad", "hlsconfig keys: ${hlsConfig.names()}, toString: $hlsConfig")
-        }
-        // Check if there's a file URL in any nested field
-        for (key in playerJson.keys()) {
-            val v = playerJson.opt(key)
-            Log.d("CinemacityLoad", "  key[$key] = ${v?.toString()?.take(200)} (${v?.javaClass?.simpleName})")
-        }
+            val playerJsonStr = decodedPlayer
+                ?.substringAfter("new Playerjs(")
+                ?.substringBeforeLast(");")
+            Log.d("CinemacityLoad", "playerJsonStr length: ${playerJsonStr?.length}, preview: ${playerJsonStr?.take(200)}")
 
-        val rawFile = playerJson.opt("file")
-        Log.d("CinemacityLoad", "rawFile value: '$rawFile' (type: ${rawFile?.javaClass?.simpleName})")
-        if (rawFile == null) {
-            Log.e("CinemacityLoad", "PlayerJS: missing file field")
-            error("PlayerJS: missing file field")
-        }
+            if (playerJsonStr.isNullOrBlank()) {
+                Log.w("CinemacityLoad", "Playerjs parse failed; fallback to iframe detection. decoded: ${decodedPlayer?.take(300)}")
+                fileArray = JSONArray()
+                parsedSubtitles = JSONArray()
+            } else {
+                val playerJson = JSONObject(playerJsonStr)
+                Log.d("CinemacityLoad", "playerJson keys: ${playerJson.names()}")
 
-        val fileArray: JSONArray = when (rawFile) {
-            is JSONArray -> rawFile
-            is String -> {
-                val value = rawFile.trim()
+                val rawFile = playerJson.opt("file")
+                Log.d("CinemacityLoad", "rawFile value: '$rawFile' (type: ${rawFile?.javaClass?.simpleName})")
 
-                when {
-                    value.startsWith("[") && value.endsWith("]") ->
-                        JSONArray(value)
-
-                    value.startsWith("{") && value.endsWith("}") ->
-                        JSONArray().apply { put(JSONObject(value)) }
-
-                    value.isNotBlank() ->
-                        JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("file", value)
-                            })
+                fileArray = when {
+                    rawFile is JSONArray -> rawFile
+                    rawFile is String && rawFile.isNotBlank() -> {
+                        val value = rawFile.trim()
+                        when {
+                            value.startsWith("[") && value.endsWith("]") -> JSONArray(value)
+                            value.startsWith("{") && value.endsWith("}") -> JSONArray().apply { put(JSONObject(value)) }
+                            else -> JSONArray().apply { put(JSONObject().apply { put("file", value) }) }
                         }
+                    }
+                    else -> {
+                        Log.w("CinemacityLoad", "Playerjs file is empty/null")
+                        JSONArray()
+                    }
+                }
 
-                    else -> error("PlayerJS: empty file string")
+                parsedSubtitles = parseSubtitles(
+                    when {
+                        playerJson.opt("subtitle") is String ->
+                            playerJson.optString("subtitle")
+                        fileArray.optJSONObject(0)?.opt("subtitle") is String ->
+                            fileArray.optJSONObject(0)?.optString("subtitle")
+                        else -> null
+                    }
+                )
+            }
+        } else {
+            Log.w("CinemacityLoad", "No atob Playerjs script found; checking iframe alternatives")
+            fileArray = JSONArray()
+            parsedSubtitles = JSONArray()
+        }
+
+        // Fallback: extract video URLs from iframes
+        if (fileArray.length() == 0) {
+            doc.select("iframe").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    Log.d("CinemacityLoad", "Found iframe src: $src")
+                    fileArray.put(JSONObject().apply { put("file", src) })
                 }
             }
-            else -> error("PlayerJS: unsupported file type")
+            doc.select("video source, source[src*=m3u8], source[src*=mp4]").forEach { source ->
+                val src = source.attr("src")
+                if (src.isNotBlank()) {
+                    Log.d("CinemacityLoad", "Found direct video source: $src")
+                    fileArray.put(JSONObject().apply { put("file", src) })
+                }
+            }
         }
 
 
@@ -350,20 +444,10 @@ class CinemacityProvider : MainAPI() {
                 ?.optString("file")
                 ?.takeIf { it.isNotBlank() }
 
-        val movieSubtitleTracks = parseSubtitles(
-            when {
-                playerJson.opt("subtitle") is String ->
-                    playerJson.optString("subtitle")
-                fileArray.optJSONObject(0)?.opt("subtitle") is String ->
-                    fileArray.optJSONObject(0)?.optString("subtitle")
-                else -> null
-            }
-        )
-
         val moviejson = movieHrefs?.let {
             JSONObject().apply {
                 put("streamUrl", it)
-                put("subtitleTracks", movieSubtitleTracks)
+                put("subtitleTracks", parsedSubtitles)
             }.toString()
         }
 
