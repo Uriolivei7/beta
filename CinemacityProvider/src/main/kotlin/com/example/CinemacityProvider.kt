@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.google.gson.Gson
 import com.lagradost.cloudstream3.Actor
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.HomePageResponse
@@ -53,10 +54,8 @@ class CinemacityProvider : MainAPI() {
         TvType.Movie, TvType.TvSeries, TvType.Cartoon, TvType.AsianDrama
     )
 
-    private var dynamicCookies: Map<String, String> = mapOf(
-        "dle_user_id" to "32729",
-        "dle_password" to "894171c6a8dab18ee594d5c652009a35"
-    )
+    private var dynamicCookies: Map<String, String> = emptyMap()
+    private val cfKiller = CloudflareKiller()
 
     private val protectionHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -66,7 +65,9 @@ class CinemacityProvider : MainAPI() {
         return app.get(
             url,
             headers = protectionHeaders + ("Referer" to "$mainUrl/"),
-            cookies = dynamicCookies
+            cookies = dynamicCookies,
+            interceptor = cfKiller,
+            timeout = 120L
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
