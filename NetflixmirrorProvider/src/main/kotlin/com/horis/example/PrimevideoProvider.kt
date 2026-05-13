@@ -100,6 +100,8 @@ class PrimevideoProvider : MainAPI() {
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val extraPlot = buildList {
+            //if (!director.isNullOrBlank()) add("Director: $director")
+            //if (!writer.isNullOrBlank()) add("Writer: $writer")
             if (!studio.isNullOrBlank()) add(" - Studio: $studio")
         }.takeIf { it.isNotEmpty() }?.joinToString("\n")
         val languagesText = if (!languages.isNullOrEmpty()) " - Audio: ${languages.joinToString(", ")}" else null

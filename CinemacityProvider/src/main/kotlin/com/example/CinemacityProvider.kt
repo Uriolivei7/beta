@@ -101,12 +101,21 @@ class CinemacityProvider : MainAPI() {
     override suspend fun getMainPage(
         page: Int, request: MainPageRequest
     ): HomePageResponse {
-        val base = request.data.trimEnd('/')
-        val url = if (page > 1) "$base/page/$page/" else "$base/"
-        val doc = doRequest(url).document
-        val home = doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
-        val hasNext = doc.select("a[href*='/page/'], .pnext, .next").isNotEmpty()
-        return newHomePageResponse(request.name, home, hasNext)
+        return try {
+            val base = request.data.trimEnd('/')
+            val url = if (page > 1) "$base/page/$page/" else "$base/"
+            Log.d("CinemacityMP", "getMainPage url: $url")
+            val resp = doRequest(url)
+            Log.d("CinemacityMP", "Status: ${resp.code}, doc length: ${resp.document.text().length}")
+            val home = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+            Log.d("CinemacityMP", "Items found: ${home.size}")
+            val hasNext = resp.document.select("a[href*='/page/'], .pnext, .next").isNotEmpty()
+            Log.d("CinemacityMP", "Has next page: $hasNext")
+            newHomePageResponse(request.name, home, hasNext)
+        } catch (e: Exception) {
+            Log.e("CinemacityMP", "getMainPage failed: ${e.message}", e)
+            throw e
+        }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -141,9 +150,22 @@ class CinemacityProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         return try {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
-            Log.d("CinemacitySearch", "Search URL: $url")
-            val resp = doRequest(url)
+            val url = "$mainUrl/index.php"
+            Log.d("CinemacitySearch", "Search URL: $url, query: $encoded")
+            val resp = app.post(
+                url,
+                headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
+                cookies = dynamicCookies,
+                data = mapOf(
+                    "do" to "search",
+                    "subaction" to "search",
+                    "search_start" to "1",
+                    "full_search" to "0",
+                    "story" to query
+                )
+            ).also {
+                if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
+            }
             Log.d("CinemacitySearch", "Status: ${resp.code}, doc length: ${resp.document.text().length}")
             val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
             Log.d("CinemacitySearch", "Results found: ${results.size}")
@@ -158,8 +180,11 @@ class CinemacityProvider : MainAPI() {
 
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d("CinemacityLoad", "load url: $url")
         val page = doRequest(url)
         val doc = page.document
+        Log.d("CinemacityLoad", "Status: ${page.code}, doc length: ${doc.text().length}")
+        Log.d("CinemacityLoad", "og:title: ${doc.selectFirst("meta[property=og:title]")?.attr("content")}")
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
         val title = ogTitle.substringBefore("(").trim()
@@ -259,7 +284,11 @@ class CinemacityProvider : MainAPI() {
             .select("script:containsData(atob)")
             .getOrNull(1)
             ?.data()
-            ?: error("PlayerJS not found; only torrent links available")
+        Log.d("CinemacityLoad", "playerScript found: ${playerScript != null}, length: ${playerScript?.length}")
+        if (playerScript == null) {
+            Log.e("CinemacityLoad", "PlayerJS not found; doc snippet: ${doc.text().take(500)}")
+            error("PlayerJS not found; only torrent links available")
+        }
 
         val decodedPlayer = base64Decode(
             playerScript.substringAfter("atob(\"").substringBefore("\")")
@@ -383,6 +412,7 @@ class CinemacityProvider : MainAPI() {
                     }
                 }
             }
+            Log.d("CinemacityLoad", "Returning TV series: ${responseData?.meta?.name ?: title}, episodes: ${episodeList.size}")
             return newTvSeriesLoadResponse(
                 responseData?.meta?.name ?: title,
                 url,
@@ -410,7 +440,7 @@ class CinemacityProvider : MainAPI() {
             }
         }
 
-        responseData?.meta?.appExtras?.certification?.let { Log.d("Phisher", it) }
+        Log.d("CinemacityLoad", "Returning movie: ${responseData?.meta?.name ?: title}")
 
         return newMovieLoadResponse(
             responseData?.meta?.name ?: title,
@@ -445,7 +475,7 @@ class CinemacityProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-
+        Log.d("CinemacityLinks", "loadLinks data length: ${data.length}, preview: ${data.take(200)}")
         val obj = JSONObject(data)
 
         obj.optJSONArray("subtitleTracks")?.let { subs ->
