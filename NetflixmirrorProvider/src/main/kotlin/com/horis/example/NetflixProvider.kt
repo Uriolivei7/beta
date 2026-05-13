@@ -94,13 +94,16 @@ class NetflixProvider : MainAPI() {
             if (!writer.isNullOrBlank()) add("Writer: $writer")
             if (!studio.isNullOrBlank()) add("Studio: $studio")
         }.takeIf { it.isNotEmpty() }?.joinToString("\n")
-        val fullPlot = listOfNotNull(data.desc, extraPlot).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
-        val languagesTag = if (!languages.isNullOrEmpty()) "Audio: ${languages.joinToString(", ")}" else null
+        val languagesText = if (!languages.isNullOrEmpty()) "Audio: ${languages.joinToString(", ")}" else null
         val tags = buildList {
             if (!genre.isNullOrEmpty()) addAll(genre)
-            if (languagesTag != null) add(languagesTag)
             if (!thisMovieIs.isNullOrBlank()) add(thisMovieIs)
         }.takeIf { it.isNotEmpty() }
+        val fullPlot = buildList {
+            data.desc?.let { add(it) }
+            languagesText?.let { add(it) }
+            extraPlot?.let { add(it) }
+        }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
 
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
