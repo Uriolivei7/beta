@@ -151,22 +151,9 @@ class CinemacityProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         return try {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = "$mainUrl/index.php"
-            Log.d("CinemacitySearch", "Search URL: $url, query: $encoded")
-            val resp = app.post(
-                url,
-                headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
-                cookies = dynamicCookies,
-                data = mapOf(
-                    "do" to "search",
-                    "subaction" to "search",
-                    "search_start" to "1",
-                    "full_search" to "0",
-                    "story" to query
-                )
-            ).also {
-                if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
-            }
+            val url = "$mainUrl/index.php?do=search&subaction=search&search_start=1&full_search=0&story=$encoded"
+            Log.d("CinemacitySearch", "Search URL: $url")
+            val resp = doRequest(url)
             Log.d("CinemacitySearch", "Status: ${resp.code}, doc length: ${resp.document.text().length}")
             val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
             Log.d("CinemacitySearch", "Results found: ${results.size}")
@@ -281,28 +268,41 @@ class CinemacityProvider : MainAPI() {
                 ?.associateBy { "${it.season}:${it.episode}" }
                 ?: emptyMap()
 
-        val playerScript = doc
-            .select("script:containsData(atob)")
-            .getOrNull(1)
-            ?.data()
+        val atobScripts = doc.select("script:containsData(atob)")
+        Log.d("CinemacityLoad", "atob scripts found: ${atobScripts.size}")
+        atobScripts.forEachIndexed { i, s ->
+            Log.d("CinemacityLoad", "atob[$i] data length: ${s.data()?.length}, preview: ${s.data()?.take(100)}")
+        }
+        val playerScript = atobScripts.getOrNull(1)?.data()
         Log.d("CinemacityLoad", "playerScript found: ${playerScript != null}, length: ${playerScript?.length}")
         if (playerScript == null) {
             Log.e("CinemacityLoad", "PlayerJS not found; doc snippet: ${doc.text().take(500)}")
             error("PlayerJS not found; only torrent links available")
         }
 
-        val decodedPlayer = base64Decode(
-            playerScript.substringAfter("atob(\"").substringBefore("\")")
-        )
+        val b64 = playerScript.substringAfter("atob(\"").substringBefore("\")")
+        Log.d("CinemacityLoad", "base64 string length: ${b64.length}, preview: ${b64.take(50)}")
+        val decodedPlayer = base64Decode(b64)
+        Log.d("CinemacityLoad", "decoded length: ${decodedPlayer?.length}, preview: ${decodedPlayer?.take(200)}")
 
-        val playerJson = JSONObject(
-            decodedPlayer
-                .substringAfter("new Playerjs(")
-                .substringBeforeLast(");")
-        )
+        val playerJsonStr = decodedPlayer
+            ?.substringAfter("new Playerjs(")
+            ?.substringBeforeLast(");")
+        Log.d("CinemacityLoad", "playerJsonStr length: ${playerJsonStr?.length}, preview: ${playerJsonStr?.take(200)}")
+        if (playerJsonStr.isNullOrBlank()) {
+            Log.e("CinemacityLoad", "Failed to parse Playerjs JSON. decoded: ${decodedPlayer?.take(500)}")
+            error("PlayerJS: cannot parse player JSON")
+        }
+
+        val playerJson = JSONObject(playerJsonStr)
+        Log.d("CinemacityLoad", "playerJson keys: ${playerJson.names()}")
 
         val rawFile = playerJson.opt("file")
-            ?: error("PlayerJS: missing file field")
+        Log.d("CinemacityLoad", "rawFile value: '$rawFile' (type: ${rawFile?.javaClass?.simpleName})")
+        if (rawFile == null) {
+            Log.e("CinemacityLoad", "PlayerJS: missing file field. Full JSON: $playerJsonStr")
+            error("PlayerJS: missing file field")
+        }
 
         val fileArray: JSONArray = when (rawFile) {
             is JSONArray -> rawFile
