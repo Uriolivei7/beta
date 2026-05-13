@@ -90,11 +90,9 @@ class NetflixProvider : MainAPI() {
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
         val extraPlot = buildList {
-            if (!director.isNullOrBlank()) add("Director: $director")
-            if (!writer.isNullOrBlank()) add("Writer: $writer")
-            if (!studio.isNullOrBlank()) add("Studio: $studio")
+            if (!studio.isNullOrBlank()) add(" - Studio: $studio")
         }.takeIf { it.isNotEmpty() }?.joinToString("\n")
-        val languagesText = if (!languages.isNullOrEmpty()) "Audio: ${languages.joinToString(", ")}" else null
+        val languagesText = if (!languages.isNullOrEmpty()) " - Audio: ${languages.joinToString(", ")}" else null
         val tags = buildList {
             if (!genre.isNullOrEmpty()) addAll(genre)
             if (!thisMovieIs.isNullOrBlank()) add(thisMovieIs)
