@@ -201,13 +201,15 @@ class CinemacityProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 30000L)
-            .let { warm ->
-                if (warm.cookies.isNotEmpty()) {
-                    dynamicCookies = dynamicCookies + warm.cookies
-                    Log.d("Cinemacity", "WarmUp: added cookies ${warm.cookies.keys}")
+        if (dynamicCookies.keys.none { it.contains("cf_clearance", ignoreCase = true) }) {
+            app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 10000L)
+                .let { warm ->
+                    if (warm.cookies.isNotEmpty()) {
+                        dynamicCookies = dynamicCookies + warm.cookies
+                        Log.d("Cinemacity", "WarmUp: added cookies ${warm.cookies.keys}")
+                    }
                 }
-            }
+        }
 
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
         val resp = app.post(
@@ -232,7 +234,30 @@ class CinemacityProvider : MainAPI() {
         return results
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        if (dynamicCookies.keys.none { it.contains("cf_clearance", ignoreCase = true) }) {
+            app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 10000L)
+                .let { warm ->
+                    if (warm.cookies.isNotEmpty()) {
+                        dynamicCookies = dynamicCookies + warm.cookies
+                        Log.d("Cinemacity", "quickSearch WarmUp: added cookies ${warm.cookies.keys}")
+                    }
+                }
+        }
+        val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
+        val resp = app.post(
+            mainUrl,
+            headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
+            cookies = dynamicCookies,
+            data = formData,
+            timeout = 120L,
+            interceptor = cfKiller
+        ).also {
+            if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
+        }
+        if (resp.code != 200) return null
+        return resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+    }
 
 
     override suspend fun load(url: String): LoadResponse {
@@ -241,8 +266,7 @@ class CinemacityProvider : MainAPI() {
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
         val title = ogTitle.substringBefore("(").trim()
-        var poster = doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
-        tmdbSearchCached(title.split(" /", " (", " -")[0].trim())?.let { poster = it }
+        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
         val bgposter = doc.selectFirst("div.dar-full_bg a")?.attr("href")
         val trailer = doc.select("div.dar-full_bg.e-cover > div").attr("data-vbg")
 
@@ -324,6 +348,16 @@ class CinemacityProvider : MainAPI() {
         }
 
         val castList = parseCredits(creditsJson)
+
+        val tmdbPoster = tmdbId?.let { id ->
+            runCatching {
+                val obj = JSONObject(app.get(
+                    "https://api.themoviedb.org/3/$tmdbmetatype/$id?api_key=1865f43a0549ca50d341dd9ab8b29f49"
+                ).textLarge)
+                obj.optString("poster_path").takeIf { it.isNotBlank() }
+                    ?.let { "$TMDBIMAGEBASEURL$it" }
+            }.getOrNull()
+        }
         val typeset = if (tvtype == TvType.TvSeries) "series" else "movie"
 
         val responseData = imdbId?.takeIf { it.isNotBlank() }?.let {
@@ -491,7 +525,7 @@ class CinemacityProvider : MainAPI() {
                 episodeList
             ) {
                 this.backgroundPosterUrl = background ?: bgposter
-                this.posterUrl = poster
+                this.posterUrl = tmdbPoster ?: poster
                 this.year = year ?: responseData?.meta?.year?.toIntOrNull()
                 this.plot = buildString {
                     append(description ?: descriptions)
@@ -517,7 +551,7 @@ class CinemacityProvider : MainAPI() {
             moviejson ?: "{}"
         ) {
             this.backgroundPosterUrl = background ?: bgposter
-            this.posterUrl = poster
+            this.posterUrl = tmdbPoster ?: poster
             this.year = year ?: responseData?.meta?.year?.toIntOrNull()
             this.plot = buildString {
                 append(description ?: descriptions)
