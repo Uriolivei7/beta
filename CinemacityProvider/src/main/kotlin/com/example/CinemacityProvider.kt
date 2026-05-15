@@ -201,16 +201,6 @@ class CinemacityProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        if (dynamicCookies.keys.none { it.contains("cf_clearance", ignoreCase = true) }) {
-            app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 10000L)
-                .let { warm ->
-                    if (warm.cookies.isNotEmpty()) {
-                        dynamicCookies = dynamicCookies + warm.cookies
-                        Log.d("Cinemacity", "WarmUp: added cookies ${warm.cookies.keys}")
-                    }
-                }
-        }
-
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
         val resp = app.post(
             mainUrl,
@@ -235,15 +225,6 @@ class CinemacityProvider : MainAPI() {
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        if (dynamicCookies.keys.none { it.contains("cf_clearance", ignoreCase = true) }) {
-            app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 10000L)
-                .let { warm ->
-                    if (warm.cookies.isNotEmpty()) {
-                        dynamicCookies = dynamicCookies + warm.cookies
-                        Log.d("Cinemacity", "quickSearch WarmUp: added cookies ${warm.cookies.keys}")
-                    }
-                }
-        }
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
         val resp = app.post(
             mainUrl,

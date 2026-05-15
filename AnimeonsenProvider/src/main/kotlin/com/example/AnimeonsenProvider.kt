@@ -29,46 +29,6 @@ class AnimeonsenProvider : MainAPI() {
     private val userAgent = "Aniyomi/App (mobile)"
     private val TAG = "AnimeOnsen"
 
-    private val tmdbPosterCache = mutableMapOf<String, String>()
-    private val tmdbApiKey = "1865f43a0549ca50d341dd9ab8b29f49"
-    private val tmdbImageBase = "https://image.tmdb.org/t/p/original"
-
-    private data class TmdbSearchResult(val results: List<TmdbItem>? = null)
-    private data class TmdbItem(val title: String? = null, val name: String? = null, val poster_path: String? = null)
-
-    private suspend fun tmdbSearchCached(cleanTitle: String): String? {
-        val key = cleanTitle.lowercase().trim()
-        tmdbPosterCache[key]?.let { Log.d(TAG, "tmdbCache HIT for '$key'"); return it }
-        val result = runCatching {
-            val enc = URLEncoder.encode(cleanTitle, "UTF-8")
-            val resp = app.get(
-                "https://api.themoviedb.org/3/search/multi?api_key=$tmdbApiKey&query=$enc",
-                timeout = 8000L
-            )
-            val parsed = AppUtils.parseJson<TmdbSearchResult>(resp.text)
-            val results = parsed.results ?: emptyList()
-            val limit = if (results.size > 3) 3 else results.size
-            for (i in 0 until limit) {
-                val item = results[i]
-                val tmdbTitle = (item.title ?: item.name ?: "").lowercase().trim()
-                val path = item.poster_path ?: continue
-                if (path.isNotBlank() && (tmdbTitle == key || key.contains(tmdbTitle) || tmdbTitle.contains(key))) {
-                    Log.d(TAG, "tmdbSearch: '$key' matched '$tmdbTitle'")
-                    return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
-                }
-            }
-            results.firstOrNull()?.poster_path?.takeIf { it.isNotBlank() }
-                ?.let {
-                    val p = "$tmdbImageBase$it"
-                    Log.d(TAG, "tmdbSearch: '$key' fallback")
-                    tmdbPosterCache[key] = p
-                    p
-                }
-        }.getOrNull()
-        if (result == null) Log.d(TAG, "tmdbSearch: '$key' no result")
-        return result
-    }
-
     private val homeGenres = listOf(
         "Acción" to "action",
         "Aventura" to "adventure",
@@ -220,13 +180,7 @@ class AnimeonsenProvider : MainAPI() {
         val displayTitle = details.getTitle()
         val posterImg = "https://api.animeonsen.xyz/v4/image/210x300/$contentId"
 
-        val cleanForTmdb = displayTitle.replace(Regex("\\s*\\([^)]*\\)\\s*$"), "").trim()
-        val tmdbPoster = tmdbSearchCached(cleanForTmdb)
-        val finalPoster = tmdbPoster ?: posterImg
-        Log.d(TAG, "Logs: Poster: ${if (tmdbPoster != null) "TMDB" else "Original"} (title='$cleanForTmdb')")
-
-        var pageDescription = details.mal_data?.synopsis ?: ""
-        val subtitleLangs = mutableListOf<String>()
+        var plotText = details.mal_data?.synopsis ?: ""
         try {
             val subResp = app.get(
                 "$apiUrl/subtitles/$contentId/languages",
@@ -240,10 +194,11 @@ class AnimeonsenProvider : MainAPI() {
                 timeout = 10
             ).text
             val subMap = AppUtils.parseJson<Map<String, String>>(subResp)
-            subMap.values.forEach { langName ->
-                if (langName.isNotBlank() && !subtitleLangs.contains(langName)) subtitleLangs.add(langName)
+            val subList = subMap.values.joinToString(", ")
+            if (subList.isNotBlank()) {
+                plotText += "\n\n-- Subtítulos Disponibles: $subList"
             }
-            Log.d(TAG, "Logs: Subtitle API OK - languages=${subtitleLangs.size} $subtitleLangs")
+            Log.d(TAG, "Logs: Subtitle API OK - $subList")
         } catch (e: Exception) {
             Log.d(TAG, "Logs: Subtitle API falló: ${e.message}")
         }
@@ -257,7 +212,7 @@ class AnimeonsenProvider : MainAPI() {
                 newEpisode("$contentId/video/$epKey") {
                     this.name = item.contentTitle_episode_en ?: item.contentTitle_episode_jp ?: "Episode $epKey"
                     this.episode = epKey.toIntOrNull()
-                    this.posterUrl = finalPoster
+                    this.posterUrl = posterImg
                 }
             }.sortedBy { it.episode }
         } catch (e: Exception) {
@@ -266,14 +221,7 @@ class AnimeonsenProvider : MainAPI() {
         }
 
         return newAnimeLoadResponse(displayTitle, url, TvType.Anime) {
-            this.posterUrl = finalPoster
-
-            val plotText = buildString {
-                append(pageDescription)
-                if (subtitleLangs.isNotEmpty()) {
-                    append("\n\n -- Subtítulos Disponibles: ${subtitleLangs.joinToString(", ")}")
-                }
-            }
+            this.posterUrl = posterImg
             this.plot = plotText.takeIf { it.isNotBlank() }
 
             this.score = Score.from10(details.mal_data?.mean_score)
@@ -299,7 +247,6 @@ class AnimeonsenProvider : MainAPI() {
             details.mal_data?.genres?.forEach { genre: Genre ->
                 tagsList.add(genre.name)
             }
-            //subtitleLangs.forEach { lang -> tagsList.add("Sub: $lang") }
             this.tags = tagsList
 
             this.showStatus = when (details.mal_data?.status) {
