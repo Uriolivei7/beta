@@ -3,9 +3,7 @@ package com.example
 import android.util.Base64
 import android.util.Log
 import com.google.gson.Gson
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+
 import com.lagradost.cloudstream3.Actor
 import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.Episode
@@ -168,27 +166,27 @@ class CinemacityProvider : MainAPI() {
         val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
         Log.d("Cinemacity", "Search: query='$query', total items=${results.size}")
 
-        // Download posters as data URIs to bypass Cloudflare for image loader
+        // Download posters as data URIs (cf_clearance already in cookies from search POST)
         if (results.isNotEmpty()) {
-            coroutineScope {
-                results.map { item ->
-                    async {
-                        val posterUrl = item.posterUrl
-                        if (posterUrl != null && posterUrl.startsWith("https://cinemacity.cc")) {
-                            runCatching {
-                                Log.d("Cinemacity", "PosterDownload: starting $posterUrl")
-                                val imgResp = app.get(posterUrl, timeout = 15000L, interceptor = cfKiller, cookies = dynamicCookies)
-                                val imgBytes = imgResp.body.bytes()
-                                val b64 = Base64.encodeToString(imgBytes, Base64.NO_WRAP)
-                                val ext = posterUrl.substringAfterLast(".", "webp")
-                                item.posterUrl = "data:image/$ext;base64,$b64"
-                                Log.d("Cinemacity", "PosterDownload: OK ${posterUrl.substringAfterLast("/")} -> ${b64.length} chars")
-                            }.onFailure { e ->
-                                Log.w("Cinemacity", "PosterDownload: FAILED $posterUrl - ${e.message}")
-                            }
+            results.forEach { item ->
+                val posterUrl = item.posterUrl
+                if (posterUrl != null && posterUrl.startsWith("https://cinemacity.cc")) {
+                    runCatching {
+                        Log.d("Cinemacity", "PosterDownload: starting $posterUrl")
+                        val imgResp = app.get(posterUrl, timeout = 15000L, cookies = dynamicCookies)
+                        if (imgResp.code in 200..299) {
+                            val imgBytes = imgResp.body.bytes()
+                            val b64 = Base64.encodeToString(imgBytes, Base64.NO_WRAP)
+                            val ext = posterUrl.substringAfterLast(".", "webp")
+                            item.posterUrl = "data:image/$ext;base64,$b64"
+                            Log.d("Cinemacity", "PosterDownload: OK ${posterUrl.substringAfterLast("/")} -> ${b64.length} chars")
+                        } else {
+                            Log.w("Cinemacity", "PosterDownload: HTTP ${imgResp.code} -> $posterUrl")
                         }
+                    }.onFailure { e ->
+                        Log.w("Cinemacity", "PosterDownload: FAILED $posterUrl - ${e.message}")
                     }
-                }.awaitAll()
+                }
             }
         }
 
