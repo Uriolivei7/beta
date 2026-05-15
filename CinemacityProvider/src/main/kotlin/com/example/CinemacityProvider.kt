@@ -2,6 +2,9 @@ package com.example
 
 import android.util.Log
 import com.google.gson.Gson
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 import com.lagradost.cloudstream3.Actor
 import com.lagradost.cloudstream3.ActorData
@@ -99,6 +102,34 @@ class CinemacityProvider : MainAPI() {
         "$mainUrl/movies/" to "Movies",
     )
 
+    private suspend fun enrichTmdbPosters(results: List<SearchResponse>) {
+        if (results.isEmpty()) return
+        val cleaned = results.map { it.name.split(" /", " (", " -", ":")[0].trim().lowercase() }.distinct()
+        val map = mutableMapOf<String, String>()
+        coroutineScope {
+            cleaned.map { clean ->
+                async {
+                    runCatching {
+                        val enc = java.net.URLEncoder.encode(clean, "UTF-8")
+                        val resp = app.get(
+                            "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$enc",
+                            timeout = 8000L
+                        )
+                        val arr = JSONObject(resp.text).optJSONArray("results")
+                        if (arr != null && arr.length() > 0) {
+                            val path = arr.getJSONObject(0).optString("poster_path")
+                            if (path.isNotBlank()) clean to "$TMDBIMAGEBASEURL$path" else null
+                        } else null
+                    }.getOrNull()
+                }
+            }.awaitAll().filterNotNull().toMap(map)
+        }
+        results.forEach { sr ->
+            val clean = sr.name.split(" /", " (", " -", ":")[0].trim().lowercase()
+            map[clean]?.let { sr.posterUrl = it }
+        }
+    }
+
     override suspend fun getMainPage(
         page: Int, request: MainPageRequest
     ): HomePageResponse {
@@ -107,6 +138,7 @@ class CinemacityProvider : MainAPI() {
         val doc = doRequest(url).document
         val home = doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
         val hasNext = doc.select("a[href*='/page/'], .pnext, .next").isNotEmpty()
+        enrichTmdbPosters(home)
         return newHomePageResponse(request.name, home, hasNext)
     }
 
@@ -169,38 +201,7 @@ class CinemacityProvider : MainAPI() {
 
         val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
         Log.d("Cinemacity", "Search: query='$query', total items=${results.size}")
-
-        if (results.isNotEmpty()) {
-            runCatching {
-                val tmdbQuery = java.net.URLEncoder.encode(query, "UTF-8")
-                val tmdbResp = app.get(
-                    "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$tmdbQuery",
-                    timeout = 10000L
-                )
-                val tmdbArr = JSONObject(tmdbResp.text).optJSONArray("results") ?: JSONArray()
-                val tmdbPosters = mutableMapOf<String, String>()
-                for (i in 0 until tmdbArr.length()) {
-                    val item = tmdbArr.getJSONObject(i)
-                    val title = item.optString("title").takeIf { it.isNotBlank() }
-                        ?: item.optString("name") ?: continue
-                    val posterPath = item.optString("poster_path") ?: continue
-                    if (posterPath.isNotBlank()) {
-                        tmdbPosters[title.lowercase().trim()] = "$TMDBIMAGEBASEURL$posterPath"
-                    }
-                }
-                results.forEach { sr ->
-                    val key = sr.name.lowercase().trim()
-                    val tmdbUrl = tmdbPosters[key] ?: tmdbPosters.entries.firstOrNull { (t, _) ->
-                        key.contains(t) || t.contains(key)
-                    }?.value
-                    if (tmdbUrl != null) {
-                        sr.posterUrl = tmdbUrl
-                        Log.d("Cinemacity", "TMDB poster for '${sr.name}': $tmdbUrl")
-                    }
-                }
-            }
-        }
-
+        enrichTmdbPosters(results)
         return results
     }
 
