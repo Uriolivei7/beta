@@ -5,7 +5,7 @@ import androidx.coordinatorlayout.R.id.async
 import androidx.core.R.id.async
 import com.google.gson.annotations.SerializedName
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.CloudflareKiller
+
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.*
@@ -23,8 +23,6 @@ class AnimeonsenProvider : MainAPI() {
     override val hasMainPage = true
     override var lang = "en"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-
-    private val cfKiller = CloudflareKiller()
 
     private val apiUrl = "https://api.animeonsen.xyz/v4"
     private var accessToken: String? = null
@@ -49,20 +47,25 @@ class AnimeonsenProvider : MainAPI() {
             )
             val parsed = AppUtils.parseJson<TmdbSearchResult>(resp.text)
             val results = parsed.results ?: emptyList()
-            val limit = if (results.size > 3) 3 else results.size
-            for (i in 0 until limit) {
+            for (i in 0 until results.size) {
                 val item = results[i]
                 val tmdbTitle = (item.title ?: item.name ?: "").lowercase().trim()
                 val path = item.poster_path ?: continue
-                if (path.isNotBlank() && (tmdbTitle == key || key.contains(tmdbTitle) || tmdbTitle.contains(key))) {
-                    Log.d(TAG, "tmdbSearch: '$key' matched '$tmdbTitle'")
-                    return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
+                if (path.isNotBlank()) {
+                    if (tmdbTitle == key) {
+                        Log.d(TAG, "tmdbSearch: '$key' exact match '$tmdbTitle'")
+                        return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
+                    }
+                    if (tmdbTitle.contains(key)) {
+                        Log.d(TAG, "tmdbSearch: '$key' specific match '$tmdbTitle'")
+                        return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
+                    }
                 }
             }
             results.firstOrNull()?.poster_path?.takeIf { it.isNotBlank() }
                 ?.let {
                     val p = "$tmdbImageBase$it"
-                    Log.d(TAG, "tmdbSearch: '$key' fallback")
+                    Log.d(TAG, "tmdbSearch: '$key' fallback to first result")
                     tmdbPosterCache[key] = p
                     p
                 }
@@ -230,25 +233,24 @@ class AnimeonsenProvider : MainAPI() {
         var pageDescription = details.mal_data?.synopsis ?: ""
         val subtitleLangs = mutableListOf<String>()
         try {
-            val doc = app.get(
-                "https://www.animeonsen.xyz/details/$contentId",
-                headers = requestHeaders + ("Accept-Language" to "en-US,en;q=0.9"),
-                timeout = 15,
-                interceptor = cfKiller
-            ).document
-            doc.select("div.description span, .description span, meta[property=og:description]").firstOrNull()?.let {
-                if (pageDescription.isBlank()) pageDescription = when (it.tagName()) {
-                    "meta" -> it.attr("content").trim()
-                    else -> it.text().trim()
-                }
+            val subResp = app.get(
+                "$apiUrl/subtitles/$contentId/languages",
+                headers = mapOf(
+                    "Authorization" to "Bearer $token",
+                    "Accept" to "application/json, text/plain, */*",
+                    "Origin" to "https://www.animeonsen.xyz",
+                    "Referer" to "https://www.animeonsen.xyz/",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                ),
+                timeout = 10
+            ).text
+            val subMap = AppUtils.parseJson<Map<String, String>>(subResp)
+            subMap.values.forEach { langName ->
+                if (langName.isNotBlank() && !subtitleLangs.contains(langName)) subtitleLangs.add(langName)
             }
-            doc.select(".language-flag img[alt], .sub-lang, [class*=language] img[alt], .subtitles img[alt]").forEach {
-                val lang = it.attr("alt").trim()
-                if (lang.isNotBlank() && !subtitleLangs.contains(lang)) subtitleLangs.add(lang)
-            }
-            Log.d(TAG, "Logs: Page scrape OK - subtitles=${subtitleLangs.size}, desc=${pageDescription.take(50)}")
+            Log.d(TAG, "Logs: Subtitle API OK - languages=${subtitleLangs.size} $subtitleLangs")
         } catch (e: Exception) {
-            Log.d(TAG, "Logs: Page scrape opcional falló: ${e.message}")
+            Log.d(TAG, "Logs: Subtitle API falló: ${e.message}")
         }
 
         val episodesList = try {
