@@ -76,9 +76,54 @@ class CinemacityProvider : MainAPI() {
         }
     }
 
+    private val tmdbPosterCache = mutableMapOf<String, String>()
+
+    private suspend fun tmdbSearchCached(cleanTitle: String): String? {
+        val key = cleanTitle.lowercase().trim()
+        tmdbPosterCache[key]?.let { return it }
+        return runCatching {
+            val enc = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
+            val resp = app.get(
+                "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$enc",
+                timeout = 8000L
+            )
+            val tmdbArr = JSONObject(resp.text).optJSONArray("results") ?: JSONArray()
+            val limit = if (tmdbArr.length() > 3) 3 else tmdbArr.length()
+            for (i in 0 until limit) {
+                val item = tmdbArr.getJSONObject(i)
+                val tmdbTitle =
+                    (item.optString("title").takeIf { it.isNotBlank() } ?: item.optString("name")
+                    ?: "").lowercase().trim()
+                val path = item.optString("poster_path") ?: continue
+                if (path.isNotBlank() && (tmdbTitle == key || key.contains(tmdbTitle) || tmdbTitle.contains(
+                        key
+                    ))
+                ) {
+                    return "$TMDBIMAGEBASEURL$path".also { tmdbPosterCache[key] = it }
+                }
+            }
+            tmdbArr.optJSONObject(0)?.optString("poster_path")?.takeIf { it.isNotBlank() }
+                ?.let { "$TMDBIMAGEBASEURL$it".also { p -> tmdbPosterCache[key] = p } }
+        }.getOrNull()
+    }
+
+    private suspend fun enrichTmdbPosters(results: List<SearchResponse>) {
+        if (results.isEmpty()) return
+        val cleaned =
+            results.map { it.name.split(" /", " (", " -", ":")[0].trim().lowercase() }.distinct()
+        coroutineScope {
+            cleaned.map { clean -> async { tmdbSearchCached(clean) } }.awaitAll()
+        }
+        results.forEach { sr ->
+            val clean = sr.name.split(" /", " (", " -", ":")[0].trim().lowercase()
+            tmdbPosterCache[clean]?.let { sr.posterUrl = it }
+        }
+    }
+
     companion object {
         private const val TMDBIMAGEBASEURL = "https://image.tmdb.org/t/p/original"
-        private const val cinemeta_url = "https://aiometadata.elfhosted.com/stremio/b7cb164b-074b-41d5-b458-b3a834e197bb/meta"
+        private const val cinemeta_url =
+            "https://aiometadata.elfhosted.com/stremio/b7cb164b-074b-41d5-b458-b3a834e197bb/meta"
     }
 
     fun parseCredits(jsonText: String?): List<ActorData> {
@@ -88,8 +133,11 @@ class CinemacityProvider : MainAPI() {
         val castArr = root.optJSONArray("cast") ?: return list
         for (i in 0 until castArr.length()) {
             val c = castArr.optJSONObject(i) ?: continue
-            val name = c.optString("name").takeIf { it.isNotBlank() } ?: c.optString("original_name").orEmpty()
-            val profile = c.optString("profile_path").takeIf { it.isNotBlank() }?.let { "$TMDBIMAGEBASEURL$it" }
+            val name =
+                c.optString("name").takeIf { it.isNotBlank() } ?: c.optString("original_name")
+                    .orEmpty()
+            val profile = c.optString("profile_path").takeIf { it.isNotBlank() }
+                ?.let { "$TMDBIMAGEBASEURL$it" }
             val character = c.optString("character").takeIf { it.isNotBlank() }
             val actor = Actor(name, profile)
             list += ActorData(actor, roleString = character)
@@ -101,34 +149,6 @@ class CinemacityProvider : MainAPI() {
         "$mainUrl/tv-series/" to "Series",
         "$mainUrl/movies/" to "Movies",
     )
-
-    private suspend fun enrichTmdbPosters(results: List<SearchResponse>) {
-        if (results.isEmpty()) return
-        val cleaned = results.map { it.name.split(" /", " (", " -", ":")[0].trim().lowercase() }.distinct()
-        val map = mutableMapOf<String, String>()
-        coroutineScope {
-            cleaned.map { clean ->
-                async {
-                    runCatching {
-                        val enc = java.net.URLEncoder.encode(clean, "UTF-8")
-                        val resp = app.get(
-                            "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$enc",
-                            timeout = 8000L
-                        )
-                        val arr = JSONObject(resp.text).optJSONArray("results")
-                        if (arr != null && arr.length() > 0) {
-                            val path = arr.getJSONObject(0).optString("poster_path")
-                            if (path.isNotBlank()) clean to "$TMDBIMAGEBASEURL$path" else null
-                        } else null
-                    }.getOrNull()
-                }
-            }.awaitAll().filterNotNull().toMap(map)
-        }
-        results.forEach { sr ->
-            val clean = sr.name.split(" /", " (", " -", ":")[0].trim().lowercase()
-            map[clean]?.let { sr.posterUrl = it }
-        }
-    }
 
     override suspend fun getMainPage(
         page: Int, request: MainPageRequest
@@ -154,10 +174,13 @@ class CinemacityProvider : MainAPI() {
         val imgSrc = img?.attr("src")
         val imgDataSrc = img?.attr("data-src")
         val poster = fixUrlNull(imgSrc) ?: fixUrlNull(imgDataSrc)
-        Log.d("Cinemacity", "SearchResult: title='$title', img=$img, src='$imgSrc', data-src='$imgDataSrc', poster='$poster'")
+        Log.d(
+            "Cinemacity",
+            "SearchResult: title='$title', img=$img, src='$imgSrc', data-src='$imgDataSrc', poster='$poster'"
+        )
         val isTv = href.contains("/tv-series/")
         val score = this.selectFirst("span.rating-color")?.text()
-        val date  = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
+        val date = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
 
         return if (isTv) {
             newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
@@ -175,12 +198,13 @@ class CinemacityProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 30000L).let { warm ->
-            if (warm.cookies.isNotEmpty()) {
-                dynamicCookies = dynamicCookies + warm.cookies
-                Log.d("Cinemacity", "WarmUp: added cookies ${warm.cookies.keys}")
+        app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 30000L)
+            .let { warm ->
+                if (warm.cookies.isNotEmpty()) {
+                    dynamicCookies = dynamicCookies + warm.cookies
+                    Log.d("Cinemacity", "WarmUp: added cookies ${warm.cookies.keys}")
+                }
             }
-        }
 
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
         val resp = app.post(
@@ -238,12 +262,16 @@ class CinemacityProvider : MainAPI() {
             val recImgSrc = recImg?.attr("src")
             val recImgDataSrc = recImg?.attr("data-src")
             val recPosterUrl = fixUrlNull(recImgSrc) ?: fixUrlNull(recImgDataSrc)
-            Log.d("Cinemacity", "Recommendation: title='$recTitle', img=$recImg, src='$recImgSrc', data-src='$recImgDataSrc', poster='$recPosterUrl'")
+            Log.d(
+                "Cinemacity",
+                "Recommendation: title='$recTitle', img=$recImg, src='$recImgSrc', data-src='$recImgDataSrc', poster='$recPosterUrl'"
+            )
 
             newMovieSearchResponse(recTitle, recHref, TvType.Movie) {
                 this.posterUrl = recPosterUrl
             }
         }
+        enrichTmdbPosters(recommendation)
 
         val year = ogTitle.substringAfter("(", "").substringBefore(")").toIntOrNull()
         val contenttype = doc.select("div.dar-full_meta > span:nth-child(5) > a").text()
@@ -271,8 +299,10 @@ class CinemacityProvider : MainAPI() {
                     ).textLarge
                 )
 
-                obj.optJSONArray("movie_results")?.optJSONObject(0)?.optInt("id")?.takeIf { it != 0 }
-                    ?: obj.optJSONArray("tv_results")?.optJSONObject(0)?.optInt("id")?.takeIf { it != 0 }
+                obj.optJSONArray("movie_results")?.optJSONObject(0)?.optInt("id")
+                    ?.takeIf { it != 0 }
+                    ?: obj.optJSONArray("tv_results")?.optJSONObject(0)?.optInt("id")
+                        ?.takeIf { it != 0 }
             }.getOrNull()?.toString()
         }
 
