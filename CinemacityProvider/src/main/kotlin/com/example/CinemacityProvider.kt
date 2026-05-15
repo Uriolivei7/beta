@@ -18,6 +18,7 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.addDate
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.base64Decode
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.fixUrlNull
@@ -59,11 +60,14 @@ class CinemacityProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
+    private val cfKiller = CloudflareKiller()
+
     private suspend fun doRequest(url: String): NiceResponse {
         return app.get(
             url,
             headers = protectionHeaders + ("Referer" to "$mainUrl/"),
-            cookies = dynamicCookies
+            cookies = dynamicCookies,
+            interceptor = cfKiller
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
@@ -148,7 +152,8 @@ class CinemacityProvider : MainAPI() {
             headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
             cookies = dynamicCookies,
             data = formData,
-            timeout = 120L
+            timeout = 120L,
+            interceptor = cfKiller
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
