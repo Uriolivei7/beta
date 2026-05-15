@@ -217,7 +217,7 @@ class CinemacityProvider : MainAPI() {
             headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
             cookies = dynamicCookies,
             data = formData,
-            timeout = 120L,
+            timeout = 15000L,
             interceptor = cfKiller
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
@@ -250,7 +250,7 @@ class CinemacityProvider : MainAPI() {
             headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
             cookies = dynamicCookies,
             data = formData,
-            timeout = 120L,
+            timeout = 15000L,
             interceptor = cfKiller
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
