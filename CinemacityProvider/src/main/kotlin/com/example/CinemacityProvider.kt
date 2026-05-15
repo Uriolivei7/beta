@@ -51,7 +51,7 @@ class CinemacityProvider : MainAPI() {
     override val hasDownloadSupport = false
     override val hasQuickSearch = true
     override val supportedTypes = setOf(
-        TvType.Movie, TvType.TvSeries, TvType.Cartoon, TvType.AsianDrama
+        TvType.Movie, TvType.TvSeries, TvType.Cartoon, TvType.AsianDrama, TvType.Anime
     )
 
     private var dynamicCookies: Map<String, String> = mapOf(

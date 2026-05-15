@@ -28,6 +28,46 @@ class AnimeonsenProvider : MainAPI() {
     private val userAgent = "Aniyomi/App (mobile)"
     private val TAG = "AnimeOnsen"
 
+    private val tmdbPosterCache = mutableMapOf<String, String>()
+    private val tmdbApiKey = "1865f43a0549ca50d341dd9ab8b29f49"
+    private val tmdbImageBase = "https://image.tmdb.org/t/p/original"
+
+    private data class TmdbSearchResult(val results: List<TmdbItem>? = null)
+    private data class TmdbItem(val title: String? = null, val name: String? = null, val poster_path: String? = null)
+
+    private suspend fun tmdbSearchCached(cleanTitle: String): String? {
+        val key = cleanTitle.lowercase().trim()
+        tmdbPosterCache[key]?.let { Log.d(TAG, "tmdbCache HIT for '$key'"); return it }
+        val result = runCatching {
+            val enc = URLEncoder.encode(cleanTitle, "UTF-8")
+            val resp = app.get(
+                "https://api.themoviedb.org/3/search/multi?api_key=$tmdbApiKey&query=$enc",
+                timeout = 8000L
+            )
+            val parsed = AppUtils.parseJson<TmdbSearchResult>(resp.text)
+            val results = parsed.results ?: emptyList()
+            val limit = if (results.size > 3) 3 else results.size
+            for (i in 0 until limit) {
+                val item = results[i]
+                val tmdbTitle = (item.title ?: item.name ?: "").lowercase().trim()
+                val path = item.poster_path ?: continue
+                if (path.isNotBlank() && (tmdbTitle == key || key.contains(tmdbTitle) || tmdbTitle.contains(key))) {
+                    Log.d(TAG, "tmdbSearch: '$key' matched '$tmdbTitle'")
+                    return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
+                }
+            }
+            results.firstOrNull()?.poster_path?.takeIf { it.isNotBlank() }
+                ?.let {
+                    val p = "$tmdbImageBase$it"
+                    Log.d(TAG, "tmdbSearch: '$key' fallback")
+                    tmdbPosterCache[key] = p
+                    p
+                }
+        }.getOrNull()
+        if (result == null) Log.d(TAG, "tmdbSearch: '$key' no result")
+        return result
+    }
+
     private val homeGenres = listOf(
         "Acción" to "action",
         "Aventura" to "adventure",
@@ -179,6 +219,29 @@ class AnimeonsenProvider : MainAPI() {
         val displayTitle = details.getTitle()
         val posterImg = "https://api.animeonsen.xyz/v4/image/210x300/$contentId"
 
+        val tmdbPoster = tmdbSearchCached(displayTitle)
+        val finalPoster = tmdbPoster ?: posterImg
+        Log.d(TAG, "Logs: Poster: ${if (tmdbPoster != null) "TMDB" else "Original"}")
+
+        var pageDescription = details.mal_data?.synopsis ?: ""
+        val subtitleLangs = mutableListOf<String>()
+        try {
+            val doc = app.get(
+                "https://www.animeonsen.xyz/details/$contentId",
+                headers = requestHeaders,
+                timeout = 15
+            ).document
+            doc.select("div.description span").firstOrNull()?.let {
+                if (pageDescription.isBlank()) pageDescription = it.text().trim()
+            }
+            doc.select(".content-languages .subtitles .language-flag img[alt]").forEach {
+                val lang = it.attr("alt").trim()
+                if (lang.isNotBlank()) subtitleLangs.add(lang)
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Logs: Page scrape opcional falló: ${e.message}")
+        }
+
         val episodesList = try {
             Log.d(TAG, "Logs: Pidiendo episodios para $contentId")
             val epResponse = app.get("$apiUrl/content/$contentId/episodes", headers = requestHeaders, timeout = 25).text
@@ -188,7 +251,7 @@ class AnimeonsenProvider : MainAPI() {
                 newEpisode("$contentId/video/$epKey") {
                     this.name = item.contentTitle_episode_en ?: item.contentTitle_episode_jp ?: "Episode $epKey"
                     this.episode = epKey.toIntOrNull()
-                    this.posterUrl = posterImg
+                    this.posterUrl = finalPoster
                 }
             }.sortedBy { it.episode }
         } catch (e: Exception) {
@@ -197,8 +260,16 @@ class AnimeonsenProvider : MainAPI() {
         }
 
         return newAnimeLoadResponse(displayTitle, url, TvType.Anime) {
-            this.posterUrl = posterImg
-            this.plot = details.mal_data?.synopsis
+            this.posterUrl = finalPoster
+
+            val plotText = buildString {
+                append(pageDescription)
+                if (subtitleLangs.isNotEmpty()) {
+                    append("\n\nAvailable Subtitles: ${subtitleLangs.joinToString(", ")}")
+                }
+            }
+            this.plot = plotText.takeIf { it.isNotBlank() }
+
             this.score = Score.from10(details.mal_data?.mean_score)
             this.year = details.content_year
 
@@ -222,6 +293,7 @@ class AnimeonsenProvider : MainAPI() {
             details.mal_data?.genres?.forEach { genre: Genre ->
                 tagsList.add(genre.name)
             }
+            subtitleLangs.forEach { lang -> tagsList.add("Sub: $lang") }
             this.tags = tagsList
 
             this.showStatus = when (details.mal_data?.status) {
