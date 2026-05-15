@@ -177,7 +177,7 @@ class CinemacityProvider : MainAPI() {
                         if (posterUrl != null && posterUrl.startsWith("https://cinemacity.cc")) {
                             runCatching {
                                 val imgResp = app.get(posterUrl, interceptor = cfKiller, cookies = dynamicCookies)
-                                val imgBytes = imgResp.body?.bytes() ?: return@runCatching
+                                val imgBytes = imgResp.body.bytes()
                                 val b64 = Base64.encodeToString(imgBytes, Base64.NO_WRAP)
                                 val ext = posterUrl.substringAfterLast(".", "webp")
                                 item.posterUrl = "data:image/$ext;base64,$b64"
