@@ -143,9 +143,11 @@ class CinemacityProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        // Warm-up GET to seed Cloudflare clearance into internal cookie jar
         app.get(mainUrl, interceptor = cfKiller, cookies = dynamicCookies, timeout = 30000L).let { warm ->
-            if (warm.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + warm.cookies
+            if (warm.cookies.isNotEmpty()) {
+                dynamicCookies = dynamicCookies + warm.cookies
+                Log.d("Cinemacity", "WarmUp: added cookies ${warm.cookies.keys}")
+            }
         }
 
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
@@ -167,6 +169,37 @@ class CinemacityProvider : MainAPI() {
 
         val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
         Log.d("Cinemacity", "Search: query='$query', total items=${results.size}")
+
+        if (results.isNotEmpty()) {
+            runCatching {
+                val tmdbQuery = java.net.URLEncoder.encode(query, "UTF-8")
+                val tmdbResp = app.get(
+                    "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$tmdbQuery",
+                    timeout = 10000L
+                )
+                val tmdbArr = JSONObject(tmdbResp.text).optJSONArray("results") ?: JSONArray()
+                val tmdbPosters = mutableMapOf<String, String>()
+                for (i in 0 until tmdbArr.length()) {
+                    val item = tmdbArr.getJSONObject(i)
+                    val title = item.optString("title").takeIf { it.isNotBlank() }
+                        ?: item.optString("name") ?: continue
+                    val posterPath = item.optString("poster_path") ?: continue
+                    if (posterPath.isNotBlank()) {
+                        tmdbPosters[title.lowercase().trim()] = "$TMDBIMAGEBASEURL$posterPath"
+                    }
+                }
+                results.forEach { sr ->
+                    val key = sr.name.lowercase().trim()
+                    val tmdbUrl = tmdbPosters[key] ?: tmdbPosters.entries.firstOrNull { (t, _) ->
+                        key.contains(t) || t.contains(key)
+                    }?.value
+                    if (tmdbUrl != null) {
+                        sr.posterUrl = tmdbUrl
+                        Log.d("Cinemacity", "TMDB poster for '${sr.name}': $tmdbUrl")
+                    }
+                }
+            }
+        }
 
         return results
     }
