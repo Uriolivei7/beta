@@ -80,8 +80,8 @@ class CinemacityProvider : MainAPI() {
 
     private suspend fun tmdbSearchCached(cleanTitle: String): String? {
         val key = cleanTitle.lowercase().trim()
-        tmdbPosterCache[key]?.let { return it }
-        return runCatching {
+        tmdbPosterCache[key]?.let { Log.d("Cinemacity", "tmdbCache HIT for '$key' -> ${tmdbPosterCache[key]}"); return it }
+        val result = runCatching {
             val enc = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
             val resp = app.get(
                 "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$enc",
@@ -99,23 +99,26 @@ class CinemacityProvider : MainAPI() {
                         key
                     ))
                 ) {
+                    Log.d("Cinemacity", "tmdbSearch: '$key' matched '$tmdbTitle' -> $path")
                     return "$TMDBIMAGEBASEURL$path".also { tmdbPosterCache[key] = it }
                 }
             }
             tmdbArr.optJSONObject(0)?.optString("poster_path")?.takeIf { it.isNotBlank() }
-                ?.let { "$TMDBIMAGEBASEURL$it".also { p -> tmdbPosterCache[key] = p } }
+                ?.let { "$TMDBIMAGEBASEURL$it".also { p -> Log.d("Cinemacity", "tmdbSearch: '$key' fallback -> $p"); tmdbPosterCache[key] = p } }
         }.getOrNull()
+        if (result == null) Log.d("Cinemacity", "tmdbSearch: '$key' no result")
+        return result
     }
 
     private suspend fun enrichTmdbPosters(results: List<SearchResponse>) {
         if (results.isEmpty()) return
         val cleaned =
-            results.map { it.name.split(" /", " (", " -", ":")[0].trim().lowercase() }.distinct()
+            results.map { it.name.split(" /", " (", " -")[0].trim().lowercase() }.distinct()
         coroutineScope {
             cleaned.map { clean -> async { tmdbSearchCached(clean) } }.awaitAll()
         }
         results.forEach { sr ->
-            val clean = sr.name.split(" /", " (", " -", ":")[0].trim().lowercase()
+            val clean = sr.name.split(" /", " (", " -")[0].trim().lowercase()
             tmdbPosterCache[clean]?.let { sr.posterUrl = it }
         }
     }
@@ -238,7 +241,8 @@ class CinemacityProvider : MainAPI() {
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
         val title = ogTitle.substringBefore("(").trim()
-        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
+        var poster = doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
+        tmdbSearchCached(title.split(" /", " (", " -")[0].trim())?.let { poster = it }
         val bgposter = doc.selectFirst("div.dar-full_bg a")?.attr("href")
         val trailer = doc.select("div.dar-full_bg.e-cover > div").attr("data-vbg")
 
