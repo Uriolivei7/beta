@@ -107,7 +107,7 @@ class PrimevideoProvider : MainAPI() {
         val languagesText = if (!languages.isNullOrEmpty()) " - Audio: ${languages.joinToString(", ")}" else null
         val tags = buildList {
             if (!genre.isNullOrEmpty()) addAll(genre)
-            if (!thisMovieIs.isNullOrBlank()) add(thisMovieIs)
+            if (!thisMovieIs.isNullOrBlank()) addAll(thisMovieIs.split(",").map { it.trim() }.filter { it.isNotEmpty() })
         }.takeIf { it.isNotEmpty() }
         val fullPlot = buildList {
             data.desc?.let { add(it) }
