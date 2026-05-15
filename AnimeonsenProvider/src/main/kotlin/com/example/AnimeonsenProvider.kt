@@ -47,25 +47,20 @@ class AnimeonsenProvider : MainAPI() {
             )
             val parsed = AppUtils.parseJson<TmdbSearchResult>(resp.text)
             val results = parsed.results ?: emptyList()
-            for (i in 0 until results.size) {
+            val limit = if (results.size > 3) 3 else results.size
+            for (i in 0 until limit) {
                 val item = results[i]
                 val tmdbTitle = (item.title ?: item.name ?: "").lowercase().trim()
                 val path = item.poster_path ?: continue
-                if (path.isNotBlank()) {
-                    if (tmdbTitle == key) {
-                        Log.d(TAG, "tmdbSearch: '$key' exact match '$tmdbTitle'")
-                        return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
-                    }
-                    if (tmdbTitle.contains(key)) {
-                        Log.d(TAG, "tmdbSearch: '$key' specific match '$tmdbTitle'")
-                        return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
-                    }
+                if (path.isNotBlank() && (tmdbTitle == key || key.contains(tmdbTitle) || tmdbTitle.contains(key))) {
+                    Log.d(TAG, "tmdbSearch: '$key' matched '$tmdbTitle'")
+                    return "$tmdbImageBase$path".also { tmdbPosterCache[key] = it }
                 }
             }
             results.firstOrNull()?.poster_path?.takeIf { it.isNotBlank() }
                 ?.let {
                     val p = "$tmdbImageBase$it"
-                    Log.d(TAG, "tmdbSearch: '$key' fallback to first result")
+                    Log.d(TAG, "tmdbSearch: '$key' fallback")
                     tmdbPosterCache[key] = p
                     p
                 }
@@ -276,7 +271,7 @@ class AnimeonsenProvider : MainAPI() {
             val plotText = buildString {
                 append(pageDescription)
                 if (subtitleLangs.isNotEmpty()) {
-                    append("\n\nAvailable Subtitles: ${subtitleLangs.joinToString(", ")}")
+                    append("\n\n -- Subtítulos Disponibles: ${subtitleLangs.joinToString(", ")}")
                 }
             }
             this.plot = plotText.takeIf { it.isNotBlank() }
@@ -304,7 +299,7 @@ class AnimeonsenProvider : MainAPI() {
             details.mal_data?.genres?.forEach { genre: Genre ->
                 tagsList.add(genre.name)
             }
-            subtitleLangs.forEach { lang -> tagsList.add("Sub: $lang") }
+            //subtitleLangs.forEach { lang -> tagsList.add("Sub: $lang") }
             this.tags = tagsList
 
             this.showStatus = when (details.mal_data?.status) {
