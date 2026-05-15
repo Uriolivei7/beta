@@ -110,15 +110,25 @@ class CinemacityProvider : MainAPI() {
         return result
     }
 
+    private fun cleanForTmdb(name: String): String {
+        return name.split(" /", " (", " -")[0].trim()
+            .replace(
+                Regex(
+                    "\\b(extended edition|director'?s cut|uncut|unrated|theatrical cut|ultimate edition|collector'?s edition|special edition|limited edition)s?\$",
+                    RegexOption.IGNORE_CASE
+                ), ""
+            ).trim()
+            .lowercase()
+    }
+
     private suspend fun enrichTmdbPosters(results: List<SearchResponse>) {
         if (results.isEmpty()) return
-        val cleaned =
-            results.map { it.name.split(" /", " (", " -")[0].trim().lowercase() }.distinct()
+        val cleaned = results.map { cleanForTmdb(it.name) }.distinct()
         coroutineScope {
             cleaned.map { clean -> async { tmdbSearchCached(clean) } }.awaitAll()
         }
         results.forEach { sr ->
-            val clean = sr.name.split(" /", " (", " -")[0].trim().lowercase()
+            val clean = cleanForTmdb(sr.name)
             tmdbPosterCache[clean]?.let { sr.posterUrl = it }
         }
     }
