@@ -114,7 +114,11 @@ class CinemacityProvider : MainAPI() {
 
         val title = link.text().split(" (", " S0", " -")[0].trim()
         val href = fixUrlNull(link.attr("href")) ?: return null
-        val poster = fixUrlNull(this.selectFirst("img")?.attr("src"))
+        val img = this.selectFirst("img")
+        val imgSrc = img?.attr("src")
+        val imgDataSrc = img?.attr("data-src")
+        val poster = fixUrlNull(imgSrc) ?: fixUrlNull(imgDataSrc)
+        Log.d("Cinemacity", "SearchResult: title='$title', img=$img, src='$imgSrc', data-src='$imgDataSrc', poster='$poster'")
         val isTv = href.contains("/tv-series/")
         val score = this.selectFirst("span.rating-color")?.text()
         val date  = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
@@ -139,7 +143,6 @@ class CinemacityProvider : MainAPI() {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
 
-        // POST to main page URL (mimics search form submission, bypasses Cloudflare)
         val resp = app.post(
             mainUrl,
             headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
@@ -150,9 +153,14 @@ class CinemacityProvider : MainAPI() {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
 
-        if (resp.code != 200) return null
+        if (resp.code != 200) {
+            Log.w("Cinemacity", "Search: status ${resp.code}")
+            return null
+        }
 
-        return resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+        val results = resp.document.select("div.dar-short_item")
+        Log.d("Cinemacity", "Search: query='$query', total items=${results.size}")
+        return results.mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
@@ -185,7 +193,11 @@ class CinemacityProvider : MainAPI() {
         val recommendation = doc.select("div.ta-rel > div.ta-rel_item").map {
             val recTitle = it.select("a").text().substringBefore("(").trim()
             val recHref = fixUrl(it.selectFirst("> div > a")?.attr("href") ?: "")
-            val recPosterUrl = it.selectFirst("div > a")?.attr("href")
+            val recImg = it.selectFirst("img")
+            val recImgSrc = recImg?.attr("src")
+            val recImgDataSrc = recImg?.attr("data-src")
+            val recPosterUrl = fixUrlNull(recImgSrc) ?: fixUrlNull(recImgDataSrc)
+            Log.d("Cinemacity", "Recommendation: title='$recTitle', img=$recImg, src='$recImgSrc', data-src='$recImgDataSrc', poster='$recPosterUrl'")
 
             newMovieSearchResponse(recTitle, recHref, TvType.Movie) {
                 this.posterUrl = recPosterUrl
@@ -290,7 +302,6 @@ class CinemacityProvider : MainAPI() {
             JSONArray()
         }
 
-        // Fallback: try iframes and direct video sources if Playerjs had no file
         if (fileArray.length() == 0) {
             doc.select("iframe").forEach { iframe ->
                 val src = iframe.attr("src")
