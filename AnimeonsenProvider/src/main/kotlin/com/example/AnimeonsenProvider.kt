@@ -5,6 +5,7 @@ import androidx.coordinatorlayout.R.id.async
 import androidx.core.R.id.async
 import com.google.gson.annotations.SerializedName
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.*
@@ -22,6 +23,8 @@ class AnimeonsenProvider : MainAPI() {
     override val hasMainPage = true
     override var lang = "en"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
+
+    private val cfKiller = CloudflareKiller()
 
     private val apiUrl = "https://api.animeonsen.xyz/v4"
     private var accessToken: String? = null
@@ -219,25 +222,31 @@ class AnimeonsenProvider : MainAPI() {
         val displayTitle = details.getTitle()
         val posterImg = "https://api.animeonsen.xyz/v4/image/210x300/$contentId"
 
-        val tmdbPoster = tmdbSearchCached(displayTitle)
+        val cleanForTmdb = displayTitle.replace(Regex("\\s*\\([^)]*\\)\\s*$"), "").trim()
+        val tmdbPoster = tmdbSearchCached(cleanForTmdb)
         val finalPoster = tmdbPoster ?: posterImg
-        Log.d(TAG, "Logs: Poster: ${if (tmdbPoster != null) "TMDB" else "Original"}")
+        Log.d(TAG, "Logs: Poster: ${if (tmdbPoster != null) "TMDB" else "Original"} (title='$cleanForTmdb')")
 
         var pageDescription = details.mal_data?.synopsis ?: ""
         val subtitleLangs = mutableListOf<String>()
         try {
             val doc = app.get(
                 "https://www.animeonsen.xyz/details/$contentId",
-                headers = requestHeaders,
-                timeout = 15
+                headers = requestHeaders + ("Accept-Language" to "en-US,en;q=0.9"),
+                timeout = 15,
+                interceptor = cfKiller
             ).document
-            doc.select("div.description span").firstOrNull()?.let {
-                if (pageDescription.isBlank()) pageDescription = it.text().trim()
+            doc.select("div.description span, .description span, meta[property=og:description]").firstOrNull()?.let {
+                if (pageDescription.isBlank()) pageDescription = when (it.tagName()) {
+                    "meta" -> it.attr("content").trim()
+                    else -> it.text().trim()
+                }
             }
-            doc.select(".content-languages .subtitles .language-flag img[alt]").forEach {
+            doc.select(".language-flag img[alt], .sub-lang, [class*=language] img[alt], .subtitles img[alt]").forEach {
                 val lang = it.attr("alt").trim()
-                if (lang.isNotBlank()) subtitleLangs.add(lang)
+                if (lang.isNotBlank() && !subtitleLangs.contains(lang)) subtitleLangs.add(lang)
             }
+            Log.d(TAG, "Logs: Page scrape OK - subtitles=${subtitleLangs.size}, desc=${pageDescription.take(50)}")
         } catch (e: Exception) {
             Log.d(TAG, "Logs: Page scrape opcional falló: ${e.message}")
         }
