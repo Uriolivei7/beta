@@ -176,11 +176,15 @@ class CinemacityProvider : MainAPI() {
                         val posterUrl = item.posterUrl
                         if (posterUrl != null && posterUrl.startsWith("https://cinemacity.cc")) {
                             runCatching {
-                                val imgResp = app.get(posterUrl, interceptor = cfKiller, cookies = dynamicCookies)
+                                Log.d("Cinemacity", "PosterDownload: starting $posterUrl")
+                                val imgResp = app.get(posterUrl, timeout = 15000L, interceptor = cfKiller, cookies = dynamicCookies)
                                 val imgBytes = imgResp.body.bytes()
                                 val b64 = Base64.encodeToString(imgBytes, Base64.NO_WRAP)
                                 val ext = posterUrl.substringAfterLast(".", "webp")
                                 item.posterUrl = "data:image/$ext;base64,$b64"
+                                Log.d("Cinemacity", "PosterDownload: OK ${posterUrl.substringAfterLast("/")} -> ${b64.length} chars")
+                            }.onFailure { e ->
+                                Log.w("Cinemacity", "PosterDownload: FAILED $posterUrl - ${e.message}")
                             }
                         }
                     }
