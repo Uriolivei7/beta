@@ -1,7 +1,11 @@
 package com.example
 
+import android.util.Base64
 import android.util.Log
 import com.google.gson.Gson
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import com.lagradost.cloudstream3.Actor
 import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.Episode
@@ -38,7 +42,6 @@ import com.lagradost.nicehttp.NiceResponse
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Element
-
 
 class CinemacityProvider : MainAPI() {
     override var mainUrl = "https://cinemacity.cc"
@@ -142,7 +145,6 @@ class CinemacityProvider : MainAPI() {
         }
     }
 
-
     override suspend fun search(query: String): List<SearchResponse>? {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
@@ -163,9 +165,30 @@ class CinemacityProvider : MainAPI() {
             return null
         }
 
-        val results = resp.document.select("div.dar-short_item")
+        val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
         Log.d("Cinemacity", "Search: query='$query', total items=${results.size}")
-        return results.mapNotNull { it.toSearchResult() }
+
+        // Download posters as data URIs to bypass Cloudflare for image loader
+        if (results.isNotEmpty()) {
+            coroutineScope {
+                results.map { item ->
+                    async {
+                        val posterUrl = item.posterUrl
+                        if (posterUrl != null && posterUrl.startsWith("https://cinemacity.cc")) {
+                            runCatching {
+                                val imgResp = app.get(posterUrl, interceptor = cfKiller, cookies = dynamicCookies)
+                                val imgBytes = imgResp.body?.bytes() ?: return@runCatching
+                                val b64 = Base64.encodeToString(imgBytes, Base64.NO_WRAP)
+                                val ext = posterUrl.substringAfterLast(".", "webp")
+                                item.posterUrl = "data:image/$ext;base64,$b64"
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+
+        return results
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
@@ -193,7 +216,6 @@ class CinemacityProvider : MainAPI() {
             ?.joinToString(", ")
 
         val descriptions = doc.selectFirst("#about div.ta-full_text1")?.text()
-
 
         val recommendation = doc.select("div.ta-rel > div.ta-rel_item").map {
             val recTitle = it.select("a").text().substringBefore("(").trim()
