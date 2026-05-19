@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Base64
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -13,11 +14,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.util.Date
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 //yeji
 class SoloLatinoProvider : MainAPI() {
@@ -332,29 +337,45 @@ class SoloLatinoProvider : MainAPI() {
                         "Accept" to "*/*",
                         "Referer" to fixedSrc,
                     )
-                    val embedDoc = app.get(fixedSrc, headers = embed69Headers, timeout = 30000L).document
-                    embedDoc.select("script")
-                        .firstOrNull { it.html().contains("dataLink = [") }?.html()
-                        ?.substringAfter("dataLink = ")
-                        ?.substringBefore(";")?.let { dataLinkJson ->
-                            tryParseJson<List<ServersByLang>>(dataLinkJson)?.amap { lang ->
-                                val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
-                                if (encryptedLinks.isEmpty()) return@amap
-                                val body = LinksRequest(encryptedLinks).toJson()
-                                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                                val decryptedRes = app.post(
-                                    "https://embed69.org/api/decrypt",
-                                    requestBody = body,
-                                    headers = embed69Headers
-                                )
-                                val decrypted = tryParseJson<Loadlinks>(decryptedRes.text)
-                                if (decrypted?.success == true && decrypted.links.isNotEmpty()) {
-                                    decrypted.links.amap { link ->
-                                        loadSourceNameExtractor(lang.videoLanguage ?: "Latino", fixHostsLinks(link.link), fixedSrc, subtitleCallback, callback)
-                                    }
+                    val embedResp = app.get(fixedSrc, headers = embed69Headers, timeout = 30000L)
+                    Log.d("SoloLatino", "embed69 - HTTP ${embedResp.code}, length=${embedResp.text.length}")
+                    val embedDoc = embedResp.document
+                    val dataLinkScript = embedDoc.select("script")
+                        .firstOrNull { it.html().contains("dataLink =") }
+                    if (dataLinkScript == null) {
+                        Log.e("SoloLatino", "embed69 - No se encontró script con 'dataLink ='")
+                        embedDoc.select("script").forEach { s ->
+                            val h = s.html()
+                            if (h.length in 50..500) Log.d("SoloLatino", "embed69 script: ${h.take(200)}")
+                        }
+                    } else {
+                        Log.d("SoloLatino", "embed69 - script con dataLink encontrado")
+                        val dataLinkJson = dataLinkScript.html()
+                            .substringAfter("dataLink =")
+                            .substringBefore(";")
+                            .trim()
+                        Log.d("SoloLatino", "embed69 - dataLink JSON: ${dataLinkJson.take(300)}")
+                        tryParseJson<List<ServersByLang>>(dataLinkJson)?.amap { lang ->
+                            val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
+                            if (encryptedLinks.isEmpty()) return@amap
+                            Log.d("SoloLatino", "embed69 - ${encryptedLinks.size} enlaces encriptados para ${lang.videoLanguage}")
+
+                            // Solve PoW and decrypt locally
+                            val aesKey = withContext(Dispatchers.Default) { solveEmbed69PoW() }
+                            if (aesKey == null) {
+                                Log.e("SoloLatino", "embed69 - PoW failed")
+                                return@amap
+                            }
+                            Log.d("SoloLatino", "embed69 - PoW solved, decrypting ${encryptedLinks.size} links")
+                            encryptedLinks.forEach { encrypted ->
+                                val decryptedUrl = decryptAESLocal(encrypted, aesKey)
+                                if (decryptedUrl != null) {
+                                    Log.d("SoloLatino", "embed69 - decrypted: ${decryptedUrl.take(100)}")
+                                    loadExtractor(fixHostsLinks(decryptedUrl), fixedSrc, subtitleCallback, callback)
                                 }
                             }
-                        }
+                        } ?: Log.e("SoloLatino", "embed69 - No se pudo parsear dataLink JSON")
+                    }
                 }
 
                 fixedSrc.contains("xupalace.org") -> {
@@ -364,6 +385,7 @@ class SoloLatinoProvider : MainAPI() {
                     val foundLinks = regex.findAll(xupalaceHtml).map { it.groupValues[1] }.distinct().toList()
 
                     if (foundLinks.isNotEmpty()) {
+                        Log.d("SoloLatino", "xupalace - ${foundLinks.size} links por go_to_playerVast")
                         foundLinks.amap { link ->
                             loadExtractor(fixHostsLinks(fixUrl(link)), fixedSrc, subtitleCallback, callback)
                         }
@@ -373,6 +395,7 @@ class SoloLatinoProvider : MainAPI() {
                             val clickAttr = it.attr("onclick")
                             Regex("'([^']+)'").find(clickAttr)?.groupValues?.get(1)
                         }
+                        Log.d("SoloLatino", "xupalace - ${liLinks.size} links por li onclick")
                         liLinks.amap { loadExtractor(fixHostsLinks(fixUrl(it)), fixedSrc, subtitleCallback, callback) }
                     }
                 }
@@ -380,12 +403,62 @@ class SoloLatinoProvider : MainAPI() {
                 else -> {
                     Log.d("SoloLatino", "BRANCH: Direct/Generic: $fixedSrc")
                     val cleanUrl = fixHostsLinks(fixedSrc)
+                    Log.d("SoloLatino", "generic - intentando loadExtractor con: $cleanUrl")
+                    try {
+                        val genResp = app.get(cleanUrl, headers = baseHeaders, timeout = 15000L)
+                        Log.d("SoloLatino", "generic - respuesta HTTP ${genResp.code}, length=${genResp.text.length}")
+                        genResp.document.select("iframe").forEach { iframe ->
+                            val iframeSrc = iframe.attr("src")
+                            if (iframeSrc.isNotBlank()) {
+                                Log.d("SoloLatino", "generic - iframe encontrado: $iframeSrc")
+                                loadExtractor(fixUrl(iframeSrc), targetUrl, subtitleCallback, callback)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SoloLatino", "generic - error: ${e.message}")
+                    }
                     loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
                 }
             }
         }
 
         return true
+    }
+}
+
+private suspend fun solveEmbed69PoW(): ByteArray? {
+    val challenge = "f27078267cda8d5020d75f5c31f5409f"
+    val salt = "6d07665b9850a0db"
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    var nonce = 0L
+    val maxAttempts = 500000L
+    while (nonce < maxAttempts) {
+        val input = "$challenge$nonce".toByteArray()
+        val hash = md.digest(input).joinToString("") { "%02x".format(it) }
+        if (hash.startsWith("000")) {
+            Log.d("SoloLatino", "embed69 PoW - nonce=$nonce hash=${hash.take(8)}")
+            return java.security.MessageDigest.getInstance("SHA-256")
+                .digest("$challenge$nonce$salt".toByteArray())
+        }
+        nonce++
+        if (nonce % 10000 == 0L) delay(1)
+    }
+    Log.e("SoloLatino", "embed69 PoW - no solution found after $maxAttempts attempts")
+    return null
+}
+
+private fun decryptAESLocal(encryptedBase64: String, aesKey: ByteArray): String? {
+    return try {
+        val raw = Base64.decode(encryptedBase64, Base64.DEFAULT)
+        val iv = raw.copyOfRange(0, 16)
+        val ciphertext = raw.copyOfRange(16, raw.size)
+        val keySpec = SecretKeySpec(aesKey.copyOfRange(0, 32), "AES")
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
+        String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+    } catch (e: Exception) {
+        Log.e("SoloLatino", "AES decrypt error: ${e.message}")
+        null
     }
 }
 
