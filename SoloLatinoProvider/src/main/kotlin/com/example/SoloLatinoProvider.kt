@@ -355,13 +355,24 @@ class SoloLatinoProvider : MainAPI() {
                             .substringBefore(";")
                             .trim()
                         Log.d("SoloLatino", "embed69 - dataLink JSON: ${dataLinkJson.take(300)}")
+
+                        // Extract POW_CHALLENGE and POW_SALT from the page (varies per request)
+                        val pageHtml = embedResp.text
+                        val embedChallenge = Regex("""POW_CHALLENGE\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        val embedSalt = Regex("""POW_SALT\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        if (embedChallenge == null || embedSalt == null) {
+                            Log.e("SoloLatino", "embed69 - No se pudo extraer POW_CHALLENGE/SALT de la página")
+                            return@forEach
+                        }
+                        Log.d("SoloLatino", "embed69 - challenge=$embedChallenge salt=$embedSalt")
+
                         tryParseJson<List<ServersByLang>>(dataLinkJson)?.amap { lang ->
                             val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
                             if (encryptedLinks.isEmpty()) return@amap
                             Log.d("SoloLatino", "embed69 - ${encryptedLinks.size} enlaces encriptados para ${lang.videoLanguage}")
 
-                            // Solve PoW and decrypt locally
-                            val aesKey = withContext(Dispatchers.Default) { solveEmbed69PoW() }
+                            // Solve PoW and decrypt locally using page-specific challenge/salt
+                            val aesKey = withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
                             if (aesKey == null) {
                                 Log.e("SoloLatino", "embed69 - PoW failed")
                                 return@amap
@@ -426,9 +437,7 @@ class SoloLatinoProvider : MainAPI() {
     }
 }
 
-private suspend fun solveEmbed69PoW(): ByteArray? {
-    val challenge = "f27078267cda8d5020d75f5c31f5409f"
-    val salt = "6d07665b9850a0db"
+private suspend fun solveEmbed69PoW(challenge: String, salt: String): ByteArray? {
     val md = java.security.MessageDigest.getInstance("SHA-256")
     var nonce = 0L
     val maxAttempts = 500000L
