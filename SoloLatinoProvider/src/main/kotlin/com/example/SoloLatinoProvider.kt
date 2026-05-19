@@ -433,12 +433,12 @@ private suspend fun solveEmbed69PoW(): ByteArray? {
     var nonce = 0L
     val maxAttempts = 500000L
     while (nonce < maxAttempts) {
-        val input = "$challenge$nonce".toByteArray()
+        val input = "$challenge$nonce".toByteArray(Charsets.UTF_8)
         val hash = md.digest(input).joinToString("") { "%02x".format(it) }
         if (hash.startsWith("000")) {
             Log.d("SoloLatino", "embed69 PoW - nonce=$nonce hash=${hash.take(8)}")
             return java.security.MessageDigest.getInstance("SHA-256")
-                .digest("$challenge$nonce$salt".toByteArray())
+                .digest("$challenge$nonce$salt".toByteArray(Charsets.UTF_8))
         }
         nonce++
         if (nonce % 10000 == 0L) delay(1)
