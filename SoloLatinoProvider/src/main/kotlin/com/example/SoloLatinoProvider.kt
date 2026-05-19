@@ -356,7 +356,6 @@ class SoloLatinoProvider : MainAPI() {
                             .trim()
                         Log.d("SoloLatino", "embed69 - dataLink JSON: ${dataLinkJson.take(300)}")
 
-                        // Extract POW_CHALLENGE and POW_SALT from the page (varies per request)
                         val pageHtml = embedResp.text
                         val embedChallenge = Regex("""POW_CHALLENGE\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
                         val embedSalt = Regex("""POW_SALT\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
@@ -371,7 +370,6 @@ class SoloLatinoProvider : MainAPI() {
                             if (encryptedLinks.isEmpty()) return@amap
                             Log.d("SoloLatino", "embed69 - ${encryptedLinks.size} enlaces encriptados para ${lang.videoLanguage}")
 
-                            // Solve PoW and decrypt locally using page-specific challenge/salt
                             val aesKey = withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
                             if (aesKey == null) {
                                 Log.e("SoloLatino", "embed69 - PoW failed")
