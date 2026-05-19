@@ -197,7 +197,8 @@ class SoloLatinoProvider : MainAPI() {
         val tvType = if (cleanUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
 
         val description = doc.selectFirst("p.text-sm.leading-relaxed")?.text() ?: ""
-        val tags = doc.select("a[href*='/genero/']").map { it.text().trim() }
+        val detail = doc.selectFirst("div.flex-1.min-w-0")
+        val tags = detail?.select("a[href*='/genero/']")?.map { it.text().trim() } ?: emptyList()
         val averageScore = doc.selectFirst("span.rating-badge__val")?.text()?.toDoubleOrNull()
         val durationMain = doc.select("div.flex.flex-wrap.items-center.gap-4.text-sm span")
             .firstOrNull { it.text().contains(Regex("(?i)\\d+h|\\d+m|\\d+\\s?min")) }
@@ -260,6 +261,7 @@ class SoloLatinoProvider : MainAPI() {
         val recommendations = doc.select("div.scroll-row div.card").mapNotNull { card ->
             val recLink = card.selectFirst("a")?.attr("href")
             val recTitle = card.selectFirst("span.card__title")?.text()
+                ?: card.selectFirst("p.card__title")?.text()
             val recImg = card.selectFirst("img.card__poster")?.attr("src") ?: ""
             if (recTitle != null && recLink != null) {
                 newAnimeSearchResponse(recTitle, fixUrl(recLink)) {
