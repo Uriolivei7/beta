@@ -376,11 +376,19 @@ class SoloLatinoProvider : MainAPI() {
                                 return@amap
                             }
                             Log.d("SoloLatino", "embed69 - PoW solved, decrypting ${encryptedLinks.size} links")
+                            val langTag = when (lang.videoLanguage?.uppercase()) {
+                                "LAT" -> "LATINO"
+                                "SUB", "ENGLISH" -> "SUBTITULADO"
+                                "CAST", "SPANISH" -> "CASTELLANO"
+                                "ENG", "VOSE" -> "VOSE"
+                                "JAP", "JAPANESE" -> "JAPONES"
+                                else -> lang.videoLanguage ?: "??"
+                            }
                             encryptedLinks.forEach { encrypted ->
                                 val decryptedUrl = decryptAESLocal(encrypted, aesKey)
                                 if (decryptedUrl != null) {
                                     Log.d("SoloLatino", "embed69 - decrypted: ${decryptedUrl.take(100)}")
-                                    loadExtractor(fixHostsLinks(decryptedUrl), fixedSrc, subtitleCallback, callback)
+                                    loadSourceNameExtractor(langTag, fixHostsLinks(decryptedUrl), fixedSrc, subtitleCallback, callback)
                                 }
                             }
                         } ?: Log.e("SoloLatino", "embed69 - No se pudo parsear dataLink JSON")
