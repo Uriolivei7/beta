@@ -449,13 +449,40 @@ private suspend fun solveEmbed69PoW(): ByteArray? {
 
 private fun decryptAESLocal(encryptedBase64: String, aesKey: ByteArray): String? {
     return try {
-        val raw = Base64.decode(encryptedBase64, Base64.DEFAULT)
+        val raw = Base64.decode(encryptedBase64, Base64.NO_WRAP)
+        if (raw.size < 17) {
+            Log.e("SoloLatino", "AES decryption: raw data too short (${raw.size} bytes)")
+            return null
+        }
         val iv = raw.copyOfRange(0, 16)
         val ciphertext = raw.copyOfRange(16, raw.size)
+        if (ciphertext.size % 16 != 0) {
+            Log.e("SoloLatino", "AES decryption: ciphertext not multiple of block size (${ciphertext.size})")
+            return null
+        }
         val keySpec = SecretKeySpec(aesKey.copyOfRange(0, 32), "AES")
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
-        String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+        try {
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
+            val decrypted = cipher.doFinal(ciphertext)
+            return String(decrypted, Charsets.UTF_8)
+        } catch (e1: Exception) {
+            Log.w("SoloLatino", "AES PKCS5 failed: ${e1.message}, trying NoPadding")
+            val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
+            val decrypted = cipher.doFinal(ciphertext)
+            val padByte = decrypted.last().toInt() and 0xFF
+            var padLen = if (padByte in 1..16) padByte else 0
+            if (padLen > 0) {
+                for (i in decrypted.size - padLen until decrypted.size) {
+                    if ((decrypted[i].toInt() and 0xFF) != padByte) {
+                        padLen = 0
+                        break
+                    }
+                }
+            }
+            return String(decrypted.copyOfRange(0, decrypted.size - padLen), Charsets.UTF_8)
+        }
     } catch (e: Exception) {
         Log.e("SoloLatino", "AES decrypt error: ${e.message}")
         null
