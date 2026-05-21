@@ -9,9 +9,11 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import android.util.Log
 import java.util.Calendar
+import java.util.Base64
 
 class AsialiveactionProvider : MainAPI() {
 
@@ -255,11 +257,13 @@ class AsialiveactionProvider : MainAPI() {
                 allVideosMatch = allVideosPattern.find(episodeResponse.text)
             }
         }
+
+        var linkCount = 0
         
         if (allVideosMatch != null) {
             val allVideosJson = allVideosMatch.groupValues[1]
             Log.d(TAG, "loadLinks: allVideos encontrado: ${allVideosJson.take(200)}")
-            
+
             try {
                 val serverDataMap = parseJson<Map<String, List<List<String>>>>(allVideosJson)
                 serverDataMap.forEach { (langId, serverList) ->
@@ -269,7 +273,7 @@ class AsialiveactionProvider : MainAPI() {
                         langId.contains("1387") -> "Español de España"
                         else -> "DEFAULT"
                     }
-                    
+
                     serverList.forEach { serverData ->
                         if (serverData.size >= 2) {
                             val serverCode = serverData[0]
@@ -279,9 +283,9 @@ class AsialiveactionProvider : MainAPI() {
                                 .replace("\\\\", "")
                                 .replace("\\", "")
                                 .removeSurrounding("\"")
-                            
+
                             Log.d(TAG, "loadLinks: [$langName] Server=$serverCode, URL=$decodedUrl")
-                            
+
                             if (decodedUrl.startsWith("http")) {
                                 val serverName = when (serverCode) {
                                     "YM" -> "Yui"
@@ -290,9 +294,35 @@ class AsialiveactionProvider : MainAPI() {
                                     "FM" -> "Byse"
                                     else -> serverCode
                                 }
-                                
+
                                 val fullName = "$serverName [$langName]"
+                                val hasHash = decodedUrl.contains("#")
+                                if (hasHash) {
+                                    val hashValue = decodedUrl.substringAfter("#")
+                                    val baseUrl = decodedUrl.substringBefore("#")
+                                    val altUrls = listOf(
+                                        "${baseUrl}e/$hashValue",
+                                        "${baseUrl}embed/$hashValue",
+                                        "${baseUrl}$hashValue",
+                                        "${baseUrl}?v=$hashValue",
+                                        "${baseUrl}?id=$hashValue",
+                                    )
+                                    for (altUrl in altUrls) {
+                                        try {
+                                            val headResp = app.get(altUrl, headers = mapOf("User-Agent" to "Mozilla/5.0"), timeout = 8000L)
+                                            if (headResp.code == 200 && headResp.text.length > 50) {
+                                                Log.d(TAG, "loadLinks: alt URL funciona: $altUrl (${headResp.text.length} chars)")
+                                                val html = headResp.text
+                                                if (html.contains("video") || html.contains("m3u8") || html.contains("iframe") || html.contains("mp4")) {
+                                                    loadSourceNameExtractor(fullName, altUrl, urlToProcess, subtitleCallback, callback)
+                                                    linkCount++
+                                                }
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
+                                }
                                 loadSourceNameExtractor(fullName, decodedUrl, urlToProcess, subtitleCallback, callback)
+                                linkCount++
                             }
                         }
                     }
@@ -302,6 +332,10 @@ class AsialiveactionProvider : MainAPI() {
             }
         } else {
             Log.d(TAG, "loadLinks: No se encontró allVideos ni enlace a episodio")
+        }
+
+        if (linkCount == 0) {
+            Log.e(TAG, "loadLinks: No se produjeron enlaces")
         }
         
         return true
