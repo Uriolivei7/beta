@@ -167,23 +167,54 @@ class AsialiveactionProvider : MainAPI() {
         val isMovie = url.contains("/pelicula/")
 
         if (!isMovie) {
-            document.select(".lista-episodios .episodio-unico a").forEach { element ->
-                val epUrl = element.attr("href")
+            document.select(".lista-episodios > .episodio-unico > a").forEach { element ->
+                val epUrl = element.attr("abs:href")
                 if (epUrl.isNotEmpty()) {
-                    val rawName = element.selectFirst(".numero-episodio")?.text()?.trim() ?: element.text().trim()
+                    val rawName = element.selectFirst(".numero-episodio")?.text()?.trim() ?: return@forEach
+                    val subtitleText = element.selectFirst(".numero-episodio > .subtitulo")?.text()?.trim()
 
-                    val cleanName = rawName.replace(Regex("(?i)^(Episodio|Ep)\\s*\\d+\\s*[:\\-]\\s*"), "").trim()
+                    val cleanName = if (subtitleText != null) {
+                        subtitleText
+                    } else {
+                        val cleaned = rawName
+                            .replace(Regex("(?i)^(Episodio|Ep)\\s*\\d+\\s*[:\\-]\\s*"), "")
+                            .trim()
+                        if (cleaned.isNotEmpty() && cleaned != rawName) cleaned else null
+                    }
 
                     val epNum = getNumberFromEpsString(rawName)
+                    val publishedText = element.selectFirst(".publicado")?.text()?.trim()
 
-                    Log.d(TAG, "load: Episodio original=$rawName -> Limpio=$cleanName, Num=$epNum")
+                    Log.d(TAG, "load: Episodio=$rawName -> Nombre=$cleanName, Num=$epNum, Publicado=$publishedText")
 
                     episodes.add(newEpisode(epUrl) {
                         this.name = cleanName
                         this.episode = epNum.toIntOrNull() ?: 1
+                        if (publishedText != null) {
+                            this.description = publishedText
+                        }
                     })
                 }
             }
+
+            document.select(".lista-episodios > .episodio-group").forEach { group ->
+                val groupEpName = group.selectFirst(".toggle-acordeon .numero-episodio")?.text()?.trim() ?: return@forEach
+                val groupEpNum = getNumberFromEpsString(groupEpName)
+                val groupPublishedText = group.selectFirst(".toggle-acordeon .publicado")?.text()?.trim()
+
+                val firstLink = group.selectFirst(".contenido-acordeon ul li a") ?: return@forEach
+                val epUrl = firstLink.attr("abs:href")
+                if (epUrl.isNotEmpty()) {
+                    episodes.add(newEpisode(epUrl) {
+                        this.name = groupEpName
+                        this.episode = groupEpNum.toIntOrNull() ?: 1
+                        if (groupPublishedText != null) {
+                            this.description = groupPublishedText
+                        }
+                    })
+                }
+            }
+
             Log.d(TAG, "load: ${episodes.size} episodios encontrados")
         }
         
