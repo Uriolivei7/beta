@@ -4,16 +4,15 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import android.util.Log
 import java.util.Calendar
-import java.util.Base64
 
 class AsialiveactionProvider : MainAPI() {
 
@@ -238,28 +237,24 @@ class AsialiveactionProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d(TAG, "loadLinks: Extrayendo de URL=$data")
-        var urlToProcess = data
-        
+
         val response = app.get(data)
         val htmlContent = response.text
-        
+
         val allVideosPattern = """allVideos\s*=\s*(\{.*?\});""".toRegex(RegexOption.DOT_MATCHES_ALL)
         var allVideosMatch = allVideosPattern.find(htmlContent)
-        
+
         if (allVideosMatch == null) {
-            Log.d(TAG, "loadLinks: allVideos no encontrado en página actual, buscando enlace a episodio")
+            Log.d(TAG, "loadLinks: allVideos no encontrado, buscando enlace a episodio")
             val episodeLink = Regex("""href="(https://asialiveaction\.com/f/[^"]+)"""").find(htmlContent)
             if (episodeLink != null) {
-                val episodeUrl = episodeLink.groupValues[1]
-                Log.d(TAG, "loadLinks: Encontrado enlace a episodio: $episodeUrl")
-                urlToProcess = episodeUrl
-                val episodeResponse = app.get(episodeUrl)
+                val episodeResponse = app.get(episodeLink.groupValues[1])
                 allVideosMatch = allVideosPattern.find(episodeResponse.text)
             }
         }
 
         var linkCount = 0
-        
+
         if (allVideosMatch != null) {
             val allVideosJson = allVideosMatch.groupValues[1]
             Log.d(TAG, "loadLinks: allVideos encontrado: ${allVideosJson.take(200)}")
@@ -280,49 +275,27 @@ class AsialiveactionProvider : MainAPI() {
                             val encodedUrl = serverData[1]
                             val decodedUrl = encodedUrl
                                 .replace("\\/", "/")
-                                .replace("\\\\", "")
-                                .replace("\\", "")
                                 .removeSurrounding("\"")
 
-                            Log.d(TAG, "loadLinks: [$langName] Server=$serverCode, URL=$decodedUrl")
+                            val serverName = when (serverCode) {
+                                "YM" -> "Yui"
+                                "MK" -> "Moa"
+                                "MM" -> "Momo"
+                                "FM" -> "Byse"
+                                else -> serverCode
+                            }
+                            val fullName = "$serverName [$langName]"
 
                             if (decodedUrl.startsWith("http")) {
-                                val serverName = when (serverCode) {
-                                    "YM" -> "Yui"
-                                    "MK" -> "Moa"
-                                    "MM" -> "Momo"
-                                    "FM" -> "Byse"
-                                    else -> serverCode
-                                }
+                                Log.d(TAG, "loadLinks: [$langName] Server=$serverCode, URL=$decodedUrl")
+                                val fixedUrl = fixHostsLinks(decodedUrl)
 
-                                val fullName = "$serverName [$langName]"
-                                val hasHash = decodedUrl.contains("#")
-                                if (hasHash) {
-                                    val hashValue = decodedUrl.substringAfter("#")
-                                    val baseUrl = decodedUrl.substringBefore("#")
-                                    val altUrls = listOf(
-                                        "${baseUrl}e/$hashValue",
-                                        "${baseUrl}embed/$hashValue",
-                                        "${baseUrl}$hashValue",
-                                        "${baseUrl}?v=$hashValue",
-                                        "${baseUrl}?id=$hashValue",
-                                    )
-                                    for (altUrl in altUrls) {
-                                        try {
-                                            val headResp = app.get(altUrl, headers = mapOf("User-Agent" to "Mozilla/5.0"), timeout = 8000L)
-                                            if (headResp.code == 200 && headResp.text.length > 50) {
-                                                Log.d(TAG, "loadLinks: alt URL funciona: $altUrl (${headResp.text.length} chars)")
-                                                val html = headResp.text
-                                                if (html.contains("video") || html.contains("m3u8") || html.contains("iframe") || html.contains("mp4")) {
-                                                    loadSourceNameExtractor(fullName, altUrl, urlToProcess, subtitleCallback, callback)
-                                                    linkCount++
-                                                }
-                                            }
-                                        } catch (_: Exception) {}
-                                    }
+                                if (fixedUrl.contains("vk.com")) {
+                                    linkCount += extractVKVideo(fullName, fixedUrl, subtitleCallback, callback)
+                                } else {
+                                    loadSourceNameExtractor(fullName, fixedUrl, data, subtitleCallback, callback)
+                                    linkCount++
                                 }
-                                loadSourceNameExtractor(fullName, decodedUrl, urlToProcess, subtitleCallback, callback)
-                                linkCount++
                             }
                         }
                     }
@@ -331,14 +304,68 @@ class AsialiveactionProvider : MainAPI() {
                 Log.e(TAG, "loadLinks: Error parseando allVideos: ${e.message}")
             }
         } else {
-            Log.d(TAG, "loadLinks: No se encontró allVideos ni enlace a episodio")
+            Log.d(TAG, "loadLinks: No se encontró allVideos")
         }
 
-        if (linkCount == 0) {
-            Log.e(TAG, "loadLinks: No se produjeron enlaces")
-        }
-        
+        Log.d(TAG, "loadLinks: $linkCount enlaces producidos")
         return true
+    }
+
+    private fun fixHostsLinks(url: String): String {
+        return url
+            .replace("vkvideo.ru", "vk.com")
+            .replace("bysejikuar.com", "filemoon.sx")
+            .replace("bysedikamoum.com", "filemoon.sx")
+    }
+
+    private suspend fun extractVKVideo(
+        source: String,
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Int {
+        var count = 0
+        try {
+            val page = app.get(url, referer = "https://vk.com/", timeout = 60L).text
+            Log.d(TAG, "extractVKVideo: page len=${page.length}")
+
+            val mp4Match = Regex("\"mp4_720\"\\s*:\\s*\"([^\"]+)\"").find(page)
+            if (mp4Match != null) {
+                val videoUrl = mp4Match.groupValues[1].replace("\\/", "/")
+                callback(newExtractorLink(source, "$source 720p", videoUrl) {
+                    this.referer = "https://vk.com/"
+                    this.quality = 720
+                })
+                count++
+            }
+
+            val hlsMatch = Regex("\"hls_ondemand\"\\s*:\\s*\"([^\"]+)\"").find(page)
+            if (hlsMatch != null) {
+                val hlsUrl = hlsMatch.groupValues[1].replace("\\/", "/")
+                callback(newExtractorLink(source, "$source HLS", hlsUrl) {
+                    this.referer = "https://vk.com/"
+                    this.quality = 1080
+                    this.type = ExtractorLinkType.M3U8
+                })
+                count++
+            }
+
+            val dashMatch = Regex("\"dash_ondemand\"\\s*:\\s*\"([^\"]+)\"").find(page)
+            if (dashMatch != null) {
+                val dashUrl = dashMatch.groupValues[1].replace("\\/", "/")
+                callback(newExtractorLink(source, "$source DASH", dashUrl) {
+                    this.referer = "https://vk.com/"
+                    this.quality = 1080
+                    this.type = ExtractorLinkType.DASH
+                })
+                count++
+            }
+
+            if (count == 0) Log.e(TAG, "extractVKVideo: no video URLs found in page")
+        } catch (e: Exception) {
+            Log.e(TAG, "extractVKVideo: ${e.message}")
+        }
+        return count
     }
 }
 
