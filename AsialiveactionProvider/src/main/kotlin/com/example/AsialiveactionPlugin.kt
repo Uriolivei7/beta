@@ -14,5 +14,9 @@ class AsialiveactionPlugin: Plugin() {
         registerExtractorAPI(OkRuSSL())
         registerExtractorAPI(FileMoon())
         registerExtractorAPI(StreamWishExtractor())
+        registerExtractorAPI(MomoEzplayer())
+        registerExtractorAPI(SuUpnOne())
+        registerExtractorAPI(MoaRpmvip())
+        registerExtractorAPI(Bysejikuar())
     }
 }
