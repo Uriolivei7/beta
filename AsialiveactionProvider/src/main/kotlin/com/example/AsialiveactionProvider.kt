@@ -32,16 +32,29 @@ class AsialiveactionProvider : MainAPI() {
 
     private fun parseDuration(text: String): Int? {
         val clean = text.trim().lowercase()
-        val hm = Regex("""(\d+)\s*h\s*(\d+)\s*min""").find(clean)
-        if (hm != null) return hm.groupValues[1].toInt() * 3600 + hm.groupValues[2].toInt() * 60
-        val simple = Regex("""(\d+)\s*min""").find(clean)
-        if (simple != null) return simple.groupValues[1].toInt() * 60
-        val masDe = Regex("""más\s*de\s*(\d+)\s*min""").find(clean)
-        if (masDe != null) return masDe.groupValues[1].toInt() * 60
-        val menosDe = Regex("""menos\s*de\s*(\d+)\s*min""").find(clean)
-        if (menosDe != null) return (menosDe.groupValues[1].toInt() * 0.66).toInt() * 60
-        val hours = Regex("""(\d+)\s*h""").find(clean)
-        if (hours != null) return hours.groupValues[1].toInt() * 3600
+        var maxSeconds = 0
+
+        Regex("""(\d+)\s*h\s*(\d+)\s*min""").findAll(clean).forEach {
+            val secs = it.groupValues[1].toInt() * 3600 + it.groupValues[2].toInt() * 60
+            if (secs > maxSeconds) maxSeconds = secs
+        }
+        if (maxSeconds > 0) return maxSeconds.coerceAtMost(5 * 3600)
+
+        Regex("""(\d+)\s*min""").findAll(clean).forEach {
+            val secs = it.groupValues[1].toInt() * 60
+            if (secs > maxSeconds) maxSeconds = secs
+        }
+        if (maxSeconds > 0) return maxSeconds.coerceAtMost(5 * 3600)
+
+        Regex("""más\s*de\s*(\d+)\s*min""").find(clean)?.let {
+            return it.groupValues[1].toInt() * 60
+        }
+        Regex("""menos\s*de\s*(\d+)\s*min""").find(clean)?.let {
+            return (it.groupValues[1].toInt() * 0.66).toInt() * 60
+        }
+        Regex("""(\d+)\s*h""").find(clean)?.let {
+            return (it.groupValues[1].toInt() * 3600).coerceAtMost(5 * 3600)
+        }
         return null
     }
 
@@ -261,12 +274,17 @@ class AsialiveactionProvider : MainAPI() {
         
         Log.d(TAG, "load: ${recommendations.size} recomendaciones encontradas")
         
+        Log.d(TAG, "load: DurationText=$durationText, DurationSeconds=$durationSeconds")
+
         return if (isMovie) {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.plot = description
                 this.year = year
-                if (durationSeconds != null) this.duration = durationSeconds
+                if (durationSeconds != null) {
+                    Log.d(TAG, "load: Setting movie duration=$durationSeconds")
+                    this.duration = durationSeconds
+                }
                 this.recommendations = recommendations
             }
         } else {
