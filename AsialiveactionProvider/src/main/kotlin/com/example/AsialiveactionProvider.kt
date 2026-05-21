@@ -59,8 +59,9 @@ class AsialiveactionProvider : MainAPI() {
                 ?: return@forEach
             
             val poster = element.selectFirst("img:not(.hover-img)")?.attr("src")
+                ?: element.selectFirst("img:not(.hover-img)")?.attr("data-src")
             
-            if (title.isNotEmpty() && poster != null && poster.contains("tmdb")) {
+            if (title.isNotEmpty() && poster != null) {
                 seriesItems.add(
                     newAnimeSearchResponse(title, link, TvType.AsianDrama) {
                         this.posterUrl = poster
@@ -84,8 +85,9 @@ class AsialiveactionProvider : MainAPI() {
                 ?: return@forEach
             
             val poster = element.selectFirst("img:not(.hover-img)")?.attr("src")
+                ?: element.selectFirst("img:not(.hover-img)")?.attr("data-src")
             
-            if (title.isNotEmpty() && poster != null && poster.contains("tmdb")) {
+            if (title.isNotEmpty() && poster != null) {
                 peliculasItems.add(
                     newMovieSearchResponse(title, link) {
                         this.posterUrl = poster
@@ -144,12 +146,10 @@ class AsialiveactionProvider : MainAPI() {
         val title = document.selectFirst("h2.Title, h1.Title")?.text() ?: ""
         Log.d(TAG, "load: Title=$title")
         
-        val posterStyle = document.selectFirst(".Poster")?.attr("style") ?: ""
-        val poster = if (posterStyle.isNotEmpty()) {
-            Regex("""url\(['"]?(.*?)['"]?\)""").find(posterStyle)?.groupValues?.get(1)
-        } else {
-            document.selectFirst("article img")?.attr("src")
-        }
+        val poster = document.selectFirst(".Poster")?.attr("style")?.let { style ->
+            Regex("""url\(['"]?(.*?)['"]?\)""").find(style)?.groupValues?.get(1)
+        } ?: document.selectFirst("article img")?.attr("src")
+            ?: document.selectFirst("article img")?.attr("data-src")
         Log.d(TAG, "load: Poster=$poster")
         
         val description = document.selectFirst("article p")?.text() ?: ""
@@ -249,12 +249,14 @@ class AsialiveactionProvider : MainAPI() {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.plot = description
+                this.year = year
                 this.recommendations = recommendations
             }
         } else {
             newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodes) {
                 this.posterUrl = poster
                 this.plot = description
+                this.year = year
                 this.showStatus = status
                 this.recommendations = recommendations
             }
