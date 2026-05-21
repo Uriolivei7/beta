@@ -282,8 +282,8 @@ class AsialiveactionProvider : MainAPI() {
                 this.plot = description
                 this.year = year
                 if (durationSeconds != null) {
-                    Log.d(TAG, "load: Setting movie duration=$durationSeconds")
-                    this.duration = durationSeconds
+                    Log.d(TAG, "load: Setting movie duration=${durationSeconds / 60} min")
+                    this.duration = durationSeconds / 60
                 }
                 this.recommendations = recommendations
             }
