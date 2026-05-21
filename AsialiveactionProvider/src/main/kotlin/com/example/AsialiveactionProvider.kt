@@ -30,6 +30,21 @@ class AsialiveactionProvider : MainAPI() {
 
     private fun getNumberFromEpsString(epsStr: String): String = epsStr.filter { it.isDigit() }.take(4)
 
+    private fun parseDuration(text: String): Int? {
+        val clean = text.trim().lowercase()
+        val hm = Regex("""(\d+)\s*h\s*(\d+)\s*min""").find(clean)
+        if (hm != null) return hm.groupValues[1].toInt() * 3600 + hm.groupValues[2].toInt() * 60
+        val simple = Regex("""(\d+)\s*min""").find(clean)
+        if (simple != null) return simple.groupValues[1].toInt() * 60
+        val masDe = Regex("""más\s*de\s*(\d+)\s*min""").find(clean)
+        if (masDe != null) return masDe.groupValues[1].toInt() * 60
+        val menosDe = Regex("""menos\s*de\s*(\d+)\s*min""").find(clean)
+        if (menosDe != null) return (menosDe.groupValues[1].toInt() * 0.66).toInt() * 60
+        val hours = Regex("""(\d+)\s*h""").find(clean)
+        if (hours != null) return hours.groupValues[1].toInt() * 3600
+        return null
+    }
+
     private fun fetchUrls(text: String?): List<String> {
         if (text.isNullOrEmpty()) return listOf()
         val linkRegex = "(http|ftp|https)://([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:/~+#-]*[\\w@?^=%&/~+#-])".toRegex()
@@ -156,6 +171,9 @@ class AsialiveactionProvider : MainAPI() {
         
         val yearText = document.selectFirst(".estreno")?.text() ?: ""
         val year = yearText.filter { it.isDigit() }.take(4).toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
+
+        val durationText = document.selectFirst(".duraciones .duracion")?.text()?.trim()
+        val durationSeconds = durationText?.let { parseDuration(it) }
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         val status = when {
             year < currentYear -> ShowStatus.Completed
@@ -190,9 +208,8 @@ class AsialiveactionProvider : MainAPI() {
                     episodes.add(newEpisode(epUrl) {
                         this.name = cleanName
                         this.episode = epNum.toIntOrNull() ?: 1
-                        if (publishedText != null) {
-                            this.description = publishedText
-                        }
+                        this.posterUrl = poster
+                        if (publishedText != null) this.description = publishedText
                     })
                 }
             }
@@ -208,9 +225,8 @@ class AsialiveactionProvider : MainAPI() {
                     episodes.add(newEpisode(epUrl) {
                         this.name = groupEpName
                         this.episode = groupEpNum.toIntOrNull() ?: 1
-                        if (groupPublishedText != null) {
-                            this.description = groupPublishedText
-                        }
+                        this.posterUrl = poster
+                        if (groupPublishedText != null) this.description = groupPublishedText
                     })
                 }
             }
@@ -250,6 +266,7 @@ class AsialiveactionProvider : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
                 this.year = year
+                if (durationSeconds != null) this.duration = durationSeconds
                 this.recommendations = recommendations
             }
         } else {
