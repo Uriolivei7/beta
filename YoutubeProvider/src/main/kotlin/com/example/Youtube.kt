@@ -1387,9 +1387,9 @@ class YoutubeProvider(
         val context = AcraApplication.context
         val playerType = if (context != null) {
             val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-            prefs.getString("youtube_player_type", "advanced")
+            prefs.getString("youtube_player_type", "classic")
         } else {
-            "advanced"
+            "classic"
         }
 
         if (playerType == "classic") {
