@@ -1621,17 +1621,21 @@ class YoutubeProvider(
                 } catch (_: Exception) {}
             }
 
-            if (audioFormats.isNotEmpty()) {
-                val audioInfos = audioFormats.mapNotNull { af ->
-                    try {
-                        val track = af.optJSONObject("audioTrack")
-                        val display = track?.optString("displayName", "") ?: ""
-                        val id = track?.optString("id", "")?.substringBefore(".") ?: ""
-                        val codec = af.optString("mimeType", "").substringAfter("/").substringBefore(";").trim()
-                        val quality = af.optString("audioQuality", "").substringAfter("AUDIO_QUALITY_")
-                        "${display.ifBlank { id.ifBlank { "?" } }} ($codec, $quality)"
-                    } catch (_: Exception) { null }
-                }
+            for (af in audioFormats) {
+                try {
+                    val fmtUrl = af.optString("url", "")
+                    if (fmtUrl.isNotBlank()) {
+                        val audioQuality = af.optString("audioQuality", "").substringAfter("AUDIO_QUALITY_")
+                        val bitrate = af.optInt("bitrate", 0)
+                        val label = "$clientName audio ${audioQuality.ifBlank { bitrate.toString() }}"
+                        callback(newExtractorLink(this.name, label, fmtUrl) {
+                            this.referer = mainUrl
+                            this.quality = if (audioQuality.contains("HIGH")) Qualities.Unknown.value else Qualities.Unknown.value
+                        })
+                        found = true
+                    }
+                } catch (_: Exception) {}
+            }
                 Log.i("YtExtractor", "Video $videoId: $clientName audio tracks (${audioFormats.size}): ${audioInfos.joinToString()}")
             } else {
                 Log.w("YtExtractor", "Video $videoId: $clientName no audio formats in adaptiveFormats")
