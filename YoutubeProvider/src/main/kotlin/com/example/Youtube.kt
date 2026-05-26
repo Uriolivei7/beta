@@ -1428,35 +1428,37 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val webApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
-        val visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
+        var visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
         val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00" else "2.20240725.01.00"
 
-        // ANDROID uses hardcoded keys, not the page-scraped key
-        val androidKeys = listOf(
-            "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-            "AIzaSyB-63vPrdThhKuerbB2Nv7HodBCD9M-5Xg"
-        )
+        Log.i("YtExtractor", "Video $videoId: Scraped apiKey present=${webApiKey.isNotBlank()} visitorData present=${visitorData.isNotBlank()} webClientVersion=$webClientVersion")
 
-        val clients = listOf(
-            Triple("19.09.37", "ANDROID", "MOBILE"),
-            Triple("19.43.37", "ANDROID", "MOBILE"),
-            Triple("1.20240726.00.00", "WEB_CREATOR", "DESKTOP")
-        )
+        // Try to get visitor data from sharedPrefs as fallback
+        if (visitorData.isBlank()) {
+            visitorData = sharedPref?.getString("VISITOR_INFO1_LIVE", null) ?: ""
+            Log.i("YtExtractor", "Video $videoId: Using VISITOR_INFO1_LIVE from prefs as visitorData, present=${visitorData.isNotBlank()}")
+        }
+
+        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+
+        // Try WEB client first (most permissive), then WEB_CREATOR
+        val clients = mutableListOf<Triple<String, String, String>>()
+        if (webApiKey.isNotBlank()) {
+            clients.add(Triple("2.20240725.01.00", "WEB", "DESKTOP"))
+            clients.add(Triple("1.20240726.00.00", "WEB_CREATOR", "DESKTOP"))
+        }
 
         for ((version, clientName, platform) in clients) {
-            val keys = if (clientName == "ANDROID") androidKeys else listOf(webApiKey).filter { it.isNotBlank() }
-            for (apiKey in keys) {
-                Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version")
-                try {
-                    val result = fetchAndParsePlayerResponse(
-                        videoId, apiKey, visitorData, webClientVersion,
-                        clientName, version, platform,
-                        subtitleCallback, callback
-                    )
-                    if (result) return true
-                } catch (e: Exception) {
-                    Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
-                }
+            Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version apiKey=${webApiKey.take(12)}... visitorData=${visitorData.take(20)}")
+            try {
+                val result = fetchAndParsePlayerResponse(
+                    videoId, webApiKey, visitorData, webClientVersion,
+                    clientName, version, platform, userAgent,
+                    subtitleCallback, callback
+                )
+                if (result) return true
+            } catch (e: Exception) {
+                Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
             }
         }
         return false
@@ -1470,6 +1472,7 @@ class YoutubeProvider(
         clientName: String,
         clientVersion: String,
         platform: String,
+        userAgent: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
@@ -1482,7 +1485,6 @@ class YoutubeProvider(
             "visitorData" to visitorData,
             "platform" to platform
         )
-        if (clientName == "ANDROID") clientMap["androidSdkVersion"] = 33
         val payload = mutableMapOf<String, Any>(
             "context" to mapOf("client" to clientMap),
             "videoId" to videoId,
@@ -1490,16 +1492,11 @@ class YoutubeProvider(
             "racyCheckOk" to true
         )
 
-        val userAgent = if (clientName == "ANDROID") {
-            "com.google.android.youtube/$clientVersion (Linux; U; Android 14; US) gzip"
-        } else {
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
-        }
-
         val headers = mutableMapOf<String, String>()
         headers["Content-Type"] = "application/json"
         headers["User-Agent"] = userAgent
-        headers["X-Youtube-Client-Name"] = if (clientName == "ANDROID") "ANDROID" else "WEB_CREATOR"
+        headers["Accept-Language"] = "en-US,en;q=0.9"
+        headers["X-Youtube-Client-Name"] = clientName
         headers["X-Youtube-Client-Version"] = clientVersion
         if (visitorData.isNotBlank()) headers["X-Goog-Visitor-Id"] = visitorData
 
