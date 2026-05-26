@@ -473,22 +473,22 @@ class YoutubeProvider(
     }
 
     private fun extractYtInitialData(html: String): Map<String, Any>? {
-        val regex = Regex(
-            """(?:var ytInitialData|window\["ytInitialData"\])\s*=\s*(\{.*\});""",
-            RegexOption.DOT_MATCHES_ALL
+        val patterns = listOf(
+            Regex("""(?:var|const|let)\s+ytInitialData\s*=\s*(\{.+\});""", RegexOption.DOT_MATCHES_ALL),
+            Regex("""window\["ytInitialData"\]\s*=\s*(\{.+\});""", RegexOption.DOT_MATCHES_ALL),
+            Regex("""window\.ytInitialData\s*=\s*(\{.+\});""", RegexOption.DOT_MATCHES_ALL),
+            Regex("""ytInitialData\s*=\s*(\{.+\});""", RegexOption.DOT_MATCHES_ALL)
         )
-        val match = try {
-            regex.find(html)
-        } catch (e: Exception) {
-            null
-        }
-        return match?.groupValues?.getOrNull(1)?.let {
+        for (regex in patterns) {
             try {
-                parseJson<Map<String, Any>>(it)
-            } catch (e: Exception) {
-                null
-            }
+                val match = regex.find(html)
+                if (match != null) {
+                    val json = parseJson<Map<String, Any>>(match.groupValues[1])
+                    if (json != null) return json
+                }
+            } catch (_: Exception) {}
         }
+        return null
     }
 
     private fun findConfig(html: String, key: String): String? {
@@ -928,10 +928,15 @@ class YoutubeProvider(
         if (url.contains("/@") || url.contains("/channel/") || url.contains("/c/") || url.contains("/user/")) {
             try {
                 val channelUrl = if (url.endsWith("/videos")) url else "$url/videos"
+                Log.i("YtChannel", "Loading channel: $channelUrl")
                 val response = app.get(channelUrl, interceptor = ytInterceptor)
                 val html = response.text
                 val data = extractYtInitialData(html)
-                    ?: throw ErrorLoadingException("Failed to extract channel data")
+                if (data == null) {
+                    Log.w("YtChannel", "extractYtInitialData returned null for $channelUrl")
+                    throw ErrorLoadingException("Failed to extract channel data")
+                }
+                Log.i("YtChannel", "ytInitialData extracted OK, keys: ${data.keys}")
 
                 val apiKey = findConfig(html, "INNERTUBE_API_KEY")
                 val clientVersion = findConfig(html, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00"
@@ -1055,6 +1060,13 @@ class YoutubeProvider(
                                         val ciMap = ci as? Map<*, *>
                                         if (ciMap != null) flattened.add(ciMap)
                                     }
+                                } else {
+                                    val richSection = sectionMap["richSectionRenderer"] as? Map<*, *>
+                                    val richContent = richSection?.get("content") as? Map<*, *>
+                                    if (richContent?.containsKey("richGridRenderer") == true) {
+                                        val richItems = safeGet(richContent, "richGridRenderer", "contents") as? List<*>
+                                        if (richItems != null) flattened.addAll(richItems.mapNotNull { it as? Map<*, *> })
+                                    }
                                 }
                             }
                             return flattened
@@ -1065,13 +1077,20 @@ class YoutubeProvider(
 
                 var initialItems: List<*>? = null
                 val tabs = safeGet(data, "contents", "twoColumnBrowseResultsRenderer", "tabs") as? List<*>
+                Log.i("YtChannel", "Tabs found: ${tabs?.size ?: 0}")
                 if (tabs != null) {
-                    for (tab in tabs) {
+                    for ((tabIdx, tab) in tabs.withIndex()) {
                         val tabMap = tab as? Map<*, *>
                         val tabRenderer = tabMap?.get("tabRenderer") as? Map<*, *>
+                        val tabTitle = extractTitle(safeGet(tabRenderer, "title") as? Map<*, *>) ?: "tab$tabIdx"
+                        val hasContent = tabRenderer?.containsKey("content") == true
+                        Log.d("YtChannel", "Tab $tabIdx: '$tabTitle' hasContent=$hasContent")
                         val content = tabRenderer?.get("content") as? Map<*, *>
                         if (content != null) {
+                            val foundKeys = content.keys.joinToString(",")
+                            Log.d("YtChannel", "Tab $tabIdx content keys: $foundKeys")
                             initialItems = extractItemsFromTabContent(content)
+                            Log.d("YtChannel", "Tab $tabIdx extractItems: ${initialItems?.size ?: 0} items")
                             if (initialItems != null) break
                         }
                     }
@@ -1079,6 +1098,7 @@ class YoutubeProvider(
 
                 // Si no se encontraron videos con /videos, intentar sin /videos
                 if (initialItems == null && url.endsWith("/videos")) {
+                    Log.w("YtChannel", "No items with /videos, retrying without /videos")
                     try {
                         val baseUrl = url.removeSuffix("/videos")
                         val fallbackResponse = app.get(baseUrl, interceptor = ytInterceptor)
@@ -1098,11 +1118,33 @@ class YoutubeProvider(
                                 }
                             }
                         }
-                    } catch (_: Exception) { }
+                    } catch (e: Exception) {
+                        Log.w("YtChannel", "Fallback without /videos failed: ${e.message}")
+                    }
                 }
 
                 if (initialItems != null) {
                     extractVideosFromItems(initialItems, allEpisodes)
+                    Log.i("YtChannel", "Extracted ${allEpisodes.size} videos from initialItems")
+                } else {
+                    Log.w("YtChannel", "No initialItems found from any tab")
+                }
+
+                if (allEpisodes.isEmpty()) {
+                    Log.w("YtChannel", "No videos yet, trying recursive search of full data tree")
+                    fun findVideosRecursive(obj: Any?) {
+                        if (obj is Map<*, *>) {
+                            if (obj.containsKey("videoRenderer") || obj.containsKey("gridVideoRenderer") || obj.containsKey("compactVideoRenderer")) {
+                                extractVideosFromItems(listOf(obj), allEpisodes)
+                                return
+                            }
+                            for (v in obj.values) findVideosRecursive(v)
+                        } else if (obj is List<*>) {
+                            for (i in obj) findVideosRecursive(i)
+                        }
+                    }
+                    findVideosRecursive(data)
+                    Log.i("YtChannel", "Recursive search found ${allEpisodes.size} videos")
                 }
 
                 var currentToken: String? = findContinuationTokenFromItems(initialItems)
@@ -1117,6 +1159,7 @@ class YoutubeProvider(
                 while (!currentToken.isNullOrBlank() && pagesFetchedLocal < maxPages && !apiKey.isNullOrBlank()) {
                     try {
                         pagesFetchedLocal += 1
+                        Log.d("YtChannel", "Pagination page $pagesFetchedLocal, token=${currentToken?.take(30)}...")
                         val apiUrl = "https://www.youtube.com/youtubei/v1/browse?key=$apiKey"
                         val payload = mapOf(
                             "context" to mapOf(
@@ -1133,13 +1176,16 @@ class YoutubeProvider(
                         val jsonResponse = app.post(apiUrl, json = payload, headers = headers, interceptor = ytInterceptor).parsedSafe<Map<String, Any>>() ?: break
                         val continuationItems = findContinuationItemsRecursive(jsonResponse) ?: break
                         extractVideosFromItems(continuationItems, allEpisodes)
+                        Log.d("YtChannel", "Pagination got ${allEpisodes.size} total videos so far")
                         currentToken = findContinuationTokenFromItems(continuationItems)
                         kotlinx.coroutines.delay((SLEEP_BETWEEN * 10).toLong())
                     } catch (e: Exception) {
+                        Log.w("YtChannel", "Pagination error on page $pagesFetchedLocal: ${e.message}")
                         break
                     }
                 }
 
+                Log.i("YtChannel", "Returning ${allEpisodes.size} episodes for channel $title")
                 return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
                     this.posterUrl = poster
                     this.plot = "Canal: $title\nSuscriptores: ${subscriberCount ?: "N/A"}\nVideos obtenidos: ${allEpisodes.size}"
@@ -1147,7 +1193,7 @@ class YoutubeProvider(
                 }
 
             } catch (e: Exception) {
-
+                Log.e("YtChannel", "Channel load error: ${e.message}")
             }
         }
 
