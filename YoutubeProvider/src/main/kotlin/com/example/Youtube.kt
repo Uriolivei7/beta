@@ -1397,59 +1397,68 @@ class YoutubeProvider(
 
         Log.i("YtExtractor", "Video $videoId: Player type=$playerType")
 
-        if (playerType == "classic") {
-            Log.i("YtExtractor", "Video $videoId: Using loadExtractor (CS3 built-in)")
-            loadExtractor(fullUrl, subtitleCallback, trackingCallback)
-        } else {
-            Log.i("YtExtractor", "Video $videoId: Using NewPipe YoutubeExtractor")
-            com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
-        }
+        Log.i("YtExtractor", "Video $videoId: Trying InnerTube API first")
+        var watchHtml: String? = null
+        try {
+            watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
+        } catch (_: Exception) {}
+
+        foundAnyLink = tryInnerTubeClients(videoId, watchHtml, subtitleCallback, trackingCallback)
 
         if (!foundAnyLink) {
-            Log.i("YtExtractor", "Video $videoId: Primary extractor gave no links, trying InnerTube API fallbacks")
+            Log.i("YtExtractor", "Video $videoId: InnerTube API gave no links, trying extractor fallbacks")
 
-            try {
-                val watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
-                val apiKey = findConfig(watchHtml, "INNERTUBE_API_KEY") ?: ""
-                val visitorData = findConfig(watchHtml, "VISITOR_DATA") ?: ""
-                val clientVersion = findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00"
-
-                if (apiKey.isNotBlank()) {
-                    val androidClients = listOf(
-                        "19.09.37" to "ANDROID",
-                        "19.43.37" to "ANDROID",
-                        "1.20240726.00.00" to "WEB_CREATOR"
-                    )
-
-                    for ((version, clientName) in androidClients) {
-                        if (foundAnyLink) break
-                        val platform = if (clientName == "ANDROID") "MOBILE" else "DESKTOP"
-                        Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version")
-
-                        try {
-                            val result = fetchAndParsePlayerResponse(
-                                videoId, apiKey, visitorData, clientVersion,
-                                clientName, version, platform,
-                                subtitleCallback, trackingCallback
-                            )
-                            if (result) {
-                                Log.i("YtExtractor", "Video $videoId: Client $clientName produced links")
-                                foundAnyLink = true
-                            }
-                        } catch (e: Exception) {
-                            Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
-                        }
-                    }
-                } else {
-                    Log.w("YtExtractor", "Video $videoId: No API key found in HTML")
-                }
-            } catch (e: Exception) {
-                Log.w("YtExtractor", "Video $videoId: Failed to fetch watch page: ${e.message}")
+            if (playerType == "classic") {
+                Log.i("YtExtractor", "Video $videoId: Using loadExtractor (CS3 built-in)")
+                loadExtractor(fullUrl, subtitleCallback, trackingCallback)
+            } else {
+                Log.i("YtExtractor", "Video $videoId: Using NewPipe YoutubeExtractor")
+                com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
             }
+        }
+
+        if (!foundAnyLink && watchHtml != null) {
+            Log.i("YtExtractor", "Video $videoId: Retrying InnerTube API with fresh scraper data")
+            foundAnyLink = tryInnerTubeClients(videoId, watchHtml, subtitleCallback, trackingCallback)
         }
 
         Log.i("YtExtractor", "Video $videoId: loadLinks returning $foundAnyLink")
         return foundAnyLink
+    }
+
+    private suspend fun tryInnerTubeClients(
+        videoId: String,
+        watchHtml: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        if (watchHtml.isNullOrBlank()) return false
+        val apiKey = findConfig(watchHtml, "INNERTUBE_API_KEY") ?: ""
+        val visitorData = findConfig(watchHtml, "VISITOR_DATA") ?: ""
+        val webClientVersion = findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00"
+        if (apiKey.isBlank()) return false
+
+        val clients = listOf(
+            "19.09.37" to "ANDROID",
+            "19.43.37" to "ANDROID",
+            "1.20240726.00.00" to "WEB_CREATOR"
+        )
+
+        for ((version, clientName) in clients) {
+            val platform = if (clientName == "ANDROID") "MOBILE" else "DESKTOP"
+            Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version")
+            try {
+                val result = fetchAndParsePlayerResponse(
+                    videoId, apiKey, visitorData, webClientVersion,
+                    clientName, version, platform,
+                    subtitleCallback, callback
+                )
+                if (result) return true
+            } catch (e: Exception) {
+                Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
+            }
+        }
+        return false
     }
 
     private suspend fun fetchAndParsePlayerResponse(
@@ -1629,7 +1638,12 @@ class YoutubeProvider(
                     if (fmtUrl.isNotBlank()) {
                         val audioQuality = af.optString("audioQuality", "").substringAfter("AUDIO_QUALITY_")
                         val bitrate = af.optInt("bitrate", 0)
-                        val label = "$clientName audio ${audioQuality.ifBlank { bitrate.toString() }}"
+                        val audioTrack = af.optJSONObject("audioTrack")
+                        val langDisplay = audioTrack?.optString("displayName", "")
+                        val langId = audioTrack?.optString("id", "")?.substringBefore(".")
+                        val langLabel = if (!langDisplay.isNullOrBlank()) " ($langDisplay)" else if (!langId.isNullOrBlank()) " ($langId)" else ""
+                        val audioCodec = af.optString("mimeType", "").substringAfter("/").substringBefore(";").trim()
+                        val label = "$clientName audio ${audioQuality.ifBlank { bitrate.toString() }}$langLabel"
                         callback(newExtractorLink(this.name, label, fmtUrl) {
                             this.referer = mainUrl
                             this.quality = if (audioQuality.contains("HIGH")) Qualities.Unknown.value else Qualities.Unknown.value
