@@ -1621,26 +1621,6 @@ class YoutubeProvider(
                 } catch (_: Exception) {}
             }
 
-            for (af in audioFormats) {
-                try {
-                    val fmtUrl = af.optString("url", "")
-                    if (fmtUrl.isNotBlank()) {
-                        val audioQuality = af.optString("audioQuality", "").substringAfter("AUDIO_QUALITY_")
-                        val bitrate = af.optInt("bitrate", 0)
-                        val label = "$clientName audio ${audioQuality.ifBlank { bitrate.toString() }}"
-                        callback(newExtractorLink(this.name, label, fmtUrl) {
-                            this.referer = mainUrl
-                            this.quality = if (audioQuality.contains("HIGH")) Qualities.Unknown.value else Qualities.Unknown.value
-                        })
-                        found = true
-                    }
-                } catch (_: Exception) {}
-            }
-                Log.i("YtExtractor", "Video $videoId: $clientName audio tracks (${audioFormats.size}): ${audioInfos.joinToString()}")
-            } else {
-                Log.w("YtExtractor", "Video $videoId: $clientName no audio formats in adaptiveFormats")
-            }
-
             for (vf in videoFormats) {
                 try {
                     val fmtUrl = vf.optString("url", "")
@@ -1660,12 +1640,7 @@ class YoutubeProvider(
                     if (fmtUrl.isNotBlank()) {
                         val audioQuality = af.optString("audioQuality", "").substringAfter("AUDIO_QUALITY_")
                         val bitrate = af.optInt("bitrate", 0)
-                        val audioTrack = af.optJSONObject("audioTrack")
-                        val langDisplay = audioTrack?.optString("displayName", "")
-                        val langId = audioTrack?.optString("id", "")?.substringBefore(".")
-                        val langLabel = if (!langDisplay.isNullOrBlank()) " ($langDisplay)" else if (!langId.isNullOrBlank()) " ($langId)" else ""
-                        val audioCodec = af.optString("mimeType", "").substringAfter("/").substringBefore(";").trim()
-                        val label = "$clientName audio ${audioQuality.ifBlank { bitrate.toString() }}$langLabel"
+                        val label = "$clientName audio ${audioQuality.ifBlank { bitrate.toString() }}"
                         callback(newExtractorLink(this.name, label, fmtUrl) {
                             this.referer = mainUrl
                             this.quality = if (audioQuality.contains("HIGH")) Qualities.Unknown.value else Qualities.Unknown.value
