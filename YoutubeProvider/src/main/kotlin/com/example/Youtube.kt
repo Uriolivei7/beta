@@ -1434,7 +1434,26 @@ class YoutubeProvider(
                 "videoId" to videoId
             )
 
-            val responseText = app.post(apiUrl, json = payload, interceptor = ytInterceptor).text
+            // Construir headers con autorización SAPISID (necesaria para streamingData)
+            val innerHeaders = mutableMapOf<String, String>()
+            innerHeaders["Content-Type"] = "application/json"
+            innerHeaders["X-Youtube-Client-Name"] = "WEB"
+            innerHeaders["X-Youtube-Client-Version"] = innerClientVersion
+            if (!innerVisitorData.isNullOrBlank()) innerHeaders["X-Goog-Visitor-Id"] = innerVisitorData
+
+            val innerSapisid = sharedPref?.getString("SAPISID", null)
+            if (!innerSapisid.isNullOrBlank()) {
+                try {
+                    val origin = "https://www.youtube.com"
+                    val hash = getSapisidHash(innerSapisid, origin)
+                    innerHeaders["Authorization"] = hash
+                    innerHeaders["X-Origin"] = origin
+                    innerHeaders["Origin"] = origin
+                    innerHeaders["X-Goog-AuthUser"] = "0"
+                } catch (_: Exception) { }
+            }
+
+            val responseText = app.post(apiUrl, headers = innerHeaders, json = payload, interceptor = ytInterceptor).text
 
             if (responseText.isNotBlank()) {
                 val root = JSONObject(responseText)
@@ -1504,6 +1523,11 @@ class YoutubeProvider(
                 try {
                     val streamingData = root.optJSONObject("streamingData")
                     val hlsUrl = streamingData?.optString("hlsManifestUrl", "")
+                    val dashManifestUrl = streamingData?.optString("dashManifestUrl", "")
+                    Log.i("YtExtractor", "Video $videoId: streamingData=${streamingData != null}, hlsUrl=${!hlsUrl.isNullOrBlank()}, dashUrl=${!dashManifestUrl.isNullOrBlank()}")
+                    if (streamingData != null) {
+                        Log.i("YtExtractor", "Video $videoId: streamingData keys=${streamingData.keys().asSequence().toList()}")
+                    }
                     if (!hlsUrl.isNullOrBlank()) {
                         Log.i("YtExtractor", "Video $videoId: HLS manifest found, adding streams")
 
