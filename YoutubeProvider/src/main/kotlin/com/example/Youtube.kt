@@ -1037,6 +1037,32 @@ class YoutubeProvider(
                     }
                 }
 
+                fun extractItemsFromTabContent(content: Map<*, *>): List<*>? {
+                    if (content.containsKey("richGridRenderer"))
+                        return safeGet(content, "richGridRenderer", "contents") as? List<*>
+                    if (content.containsKey("gridRenderer"))
+                        return safeGet(content, "gridRenderer", "items") as? List<*>
+                    if (content.containsKey("sectionListRenderer")) {
+                        val sectionItems = safeGet(content, "sectionListRenderer", "contents") as? List<*>
+                        if (sectionItems != null) {
+                            val flattened = mutableListOf<Map<*, *>>()
+                            for (item in sectionItems) {
+                                val sectionMap = item as? Map<*, *> ?: continue
+                                val itemSection = sectionMap["itemSectionRenderer"] as? Map<*, *>
+                                if (itemSection != null) {
+                                    val innerContents = itemSection["contents"] as? List<*>
+                                    innerContents?.forEach { ci ->
+                                        val ciMap = ci as? Map<*, *>
+                                        if (ciMap != null) flattened.add(ciMap)
+                                    }
+                                }
+                            }
+                            return flattened
+                        }
+                    }
+                    return null
+                }
+
                 var initialItems: List<*>? = null
                 val tabs = safeGet(data, "contents", "twoColumnBrowseResultsRenderer", "tabs") as? List<*>
                 if (tabs != null) {
@@ -1044,16 +1070,37 @@ class YoutubeProvider(
                         val tabMap = tab as? Map<*, *>
                         val tabRenderer = tabMap?.get("tabRenderer") as? Map<*, *>
                         val content = tabRenderer?.get("content") as? Map<*, *>
-                        if (content?.containsKey("richGridRenderer") == true) {
-                            initialItems = safeGet(content, "richGridRenderer", "contents") as? List<*>
-                            break
-                        }
-                        if (content?.containsKey("gridRenderer") == true) {
-                            initialItems = safeGet(content, "gridRenderer", "items") as? List<*>
-                            break
+                        if (content != null) {
+                            initialItems = extractItemsFromTabContent(content)
+                            if (initialItems != null) break
                         }
                     }
                 }
+
+                // Si no se encontraron videos con /videos, intentar sin /videos
+                if (initialItems == null && url.endsWith("/videos")) {
+                    try {
+                        val baseUrl = url.removeSuffix("/videos")
+                        val fallbackResponse = app.get(baseUrl, interceptor = ytInterceptor)
+                        val fallbackHtml = fallbackResponse.text
+                        val fallbackData = extractYtInitialData(fallbackHtml)
+                        if (fallbackData != null) {
+                            val fallbackTabs = safeGet(fallbackData, "contents", "twoColumnBrowseResultsRenderer", "tabs") as? List<*>
+                            if (fallbackTabs != null) {
+                                for (tab in fallbackTabs) {
+                                    val tabMap = tab as? Map<*, *>
+                                    val tabRenderer = tabMap?.get("tabRenderer") as? Map<*, *>
+                                    val content = tabRenderer?.get("content") as? Map<*, *>
+                                    if (content != null) {
+                                        initialItems = extractItemsFromTabContent(content)
+                                        if (initialItems != null) break
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) { }
+                }
+
                 if (initialItems != null) {
                     extractVideosFromItems(initialItems, allEpisodes)
                 }
