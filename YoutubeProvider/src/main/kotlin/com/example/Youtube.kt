@@ -1480,6 +1480,87 @@ class YoutubeProvider(
                         }
                     }
                 }
+
+                // Extraer streams HLS del mismo response (fallback cuando NewPipe no encuentra streams)
+                try {
+                    val streamingData = root.optJSONObject("streamingData")
+                    val hlsUrl = streamingData?.optString("hlsManifestUrl", "")
+                    if (!hlsUrl.isNullOrBlank()) {
+                        Log.i("YtExtractor", "Video $videoId: HLS manifest found, adding streams")
+
+                        callback(
+                            newExtractorLink(this.name, "M3U AUTO", hlsUrl) {
+                                this.referer = mainUrl
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+
+                        try {
+                            val masterM3u8 = app.get(hlsUrl, referer = mainUrl).text
+                            val lines = masterM3u8.lines()
+
+                            // Subtítulos desde HLS
+                            lines.filter { it.startsWith("#EXT-X-MEDIA") && it.contains("TYPE=SUBTITLES") }
+                                .forEach { line ->
+                                    val subUri = parseM3u8Tag(line, "URI")
+                                    val subName = parseM3u8Tag(line, "NAME")
+                                    val subLang = parseM3u8Tag(line, "LANGUAGE")
+
+                                    if (subUri != null) {
+                                        val displayName = subName ?: subLang ?: "Subtitle (HLS)"
+                                        subtitleCallback(newSubtitleFile(displayName, subUri))
+                                    }
+                                }
+
+                            // Variantes de resolución
+                            lines.forEachIndexed { index, line ->
+                                if (line.startsWith("#EXT-X-STREAM-INF")) {
+                                    val infoLine = line
+                                    val urlLine = lines.getOrNull(index + 1)?.takeIf { it.startsWith("http") }
+                                        ?: return@forEachIndexed
+
+                                    val resolution = parseM3u8Tag(infoLine, "RESOLUTION")
+                                    val resolutionHeight = resolution?.substringAfter("x")?.plus("p") ?: ""
+
+                                    val audioId = parseM3u8Tag(infoLine, "YT-EXT-AUDIO-CONTENT-ID")
+                                    val lang = audioId?.substringBefore('.')?.uppercase()
+
+                                    val ytTags = parseM3u8Tag(infoLine, "YT-EXT-XTAGS")
+                                    val audioType = when {
+                                        ytTags?.contains("dubbed") == true -> "Dubbed"
+                                        ytTags?.contains("original") == true -> "Original"
+                                        else -> null
+                                    }
+
+                                    val nameBuilder = StringBuilder()
+                                    nameBuilder.append(resolutionHeight)
+                                    if (lang != null) {
+                                        nameBuilder.append(" ($lang")
+                                        if (audioType != null) {
+                                            nameBuilder.append(" - $audioType")
+                                        }
+                                        nameBuilder.append(")")
+                                    }
+
+                                    val streamName = nameBuilder.toString().trim()
+
+                                    if (streamName.isNotBlank()) {
+                                        callback(
+                                            newExtractorLink(this.name, streamName, urlLine) {
+                                                this.referer = mainUrl
+                                                this.quality = getQualityFromName(resolutionHeight)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            logError(e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    logError(e)
+                }
             }
         } catch (e: Exception) {
 
