@@ -1401,15 +1401,34 @@ class YoutubeProvider(
         }
 
         try {
-            val apiUrl = "$mainUrl/youtubei/v1/player"
+            // Fetch video page HTML to extract InnerTube API config (needed for HLS streams)
+            val watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
+
+            val innerApiKey = findConfig(watchHtml, "INNERTUBE_API_KEY")
+            val innerClientVersion = findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00"
+            val innerVisitorData = findConfig(watchHtml, "VISITOR_DATA")
+
+            Log.i("YtExtractor", "Video $videoId: InnerTube API key found=${!innerApiKey.isNullOrBlank()}")
+
+            if (innerApiKey.isNullOrBlank()) {
+                Log.w("YtExtractor", "Video $videoId: No API key found, cannot fetch HLS streams")
+            }
+
+            val apiUrl = if (!innerApiKey.isNullOrBlank()) {
+                "$mainUrl/youtubei/v1/player?key=$innerApiKey"
+            } else {
+                "$mainUrl/youtubei/v1/player"
+            }
 
             val payload = mapOf(
                 "context" to mapOf(
                     "client" to mapOf(
                         "clientName" to "WEB",
-                        "clientVersion" to "2.20240725.01.00",
+                        "clientVersion" to innerClientVersion,
                         "hl" to "en",
-                        "gl" to "US"
+                        "gl" to "US",
+                        "visitorData" to (innerVisitorData ?: ""),
+                        "platform" to "DESKTOP"
                     )
                 ),
                 "videoId" to videoId
