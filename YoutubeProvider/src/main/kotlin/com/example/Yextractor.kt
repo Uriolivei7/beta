@@ -78,8 +78,8 @@ open class YoutubeExtractor : ExtractorApi() {
                 val s = object : YoutubeStreamExtractor(ServiceList.YouTube, link) {}
                 s.fetchPage()
 
-                // Reintentar si NewPipe no encontró streams (fallo intermitente)
-                if ((s.videoOnlyStreams ?: emptyList()).isEmpty() && (s.videoStreams ?: emptyList()).isEmpty()) {
+                // Reintentar si NewPipe no encontró streams video-only (fallo intermitente de fetchPage)
+                if ((s.videoOnlyStreams ?: emptyList()).isEmpty()) {
                     try {
                         Thread.sleep(1500)
                         s.fetchPage()
