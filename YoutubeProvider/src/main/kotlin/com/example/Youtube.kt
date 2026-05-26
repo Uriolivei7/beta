@@ -1417,11 +1417,6 @@ class YoutubeProvider(
             }
         }
 
-        if (!foundAnyLink && watchHtml != null) {
-            Log.i("YtExtractor", "Video $videoId: Retrying InnerTube API with fresh scraper data")
-            foundAnyLink = tryInnerTubeClients(videoId, watchHtml, subtitleCallback, trackingCallback)
-        }
-
         Log.i("YtExtractor", "Video $videoId: loadLinks returning $foundAnyLink")
         return foundAnyLink
     }
@@ -1432,30 +1427,36 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (watchHtml.isNullOrBlank()) return false
-        val apiKey = findConfig(watchHtml, "INNERTUBE_API_KEY") ?: ""
-        val visitorData = findConfig(watchHtml, "VISITOR_DATA") ?: ""
-        val webClientVersion = findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00"
-        if (apiKey.isBlank()) return false
+        val webApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
+        val visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
+        val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00" else "2.20240725.01.00"
 
-        val clients = listOf(
-            "19.09.37" to "ANDROID",
-            "19.43.37" to "ANDROID",
-            "1.20240726.00.00" to "WEB_CREATOR"
+        // ANDROID uses hardcoded keys, not the page-scraped key
+        val androidKeys = listOf(
+            "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+            "AIzaSyB-63vPrdThhKuerbB2Nv7HodBCD9M-5Xg"
         )
 
-        for ((version, clientName) in clients) {
-            val platform = if (clientName == "ANDROID") "MOBILE" else "DESKTOP"
-            Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version")
-            try {
-                val result = fetchAndParsePlayerResponse(
-                    videoId, apiKey, visitorData, webClientVersion,
-                    clientName, version, platform,
-                    subtitleCallback, callback
-                )
-                if (result) return true
-            } catch (e: Exception) {
-                Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
+        val clients = listOf(
+            Triple("19.09.37", "ANDROID", "MOBILE"),
+            Triple("19.43.37", "ANDROID", "MOBILE"),
+            Triple("1.20240726.00.00", "WEB_CREATOR", "DESKTOP")
+        )
+
+        for ((version, clientName, platform) in clients) {
+            val keys = if (clientName == "ANDROID") androidKeys else listOf(webApiKey).filter { it.isNotBlank() }
+            for (apiKey in keys) {
+                Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version")
+                try {
+                    val result = fetchAndParsePlayerResponse(
+                        videoId, apiKey, visitorData, webClientVersion,
+                        clientName, version, platform,
+                        subtitleCallback, callback
+                    )
+                    if (result) return true
+                } catch (e: Exception) {
+                    Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
+                }
             }
         }
         return false
@@ -1473,25 +1474,31 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val apiUrl = "$mainUrl/youtubei/v1/player?key=$apiKey"
+        val clientMap = mutableMapOf<String, Any>(
+            "clientName" to clientName,
+            "clientVersion" to clientVersion,
+            "hl" to "en",
+            "gl" to "US",
+            "visitorData" to visitorData,
+            "platform" to platform
+        )
+        if (clientName == "ANDROID") clientMap["androidSdkVersion"] = 33
         val payload = mutableMapOf<String, Any>(
-            "context" to mapOf(
-                "client" to mapOf(
-                    "clientName" to clientName,
-                    "clientVersion" to clientVersion,
-                    "hl" to "en",
-                    "gl" to "US",
-                    "visitorData" to visitorData,
-                    "platform" to platform,
-                    "androidSdkVersion" to if (clientName == "ANDROID") 33 else ""
-                )
-            ),
+            "context" to mapOf("client" to clientMap),
             "videoId" to videoId,
             "contentCheckOk" to true,
             "racyCheckOk" to true
         )
 
+        val userAgent = if (clientName == "ANDROID") {
+            "com.google.android.youtube/$clientVersion (Linux; U; Android 14; US) gzip"
+        } else {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+        }
+
         val headers = mutableMapOf<String, String>()
         headers["Content-Type"] = "application/json"
+        headers["User-Agent"] = userAgent
         headers["X-Youtube-Client-Name"] = if (clientName == "ANDROID") "ANDROID" else "WEB_CREATOR"
         headers["X-Youtube-Client-Version"] = clientVersion
         if (visitorData.isNotBlank()) headers["X-Goog-Visitor-Id"] = visitorData
@@ -1508,7 +1515,7 @@ class YoutubeProvider(
             } catch (_: Exception) {}
         }
 
-        val responseText = app.post(apiUrl, json = payload.toMap(), headers = headers, interceptor = ytInterceptor).text
+        val responseText = app.post(apiUrl, json = payload.toMap(), headers = headers).text
         if (responseText.isBlank()) return false
 
         val root = JSONObject(responseText)
@@ -1518,7 +1525,8 @@ class YoutubeProvider(
             val status = playabilityStatus.optString("status", "")
             if (status != "OK") {
                 val reason = playabilityStatus.optString("reason", "")
-                Log.w("YtExtractor", "Video $videoId: $clientName playabilityStatus=$status reason=$reason")
+                val subreason = playabilityStatus.optJSONObject("errorScreen")?.optJSONObject("playerErrorMessageRenderer")?.optJSONArray("subreason")?.optJSONObject(0)?.optString("simpleText", "") ?: ""
+                Log.w("YtExtractor", "Video $videoId: $clientName playabilityStatus=$status reason=$reason subreason=$subreason")
                 if (status == "UNPLAYABLE" || status == "ERROR" || status == "LOGIN_REQUIRED") {
                     return false
                 }
@@ -1527,7 +1535,7 @@ class YoutubeProvider(
 
         val streamingData = root.optJSONObject("streamingData")
         if (streamingData == null) {
-            Log.w("YtExtractor", "Video $videoId: $clientName no streamingData in response")
+            Log.w("YtExtractor", "Video $videoId: $clientName no streamingData in response (full response: ${responseText.take(2000)})")
             return false
         }
 
@@ -1617,6 +1625,22 @@ class YoutubeProvider(
                         audioFormats.add(fmt)
                     }
                 } catch (_: Exception) {}
+            }
+
+            if (audioFormats.isNotEmpty()) {
+                val audioInfos = audioFormats.mapNotNull { af ->
+                    try {
+                        val track = af.optJSONObject("audioTrack")
+                        val display = track?.optString("displayName", "") ?: ""
+                        val id = track?.optString("id", "")?.substringBefore(".") ?: ""
+                        val codec = af.optString("mimeType", "").substringAfter("/").substringBefore(";").trim()
+                        val quality = af.optString("audioQuality", "").substringAfter("AUDIO_QUALITY_")
+                        "${display.ifBlank { id.ifBlank { "?" } }} ($codec, $quality)"
+                    } catch (_: Exception) { null }
+                }
+                Log.i("YtExtractor", "Video $videoId: $clientName audio tracks (${audioFormats.size}): ${audioInfos.joinToString()}")
+            } else {
+                Log.w("YtExtractor", "Video $videoId: $clientName no audio formats in adaptiveFormats")
             }
 
             for (vf in videoFormats) {
