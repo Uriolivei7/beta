@@ -126,8 +126,13 @@ open class YoutubeExtractor : ExtractorApi() {
 
                         var rawLang = asr.audioTrackId ?: "Default"
                         if (rawLang.contains(".")) rawLang = rawLang.substringBefore(".")
+                        var displayLang = asr.audioTrackName?.ifBlank { null } ?: rawLang.uppercase()
 
-                        AudioInfo(aUrl, mime, bitrate, initR, indexR, rawLang.uppercase())
+                        if (asr.audioTrackName != null) {
+                            Log.i("YtExtractor", "Video $videoId: audio track - id=${asr.audioTrackId} name=${asr.audioTrackName} -> displayLang=$displayLang")
+                        }
+
+                        AudioInfo(aUrl, mime, bitrate, initR, indexR, displayLang)
                     } catch (e: Exception) { null }
                 }.distinctBy { it.url }
 

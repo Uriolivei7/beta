@@ -1397,24 +1397,21 @@ class YoutubeProvider(
 
         Log.i("YtExtractor", "Video $videoId: Player type=$playerType")
 
-        Log.i("YtExtractor", "Video $videoId: Trying InnerTube API first")
-        var watchHtml: String? = null
-        try {
-            watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
-        } catch (_: Exception) {}
-
-        foundAnyLink = tryInnerTubeClients(videoId, watchHtml, subtitleCallback, trackingCallback)
+        if (playerType == "classic") {
+            Log.i("YtExtractor", "Video $videoId: Using loadExtractor (CS3 built-in)")
+            loadExtractor(fullUrl, subtitleCallback, trackingCallback)
+        } else {
+            Log.i("YtExtractor", "Video $videoId: Using NewPipe YoutubeExtractor")
+            com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
+        }
 
         if (!foundAnyLink) {
-            Log.i("YtExtractor", "Video $videoId: InnerTube API gave no links, trying extractor fallbacks")
-
-            if (playerType == "classic") {
-                Log.i("YtExtractor", "Video $videoId: Using loadExtractor (CS3 built-in)")
-                loadExtractor(fullUrl, subtitleCallback, trackingCallback)
-            } else {
-                Log.i("YtExtractor", "Video $videoId: Using NewPipe YoutubeExtractor")
-                com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
-            }
+            Log.i("YtExtractor", "Video $videoId: Primary extractor gave no links, trying InnerTube API")
+            var watchHtml: String? = null
+            try {
+                watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
+            } catch (_: Exception) {}
+            foundAnyLink = tryInnerTubeClients(videoId, watchHtml, subtitleCallback, trackingCallback)
         }
 
         Log.i("YtExtractor", "Video $videoId: loadLinks returning $foundAnyLink")
