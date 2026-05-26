@@ -78,6 +78,17 @@ open class YoutubeExtractor : ExtractorApi() {
                 val s = object : YoutubeStreamExtractor(ServiceList.YouTube, link) {}
                 s.fetchPage()
 
+                // Reintentar si NewPipe no encontró streams (fallo intermitente)
+                if ((s.videoOnlyStreams ?: emptyList()).isEmpty() && (s.videoStreams ?: emptyList()).isEmpty()) {
+                    try {
+                        Thread.sleep(1500)
+                        s.fetchPage()
+                        Log.w("YtExtractor", "Video $videoId: Retry fetchPage() - videoOnlyStreams=${(s.videoOnlyStreams ?: emptyList()).size}, videoStreams=${(s.videoStreams ?: emptyList()).size}")
+                    } catch (e: Exception) {
+                        Log.e("YtExtractor", "Video $videoId: Retry fetchPage() failed: ${e.message}")
+                    }
+                }
+
                 val durationSeconds = if (s.length > 0) s.length else 3600L
                 val builtLinks = mutableListOf<ExtractorLink>()
                 val seenUrls = mutableSetOf<String>()

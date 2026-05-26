@@ -1409,6 +1409,14 @@ class YoutubeProvider(
             Log.w("YtExtractor", "Video $videoId: Classic fallback failed: ${e.message}")
         }
 
+        // Fallback ANDROID: usar cliente ANDROID (no requiere SAPISID) para obtener HLS
+        try {
+            val androidResult = loadLinksAdvanced(videoId, subtitleCallback, callback)
+            Log.i("YtExtractor", "Video $videoId: ANDROID client fallback result=$androidResult")
+        } catch (e: Exception) {
+            Log.w("YtExtractor", "Video $videoId: ANDROID client fallback error: ${e.message}")
+        }
+
         try {
             // Fetch video page HTML to extract InnerTube API config and subtitles
             val watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
@@ -1545,24 +1553,29 @@ class YoutubeProvider(
 
         return true
     }
-    
+
     private suspend fun loadLinksAdvanced(
         videoId: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val fullUrl = "https://www.youtube.com/watch?v=$videoId"
-
-
         try {
-            val apiUrl = "$mainUrl/youtubei/v1/player"
+            val fullUrl = "https://www.youtube.com/watch?v=$videoId&hl=en"
+            val watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
+
+            val apiKey = findConfig(watchHtml, "INNERTUBE_API_KEY") ?: return false
+            val visitorData = findConfig(watchHtml, "VISITOR_DATA")
+
+            val apiUrl = "$mainUrl/youtubei/v1/player?key=$apiKey"
             val payload = mapOf(
                 "context" to mapOf(
                     "client" to mapOf(
-                        "clientName" to "3",
+                        "clientName" to "ANDROID",
                         "clientVersion" to "19.29.35",
                         "hl" to "en",
-                        "gl" to "US"
+                        "gl" to "US",
+                        "visitorData" to (visitorData ?: ""),
+                        "platform" to "MOBILE"
                     )
                 ),
                 "videoId" to videoId
@@ -1572,6 +1585,8 @@ class YoutubeProvider(
 
             if (responseText.isNotBlank()) {
                 val root = JSONObject(responseText)
+
+                // Extraer subtítulos
                 val captions = root.optJSONObject("captions")
                 val tracklist = captions?.optJSONObject("playerCaptionsTracklistRenderer")
                 val captionTracks = tracklist?.optJSONArray("captionTracks")
@@ -1579,65 +1594,90 @@ class YoutubeProvider(
                 if (captionTracks != null && captionTracks.length() > 0) {
                     val seenSubs = mutableSetOf<String>()
 
-                    var baseTrack = captionTracks.optJSONObject(0)
-                    var baseLangCode = ""
-
-                    for (i in 0 until captionTracks.length()) {
-                        val t = captionTracks.optJSONObject(i)
-                        val lang = t.optString("languageCode")
-                        if (lang == "en") {
-                            baseTrack = t
-                            break
-                        }
-                    }
-
-                    val baseUrl = baseTrack.optString("baseUrl", "")
-                    baseLangCode = baseTrack.optString("languageCode", "original").lowercase()
-
                     for (i in 0 until captionTracks.length()) {
                         val track = captionTracks.optJSONObject(i)
                         val name = track.optJSONObject("name")?.optString("simpleText") ?: ""
                         val lang = track.optString("languageCode")
                         val url = track.optString("baseUrl")
 
-                        val ttmlUrl = "$url&fmt=ttml"
-                        if (!seenSubs.contains(ttmlUrl)) {
-                            seenSubs.add(ttmlUrl)
+                        val vttUrl = "$url&fmt=vtt"
+                        if (!seenSubs.contains(vttUrl)) {
+                            seenSubs.add(vttUrl)
                             val displayTitle = "$name ($lang)"
-                            subtitleCallback(SubtitleFile(displayTitle, ttmlUrl))
-                        }
-                    }
-
-                    if (baseUrl.isNotEmpty()) {
-                        val autoLangs = listOf(
-                            "aa","ab","af","ak","am","ar","as","ay","az","ba","be","bg","bho","bn","bo","br","bs","ca","ceb","co","crs",
-                            "cs","cy","da","de","dv","dz","ee","el","en","eo","es","et","eu","fa","fi","fil","fj","fo","fr","fy","ga",
-                            "gaa","gd","gl","gn","gu","gv","ha","haw","he","hi","hmn","hr","ht","hu","hy","id","ig","is","it","iu","iw",
-                            "ja","jv","ka","kha","kk","kl","km","kn","ko","kri","ku","ky","la","lb","lg","ln","lo","lt","lua","luo","lv",
-                            "mfe","mg","mi","mk","ml","mn","mr","ms","mt","my","ne","new","nl","no","nso","ny","oc","om","or","os","pa",
-                            "pam","pl","ps","pt","pt-BR","pt-PT","qu","rn","ro","ru","rw","sa","sd","sg","si","sk","sl","sm","sn","so","sq",
-                            "sr","ss","st","su","sv","sw","ta","te","tg","th","ti","tk","tn","to","tr","ts","tt","tum","ug","uk","ur","uz",
-                            "ve","vi","war","wo","xh","yi","yo","zh-Hans","zh-Hant","zu"
-                        )
-
-                        for (targetLang in autoLangs) {
-                            if (targetLang.equals(baseLangCode, true)) continue
-
-                            val autoUrl = "$baseUrl&fmt=ttml&tlang=$targetLang"
-                            if (!seenSubs.contains(autoUrl)) {
-                                seenSubs.add(autoUrl)
-                                val displayName = "$baseLangCode → $targetLang"
-                                subtitleCallback(SubtitleFile(displayName, autoUrl))
-                            }
+                            subtitleCallback(newSubtitleFile(displayTitle, vttUrl))
                         }
                     }
                 }
+
+                // Extraer HLS
+                val streamingData = root.optJSONObject("streamingData")
+                val hlsUrl = streamingData?.optString("hlsManifestUrl", "")
+
+                if (!hlsUrl.isNullOrBlank()) {
+                    Log.i("YtExtractor", "Video $videoId: ANDROID client HLS found, parsing manifest")
+
+                    callback(
+                        newExtractorLink(this.name, "M3U AUTO", hlsUrl) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+
+                    try {
+                        val masterM3u8 = app.get(hlsUrl, referer = mainUrl).text
+                        val lines = masterM3u8.lines()
+
+                        // Subtítulos HLS
+                        lines.filter { it.startsWith("#EXT-X-MEDIA") && it.contains("TYPE=SUBTITLES") }
+                            .forEach { line ->
+                                val subUri = parseM3u8Tag(line, "URI")
+                                val subName = parseM3u8Tag(line, "NAME")
+                                val subLang = parseM3u8Tag(line, "LANGUAGE")
+                                if (subUri != null) {
+                                    subtitleCallback(newSubtitleFile(subName ?: subLang ?: "Subtitle (HLS)", subUri))
+                                }
+                            }
+
+                        // Variantes de resolución
+                        lines.forEachIndexed { index, line ->
+                            if (line.startsWith("#EXT-X-STREAM-INF")) {
+                                val urlLine = lines.getOrNull(index + 1)?.takeIf { it.startsWith("http") } ?: return@forEachIndexed
+                                val resolution = parseM3u8Tag(line, "RESOLUTION")
+                                val resolutionHeight = resolution?.substringAfter("x")?.plus("p") ?: ""
+                                val audioId = parseM3u8Tag(line, "YT-EXT-AUDIO-CONTENT-ID")
+                                val lang = audioId?.substringBefore('.')?.uppercase()
+
+                                val nameBuilder = StringBuilder()
+                                nameBuilder.append(resolutionHeight)
+                                if (lang != null) nameBuilder.append(" ($lang)")
+                                val streamName = nameBuilder.toString().trim()
+
+                                if (streamName.isNotBlank()) {
+                                    callback(
+                                        newExtractorLink(this.name, streamName, urlLine) {
+                                            this.referer = mainUrl
+                                            this.quality = getQualityFromName(resolutionHeight)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("YtExtractor", "Video $videoId: ANDROID HLS parse error: ${e.message}")
+                    }
+
+                    return true
+                }
+
+                Log.i("YtExtractor", "Video $videoId: ANDROID client - no HLS in response")
+                return false
             }
+
+            return false
         } catch (e: Exception) {
-
+            Log.w("YtExtractor", "Video $videoId: ANDROID client error: ${e.message}")
+            return false
         }
-
-        return true
     }
 
 
