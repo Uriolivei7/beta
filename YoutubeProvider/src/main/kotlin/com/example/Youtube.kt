@@ -1470,10 +1470,23 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val scrapedApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
-        var visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
-        try { visitorData = java.net.URLDecoder.decode(visitorData, "UTF-8") } catch (_: Exception) {}
-        val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20260526.01.00" else "2.20260526.01.00"
+        var scrapedApiKey = ""
+        var visitorData = ""
+        var webClientVersion = "2.20260526.01.00"
+        if (!watchHtml.isNullOrBlank()) {
+            val ytcfgBlock = try {
+                val regex = Regex("""ytcfg\.set\(\s*(\{.*?\})\s*\)\s*;""", RegexOption.DOT_MATCHES_ALL)
+                val m = regex.find(watchHtml)
+                m?.groupValues?.getOrNull(1)
+                    ?: watchHtml.substringAfter("ytcfg.set(", "").substringBefore(");")
+                        .takeIf { it.trim().startsWith("{") }
+            } catch (_: Exception) { null }
+            if (!ytcfgBlock.isNullOrBlank()) {
+                scrapedApiKey = findConfig(ytcfgBlock, "INNERTUBE_API_KEY") ?: ""
+                visitorData = findConfig(ytcfgBlock, "VISITOR_DATA") ?: ""
+                webClientVersion = findConfig(ytcfgBlock, "INNERTUBE_CLIENT_VERSION") ?: "2.20260526.01.00"
+            }
+        }
 
         Log.i("YtExtractor", "Video $videoId: Scraped apiKey present=${scrapedApiKey.isNotBlank()} visitorData present=${visitorData.isNotBlank()} webClientVersion=$webClientVersion")
 
@@ -1600,7 +1613,7 @@ class YoutubeProvider(
         Log.d("YtExtractor", "Video $videoId: $clientName request payload: ${JSONObject(payload.toMap()).toString(2).take(1500)}")
         Log.d("YtExtractor", "Video $videoId: $clientName request headers: $headers")
 
-        val responseText = app.post(apiUrl, json = payload.toMap(), headers = headers).text
+        val responseText = app.post(apiUrl, json = payload.toMap(), headers = headers, interceptor = ytInterceptor).text
         if (responseText.isBlank()) {
             Log.w("YtExtractor", "Video $videoId: $clientName empty response")
             return false
