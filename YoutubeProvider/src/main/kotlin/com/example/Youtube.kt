@@ -1564,7 +1564,7 @@ class YoutubeProvider(
         if (clientName.startsWith("ANDROID")) {
             payload["playbackContext"] = mapOf(
                 "contentPlaybackContext" to mapOf(
-                    "html5Preference" to "SHORTS"
+                    "html5Preference" to "HTML5_PREFERENCE_SHORTS"
                 )
             )
         }
