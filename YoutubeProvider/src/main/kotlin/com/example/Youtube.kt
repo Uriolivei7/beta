@@ -1537,15 +1537,15 @@ class YoutubeProvider(
         }
         if (clientName.startsWith("ANDROID")) {
             clientMap["androidSdkVersion"] = 30
-            clientMap["osName"] = "Android"
-            clientMap["osVersion"] = "12"
         }
         val payload = mutableMapOf<String, Any>(
             "context" to mapOf("client" to clientMap),
-            "videoId" to videoId,
-            "contentCheckOk" to true,
-            "racyCheckOk" to true
+            "videoId" to videoId
         )
+        if (!clientName.startsWith("ANDROID")) {
+            payload["contentCheckOk"] = true
+            payload["racyCheckOk"] = true
+        }
 
         val headers = mutableMapOf<String, String>()
         headers["Content-Type"] = "application/json"
