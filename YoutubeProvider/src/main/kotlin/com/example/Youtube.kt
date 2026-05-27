@@ -1472,6 +1472,7 @@ class YoutubeProvider(
     ): Boolean {
         val scrapedApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
         var visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
+        try { visitorData = java.net.URLDecoder.decode(visitorData, "UTF-8") } catch (_: Exception) {}
         val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20260526.01.00" else "2.20260526.01.00"
 
         Log.i("YtExtractor", "Video $videoId: Scraped apiKey present=${scrapedApiKey.isNotBlank()} visitorData present=${visitorData.isNotBlank()} webClientVersion=$webClientVersion")
@@ -1499,7 +1500,7 @@ class YoutubeProvider(
         // Try multiple clients — WEB often fails, ANDROID clients are more permissive
         data class Client(val name: String, val version: String, val platform: String, val userAgent: String)
         val clients = mutableListOf<Client>()
-        clients.add(Client("WEB", "2.20240725.01.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+        clients.add(Client("WEB", webClientVersion, "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
         clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
         clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
         clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
@@ -1582,6 +1583,8 @@ class YoutubeProvider(
             headers["X-Goog-Visitor-Id"] = visitorData
         }
 
+        headers["Origin"] = "https://www.youtube.com"
+        headers["Referer"] = "https://www.youtube.com/watch?v=$videoId"
         val sapisid = sharedPref?.getString("SAPISID", null)
         if (!sapisid.isNullOrBlank() && clientName != "ANDROID") {
             try {
