@@ -1490,7 +1490,6 @@ class YoutubeProvider(
             clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
             clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
             clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
-            clients.add(Client("ANDROID_EMBEDDED_PLAYER", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
             clients.add(Client("iOS", "19.09.37", "MOBILE", "com.google.ios.youtube/19.09.37 (iPhone; CPU iPhone OS 16_0 like Mac OS X; en_US)"))
         }
 
@@ -1547,9 +1546,19 @@ class YoutubeProvider(
         headers["Content-Type"] = "application/json"
         headers["User-Agent"] = userAgent
         headers["Accept-Language"] = "en-US,en;q=0.9"
-        headers["X-Youtube-Client-Name"] = clientName
+        val clientNameNumeric = when (clientName) {
+            "WEB" -> "1"
+            "ANDROID" -> "3"
+            "iOS" -> "5"
+            "ANDROID_MUSIC" -> "21"
+            "WEB_CREATOR" -> "62"
+            else -> "1"
+        }
+        headers["X-Youtube-Client-Name"] = clientNameNumeric
         headers["X-Youtube-Client-Version"] = clientVersion
-        if (visitorData.isNotBlank()) headers["X-Goog-Visitor-Id"] = visitorData
+        if (visitorData.isNotBlank() && !clientName.startsWith("ANDROID")) {
+            headers["X-Goog-Visitor-Id"] = visitorData
+        }
 
         val sapisid = sharedPref?.getString("SAPISID", null)
         if (!sapisid.isNullOrBlank() && clientName != "ANDROID") {
