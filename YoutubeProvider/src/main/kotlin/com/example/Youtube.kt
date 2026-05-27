@@ -1561,13 +1561,7 @@ class YoutubeProvider(
             "contentCheckOk" to true,
             "racyCheckOk" to true
         )
-        if (clientName.startsWith("ANDROID")) {
-            payload["playbackContext"] = mapOf(
-                "contentPlaybackContext" to mapOf(
-                    "html5Preference" to "HTML5_PREFERENCE_SHORTS"
-                )
-            )
-        }
+        // playbackContext omitted for ANDROID - html5Preference enum is unknown
 
         val headers = mutableMapOf<String, String>()
         headers["Content-Type"] = "application/json"
