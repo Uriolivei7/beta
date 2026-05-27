@@ -1472,7 +1472,7 @@ class YoutubeProvider(
     ): Boolean {
         val webApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
         var visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
-        val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20240725.01.00" else "2.20240725.01.00"
+        val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20260526.01.00" else "2.20260526.01.00"
 
         Log.i("YtExtractor", "Video $videoId: Scraped apiKey present=${webApiKey.isNotBlank()} visitorData present=${visitorData.isNotBlank()} webClientVersion=$webClientVersion")
 
@@ -1482,26 +1482,28 @@ class YoutubeProvider(
             Log.i("YtExtractor", "Video $videoId: Using VISITOR_INFO1_LIVE from prefs as visitorData, present=${visitorData.isNotBlank()}")
         }
 
-        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
-
-        // Try WEB client first (most permissive), then WEB_CREATOR
-        val clients = mutableListOf<Triple<String, String, String>>()
+        // Try multiple clients — WEB often fails, ANDROID clients are more permissive
+        data class Client(val name: String, val version: String, val platform: String, val userAgent: String)
+        val clients = mutableListOf<Client>()
         if (webApiKey.isNotBlank()) {
-            clients.add(Triple("2.20240725.01.00", "WEB", "DESKTOP"))
-            clients.add(Triple("1.20240726.00.00", "WEB_CREATOR", "DESKTOP"))
+            clients.add(Client("WEB", "2.20240725.01.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+            clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+            clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
+            clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
+            clients.add(Client("TV", "6.0.0", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
         }
 
-        for ((version, clientName, platform) in clients) {
-            Log.i("YtExtractor", "Video $videoId: Trying client=$clientName v=$version apiKey=${webApiKey.take(12)}... visitorData=${visitorData.take(20)}")
+        for (client in clients) {
+            Log.i("YtExtractor", "Video $videoId: Trying client=${client.name} v=${client.version} apiKey=${webApiKey.take(12)}... visitorData=${visitorData.take(20)}")
             try {
                 val result = fetchAndParsePlayerResponse(
                     videoId, webApiKey, visitorData, webClientVersion,
-                    clientName, version, platform, userAgent,
+                    client.name, client.version, client.platform, client.userAgent,
                     subtitleCallback, callback
                 )
                 if (result) return true
             } catch (e: Exception) {
-                Log.w("YtExtractor", "Video $videoId: Client $clientName error: ${e.message}")
+                Log.w("YtExtractor", "Video $videoId: Client ${client.name} error: ${e.message}")
             }
         }
         return false
