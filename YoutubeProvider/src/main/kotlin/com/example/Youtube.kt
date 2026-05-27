@@ -1590,13 +1590,25 @@ class YoutubeProvider(
                 }
             }
         } else {
-            Log.w("YtExtractor", "Video $videoId: $clientName no playabilityStatus in response (keys: ${root.keys().asSequence().joinToString(",")})")
+            val keys = root.keys().asSequence().joinToString(",")
+            if (keys == "error") {
+                val errObj = root.optJSONObject("error")
+                val errCode = errObj?.optInt("code", 0)
+                val errMsg = errObj?.optString("message", "")
+                Log.w("YtExtractor", "Video $videoId: $clientName API error code=$errCode message=$errMsg")
+                Log.d("YtExtractor", "Video $videoId: $clientName full error: ${responseText.take(1000)}")
+            } else {
+                Log.w("YtExtractor", "Video $videoId: $clientName no playabilityStatus in response (keys: $keys, body: ${responseText.take(500)})")
+            }
         }
 
         val streamingData = root.optJSONObject("streamingData")
         if (streamingData == null) {
             val keys = root.keys().asSequence().joinToString(",")
-            Log.w("YtExtractor", "Video $videoId: $clientName no streamingData, root keys: $keys")
+            Log.w("YtExtractor", "Video $videoId: $clientName no streamingData, root keys: $keys, response length=${responseText.length}")
+            if (responseText.length < 3000) {
+                Log.w("YtExtractor", "Video $videoId: $clientName full response: $responseText")
+            }
             val endpoint = root.optJSONObject("currentVideoEndpoint") ?: root.optJSONObject("watchEndpoint")
             if (endpoint != null) {
                 Log.w("YtExtractor", "Video $videoId: $clientName redirect endpoint found: ${endpoint.toString().take(500)}")
