@@ -1490,7 +1490,7 @@ class YoutubeProvider(
             clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
             clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
             clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
-            clients.add(Client("TV", "6.0.0", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+            clients.add(Client("TVHTML5", "6.0.0", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
         }
 
         for (client in clients) {
@@ -1530,6 +1530,9 @@ class YoutubeProvider(
             "visitorData" to visitorData,
             "platform" to platform
         )
+        if (clientName.startsWith("ANDROID")) {
+            clientMap["androidSdkVersion"] = 30
+        }
         val payload = mutableMapOf<String, Any>(
             "context" to mapOf("client" to clientMap),
             "videoId" to videoId,
@@ -1557,27 +1560,47 @@ class YoutubeProvider(
             } catch (_: Exception) {}
         }
 
+        Log.d("YtExtractor", "Video $videoId: $clientName request payload: ${JSONObject(payload.toMap()).toString(2).take(1500)}")
+        Log.d("YtExtractor", "Video $videoId: $clientName request headers: $headers")
+
         val responseText = app.post(apiUrl, json = payload.toMap(), headers = headers).text
-        if (responseText.isBlank()) return false
+        if (responseText.isBlank()) {
+            Log.w("YtExtractor", "Video $videoId: $clientName empty response")
+            return false
+        }
+        Log.d("YtExtractor", "Video $videoId: $clientName response length=${responseText.length} bytes")
 
         val root = JSONObject(responseText)
 
         val playabilityStatus = root.optJSONObject("playabilityStatus")
         if (playabilityStatus != null) {
             val status = playabilityStatus.optString("status", "")
-            if (status != "OK") {
-                val reason = playabilityStatus.optString("reason", "")
-                val subreason = playabilityStatus.optJSONObject("errorScreen")?.optJSONObject("playerErrorMessageRenderer")?.optJSONArray("subreason")?.optJSONObject(0)?.optString("simpleText", "") ?: ""
+            val reason = playabilityStatus.optString("reason", "")
+            val subreason = playabilityStatus.optJSONObject("errorScreen")?.optJSONObject("playerErrorMessageRenderer")?.optJSONArray("subreason")?.optJSONObject(0)?.optString("simpleText", "") ?: ""
+            if (status == "OK") {
+                Log.i("YtExtractor", "Video $videoId: $clientName playabilityStatus=OK (video is playable!)")
+            } else {
                 Log.w("YtExtractor", "Video $videoId: $clientName playabilityStatus=$status reason=$reason subreason=$subreason")
+                val errorScreen = playabilityStatus.optJSONObject("errorScreen")
+                if (errorScreen != null) {
+                    Log.w("YtExtractor", "Video $videoId: $clientName errorScreen keys: ${errorScreen.keys().asSequence().joinToString(",")}")
+                }
                 if (status == "UNPLAYABLE" || status == "ERROR" || status == "LOGIN_REQUIRED") {
                     return false
                 }
             }
+        } else {
+            Log.w("YtExtractor", "Video $videoId: $clientName no playabilityStatus in response (keys: ${root.keys().asSequence().joinToString(",")})")
         }
 
         val streamingData = root.optJSONObject("streamingData")
         if (streamingData == null) {
-            Log.w("YtExtractor", "Video $videoId: $clientName no streamingData in response (full response: ${responseText.take(2000)})")
+            val keys = root.keys().asSequence().joinToString(",")
+            Log.w("YtExtractor", "Video $videoId: $clientName no streamingData, root keys: $keys")
+            val endpoint = root.optJSONObject("currentVideoEndpoint") ?: root.optJSONObject("watchEndpoint")
+            if (endpoint != null) {
+                Log.w("YtExtractor", "Video $videoId: $clientName redirect endpoint found: ${endpoint.toString().take(500)}")
+            }
             return false
         }
 
@@ -1585,7 +1608,7 @@ class YoutubeProvider(
 
         val hlsUrl = streamingData.optString("hlsManifestUrl", "")
         if (hlsUrl.isNotBlank()) {
-            Log.i("YtExtractor", "Video $videoId: $clientName HLS found")
+            Log.i("YtExtractor", "Video $videoId: $clientName HLS manifest found: $hlsUrl")
             callback(newExtractorLink(this.name, "$clientName M3U8", hlsUrl) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
@@ -1594,6 +1617,7 @@ class YoutubeProvider(
             try {
                 val masterM3u8 = app.get(hlsUrl, referer = mainUrl).text
                 val lines = masterM3u8.lines()
+                Log.d("YtExtractor", "Video $videoId: $clientName HLS master has ${lines.size} lines")
                 lines.filter { it.startsWith("#EXT-X-MEDIA") && it.contains("TYPE=SUBTITLES") }
                     .forEach { line ->
                         val subUri = parseM3u8Tag(line, "URI")
@@ -1603,6 +1627,7 @@ class YoutubeProvider(
                             subtitleCallback(newSubtitleFile(subName ?: subLang ?: "HLS Sub", subUri))
                         }
                     }
+                var streamInfCount = 0
                 lines.forEachIndexed { index, line ->
                     if (line.startsWith("#EXT-X-STREAM-INF")) {
                         val urlLine = lines.getOrNull(index + 1)?.takeIf { it.startsWith("http") } ?: return@forEachIndexed
@@ -1612,14 +1637,19 @@ class YoutubeProvider(
                             this.referer = mainUrl
                             this.quality = getQualityFromName(resHeight)
                         })
+                        streamInfCount++
                         found = true
                     }
                 }
-            } catch (_: Exception) {}
+                Log.i("YtExtractor", "Video $videoId: $clientName emitted $streamInfCount HLS variants")
+            } catch (e: Exception) {
+                Log.w("YtExtractor", "Video $videoId: $clientName HLS parsing failed: ${e.message}")
+            }
         }
 
         val formats = streamingData.optJSONArray("formats")
         if (formats != null) {
+            Log.d("YtExtractor", "Video $videoId: $clientName formats count=${formats.length()}")
             for (i in 0 until formats.length()) {
                 try {
                     val fmt = formats.optJSONObject(i)
@@ -1651,10 +1681,13 @@ class YoutubeProvider(
                     }
                 } catch (_: Exception) {}
             }
+        } else {
+            Log.d("YtExtractor", "Video $videoId: $clientName no formats array")
         }
 
         val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
         if (adaptiveFormats != null) {
+            Log.d("YtExtractor", "Video $videoId: $clientName adaptiveFormats count=${adaptiveFormats.length()}")
             val videoFormats = mutableListOf<JSONObject>()
             val audioFormats = mutableListOf<JSONObject>()
             for (i in 0 until adaptiveFormats.length()) {
@@ -1668,6 +1701,7 @@ class YoutubeProvider(
                     }
                 } catch (_: Exception) {}
             }
+            Log.d("YtExtractor", "Video $videoId: $clientName ${videoFormats.size} video / ${audioFormats.size} audio adaptive formats")
 
             for (vf in videoFormats) {
                 try {
@@ -1679,6 +1713,11 @@ class YoutubeProvider(
                             this.quality = getQualityFromName(qualityLabel)
                         })
                         found = true
+                    } else {
+                        val hasCipher = vf.optString("signatureCipher", "").isNotBlank()
+                        if (hasCipher) {
+                            Log.d("YtExtractor", "Video $videoId: $clientName video adaptive format has signatureCipher (needs decrypt)")
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -1694,11 +1733,19 @@ class YoutubeProvider(
                             this.quality = if (audioQuality.contains("HIGH")) Qualities.Unknown.value else Qualities.Unknown.value
                         })
                         found = true
+                    } else {
+                        val hasCipher = af.optString("signatureCipher", "").isNotBlank()
+                        if (hasCipher) {
+                            Log.d("YtExtractor", "Video $videoId: $clientName audio adaptive format has signatureCipher (needs decrypt)")
+                        }
                     }
                 } catch (_: Exception) {}
             }
+        } else {
+            Log.d("YtExtractor", "Video $videoId: $clientName no adaptiveFormats array")
         }
 
+        Log.i("YtExtractor", "Video $videoId: $clientName total links emitted=$found")
         return found
     }
 
