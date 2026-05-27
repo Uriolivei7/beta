@@ -1470,11 +1470,11 @@ class YoutubeProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val webApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
+        val scrapedApiKey = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_API_KEY") ?: "" else ""
         var visitorData = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "VISITOR_DATA") ?: "" else ""
         val webClientVersion = if (!watchHtml.isNullOrBlank()) findConfig(watchHtml, "INNERTUBE_CLIENT_VERSION") ?: "2.20260526.01.00" else "2.20260526.01.00"
 
-        Log.i("YtExtractor", "Video $videoId: Scraped apiKey present=${webApiKey.isNotBlank()} visitorData present=${visitorData.isNotBlank()} webClientVersion=$webClientVersion")
+        Log.i("YtExtractor", "Video $videoId: Scraped apiKey present=${scrapedApiKey.isNotBlank()} visitorData present=${visitorData.isNotBlank()} webClientVersion=$webClientVersion")
 
         // Try to get visitor data from sharedPrefs as fallback
         if (visitorData.isBlank()) {
@@ -1482,23 +1482,36 @@ class YoutubeProvider(
             Log.i("YtExtractor", "Video $videoId: Using VISITOR_INFO1_LIVE from prefs as visitorData, present=${visitorData.isNotBlank()}")
         }
 
+        // Known InnerTube API keys per client
+        val knownApiKeys = mapOf(
+            "WEB" to "AIzaSyAO_FJ2t_7EIXq_yNMgq_sR3gCwq9ANz8M",
+            "WEB_CREATOR" to "AIzaSyAO_FJ2t_7EIXq_yNMgq_sR3gCwq9ANz8M",
+            "ANDROID" to "AIzaSyA8eiZmM1Gd7dBAa3yl3WjAwF6mS7Fv9Ew",
+            "ANDROID_MUSIC" to "AIzaSyAOghZGza2MQSZkYGeOQWTb9GPwW6fMkak",
+            "iOS" to "AIzaSyB-63vPr2V1sSGG8_NX_g3BnyTvkZISMrg",
+            "TVHTML5" to "AIzaSyAO_FJ2t_7EIXq_yNMgq_sR3gCwq9ANz8M"
+        )
+        fun apiKeyFor(clientName: String): String {
+            val known = knownApiKeys[clientName] ?: ""
+            return if (known.isNotBlank()) known else scrapedApiKey
+        }
+
         // Try multiple clients — WEB often fails, ANDROID clients are more permissive
         data class Client(val name: String, val version: String, val platform: String, val userAgent: String)
         val clients = mutableListOf<Client>()
-        if (webApiKey.isNotBlank()) {
-            clients.add(Client("WEB", "2.20240725.01.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
-            clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
-            clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
-            clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
-            clients.add(Client("iOS", "19.09.37", "MOBILE", "com.google.ios.youtube/19.09.37 (iPhone; CPU iPhone OS 16_0 like Mac OS X; en_US)"))
-            clients.add(Client("TVHTML5", "7.20241024.00.00", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
-        }
+        clients.add(Client("WEB", "2.20240725.01.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+        clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+        clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
+        clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
+        clients.add(Client("iOS", "19.09.37", "MOBILE", "com.google.ios.youtube/19.09.37 (iPhone; CPU iPhone OS 16_0 like Mac OS X; en_US)"))
+        clients.add(Client("TVHTML5", "7.20241024.00.00", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
 
         for (client in clients) {
-            Log.i("YtExtractor", "Video $videoId: Trying client=${client.name} v=${client.version} apiKey=${webApiKey.take(12)}... visitorData=${visitorData.take(20)}")
+            val apiKey = apiKeyFor(client.name)
+            Log.i("YtExtractor", "Video $videoId: Trying client=${client.name} v=${client.version} apiKey=${apiKey.take(12)}... visitorData=${visitorData.take(20)}")
             try {
                 val result = fetchAndParsePlayerResponse(
-                    videoId, webApiKey, visitorData, webClientVersion,
+                    videoId, apiKey, visitorData, webClientVersion,
                     client.name, client.version, client.platform, client.userAgent,
                     subtitleCallback, callback
                 )
