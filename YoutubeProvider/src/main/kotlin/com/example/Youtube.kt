@@ -1491,6 +1491,7 @@ class YoutubeProvider(
             clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
             clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
             clients.add(Client("iOS", "19.09.37", "MOBILE", "com.google.ios.youtube/19.09.37 (iPhone; CPU iPhone OS 16_0 like Mac OS X; en_US)"))
+            clients.add(Client("TVHTML5", "7.20241024.00.00", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
         }
 
         for (client in clients) {
@@ -1526,14 +1527,18 @@ class YoutubeProvider(
             "clientName" to clientName,
             "clientVersion" to clientVersion,
             "hl" to "en",
-            "gl" to "US",
-            "platform" to platform
+            "gl" to "US"
         )
         if (visitorData.isNotBlank() && !clientName.startsWith("ANDROID")) {
             clientMap["visitorData"] = visitorData
         }
+        if (!clientName.startsWith("ANDROID")) {
+            clientMap["platform"] = platform
+        }
         if (clientName.startsWith("ANDROID")) {
             clientMap["androidSdkVersion"] = 30
+            clientMap["osName"] = "Android"
+            clientMap["osVersion"] = "12"
         }
         val payload = mutableMapOf<String, Any>(
             "context" to mapOf("client" to clientMap),
@@ -1552,6 +1557,7 @@ class YoutubeProvider(
             "iOS" -> "5"
             "ANDROID_MUSIC" -> "21"
             "WEB_CREATOR" -> "62"
+            "TVHTML5" -> "85"
             else -> "1"
         }
         headers["X-Youtube-Client-Name"] = clientNameNumeric
