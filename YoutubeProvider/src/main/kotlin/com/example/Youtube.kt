@@ -1490,7 +1490,8 @@ class YoutubeProvider(
             clients.add(Client("WEB_CREATOR", "1.20240726.00.00", "DESKTOP", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
             clients.add(Client("ANDROID", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
             clients.add(Client("ANDROID_MUSIC", "5.19.0", "MOBILE", "com.google.android.apps.youtube.music/5.19.0 (Linux; U; Android 12; GB) gzip"))
-            clients.add(Client("TVHTML5", "6.0.0", "TV", "Mozilla/5.0 (ChromiumStylePlatform; Chrome/116.0.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"))
+            clients.add(Client("ANDROID_EMBEDDED_PLAYER", "19.09.37", "MOBILE", "com.google.android.youtube/19.09.37 (Linux; U; Android 12; GB) gzip"))
+            clients.add(Client("iOS", "19.09.37", "MOBILE", "com.google.ios.youtube/19.09.37 (iPhone; CPU iPhone OS 16_0 like Mac OS X; en_US)"))
         }
 
         for (client in clients) {
@@ -1527,9 +1528,11 @@ class YoutubeProvider(
             "clientVersion" to clientVersion,
             "hl" to "en",
             "gl" to "US",
-            "visitorData" to visitorData,
             "platform" to platform
         )
+        if (visitorData.isNotBlank() && !clientName.startsWith("ANDROID")) {
+            clientMap["visitorData"] = visitorData
+        }
         if (clientName.startsWith("ANDROID")) {
             clientMap["androidSdkVersion"] = 30
         }
