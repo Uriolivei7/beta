@@ -1522,7 +1522,7 @@ class YoutubeProvider(
 
         for (client in clients) {
             val apiKey = apiKeyFor(client.name)
-            Log.i("YtExtractor", "Video $videoId: Trying client=${client.name} v=${client.version} apiKey=${apiKey.take(12)}... visitorData=${visitorData.take(20)}")
+            Log.i("YtExtractor", "Video $videoId: Trying client=${client.name} v=${client.version} apiKey=${apiKey.take(12)}... (minimal payload, no visitorData/checks)")
             try {
                 val result = fetchAndParsePlayerResponse(
                     videoId, apiKey, visitorData, webClientVersion,
@@ -1550,30 +1550,16 @@ class YoutubeProvider(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val apiUrl = "$mainUrl/youtubei/v1/player?key=$apiKey"
-        val clientMap = mutableMapOf<String, Any>(
-            "clientName" to clientName,
-            "clientVersion" to clientVersion,
-            "hl" to "en",
-            "gl" to "US"
-        )
-        if (visitorData.isNotBlank() && !clientName.startsWith("ANDROID")) {
-            clientMap["visitorData"] = visitorData
-        }
-        if (!clientName.startsWith("ANDROID")) {
-            clientMap["platform"] = platform
-        }
-        if (clientName.startsWith("ANDROID")) {
-            clientMap["androidSdkVersion"] = 30
-            clientMap["osName"] = "Android"
-            clientMap["osVersion"] = "12"
-            clientMap["deviceMake"] = "Google"
-            clientMap["deviceModel"] = "Pixel 6"
-        }
-        val payload = mutableMapOf<String, Any>(
-            "context" to mapOf("client" to clientMap),
-            "videoId" to videoId,
-            "contentCheckOk" to true,
-            "racyCheckOk" to true
+        val payload = mapOf<String, Any>(
+            "context" to mapOf(
+                "client" to mapOf(
+                    "clientName" to clientName,
+                    "clientVersion" to clientVersion,
+                    "hl" to "en",
+                    "gl" to "US"
+                )
+            ),
+            "videoId" to videoId
         )
         // playbackContext omitted for ANDROID - html5Preference enum is unknown
 
@@ -1592,9 +1578,6 @@ class YoutubeProvider(
         }
         headers["X-Youtube-Client-Name"] = clientNameNumeric
         headers["X-Youtube-Client-Version"] = clientVersion
-        if (visitorData.isNotBlank() && !clientName.startsWith("ANDROID")) {
-            headers["X-Goog-Visitor-Id"] = visitorData
-        }
 
         headers["Origin"] = "https://www.youtube.com"
         headers["Referer"] = "https://www.youtube.com/watch?v=$videoId"
