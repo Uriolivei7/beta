@@ -616,8 +616,7 @@ suspend fun loadSourceNameExtractor(
 
 fun fixHostsLinks(url: String): String {
     return url
-        .replaceFirst("https://hglink.to", "https://streamwish.to")
-        .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
+        .replaceFirst("https://minochinos.com", "https://vidhidepro.com")
         .replaceFirst("https://hglink.to", "https://streamwish.to")
         .replaceFirst("https://swdyu.com", "https://streamwish.to")
         .replaceFirst("https://cybervynx.com", "https://streamwish.to")
