@@ -314,42 +314,69 @@ class SoloLatinoProvider : MainAPI() {
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Accept" to "application/json",
+            "Content-Type" to "application/json",
             "X-CSRF-TOKEN" to csrfToken,
             "X-Requested-With" to "XMLHttpRequest",
             "Referer" to targetUrl,
         )
 
         val serverUrls = mutableListOf<String>()
+        val tokens = mutableSetOf<String>()
 
-        val playerButtons = doc.select("button[data-player-id]")
-        if (playerButtons.isNotEmpty()) {
-            playerButtons.forEach { btn ->
-                val playerModel = btn.attr("data-player-model").ifBlank { "episode" }
-                val playerId = btn.attr("data-player-id").ifBlank { null }
-                if (playerId != null) {
-                    try {
-                        val apiUrl = "$mainUrl/api/player-url/$playerModel/$playerId"
-                        val apiResp = app.get(apiUrl, headers = apiHeaders, timeout = 15000L)
-                        val playerData = tryParseJson<PlayerUrlResponse>(apiResp.text)
-                        val embedUrl = playerData?.url
-                        if (!embedUrl.isNullOrBlank()) {
-                            serverUrls.add(embedUrl)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("SoloLatino", "Error fetching player URL for $playerId: ${e.message}")
+        // Strategy 1: elements with data-server-btn (same selector as site's JS)
+        doc.select("[data-server-btn]").forEach { btn ->
+            btn.attr("data-player-token").ifBlank { null }?.let { tokens.add(it) }
+        }
+
+        // Strategy 2: regex fallback for data-player-token in raw HTML
+        if (tokens.isEmpty()) {
+            Regex("""data-player-token="([^"]+)""").findAll(html).forEach {
+                tokens.add(it.groupValues[1])
+            }
+        }
+
+        // Strategy 3: regex for any Laravel encrypted token pattern in HTML
+        if (tokens.isEmpty()) {
+            Regex("""eyJpdiI6I[A-Za-z0-9+/]{1,}={0,2}""").findAll(html).forEach {
+                tokens.add(it.value)
+            }
+        }
+
+        if (tokens.isNotEmpty()) {
+            Log.d("SoloLatino", "loadLinks - ${tokens.size} tokens encontrados")
+            tokens.forEach { token ->
+                try {
+                    val apiResp = app.post(
+                        "$mainUrl/api/player-url",
+                        json = mapOf("t" to token),
+                        headers = apiHeaders,
+                        timeout = 15000L
+                    )
+                    tryParseJson<PlayerUrlResponse>(apiResp.text)?.let { data ->
+                        if (!data.url.isNullOrBlank()) serverUrls.add(data.url)
                     }
+                } catch (e: Exception) {
+                    Log.e("SoloLatino", "loadLinks - Error con token: ${e.message}")
                 }
             }
         }
 
+        // Fallback: lazy embed on #player-frame (present on some pages)
         if (serverUrls.isEmpty()) {
-            val legacyButtons = doc.select("button[data-server-url], .server-btn")
-            serverUrls.addAll(legacyButtons.mapNotNull { it.attr("data-server-url").ifBlank { null } })
-        }
-
-        if (serverUrls.isEmpty()) {
-            doc.selectFirst("div#player-frame iframe, iframe")?.attr("src")?.let {
-                if (it.isNotBlank()) serverUrls.add(it)
+            doc.selectFirst("#player-frame[data-lazy-embed]")?.attr("data-lazy-embed")?.let { lazyToken ->
+                try {
+                    val apiResp = app.post(
+                        "$mainUrl/api/player-embed",
+                        json = mapOf("t" to lazyToken),
+                        headers = apiHeaders,
+                        timeout = 15000L
+                    )
+                    tryParseJson<PlayerUrlResponse>(apiResp.text)?.let { data ->
+                        if (!data.url.isNullOrBlank()) serverUrls.add(data.url)
+                    }
+                } catch (e: Exception) {
+                    Log.e("SoloLatino", "loadLinks - Error con lazy embed: ${e.message}")
+                }
             }
         }
 
