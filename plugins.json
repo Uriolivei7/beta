@@ -387,7 +387,7 @@
     "authors": ["Ranita"],
     "description": "Plugin para Series, Peliculas y Animes",
     "tvTypes": ["Anime"],
-    "iconUrl": "https://la.movie/wp-content/uploads/2025/05/cropped-La.movie_-32x32.png",
+    "iconUrl": "https://lamovie.org/wp-content/uploads/2025/05/cropped-La.movie_-32x32.png",
     "language": "mx",
     "fileSize": 20000
   },
