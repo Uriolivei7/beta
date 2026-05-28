@@ -352,8 +352,13 @@ class SoloLatinoProvider : MainAPI() {
                         headers = apiHeaders,
                         timeout = 15000L
                     )
-                    tryParseJson<PlayerUrlResponse>(apiResp.text)?.let { data ->
-                        if (!data.url.isNullOrBlank()) serverUrls.add(data.url)
+                    Log.d("SoloLatino", "loadLinks - POST /api/player-url HTTP ${apiResp.code}, body=${apiResp.text.take(200)}")
+                    val playerData = tryParseJson<PlayerUrlResponse>(apiResp.text)
+                    if (playerData == null) {
+                        Log.e("SoloLatino", "loadLinks - No se pudo parsear respuesta JSON")
+                    } else {
+                        Log.d("SoloLatino", "loadLinks - Respuesta parseada: url=${playerData.url}, type=${playerData.type}")
+                        if (!playerData.url.isNullOrBlank()) serverUrls.add(playerData.url)
                     }
                 } catch (e: Exception) {
                     Log.e("SoloLatino", "loadLinks - Error con token: ${e.message}")
