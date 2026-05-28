@@ -312,14 +312,17 @@ class SoloLatinoProvider : MainAPI() {
         // Step 1: initialize Sanctum session to get XSRF-TOKEN + laravel_session cookies
         try {
             app.get("$mainUrl/sanctum/csrf-cookie", headers = baseHeaders, timeout = 15000L).also {
+                Log.d("SoloLatino", "loadLinks - Sanctum GET HTTP ${it.code}, cookies=${it.cookies}")
                 if (it.cookies.isNotEmpty()) sessionCookies = sessionCookies + it.cookies
             }
         } catch (_: Exception) { }
 
         // Step 2: fetch episode page with session cookies
         val pageResp = app.get(targetUrl, headers = baseHeaders, cookies = sessionCookies, timeout = 30000L)
+        Log.d("SoloLatino", "loadLinks - Page GET HTTP ${pageResp.code}, cookies=${pageResp.cookies}")
         if (!pageResp.isSuccessful) return false
         if (pageResp.cookies.isNotEmpty()) sessionCookies = sessionCookies + pageResp.cookies
+        Log.d("SoloLatino", "loadLinks - sessionCookies final=${sessionCookies}")
         val html = pageResp.text
         val doc = pageResp.document
 
