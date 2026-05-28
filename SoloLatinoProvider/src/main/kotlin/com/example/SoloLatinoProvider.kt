@@ -307,13 +307,21 @@ class SoloLatinoProvider : MainAPI() {
 
         if (targetUrl.isBlank()) return false
 
-        val html = safeAppGet(targetUrl) ?: return false
-        val doc = Jsoup.parse(html)
+        var sessionCookies = mapOf<String, String>()
 
-        // Initialize Sanctum session (sets XSRF-TOKEN + laravel_session cookies)
+        // Step 1: initialize Sanctum session to get XSRF-TOKEN + laravel_session cookies
         try {
-            app.get("$mainUrl/sanctum/csrf-cookie", headers = baseHeaders, timeout = 15000L)
+            app.get("$mainUrl/sanctum/csrf-cookie", headers = baseHeaders, timeout = 15000L).also {
+                if (it.cookies.isNotEmpty()) sessionCookies = sessionCookies + it.cookies
+            }
         } catch (_: Exception) { }
+
+        // Step 2: fetch episode page with session cookies
+        val pageResp = app.get(targetUrl, headers = baseHeaders, cookies = sessionCookies, timeout = 30000L)
+        if (!pageResp.isSuccessful) return false
+        if (pageResp.cookies.isNotEmpty()) sessionCookies = sessionCookies + pageResp.cookies
+        val html = pageResp.text
+        val doc = pageResp.document
 
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -353,6 +361,7 @@ class SoloLatinoProvider : MainAPI() {
                         "$mainUrl/api/player-url",
                         json = mapOf("t" to token),
                         headers = apiHeaders,
+                        cookies = sessionCookies,
                         timeout = 15000L
                     )
                     Log.d("SoloLatino", "loadLinks - POST /api/player-url HTTP ${apiResp.code}, body=${apiResp.text.take(200)}")
@@ -377,6 +386,7 @@ class SoloLatinoProvider : MainAPI() {
                         "$mainUrl/api/player-embed",
                         json = mapOf("t" to lazyToken),
                         headers = apiHeaders,
+                        cookies = sessionCookies,
                         timeout = 15000L
                     )
                     tryParseJson<PlayerUrlResponse>(apiResp.text)?.let { data ->
