@@ -54,26 +54,31 @@ class CinemacityProvider : MainAPI() {
         TvType.Movie, TvType.TvSeries, TvType.Cartoon, TvType.AsianDrama, TvType.Anime
     )
 
-    private var dynamicCookies: Map<String, String> = mapOf(
-        "dle_user_id" to "32729",
-        "dle_password" to "894171c6a8dab18ee594d5c652009a35"
-    )
+    private var dynamicCookies: Map<String, String> = mapOf()
 
     private val protectionHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9,es;q=0.8",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none",
+        "Sec-Fetch-User" to "?1"
     )
 
     private val cfKiller = CloudflareKiller()
 
     private suspend fun doRequest(url: String): NiceResponse {
-        return app.get(
+        Log.d("Cinemacity", "doRequest: $url cookies=${dynamicCookies.size}")
+        val resp = app.get(
             url,
             headers = protectionHeaders + ("Referer" to "$mainUrl/"),
             cookies = dynamicCookies,
             interceptor = cfKiller
-        ).also {
-            if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
-        }
+        )
+        Log.d("Cinemacity", "doRequest: status=${resp.code} cookies=${resp.cookies.size}")
+        if (resp.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + resp.cookies
+        return resp
     }
 
     private val tmdbPosterCache = mutableMapOf<String, String>()
@@ -166,11 +171,22 @@ class CinemacityProvider : MainAPI() {
     override suspend fun getMainPage(
         page: Int, request: MainPageRequest
     ): HomePageResponse {
+        // Ensure Cloudflare cookies first
+        if (dynamicCookies.isEmpty()) {
+            doRequest("$mainUrl/")
+        }
         val base = request.data.trimEnd('/')
         val url = if (page > 1) "$base/page/$page/" else "$base/"
-        val doc = doRequest(url).document
-        val home = doc.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
-        val hasNext = doc.select("a[href*='/page/'], .pnext, .next").isNotEmpty()
+        Log.d("Cinemacity", "getMainPage: url=$url page=$page")
+        val resp = doRequest(url)
+        Log.d("Cinemacity", "getMainPage: status=${resp.code} len=${resp.text.length}")
+        val doc = resp.document
+        val home = doc.select("div.dar-short_item, div.short-item, article.short, div.post-item, .shortStory, .story").mapNotNull { it.toSearchResult() }
+        val hasNext = doc.select("a[href*='/page/'], .pnext, .next, .navigation a[href*=page]").isNotEmpty()
+        Log.d("Cinemacity", "getMainPage: found ${home.size} items, hasNext=$hasNext")
+        if (home.isEmpty()) {
+            Log.d("Cinemacity", "getMainPage: body sample=${resp.text.take(500)}")
+        }
         enrichTmdbPosters(home)
         return newHomePageResponse(request.name, home, hasNext)
     }
@@ -178,7 +194,7 @@ class CinemacityProvider : MainAPI() {
     private fun Element.toSearchResult(): SearchResponse? {
         val link = this.select("a").firstOrNull {
             val h = it.attr("href")
-            (h.contains("/movies/") || h.contains("/tv-series/")) && !h.contains(Regex("\\.(webp|jpg|png)"))
+            (h.contains("/movies/") || h.contains("/tv-series/")) && !h.contains(Regex("\\.(webp|jpg|png|jpeg)"))
         } ?: return null
 
         val title = link.text().split(" (", " S0", " -")[0].trim()
@@ -186,14 +202,11 @@ class CinemacityProvider : MainAPI() {
         val img = this.selectFirst("img")
         val imgSrc = img?.attr("src")
         val imgDataSrc = img?.attr("data-src")
-        val poster = fixUrlNull(imgSrc) ?: fixUrlNull(imgDataSrc)
-        Log.d(
-            "Cinemacity",
-            "SearchResult: title='$title', img=$img, src='$imgSrc', data-src='$imgDataSrc', poster='$poster'"
-        )
+        val imgLazySrc = img?.attr("data-lazy-src")
+        val poster = fixUrlNull(imgSrc) ?: fixUrlNull(imgDataSrc) ?: fixUrlNull(imgLazySrc)
         val isTv = href.contains("/tv-series/")
-        val score = this.selectFirst("span.rating-color")?.text()
-        val date = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
+        val score = this.selectFirst("span.rating-color, .rating, [class*=rating]")?.text()
+        val date = this.selectFirst("span a[href*=year], a[href*=year]")?.text()?.toIntOrNull()
 
         return if (isTv) {
             newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
@@ -211,55 +224,83 @@ class CinemacityProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
+        // First ensure we have Cloudflare cookies by visiting the main page
+        if (dynamicCookies.isEmpty()) {
+            val warmup = doRequest("$mainUrl/")
+            if (warmup.code != 200) {
+                Log.w("Cinemacity", "Search: warmup returned ${warmup.code}")
+            }
+        }
+
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
+        val searchUrl = "$mainUrl/index.php"
+        Log.d("Cinemacity", "Search: POST $searchUrl query='$query' cookies=${dynamicCookies.size}")
         val resp = app.post(
-            mainUrl,
+            searchUrl,
             headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
             cookies = dynamicCookies,
             data = formData,
-            timeout = 15000L,
+            timeout = 20000L,
             interceptor = cfKiller
         ).also {
-            if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
+            if (it.cookies.isNotEmpty()) {
+                Log.d("Cinemacity", "Search: got ${it.cookies.size} new cookies")
+                dynamicCookies = dynamicCookies + it.cookies
+            }
         }
 
+        Log.d("Cinemacity", "Search: status=${resp.code} len=${resp.text.length}")
         if (resp.code != 200) {
-            Log.w("Cinemacity", "Search: status ${resp.code}")
+            Log.w("Cinemacity", "Search: status ${resp.code} body=${resp.text.take(300)}")
             return null
         }
 
-        val results = resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+        val results = resp.document.select("div.dar-short_item, div.short-item, article.short, div.post-item").mapNotNull { it.toSearchResult() }
         Log.d("Cinemacity", "Search: query='$query', total items=${results.size}")
+        if (results.isEmpty()) {
+            Log.d("Cinemacity", "Search: body sample=${resp.text.take(500)}")
+        }
         enrichTmdbPosters(results)
         return results
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        if (dynamicCookies.isEmpty()) {
+            doRequest("$mainUrl/")
+        }
         val formData = mapOf("do" to "search", "subaction" to "search", "story" to query)
         val resp = app.post(
-            mainUrl,
+            "$mainUrl/index.php",
             headers = protectionHeaders + ("Referer" to "$mainUrl/") + ("X-Requested-With" to "XMLHttpRequest"),
             cookies = dynamicCookies,
             data = formData,
-            timeout = 15000L,
+            timeout = 20000L,
             interceptor = cfKiller
         ).also {
             if (it.cookies.isNotEmpty()) dynamicCookies = dynamicCookies + it.cookies
         }
         if (resp.code != 200) return null
-        return resp.document.select("div.dar-short_item").mapNotNull { it.toSearchResult() }
+        return resp.document.select("div.dar-short_item, div.short-item, article.short, div.post-item").mapNotNull { it.toSearchResult() }
     }
 
 
     override suspend fun load(url: String): LoadResponse {
+        // Ensure we have Cloudflare cookies first
+        if (dynamicCookies.isEmpty()) {
+            val warmup = doRequest("$mainUrl/")
+            Log.d("Cinemacity", "load: warmup status=${warmup.code}")
+        }
+
         val page = doRequest(url)
+        Log.d("Cinemacity", "load: status=${page.code} len=${page.text.length} url=$url")
         val doc = page.document
 
         val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
         val title = ogTitle.substringBefore("(").trim()
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
-        val bgposter = doc.selectFirst("div.dar-full_bg a")?.attr("href")
-        val trailer = doc.select("div.dar-full_bg.e-cover > div").attr("data-vbg")
+            ?: doc.selectFirst("img[class*=poster], .poster img, img[src*=uploads]")?.attr("src").orEmpty()
+        val bgposter = doc.selectFirst("div.dar-full_bg a, .bg-poster a, [class*=bg] a, a[href*=uploads]")?.attr("href")
+        val trailer = doc.select("div.dar-full_bg.e-cover > div, .trailer, iframe[src*=youtube], [data-vbg]").attr("data-vbg")
 
         val audioLanguages = doc
             .select("li")
@@ -271,10 +312,15 @@ class CinemacityProvider : MainAPI() {
             ?.map { it.text().trim() }
             ?.filter { it.isNotEmpty() }
             ?.joinToString(", ")
+            ?: doc.select("[class*=audio] a, [class*=lang] a, .language a")
+                .map { it.text().trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString(", ")
+                .takeIf { it.isNotBlank() }
 
-        val descriptions = doc.selectFirst("#about div.ta-full_text1")?.text()
+        val descriptions = doc.selectFirst("#about div.ta-full_text1, .full-text, [class*=description], [class*=full_text]")?.text()
 
-        val recommendation = doc.select("div.ta-rel > div.ta-rel_item").map {
+        val recommendation = doc.select("div.ta-rel > div.ta-rel_item, [class*=rel] [class*=item], .recommendations > div, .related > div").map {
             val recTitle = it.select("a").text().substringBefore("(").trim()
             val recHref = fixUrl(it.selectFirst("> div > a")?.attr("href") ?: "")
             val recImg = it.selectFirst("img")
@@ -293,7 +339,7 @@ class CinemacityProvider : MainAPI() {
         enrichTmdbPosters(recommendation)
 
         val year = ogTitle.substringAfter("(", "").substringBefore(")").toIntOrNull()
-        val contenttype = doc.select("div.dar-full_meta > span:nth-child(5) > a").text()
+        val contenttype = doc.select("div.dar-full_meta > span:nth-child(5) > a, [class*=meta] a[href*=genre], .genre a").text()
 
         val tvtype = if (url.contains("/movies/", true)) TvType.Movie else TvType.TvSeries
         val tmdbmetatype = if (tvtype == TvType.TvSeries) "tv" else "movie"
@@ -304,9 +350,12 @@ class CinemacityProvider : MainAPI() {
 
 
         val imdbId = doc
-            .select("div.ta-full_rating1 > div")
+            .select("div.ta-full_rating1 > div, [class*=rating] [onclick*=tt], [onclick*=imdb]")
             .mapNotNull { it.attr("onclick") }
             .firstNotNullOfOrNull { Regex("tt\\d+").find(it)?.value }
+            ?: doc.select("a[href*=imdb], [href*=imdb]")
+                .mapNotNull { Regex("tt\\d+").find(it.attr("href"))?.value }
+                .firstOrNull()
 
         val tmdbId = imdbId?.let { id ->
             runCatching {
