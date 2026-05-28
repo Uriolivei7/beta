@@ -467,7 +467,7 @@ class SoloLatinoProvider : MainAPI() {
                             val langTag = when (lang.videoLanguage?.uppercase()) {
                                 "LAT" -> "LATINO"
                                 "SUB", "ENGLISH" -> "SUBTITULADO"
-                                "CAST", "SPANISH" -> "CASTELLANO"
+                                "ESP", "SPANISH" -> "CASTELLANO"
                                 "ENG", "VOSE" -> "VOSE"
                                 "JAP", "JAPANESE" -> "JAPONES"
                                 else -> lang.videoLanguage ?: "??"
