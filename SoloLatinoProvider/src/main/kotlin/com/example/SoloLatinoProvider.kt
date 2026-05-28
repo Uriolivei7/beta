@@ -326,13 +326,18 @@ class SoloLatinoProvider : MainAPI() {
         val html = pageResp.text
         val doc = pageResp.document
 
+        val xsrfToken = java.net.URLDecoder.decode(
+            sessionCookies["XSRF-TOKEN"] ?: "", "UTF-8"
+        )
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Accept" to "application/json",
             "Content-Type" to "application/json",
+            "X-XSRF-TOKEN" to xsrfToken,
             "X-Requested-With" to "XMLHttpRequest",
             "Referer" to targetUrl,
         )
+        Log.d("SoloLatino", "loadLinks - X-XSRF-TOKEN header=${xsrfToken.take(80)}")
 
         val serverUrls = mutableListOf<String>()
         val tokens = mutableSetOf<String>()
