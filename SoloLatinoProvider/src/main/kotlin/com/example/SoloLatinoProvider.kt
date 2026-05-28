@@ -310,12 +310,15 @@ class SoloLatinoProvider : MainAPI() {
         val html = safeAppGet(targetUrl) ?: return false
         val doc = Jsoup.parse(html)
 
-        val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: ""
+        // Initialize Sanctum session (sets XSRF-TOKEN + laravel_session cookies)
+        try {
+            app.get("$mainUrl/sanctum/csrf-cookie", headers = baseHeaders, timeout = 15000L)
+        } catch (_: Exception) { }
+
         val apiHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Accept" to "application/json",
             "Content-Type" to "application/json",
-            "X-CSRF-TOKEN" to csrfToken,
             "X-Requested-With" to "XMLHttpRequest",
             "Referer" to targetUrl,
         )
