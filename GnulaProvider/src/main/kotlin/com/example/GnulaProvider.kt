@@ -38,12 +38,15 @@ class GnulaProvider : MainAPI() {
 
         for ((url, title) in catalogs) {
             try {
+                val isSeriesSection = url.contains("/series/", ignoreCase = true)
+                val sectionPrefix = if (isSeriesSection) "series" else "movies"
                 val res = app.get(url).text
                 val pProps = getNextData(res)
                 val results = pProps?.results?.data?.mapNotNull { item ->
                     val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
-                    val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
-                    newMovieSearchResponse(item.titles.name ?: "", finalUrl, if (finalUrl.contains("/series/")) TvType.TvSeries else TvType.Movie) {
+                    val finalUrl = "$mainUrl/$sectionPrefix/${slugPath.removePrefix("/")}"
+                    val tvType = if (isSeriesSection) TvType.TvSeries else TvType.Movie
+                    newMovieSearchResponse(item.titles.name ?: "", finalUrl, tvType) {
                         this.posterUrl = fixImageUrl(item.images.poster)
                         this.year = item.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
                     }
@@ -61,8 +64,18 @@ class GnulaProvider : MainAPI() {
             val pProps = getNextData(res)
             pProps?.results?.data?.mapNotNull { item ->
                 val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
-                val finalUrl = "$mainUrl/${slugPath.removePrefix("/")}"
-                newMovieSearchResponse(item.titles.name ?: "Sin título", finalUrl, if (finalUrl.contains("/series/")) TvType.TvSeries else TvType.Movie) {
+                val typePath = when {
+                    item.typeName?.contains("Serie", ignoreCase = true) == true -> "series"
+                    item.typeName?.contains("Movie", ignoreCase = true) == true -> "movies"
+                    else -> null
+                }
+                val finalUrl = if (typePath != null) "$mainUrl/$typePath/${slugPath.removePrefix("/")}"
+                               else "$mainUrl/${slugPath.removePrefix("/")}"
+                val tvType = when {
+                    typePath == "series" -> TvType.TvSeries
+                    else -> TvType.Movie
+                }
+                newMovieSearchResponse(item.titles.name ?: "Sin título", finalUrl, tvType) {
                     this.posterUrl = fixImageUrl(item.images.poster)
                 }
             } ?: emptyList()
@@ -84,8 +97,11 @@ class GnulaProvider : MainAPI() {
         var pProps = getNextData(response.text)
         var actualUrl = url
 
+        val isOriginalSeries = url.contains("/series/", ignoreCase = true)
         if (pProps?.post == null && pProps?.data == null) {
-            val trials = listOf("$mainUrl/series/$slugRaw", "$mainUrl/movies/$slugRaw")
+            val preferredType = if (isOriginalSeries) "series" else "movies"
+            val otherType = if (isOriginalSeries) "movies" else "series"
+            val trials = listOf("$mainUrl/$preferredType/$slugRaw", "$mainUrl/$otherType/$slugRaw")
             for (trial in trials) {
                 if (trial == url) continue
                 val nextRes = app.get(trial, headers = nextJsHeaders)
