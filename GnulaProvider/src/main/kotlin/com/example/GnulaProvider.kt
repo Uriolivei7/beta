@@ -146,12 +146,9 @@ class GnulaProvider : MainAPI() {
         val isOriginalSeries = url.contains("/series/", ignoreCase = true)
         val originalType = if (isOriginalSeries) "series" else "movies"
 
-        // Extraer partes de la URL original
-        // Formato: https://gnula.life/{type}/{numericId}/{slugName}
         val pathAfterDomain = url.removePrefix(mainUrl).trimStart('/')
         val pathSegments = pathAfterDomain.split("/").filter { it.isNotBlank() }
         val slugRaw = url.trimEnd('/').substringAfterLast("/")
-        // Si la URL tiene formato /{type}/{id}/{name}, extraer id y rango completo
         val numericId = if (pathSegments.size >= 2) pathSegments.getOrNull(1) else null
         val fullSlugPath = if (pathSegments.size >= 2) pathSegments.drop(2).joinToString("/") else slugRaw
 
@@ -161,7 +158,6 @@ class GnulaProvider : MainAPI() {
         var actualUrl = url
         val triedUrls = mutableSetOf(url)
 
-        // Estrategia 1: fetch con x-nextjs-data header en URL original
         Log.d(TAG, "load [E1]: x-nextjs-data header -> $url")
         try {
             val res = app.get(url, headers = nextJsHeaders)
@@ -170,7 +166,6 @@ class GnulaProvider : MainAPI() {
             if (pProps?.post != null || pProps?.data != null) Log.d(TAG, "load [E1]: OK")
         } catch (e: Exception) { Log.w(TAG, "load [E1]: Error -> ${e.message}") }
 
-        // Estrategia 2: sin x-nextjs-data en URL original (carga normal navegador)
         if (pProps?.post == null && pProps?.data == null) {
             Log.d(TAG, "load [E2]: Sin header especial -> $url")
             triedUrls.add(url)
@@ -182,18 +177,13 @@ class GnulaProvider : MainAPI() {
             } catch (e: Exception) { Log.w(TAG, "load [E2]: Error -> ${e.message}") }
         }
 
-        // Estrategia 3: mantener el path completo con ID numérico, cambiar solo el tipo (series <-> movies)
         if (pProps?.post == null && pProps?.data == null && numericId != null) {
             val otherType = if (isOriginalSeries) "movies" else "series"
             val trials = mutableListOf<String>()
             val slugPart = if (pathSegments.size >= 3) pathSegments.drop(2).joinToString("/") else slugRaw
-            // Probar con el mismo path pero tipo opuesto (ej: movies -> series)
             trials.add("$mainUrl/$otherType/$numericId/$slugPart")
-            // Probar sin ID numérico (slug directo)
             trials.add("$mainUrl/$originalType/$slugPart")
-            // Probar ambos tipos sin ID
             trials.add("$mainUrl/$otherType/$slugPart")
-            // Probar con otras variaciones
             if (fullSlugPath != slugRaw) {
                 trials.add("$mainUrl/$originalType/$fullSlugPath")
                 trials.add("$mainUrl/$otherType/$fullSlugPath")
@@ -215,7 +205,6 @@ class GnulaProvider : MainAPI() {
             }
         }
 
-        // Estrategia 4: probar varias combinaciones de path sin x-nextjs-data
         if (pProps?.post == null && pProps?.data == null) {
             val trials = mutableListOf<String>()
             if (numericId != null) {
@@ -248,7 +237,6 @@ class GnulaProvider : MainAPI() {
             }
         }
 
-        // Estrategia 5: buscar en toda la página con regex como último recurso
         if (pProps?.post == null && pProps?.data == null) {
             val trials = mutableListOf(url)
             if (numericId != null) {
@@ -280,7 +268,6 @@ class GnulaProvider : MainAPI() {
         val post = finalProps.post ?: finalProps.data ?: throw ErrorLoadingException("No se encontró post/data")
         Log.d(TAG, "load: Estrategia exitosa, actualUrl=$actualUrl título='${post.titles.name}'")
 
-        // Validar coherencia: si esperábamos película pero tiene seasons
         val finalIsSeries = !post.seasons.isNullOrEmpty()
         if (!isOriginalSeries && finalIsSeries) {
             Log.w(TAG, "load: Tipo inconsistente — URL movie pero data tiene seasons. Slug='$slugRaw'")

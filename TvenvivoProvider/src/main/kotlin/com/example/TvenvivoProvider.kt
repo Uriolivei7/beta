@@ -120,9 +120,12 @@ class TvenvivoProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val html = safeAppGet(mainUrl) ?: return null
+        Log.d("Tvenvivo", "getMainPage: HTML ${html.length} chars")
         val channels = extractChannelsFromHtml(html)
+        Log.d("Tvenvivo", "getMainPage: ${channels.size} canales extraídos")
 
         val uniqueChannels = channels.distinctBy { (_, link, _) -> link }
+        Log.d("Tvenvivo", "getMainPage: ${uniqueChannels.size} únicos")
 
         val channelResults = uniqueChannels.mapNotNull { (titleRaw, link, img) ->
             val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
@@ -133,33 +136,29 @@ class TvenvivoProvider : MainAPI() {
             }
         }
 
+        Log.d("Tvenvivo", "getMainPage: ${channelResults.size} resultados finales")
         return newHomePageResponse(listOf(HomePageList("Todos los Canales", channelResults)), false)
     }
 
     private fun extractChannelsFromHtml(html: String): List<Triple<String, String, String>> {
         val channels = mutableListOf<Triple<String, String, String>>()
+        val doc = Jsoup.parse(html)
 
-        for (varName in listOf("homeChannels", "showChannels")) {
-            val match = Regex("""const\s+$varName\s*=\s*`([^`]*)`""", RegexOption.DOT_MATCHES_ALL).find(html)
-            if (match != null) {
-                val channelDoc = Jsoup.parse(match.groupValues[1])
-                channelDoc.select("a.channel-card").forEach { channelCard ->
-                    val link = channelCard.attr("href")
-                    val imgElement = channelCard.selectFirst("img")
-                    val pElement = channelCard.selectFirst("p")
-                    val titleRaw = if (imgElement?.attr("alt")?.isNotBlank() == true) {
-                        imgElement.attr("alt")
-                    } else if (pElement?.text()?.isNotBlank() == true) {
-                        pElement.text()
-                    } else {
-                        ""
-                    }
-                    val img = imgElement?.attr("src") ?: ""
+        doc.select("a.channel-card").forEach { channelCard ->
+            val link = channelCard.attr("href")
+            val imgElement = channelCard.selectFirst("img")
+            val pElement = channelCard.selectFirst("p")
+            val titleRaw = if (imgElement?.attr("alt")?.isNotBlank() == true) {
+                imgElement.attr("alt")
+            } else if (pElement?.text()?.isNotBlank() == true) {
+                pElement.text()
+            } else {
+                ""
+            }
+            val img = imgElement?.attr("src") ?: ""
 
-                    if (titleRaw.isNotBlank() && link.isNotBlank()) {
-                        channels.add(Triple(titleRaw, link, img))
-                    }
-                }
+            if (titleRaw.isNotBlank() && link.isNotBlank()) {
+                channels.add(Triple(titleRaw, link, img))
             }
         }
 
