@@ -134,16 +134,28 @@ class GnulaProvider : MainAPI() {
             "user-agent" to ua,
             "referer" to mainUrl
         )
+        val plainHeaders = mapOf("user-agent" to ua, "referer" to mainUrl)
 
-        val slugRaw = url.trimEnd('/').substringAfterLast("/")
         val isOriginalSeries = url.contains("/series/", ignoreCase = true)
+        val originalType = if (isOriginalSeries) "series" else "movies"
+
+        // Extraer partes de la URL original
+        // Formato: https://gnula.life/{type}/{numericId}/{slugName}
+        val pathAfterDomain = url.removePrefix(mainUrl).trimStart('/')
+        val pathSegments = pathAfterDomain.split("/").filter { it.isNotBlank() }
+        val slugRaw = url.trimEnd('/').substringAfterLast("/")
+        // Si la URL tiene formato /{type}/{id}/{name}, extraer id y rango completo
+        val numericId = if (pathSegments.size >= 2) pathSegments.getOrNull(1) else null
+        val fullSlugPath = if (pathSegments.size >= 2) pathSegments.drop(2).joinToString("/") else slugRaw
+
+        Log.d(TAG, "load: parsed — type=$originalType numericId=$numericId slugRaw=$slugRaw fullSlugPath=$fullSlugPath pathSegments=$pathSegments")
 
         var pProps: PageProps? = null
         var actualUrl = url
         val triedUrls = mutableSetOf(url)
 
-        // Estrategia 1: fetch con x-nextjs-data header
-        Log.d(TAG, "load [E1]: Intentando con x-nextjs-data header -> $url")
+        // Estrategia 1: fetch con x-nextjs-data header en URL original
+        Log.d(TAG, "load [E1]: x-nextjs-data header -> $url")
         try {
             val res = app.get(url, headers = nextJsHeaders)
             actualUrl = res.url
@@ -151,72 +163,97 @@ class GnulaProvider : MainAPI() {
             if (pProps?.post != null || pProps?.data != null) Log.d(TAG, "load [E1]: OK")
         } catch (e: Exception) { Log.w(TAG, "load [E1]: Error -> ${e.message}") }
 
-        // Estrategia 2: probar con prefijo de tipo alternativo
+        // Estrategia 2: sin x-nextjs-data en URL original (carga normal navegador)
         if (pProps?.post == null && pProps?.data == null) {
-            val preferredType = if (isOriginalSeries) "series" else "movies"
+            Log.d(TAG, "load [E2]: Sin header especial -> $url")
+            triedUrls.add(url)
+            try {
+                val res = app.get(url, headers = plainHeaders)
+                actualUrl = res.url
+                pProps = getNextData(res.text)
+                if (pProps?.post != null || pProps?.data != null) Log.d(TAG, "load [E2]: OK")
+            } catch (e: Exception) { Log.w(TAG, "load [E2]: Error -> ${e.message}") }
+        }
+
+        // Estrategia 3: mantener el path completo con ID numérico, cambiar solo el tipo (series <-> movies)
+        if (pProps?.post == null && pProps?.data == null && numericId != null) {
             val otherType = if (isOriginalSeries) "movies" else "series"
-            val trials = listOf("$mainUrl/$preferredType/$slugRaw", "$mainUrl/$otherType/$slugRaw")
+            val trials = mutableListOf<String>()
+            val slugPart = if (pathSegments.size >= 3) pathSegments.drop(2).joinToString("/") else slugRaw
+            // Probar con el mismo path pero tipo opuesto (ej: movies -> series)
+            trials.add("$mainUrl/$otherType/$numericId/$slugPart")
+            // Probar sin ID numérico (slug directo)
+            trials.add("$mainUrl/$originalType/$slugPart")
+            // Probar ambos tipos sin ID
+            trials.add("$mainUrl/$otherType/$slugPart")
+            // Probar con otras variaciones
+            if (fullSlugPath != slugRaw) {
+                trials.add("$mainUrl/$originalType/$fullSlugPath")
+                trials.add("$mainUrl/$otherType/$fullSlugPath")
+            }
+
             for (trial in trials) {
                 if (trial in triedUrls) continue
                 triedUrls.add(trial)
                 try {
-                    Log.d(TAG, "load [E2]: Probando -> $trial")
+                    Log.d(TAG, "load [E3]: path completo -> $trial")
                     val res = app.get(trial, headers = nextJsHeaders)
                     val props = getNextData(res.text)
                     if (props?.post != null || props?.data != null) {
                         pProps = props; actualUrl = res.url
-                        Log.d(TAG, "load [E2]: OK en $trial")
-                        break
-                    }
-                } catch (e: Exception) { Log.w(TAG, "load [E2]: Error -> ${e.message}") }
-            }
-        }
-
-        // Estrategia 3: fetch SIN x-nextjs-data (carga normal del navegador)
-        if (pProps?.post == null && pProps?.data == null) {
-            val plainHeaders = mapOf("user-agent" to ua, "referer" to mainUrl)
-            for (trialUrl in listOf(url, "$mainUrl/series/$slugRaw", "$mainUrl/movies/$slugRaw")) {
-                if (trialUrl in triedUrls) continue
-                triedUrls.add(trialUrl)
-                try {
-                    Log.d(TAG, "load [E3]: Probando sin header especial -> $trialUrl")
-                    val res = app.get(trialUrl, headers = plainHeaders)
-                    val props = getNextData(res.text)
-                    if (props?.post != null || props?.data != null) {
-                        pProps = props; actualUrl = res.url
-                        Log.d(TAG, "load [E3]: OK en $trialUrl")
+                        Log.d(TAG, "load [E3]: OK en $trial")
                         break
                     }
                 } catch (e: Exception) { Log.w(TAG, "load [E3]: Error -> ${e.message}") }
             }
         }
 
-        // Estrategia 4: extraer slug anidado (si la URL ya tenía /series/X/slug, probar slug directo)
+        // Estrategia 4: probar varias combinaciones de path sin x-nextjs-data
         if (pProps?.post == null && pProps?.data == null) {
-            val parts = slugRaw.split("/")
-            if (parts.size > 1) {
-                val directSlug = parts.last()
-                val trials = listOf("$mainUrl/series/$directSlug", "$mainUrl/movies/$directSlug")
-                for (trial in trials) {
-                    if (trial in triedUrls) continue
-                    triedUrls.add(trial)
-                    try {
-                        Log.d(TAG, "load [E4]: Probando slug directo -> $trial")
-                        val res = app.get(trial, headers = nextJsHeaders)
-                        val props = getNextData(res.text)
-                        if (props?.post != null || props?.data != null) {
-                            pProps = props; actualUrl = res.url
-                            Log.d(TAG, "load [E4]: OK en $trial")
-                            break
-                        }
-                    } catch (e: Exception) { Log.w(TAG, "load [E4]: Error -> ${e.message}") }
-                }
+            val trials = mutableListOf<String>()
+            if (numericId != null) {
+                val slugPart = if (pathSegments.size >= 3) pathSegments.drop(2).joinToString("/") else slugRaw
+                trials.add("$mainUrl/$originalType/$numericId/$slugPart")
+                val otherType = if (isOriginalSeries) "movies" else "series"
+                trials.add("$mainUrl/$otherType/$numericId/$slugPart")
+            }
+            trials.add("$mainUrl/$originalType/$slugRaw")
+            if (fullSlugPath != slugRaw) {
+                val otherType = if (isOriginalSeries) "movies" else "series"
+                trials.add("$mainUrl/$otherType/$fullSlugPath")
+            }
+            val otherType2 = if (isOriginalSeries) "movies" else "series"
+            trials.add("$mainUrl/$otherType2/$slugRaw")
+
+            for (trial in trials) {
+                if (trial in triedUrls) continue
+                triedUrls.add(trial)
+                try {
+                    Log.d(TAG, "load [E4]: varias combinaciones -> $trial")
+                    val res = app.get(trial, headers = plainHeaders)
+                    val props = getNextData(res.text)
+                    if (props?.post != null || props?.data != null) {
+                        pProps = props; actualUrl = res.url
+                        Log.d(TAG, "load [E4]: OK en $trial")
+                        break
+                    }
+                } catch (e: Exception) { Log.w(TAG, "load [E4]: Error -> ${e.message}") }
             }
         }
 
         // Estrategia 5: buscar en toda la página con regex como último recurso
         if (pProps?.post == null && pProps?.data == null) {
-            for (trialUrl in listOf(url, "$mainUrl/series/$slugRaw", "$mainUrl/movies/$slugRaw")) {
+            val trials = mutableListOf(url)
+            if (numericId != null) {
+                val slugPart = if (pathSegments.size >= 3) pathSegments.drop(2).joinToString("/") else slugRaw
+                val otherType = if (isOriginalSeries) "movies" else "series"
+                trials.add("$mainUrl/$originalType/$slugPart")
+                trials.add("$mainUrl/$otherType/$slugPart")
+            }
+            trials.add("$mainUrl/$originalType/$slugRaw")
+            trials.add("${mainUrl}/${if (isOriginalSeries) "movies" else "series"}/$slugRaw")
+
+            for (trialUrl in trials) {
                 if (trialUrl in triedUrls) continue
                 triedUrls.add(trialUrl)
                 try {
