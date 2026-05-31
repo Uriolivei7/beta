@@ -69,14 +69,14 @@ class GnulaProvider : MainAPI() {
                 Log.d(TAG, "getMainPage: '$title' respuesta ${res.length} chars")
                 val pProps = getNextData(res)
                 val results = pProps?.results?.data?.mapNotNull { item ->
-                    val slugPath = item.url.slug ?: item.slug.name ?: return@mapNotNull null
-                    val finalUrl = "$mainUrl/$sectionPrefix/${slugPath.removePrefix("/")}"
+                    val slugName = item.slug.name ?: item.url.slug?.substringAfterLast("/") ?: return@mapNotNull null
+                    val finalUrl = "$mainUrl/$sectionPrefix/$slugName"
                     val tvType = if (isSeriesSection) TvType.TvSeries else TvType.Movie
                     val itemResult = newMovieSearchResponse(item.titles.name ?: "", finalUrl, tvType) {
                         this.posterUrl = fixImageUrl(item.images.poster)
                         this.year = item.releaseDate?.split("-")?.firstOrNull()?.toIntOrNull()
                     }
-                    Log.d(TAG, "getMainPage: Item '${item.titles.name}' -> $finalUrl (type=$tvType, slug=$slugPath)")
+                    Log.d(TAG, "getMainPage: Item '${item.titles.name}' -> $finalUrl (type=$tvType, slugName=$slugName)")
                     itemResult
                 } ?: emptyList()
                 Log.d(TAG, "getMainPage: '$title' produjo ${results.size} resultados")
@@ -102,23 +102,23 @@ class GnulaProvider : MainAPI() {
                 val urlSlug = item.url.slug
                 val nameSlug = item.slug.name
                 Log.d(TAG, "search: raw — url.slug='$urlSlug' slug.name='$nameSlug' releaseDate=${item.releaseDate}")
-                val slugPath = urlSlug ?: nameSlug
-                if (slugPath == null) {
+                val slugName = nameSlug ?: urlSlug?.substringAfterLast("/")
+                if (slugName == null) {
                     Log.w(TAG, "search: Item sin slug, saltando")
                     return@mapNotNull null
                 }
                 val typePath = when {
-                    item.typeName?.contains("Serie", ignoreCase = true) == true -> "series"
-                    item.typeName?.contains("Movie", ignoreCase = true) == true -> "movies"
+                    urlSlug?.startsWith("series/") == true -> "series"
+                    urlSlug?.startsWith("movies/") == true -> "movies"
                     else -> null
                 }
-                val finalUrl = if (typePath != null) "$mainUrl/$typePath/${slugPath.removePrefix("/")}"
-                               else "$mainUrl/${slugPath.removePrefix("/")}"
+                val finalUrl = if (typePath != null) "$mainUrl/$typePath/$slugName"
+                               else "$mainUrl/$slugName"
                 val tvType = when {
                     typePath == "series" -> TvType.TvSeries
                     else -> TvType.Movie
                 }
-                Log.d(TAG, "search: Item '${item.titles.name}' type=${item.typeName} slug=$slugPath -> $finalUrl (tvType=$tvType)")
+                Log.d(TAG, "search: Item '${item.titles.name}' url.slug=$urlSlug slug.name=$nameSlug -> $finalUrl (tvType=$tvType)")
                 newMovieSearchResponse(item.titles.name ?: "Sin título", finalUrl, tvType) {
                     this.posterUrl = fixImageUrl(item.images.poster)
                 }
