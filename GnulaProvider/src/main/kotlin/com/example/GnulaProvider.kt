@@ -32,12 +32,16 @@ class GnulaProvider : MainAPI() {
             val props = model.pageProps ?: model.props?.pageProps
             if (props == null) {
                 Log.w(TAG, "getNextData: pageProps es null en el JSON")
+                Log.d(TAG, "getNextData: JSON preview (300 chars): ${jsonStr.take(300)}")
             } else {
                 val hasPost = props.post != null
                 val hasData = props.data != null
                 val hasResults = props.results != null
                 val hasEpisode = props.episode != null
                 Log.d(TAG, "getNextData: pageProps encontrado — post=$hasPost data=$hasData results=$hasResults episode=$hasEpisode")
+                if (!hasPost && !hasData && !hasResults && !hasEpisode) {
+                    Log.d(TAG, "getNextData: JSON preview (500 chars): ${jsonStr.take(500)}")
+                }
             }
             props
         } catch (e: Exception) {
@@ -95,7 +99,10 @@ class GnulaProvider : MainAPI() {
                 Log.w(TAG, "search: results.data es null en la respuesta")
             }
             val results = pProps?.results?.data?.mapNotNull { item ->
-                val slugPath = item.url.slug ?: item.slug.name
+                val urlSlug = item.url.slug
+                val nameSlug = item.slug.name
+                Log.d(TAG, "search: raw — url.slug='$urlSlug' slug.name='$nameSlug' releaseDate=${item.releaseDate}")
+                val slugPath = urlSlug ?: nameSlug
                 if (slugPath == null) {
                     Log.w(TAG, "search: Item sin slug, saltando")
                     return@mapNotNull null
