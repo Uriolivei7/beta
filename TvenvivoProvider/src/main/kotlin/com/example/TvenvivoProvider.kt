@@ -222,13 +222,15 @@ class TvenvivoProvider : MainAPI() {
             .replace(Regex("""\s*\|\s*.*"""), "")
             .trim()
 
-        val poster = doc.selectFirst("div.flex.justify-between img[src]")?.attr("src")
+        val poster = doc.selectFirst("div.info-logo img")?.attr("src")
+            ?: doc.selectFirst("meta[name='og:image']")?.attr("content")
             ?: doc.selectFirst("section img[src*='/imge/']")?.attr("src")
             ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
             ?: ""
 
-        val description = doc.selectFirst("div.info.text-sm.leading-relaxed")?.text()
-            ?: doc.selectFirst("p.text-sm.leading-relaxed")?.text()
+        val description = doc.selectFirst("section.info div.info-card")?.text()
+            ?: doc.selectFirst("meta[property='og:description']")?.attr("content")
+            ?: doc.selectFirst("meta[name=description]")?.attr("content")
             ?: ""
 
         val episodes = listOf(
