@@ -308,7 +308,6 @@ class SoloLatinoProvider : MainAPI() {
 
         var sessionCookies = mapOf<String, String>()
 
-        // Step 1: initialize Sanctum session to get XSRF-TOKEN + laravel_session cookies
         try {
             app.get("$mainUrl/sanctum/csrf-cookie", headers = baseHeaders, timeout = 15000L).also {
                 Log.d("SoloLatino", "loadLinks - Sanctum GET HTTP ${it.code}, cookies=${it.cookies}")
@@ -316,7 +315,6 @@ class SoloLatinoProvider : MainAPI() {
             }
         } catch (_: Exception) { }
 
-        // Step 2: fetch episode page with session cookies
         val pageResp = app.get(targetUrl, headers = baseHeaders, cookies = sessionCookies, timeout = 30000L)
         Log.d("SoloLatino", "loadLinks - Page GET HTTP ${pageResp.code}, cookies=${pageResp.cookies}")
         if (!pageResp.isSuccessful) return false
@@ -341,19 +339,16 @@ class SoloLatinoProvider : MainAPI() {
         val serverUrls = mutableListOf<String>()
         val tokens = mutableSetOf<String>()
 
-        // Strategy 1: elements with data-server-btn (same selector as site's JS)
         doc.select("[data-server-btn]").forEach { btn ->
             btn.attr("data-player-token").ifBlank { null }?.let { tokens.add(it) }
         }
 
-        // Strategy 2: regex fallback for data-player-token in raw HTML
         if (tokens.isEmpty()) {
             Regex("""data-player-token="([^"]+)""").findAll(html).forEach {
                 tokens.add(it.groupValues[1])
             }
         }
 
-        // Strategy 3: regex for any Laravel encrypted token pattern in HTML
         if (tokens.isEmpty()) {
             Regex("""eyJpdiI6I[A-Za-z0-9+/]{1,}={0,2}""").findAll(html).forEach {
                 tokens.add(it.value)
@@ -385,7 +380,6 @@ class SoloLatinoProvider : MainAPI() {
             }
         }
 
-        // Fallback: lazy embed on #player-frame (present on some pages)
         if (serverUrls.isEmpty()) {
             doc.selectFirst("#player-frame[data-lazy-embed]")?.attr("data-lazy-embed")?.let { lazyToken ->
                 try {
