@@ -145,6 +145,37 @@ class SerieskaoProvider : MainAPI() {
         }
     }
 
+    private fun parseRecommendations(doc: org.jsoup.nodes.Document): List<SearchResponse>? {
+        return try {
+            val section = doc.selectFirst("section.section:has(h3.section__title)")
+            if (section == null) return null
+            section.select("article.card").mapNotNull { element ->
+                try {
+                    val linkEl = element.selectFirst("a.card__link") ?: return@mapNotNull null
+                    val link = linkEl.attr("href")
+                    val title = element.selectFirst("h4.card__title")?.text()?.trim()
+                    val img = element.selectFirst("figure.card__poster img")?.attr("src")
+                    val typeBadge = element.selectFirst("span.card__badge--type")?.text()
+                    if (title == null || link.isBlank()) return@mapNotNull null
+                    newAnimeSearchResponse(title, fixUrl(link)) {
+                        this.posterUrl = fixUrlNull(img)
+                        this.type = when (typeBadge) {
+                            "PEL" -> TvType.Movie
+                            "ANI" -> TvType.Anime
+                            else -> TvType.TvSeries
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "parseRecommendations error item: ${e.message}")
+                    null
+                }
+            }.ifEmpty { null }
+        } catch (e: Exception) {
+            Log.w(TAG, "parseRecommendations error: ${e.message}")
+            null
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "load url=$url")
         return try {
@@ -170,6 +201,9 @@ class SerieskaoProvider : MainAPI() {
             val description = doc.selectFirst("h2.detail-hero__desc")?.text()?.trim() ?: ""
             Log.d(TAG, "load poster='$poster' desc len=${description.length}")
 
+            val recommendations = parseRecommendations(doc)
+            Log.d(TAG, "load recommendations=${recommendations?.size}")
+
             if (isMovie) {
                 newMovieLoadResponse(title, url, TvType.Movie, url) {
                     this.posterUrl = poster
@@ -177,6 +211,7 @@ class SerieskaoProvider : MainAPI() {
                     this.year = year
                     this.tags = genres
                     this.score = score
+                    this.recommendations = recommendations
                 }
             } else {
                 val epItems = doc.select("a.episode-item")
@@ -204,6 +239,7 @@ class SerieskaoProvider : MainAPI() {
                     this.year = year
                     this.tags = genres
                     this.score = score
+                    this.recommendations = recommendations
                 }
             }
         } catch (e: Exception) {
@@ -218,7 +254,7 @@ class SerieskaoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
-        Log.d(TAG, "loadLinks data='$data'")
+        Log.d(TAG, "loadLinks data='${data.take(120)}'")
         val doc = try {
             app.get(data).document
         } catch (e: Exception) {
@@ -235,6 +271,12 @@ class SerieskaoProvider : MainAPI() {
         val playerUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$mainUrl$iframeSrc"
         Log.d(TAG, "loadLinks playerUrl=$playerUrl")
 
+        if (!playerUrl.contains(mainUrl.removePrefix("https://").removePrefix("http://"))) {
+            Log.d(TAG, "loadLinks embed externo -> loadExtractor directo")
+            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+            return@coroutineScope true
+        }
+
         val playerHtml = try {
             app.get(playerUrl, referer = data).text
         } catch (e: Exception) {
@@ -244,8 +286,9 @@ class SerieskaoProvider : MainAPI() {
 
         val dataLinkMatch = Regex("""dataLink\s*=\s*(\[.*?\])\s*;""").find(playerHtml)
         if (dataLinkMatch == null) {
-            Log.e(TAG, "loadLinks no se encontró dataLink en playerUrl")
-            return@coroutineScope false
+            Log.e(TAG, "loadLinks sin dataLink en playerUrl -> loadExtractor directo")
+            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+            return@coroutineScope true
         }
 
         val jsonStr = dataLinkMatch.groupValues[1]
@@ -253,7 +296,8 @@ class SerieskaoProvider : MainAPI() {
         val items = tryParseJson<List<Item>>(jsonStr)
         if (items == null) {
             Log.e(TAG, "loadLinks error parseando dataLink JSON: ${jsonStr.take(200)}")
-            return@coroutineScope false
+            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+            return@coroutineScope true
         }
         Log.d(TAG, "loadLinks items=${items.size}")
 
