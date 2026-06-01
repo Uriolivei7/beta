@@ -380,7 +380,7 @@ class SerieskaoProvider : MainAPI() {
 
     private fun cryptoAESDecrypt(data: String, key: String): String? {
         return try {
-            val keyBytes = MessageDigest.getInstance("MD5").digest(key.toByteArray(Charsets.UTF_8))
+            val keyBytes = key.toByteArray(Charsets.UTF_8)
             val keySpec = SecretKeySpec(keyBytes, "AES")
             val decoded = Base64.decode(data, Base64.NO_WRAP)
             val iv = decoded.copyOfRange(0, 16)
