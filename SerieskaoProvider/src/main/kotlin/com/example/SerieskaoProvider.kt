@@ -378,20 +378,38 @@ class SerieskaoProvider : MainAPI() {
         return@coroutineScope true
     }
 
-    private fun cryptoAESDecrypt(data: String, key: String): String? {
+    private fun cryptoAESDecrypt(cipherText: String, password: String): String? {
         return try {
-            val keyBytes = key.toByteArray(Charsets.UTF_8)
-            val keySpec = SecretKeySpec(keyBytes, "AES")
-            val decoded = Base64.decode(data, Base64.NO_WRAP)
-            val iv = decoded.copyOfRange(0, 16)
-            val encrypted = decoded.copyOfRange(16, decoded.size)
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
-            String(cipher.doFinal(encrypted), Charsets.UTF_8)
+            val ctBytes = Base64.decode(cipherText, Base64.DEFAULT)
+            val saltBytes = ctBytes.copyOfRange(8, 16)
+            val cipherTextBytes = ctBytes.copyOfRange(16, ctBytes.size)
+            val md5 = MessageDigest.getInstance("MD5")
+            val keyAndIV = generateKeyAndIV(32, 16, saltBytes, password.toByteArray(Charsets.UTF_8), md5)
+            val keySpec = SecretKeySpec(keyAndIV[0], "AES")
+            val cipher = Cipher.getInstance("AES/CBC/PKCS7PADDING")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(keyAndIV[1]))
+            String(cipher.doFinal(cipherTextBytes), Charsets.UTF_8)
         } catch (e: Exception) {
             Log.e(TAG, "CryptoAES error: ${e.message}")
             null
         }
+    }
+
+    private fun generateKeyAndIV(keyLength: Int, ivLength: Int, salt: ByteArray, password: ByteArray, md: MessageDigest): Array<ByteArray> {
+        val digestLength = md.digestLength
+        val requiredLength = ((keyLength + ivLength + digestLength - 1) / digestLength) * digestLength
+        val generatedData = ByteArray(requiredLength)
+        var generatedLength = 0
+        while (generatedLength < keyLength + ivLength) {
+            if (generatedLength > 0) md.update(generatedData, generatedLength - digestLength, digestLength)
+            md.update(password)
+            md.update(salt, 0, 8)
+            md.digest(generatedData, generatedLength, digestLength)
+            generatedLength += digestLength
+        }
+        val key = generatedData.copyOfRange(0, keyLength)
+        val iv = generatedData.copyOfRange(keyLength, keyLength + ivLength)
+        return arrayOf(key, iv)
     }
 
     data class Item(
