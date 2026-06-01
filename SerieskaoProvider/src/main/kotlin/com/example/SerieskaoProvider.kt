@@ -1,16 +1,14 @@
 package com.example
 
-import android.util.Base64
 import android.util.Log
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import kotlinx.coroutines.*
-import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.serialization.Serializable
 
 class SerieskaoProvider : MainAPI() {
     override var mainUrl = "https://serieskao.top"
@@ -27,7 +25,6 @@ class SerieskaoProvider : MainAPI() {
     override val hasDownloadSupport = true
 
     private val TAG = "SeriesKao"
-    private val cryptoKey = "Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE"
 
     companion object {
         private val fixHosts = mapOf(
@@ -336,7 +333,7 @@ class SerieskaoProvider : MainAPI() {
 
         val jsonStr = dataLinkMatch.groupValues[1]
         Log.d(TAG, "loadLinks dataLink JSON len=${jsonStr.length}")
-        val items = tryParseJson<List<Item>>(jsonStr)
+        val items = tryParseJson<List<DataLinkEntry>>(jsonStr)
         if (items == null) {
             Log.e(TAG, "loadLinks error parseando dataLink JSON: ${jsonStr.take(200)}")
             loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
@@ -344,83 +341,56 @@ class SerieskaoProvider : MainAPI() {
         }
         Log.d(TAG, "loadLinks items=${items.size}")
 
-        val langMap = mapOf("LAT" to "LATINO", "ESP" to "CASTELLANO", "SUB" to "SUBTITULADO")
-        items.amap { item ->
-            val langTag = langMap[item.videoLanguage] ?: item.videoLanguage ?: "??"
-            Log.d(TAG, "loadLinks lang=$langTag embeds=${item.sortedEmbeds.size}")
-            item.sortedEmbeds.amap { embed ->
-                val encrypted = embed.link ?: return@amap
-                Log.d(TAG, "loadLinks descifrando ${embed.servername}: ${encrypted.take(40)}...")
-                val decrypted = cryptoAESDecrypt(encrypted, cryptoKey)
-                if (decrypted == null) {
-                    Log.e(TAG, "loadLinks falló descifrado ${embed.servername}")
-                    return@amap
-                }
-                Log.d(TAG, "loadLinks descifrado OK ${embed.servername} -> $decrypted")
-                loadExtractor(fixHostsTitle(decrypted), playerUrl, subtitleCallback) { link ->
-                    Log.d(TAG, "loadLinks extractor OK ${link.source}")
-                    CoroutineScope(Dispatchers.IO).launch {
-                        callback(newExtractorLink(
-                            "$langTag[${link.source}]",
-                            "$langTag[${link.source}]",
-                            link.url
-                        ) {
-                            this.quality = link.quality
-                            this.type = link.type
-                            this.referer = link.referer
-                            this.headers = link.headers
-                            this.extractorData = link.extractorData
-                        })
-                    }
+        val encryptedLinks = items.flatMap { it.sortedEmbeds?.mapNotNull { e -> e.link } ?: emptyList() }.distinct()
+        Log.d(TAG, "loadLinks encrypted links=${encryptedLinks.size}")
+        if (encryptedLinks.isEmpty()) {
+            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+            return@coroutineScope true
+        }
+
+        val body = DecryptRequestBody(encryptedLinks).toJson()
+            .toRequestBody("application/json".toMediaTypeOrNull())
+        val decRes = app.post("https://embed69.org/api/decrypt", requestBody = body).text
+        val decResponse = tryParseJson<DecryptionResponse>(decRes)
+        if (decResponse?.success == true && decResponse.links != null) {
+            Log.d(TAG, "loadLinks decrypt OK links=${decResponse.links.size}")
+            decResponse.links.forEach { decLink ->
+                decLink.link?.let {
+                    Log.d(TAG, "loadLinks decrypted: $it")
+                    loadExtractor(fixHostsTitle(it), playerUrl, subtitleCallback, callback)
                 }
             }
+        } else {
+            Log.e(TAG, "loadLinks falló decrypt: ${decResponse?.reason}")
+            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
         }
         return@coroutineScope true
     }
 
-    private fun cryptoAESDecrypt(cipherText: String, password: String): String? {
-        return try {
-            val ctBytes = Base64.decode(cipherText, Base64.DEFAULT)
-            val saltBytes = ctBytes.copyOfRange(8, 16)
-            val cipherTextBytes = ctBytes.copyOfRange(16, ctBytes.size)
-            val md5 = MessageDigest.getInstance("MD5")
-            val keyAndIV = generateKeyAndIV(32, 16, saltBytes, password.toByteArray(Charsets.UTF_8), md5)
-            val keySpec = SecretKeySpec(keyAndIV[0], "AES")
-            val cipher = Cipher.getInstance("AES/CBC/PKCS7PADDING")
-            cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(keyAndIV[1]))
-            String(cipher.doFinal(cipherTextBytes), Charsets.UTF_8)
-        } catch (e: Exception) {
-            Log.e(TAG, "CryptoAES error: ${e.message}")
-            null
-        }
-    }
-
-    private fun generateKeyAndIV(keyLength: Int, ivLength: Int, salt: ByteArray, password: ByteArray, md: MessageDigest): Array<ByteArray> {
-        val digestLength = md.digestLength
-        val requiredLength = ((keyLength + ivLength + digestLength - 1) / digestLength) * digestLength
-        val generatedData = ByteArray(requiredLength)
-        var generatedLength = 0
-        while (generatedLength < keyLength + ivLength) {
-            if (generatedLength > 0) md.update(generatedData, generatedLength - digestLength, digestLength)
-            md.update(password)
-            md.update(salt, 0, 8)
-            md.digest(generatedData, generatedLength, digestLength)
-            generatedLength += digestLength
-        }
-        val key = generatedData.copyOfRange(0, keyLength)
-        val iv = generatedData.copyOfRange(keyLength, keyLength + ivLength)
-        return arrayOf(key, iv)
-    }
-
-    data class Item(
-        @JsonProperty("file_id") val fileId: Int? = null,
-        @JsonProperty("video_language") val videoLanguage: String? = null,
-        @JsonProperty("sortedEmbeds") val sortedEmbeds: List<Embed> = emptyList(),
+    @Serializable
+    data class DataLinkEntry(
+        val serverName: String? = null,
+        val video_language: String? = null,
+        val sortedEmbeds: List<SortedEmbed>? = emptyList()
     )
 
-    data class Embed(
-        @JsonProperty("servername") val servername: String? = null,
-        @JsonProperty("link") val link: String? = null,
-        @JsonProperty("type") val type: String? = null,
+    @Serializable
+    data class SortedEmbed(
+        val servername: String? = null,
+        val link: String? = null,
+        val type: String? = null,
+    )
+
+    @Serializable
+    data class DecryptRequestBody(val links: List<String>)
+
+    @Serializable
+    data class DecryptedLink(val id: Int? = null, val link: String? = null)
+
+    @Serializable
+    data class DecryptionResponse(
+        val success: Boolean? = false,
+        val reason: String? = null,
+        val links: List<DecryptedLink>? = emptyList()
     )
 }
