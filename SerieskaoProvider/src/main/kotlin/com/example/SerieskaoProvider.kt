@@ -18,10 +18,10 @@ class SerieskaoProvider : MainAPI() {
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
-        TvType.Anime,
+        TvType.Cartoon,
     )
 
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
