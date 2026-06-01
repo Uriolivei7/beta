@@ -1,14 +1,16 @@
 package com.example
 
+import android.util.Base64
 import android.util.Log
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import kotlinx.coroutines.*
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
-import kotlinx.serialization.Serializable
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class SerieskaoProvider : MainAPI() {
     override var mainUrl = "https://serieskao.top"
@@ -341,56 +343,96 @@ class SerieskaoProvider : MainAPI() {
         }
         Log.d(TAG, "loadLinks items=${items.size}")
 
-        val encryptedLinks = items.flatMap { it.sortedEmbeds?.mapNotNull { e -> e.link } ?: emptyList() }.distinct()
-        Log.d(TAG, "loadLinks encrypted links=${encryptedLinks.size}")
-        if (encryptedLinks.isEmpty()) {
+        val embedChallenge = Regex("""POW_CHALLENGE\s*=\s*'([^']+)'""").find(playerHtml)?.groupValues?.get(1)
+        val embedSalt = Regex("""POW_SALT\s*=\s*'([^']+)'""").find(playerHtml)?.groupValues?.get(1)
+        if (embedChallenge == null || embedSalt == null) {
+            Log.e(TAG, "loadLinks sin POW_CHALLENGE/SALT -> loadExtractor directo")
             loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
             return@coroutineScope true
         }
+        Log.d(TAG, "loadLinks challenge=$embedChallenge salt=$embedSalt")
 
-        val body = DecryptRequestBody(encryptedLinks).toJson()
-            .toRequestBody("application/json".toMediaTypeOrNull())
-        val decRes = app.post("https://embed69.org/api/decrypt", requestBody = body).text
-        val decResponse = tryParseJson<DecryptionResponse>(decRes)
-        if (decResponse?.success == true && decResponse.links != null) {
-            Log.d(TAG, "loadLinks decrypt OK links=${decResponse.links.size}")
-            decResponse.links.forEach { decLink ->
-                decLink.link?.let {
-                    Log.d(TAG, "loadLinks decrypted: $it")
-                    loadExtractor(fixHostsTitle(it), playerUrl, subtitleCallback, callback)
+        val langMap = mapOf("LAT" to "LATINO", "ESP" to "CASTELLANO", "SUB" to "SUBTITULADO")
+        val aesKey = withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
+        if (aesKey == null) {
+            Log.e(TAG, "loadLinks PoW failed -> loadExtractor directo")
+            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+            return@coroutineScope true
+        }
+        Log.d(TAG, "loadLinks PoW solved, items=${items.size}")
+
+        items.forEach { item ->
+            val langTag = langMap[item.videoLanguage] ?: item.videoLanguage ?: "??"
+            item.sortedEmbeds?.forEach { embed ->
+                val encrypted = embed.link ?: return@forEach
+                val decrypted = decryptAESLocal(encrypted, aesKey)
+                if (decrypted != null) {
+                    Log.d(TAG, "loadLinks decrypted ${embed.servername}: $decrypted")
+                    loadExtractor(fixHostsTitle(decrypted), playerUrl, subtitleCallback) { link ->
+                        CoroutineScope(Dispatchers.IO).launch {
+                            callback(newExtractorLink(
+                                "$langTag[${link.source}]",
+                                "$langTag[${link.source}]",
+                                link.url
+                            ) {
+                                this.quality = link.quality
+                                this.type = link.type
+                                this.referer = link.referer
+                                this.headers = link.headers
+                                this.extractorData = link.extractorData
+                            })
+                        }
+                    }
                 }
             }
-        } else {
-            Log.e(TAG, "loadLinks falló decrypt: ${decResponse?.reason}")
-            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
         }
         return@coroutineScope true
     }
 
-    @Serializable
+    private suspend fun solveEmbed69PoW(challenge: String, salt: String): ByteArray? {
+        val md = MessageDigest.getInstance("SHA-256")
+        var nonce = 0L
+        val maxAttempts = 500000L
+        while (nonce < maxAttempts) {
+            val input = "$challenge$nonce".toByteArray(Charsets.UTF_8)
+            val hash = md.digest(input).joinToString("") { "%02x".format(it) }
+            if (hash.startsWith("000")) {
+                Log.d(TAG, "PoW nonce=$nonce hash=${hash.take(8)} attempts=$nonce")
+                return MessageDigest.getInstance("SHA-256")
+                    .digest("$challenge$nonce$salt".toByteArray(Charsets.UTF_8))
+            }
+            nonce++
+        }
+        Log.e(TAG, "PoW no solution after $maxAttempts attempts")
+        return null
+    }
+
+    private fun decryptAESLocal(encryptedBase64: String, aesKey: ByteArray): String? {
+        return try {
+            val raw = Base64.decode(encryptedBase64, Base64.NO_WRAP)
+            if (raw.size < 17) return null
+            val iv = raw.copyOfRange(0, 16)
+            val ciphertext = raw.copyOfRange(16, raw.size)
+            if (ciphertext.size % 16 != 0) return null
+            val keySpec = SecretKeySpec(aesKey.copyOfRange(0, 32), "AES")
+            val cipher = try { Cipher.getInstance("AES/CBC/PKCS5Padding") } catch (e: Throwable) { Cipher.getInstance("AES/CBC/PKCS7PADDING") }
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
+            String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e(TAG, "AES error: ${e.message}")
+            null
+        }
+    }
+
     data class DataLinkEntry(
-        val serverName: String? = null,
-        val video_language: String? = null,
-        val sortedEmbeds: List<SortedEmbed>? = emptyList()
+        @JsonProperty("file_id") val fileId: String? = null,
+        @JsonProperty("video_language") val videoLanguage: String? = null,
+        @JsonProperty("sortedEmbeds") val sortedEmbeds: List<SortedEmbed>? = emptyList(),
     )
 
-    @Serializable
     data class SortedEmbed(
-        val servername: String? = null,
-        val link: String? = null,
-        val type: String? = null,
-    )
-
-    @Serializable
-    data class DecryptRequestBody(val links: List<String>)
-
-    @Serializable
-    data class DecryptedLink(val id: Int? = null, val link: String? = null)
-
-    @Serializable
-    data class DecryptionResponse(
-        val success: Boolean? = false,
-        val reason: String? = null,
-        val links: List<DecryptedLink>? = emptyList()
+        @JsonProperty("servername") val servername: String? = null,
+        @JsonProperty("link") val link: String? = null,
+        @JsonProperty("type") val type: String? = null,
     )
 }
