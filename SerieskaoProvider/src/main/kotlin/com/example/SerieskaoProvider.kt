@@ -21,7 +21,7 @@ class SerieskaoProvider : MainAPI() {
         TvType.Cartoon,
     )
 
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
@@ -77,93 +77,162 @@ class SerieskaoProvider : MainAPI() {
             Pair("Doramas", "$mainUrl/generos/dorama"),
         )
 
+        Log.d(TAG, "getMainPage page=$page, categorías=${urls.size}")
         val homePageLists = urls.amap { (name, url) ->
-            val doc = app.get(url).document
-            val homeItems = doc.select("div.Posters a.Posters-link").mapNotNull { element ->
-                val rawTitle = element.selectFirst("div.listing-content p")?.text()
-                    ?: element.attr("data-title")
-                val clean = cleanTitle(rawTitle) ?: return@mapNotNull null
-                val link = element.attr("href") ?: return@mapNotNull null
-                val img = element.selectFirst("img")?.attr("src")
-                newAnimeSearchResponse(clean, fixUrl(link)) {
-                    this.posterUrl = fixUrlNull(img)
-                    this.type = if (url.contains("peliculas")) TvType.Movie else TvType.TvSeries
+            try {
+                val doc = app.get(url).document
+                val items = doc.select("div.Posters a.Posters-link")
+                Log.d(TAG, "getMainPage[$name] elementos HTML=${items.size}")
+                val homeItems = items.mapNotNull { element ->
+                    try {
+                        val rawTitle = element.selectFirst("div.listing-content p")?.text()
+                            ?: element.attr("data-title")
+                        val clean = cleanTitle(rawTitle)
+                        if (clean == null) {
+                            Log.w(TAG, "getMainPage[$name] título nulo: raw='$rawTitle'")
+                            return@mapNotNull null
+                        }
+                        val link = element.attr("href")
+                        if (link == null) {
+                            Log.w(TAG, "getMainPage[$name] link nulo para '$clean'")
+                            return@mapNotNull null
+                        }
+                        val img = element.selectFirst("img")?.attr("src")
+                        newAnimeSearchResponse(clean, fixUrl(link)) {
+                            this.posterUrl = fixUrlNull(img)
+                            this.type = if (url.contains("peliculas")) TvType.Movie else TvType.TvSeries
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "getMainPage[$name] error en item: ${e.message}")
+                        null
+                    }
                 }
+                Log.d(TAG, "getMainPage[$name] items válidos=${homeItems.size}")
+                HomePageList(name, homeItems)
+            } catch (e: Exception) {
+                Log.e(TAG, "getMainPage[$name] error cargando '$url': ${e.message}")
+                HomePageList(name, emptyList())
             }
-            HomePageList(name, homeItems)
         }
+        val totalItems = homePageLists.sumOf { it.list.size }
+        Log.d(TAG, "getMainPage total items=$totalItems")
         return newHomePageResponse(homePageLists, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (query.isBlank()) return emptyList()
+        if (query.isBlank()) {
+            Log.w(TAG, "search query vacía")
+            return emptyList()
+        }
         val url = "$mainUrl/search?s=$query"
-        Log.d(TAG, "Búsqueda: $url")
-        val doc = app.get(url).document
-        return doc.select("div.Posters a.Posters-link").mapNotNull {
-            val rawTitle = it.selectFirst("div.listing-content p")?.text()
-                ?: it.attr("data-title")
-            val clean = cleanTitle(rawTitle) ?: return@mapNotNull null
-            val link = it.attr("href") ?: return@mapNotNull null
-            val img = it.selectFirst("img")?.attr("src")
-            newAnimeSearchResponse(clean, fixUrl(link)) {
-                this.posterUrl = fixUrlNull(img)
+        Log.d(TAG, "search query='$query' url=$url")
+        return try {
+            val doc = app.get(url).document
+            val items = doc.select("div.Posters a.Posters-link")
+            Log.d(TAG, "search elementos HTML=${items.size}")
+            val results = items.mapNotNull {
+                try {
+                    val rawTitle = it.selectFirst("div.listing-content p")?.text()
+                        ?: it.attr("data-title")
+                    val clean = cleanTitle(rawTitle)
+                    if (clean == null) {
+                        Log.w(TAG, "search título nulo: raw='$rawTitle'")
+                        return@mapNotNull null
+                    }
+                    val link = it.attr("href")
+                    if (link == null) {
+                        Log.w(TAG, "search link nulo para '$clean'")
+                        return@mapNotNull null
+                    }
+                    val img = it.selectFirst("img")?.attr("src")
+                    newAnimeSearchResponse(clean, fixUrl(link)) {
+                        this.posterUrl = fixUrlNull(img)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "search error en item: ${e.message}")
+                    null
+                }
             }
+            Log.d(TAG, "search resultados=${results.size}")
+            results
+        } catch (e: Exception) {
+            Log.e(TAG, "search error cargando '$url': ${e.message}")
+            emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "Cargando: $url")
-        val doc = app.get(url).document
-        val isMovie = url.contains("/pelicula/")
+        Log.d(TAG, "load url=$url")
+        return try {
+            val doc = app.get(url).document
+            val isMovie = url.contains("/pelicula/")
+            Log.d(TAG, "load isMovie=$isMovie")
 
-        val rawTitle = doc.selectFirst("h1.m-b-5")?.text() ?: ""
-        val title = cleanTitle(rawTitle) ?: rawTitle
+            val rawTitle = doc.selectFirst("h1.m-b-5")?.text() ?: ""
+            val title = cleanTitle(rawTitle) ?: rawTitle
+            Log.d(TAG, "load title='$title' raw='$rawTitle'")
 
-        val year = doc.select("div.p-v-20.p-r-15 span.text-info").text().toIntOrNull()
-            ?: Regex("""(\d{4})""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+            val year = doc.select("div.p-v-20.p-r-15 span.text-info").text().toIntOrNull()
+                ?: Regex("""(\d{4})""").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+            Log.d(TAG, "load year=$year")
 
-        val genres = doc.select("a[href*='/generos/'] span").map { it.text() }
-        val country = doc.selectFirst("a[href*='/pais/']")?.text()
-        val allTags = if (country != null) genres + country else genres
+            val genres = doc.select("a[href*='/generos/'] span").map { it.text() }
+            val country = doc.selectFirst("a[href*='/pais/']")?.text()
+            val allTags = if (country != null) genres + country else genres
+            Log.d(TAG, "load genres=${genres.size} country=$country")
 
-        val ratingText = doc.select("span.ion-md-star").text().split("/").firstOrNull()?.trim()
-        val score = ratingText?.toDoubleOrNull()?.let { Score.from10(it) }
+            val ratingText = doc.select("span.ion-md-star").text().split("/").firstOrNull()?.trim()
+            val score = ratingText?.toDoubleOrNull()?.let { Score.from10(it) }
+            Log.d(TAG, "load rating='$ratingText' score=$score")
 
-        val poster = fixUrl(doc.selectFirst("img.img-fluid")?.attr("src") ?: "")
-        val description = doc.selectFirst("div.text-large")?.text() ?: ""
+            val poster = fixUrl(doc.selectFirst("img.img-fluid")?.attr("src") ?: "")
+            val description = doc.selectFirst("div.text-large")?.text() ?: ""
+            Log.d(TAG, "load poster='$poster' desc length=${description.length}")
 
-        return if (isMovie) {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = poster
-                this.plot = description
-                this.year = year
-                this.tags = allTags
-                this.score = score
-            }
-        } else {
-            val episodes = doc.select("div.tab-content div a").mapNotNull { element ->
-                val epUrl = fixUrl(element.attr("href") ?: "")
-                val epName = element.text().trim()
-                if (epUrl.isBlank() || epName.isBlank()) return@mapNotNull null
-
-                val season = Regex("(?i)T(\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                val episode = Regex("(?i)E(\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull()
-
-                newEpisode(epUrl) {
-                    this.name = epName
-                    this.season = season
-                    this.episode = episode
+            if (isMovie) {
+                Log.d(TAG, "load -> MovieResponse: $title")
+                newMovieLoadResponse(title, url, TvType.Movie, url) {
+                    this.posterUrl = poster
+                    this.plot = description
+                    this.year = year
+                    this.tags = allTags
+                    this.score = score
+                }
+            } else {
+                val episodeElements = doc.select("div.tab-content div a")
+                Log.d(TAG, "load episodios HTML=${episodeElements.size}")
+                val episodes = episodeElements.mapNotNull { element ->
+                    try {
+                        val epUrl = fixUrl(element.attr("href") ?: "")
+                        val epName = element.text().trim()
+                        if (epUrl.isBlank() || epName.isBlank()) {
+                            Log.w(TAG, "load episodio saltado: url='$epUrl' name='$epName'")
+                            return@mapNotNull null
+                        }
+                        val season = Regex("(?i)T(\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                        val episode = Regex("(?i)E(\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull()
+                        newEpisode(epUrl) {
+                            this.name = epName
+                            this.season = season
+                            this.episode = episode
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "load error creando episodio: ${e.message}")
+                        null
+                    }
+                }
+                Log.d(TAG, "load -> TvSeriesResponse: $title, episodios=${episodes.size}")
+                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = poster
+                    this.plot = description
+                    this.year = year
+                    this.tags = allTags
+                    this.score = score
                 }
             }
-
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                this.posterUrl = poster
-                this.plot = description
-                this.year = year
-                this.tags = allTags
-                this.score = score
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "load error cargando '$url': ${e.message}")
+            null
         }
     }
 
@@ -173,61 +242,91 @@ class SerieskaoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
-        val doc = app.get(data).document
+        Log.d(TAG, "loadLinks data='$data'")
+        val doc = try {
+            app.get(data).document
+        } catch (e: Exception) {
+            Log.e(TAG, "loadLinks error fetching page: ${e.message}")
+            return@coroutineScope false
+        }
 
         val scriptContent = doc.select("script").joinToString("\n") { it.html() }
         val playerUrls = Regex("""video\[\d+\]\s*=\s*['"](https?:\/\/[^"']+)['"]""")
-            .findAll(scriptContent).map { it.groupValues[1] }.toList()
+            .findAll(scriptContent).map { it.groupValues[1] }.toList().toMutableList()
 
-        doc.selectFirst("iframe")?.attr("src")?.let { if (it.isNotBlank()) playerUrls.toMutableList().add(fixUrl(it)) }
+        doc.selectFirst("iframe")?.attr("src")?.let { if (it.isNotBlank()) playerUrls.add(fixUrl(it)) }
 
-        if (playerUrls.isEmpty()) return@coroutineScope false
+        Log.d(TAG, "loadLinks scripts=${doc.select("script").size} playerUrls=${playerUrls.size} urls=$playerUrls")
+
+        if (playerUrls.isEmpty()) {
+            Log.e(TAG, "loadLinks no se encontraron player URLs en el HTML")
+            return@coroutineScope false
+        }
 
         playerUrls.distinct().amap { playerUrl ->
             try {
-                val resp = app.get(fixUrl(playerUrl), referer = data)
+                val fixedUrl = fixUrl(playerUrl)
+                Log.d(TAG, "loadLinks procesando playerUrl=$fixedUrl")
+                val resp = app.get(fixedUrl, referer = data)
                 val html = resp.text
+                Log.d(TAG, "loadLinks resp length=${html.length}")
+
                 val dataLinkMatch = Regex("""dataLink\s*=\s*(\[.*?\])\s*;""").find(html)
                 if (dataLinkMatch == null) {
-                    Log.w(TAG, "Sin dataLink en: $playerUrl")
-                    loadExtractor(fixHostsTitle(fixUrl(playerUrl)), data, subtitleCallback, callback)
+                    Log.w(TAG, "loadLinks sin dataLink en $fixedUrl, intentando loadExtractor directo")
+                    loadExtractor(fixHostsTitle(fixedUrl), data, subtitleCallback, callback)
                     return@amap
                 }
 
-                val items = tryParseJson<List<Item>>(dataLinkMatch.groupValues[1])
+                val jsonStr = dataLinkMatch.groupValues[1]
+                Log.d(TAG, "loadLinks dataLink JSON length=${jsonStr.length}")
+                val items = tryParseJson<List<Item>>(jsonStr)
                 if (items == null) {
-                    Log.e(TAG, "Error parseando dataLink JSON")
+                    Log.e(TAG, "loadLinks error parseando dataLink JSON: substr=${jsonStr.take(200)}")
                     return@amap
                 }
+                Log.d(TAG, "loadLinks dataLink items=${items.size}")
 
                 val langMap = mapOf("LAT" to "LATINO", "ESP" to "CASTELLANO", "SUB" to "SUBTITULADO")
                 items.amap { item ->
                     val langTag = langMap[item.videoLanguage] ?: item.videoLanguage ?: "??"
+                    Log.d(TAG, "loadLinks item lang=$langTag embeds=${item.sortedEmbeds.size}")
                     item.sortedEmbeds.amap { embed ->
-                        val decrypted = cryptoAESDecrypt(embed.link ?: return@amap, cryptoKey)
-                        if (decrypted != null) {
-                            loadExtractor(fixHostsTitle(decrypted), data, subtitleCallback) { link ->
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    callback(
-                                        newExtractorLink(
-                                            "$langTag[${link.source}]",
-                                            "$langTag[${link.source}]",
-                                            link.url
-                                        ) {
-                                            this.quality = link.quality
-                                            this.type = link.type
-                                            this.referer = link.referer
-                                            this.headers = link.headers
-                                            this.extractorData = link.extractorData
-                                        }
-                                    )
-                                }
+                        val encrypted = embed.link
+                        if (encrypted == null) {
+                            Log.w(TAG, "loadLinks embed sin link")
+                            return@amap
+                        }
+                        Log.d(TAG, "loadLinks descifrando embed server=${embed.servername} encrypted=${encrypted.take(50)}...")
+                        val decrypted = cryptoAESDecrypt(encrypted, cryptoKey)
+                        if (decrypted == null) {
+                            Log.e(TAG, "loadLinks falló descifrado para ${embed.servername}")
+                            return@amap
+                        }
+                        Log.d(TAG, "loadLinks descifrado OK -> $decrypted")
+                        val fixedDec = fixHostsTitle(decrypted)
+                        loadExtractor(fixedDec, data, subtitleCallback) { link ->
+                            Log.d(TAG, "loadLinks extractor OK source=${link.source} url=${link.url.take(80)}")
+                            CoroutineScope(Dispatchers.IO).launch {
+                                callback(
+                                    newExtractorLink(
+                                        "$langTag[${link.source}]",
+                                        "$langTag[${link.source}]",
+                                        link.url
+                                    ) {
+                                        this.quality = link.quality
+                                        this.type = link.type
+                                        this.referer = link.referer
+                                        this.headers = link.headers
+                                        this.extractorData = link.extractorData
+                                    }
+                                )
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error procesando $playerUrl: ${e.message}")
+                Log.e(TAG, "loadLinks error procesando $playerUrl: ${e.message}")
             }
         }
         return@coroutineScope true
