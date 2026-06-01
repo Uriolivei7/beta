@@ -272,8 +272,51 @@ class SerieskaoProvider : MainAPI() {
         Log.d(TAG, "loadLinks playerUrl=$playerUrl")
 
         if (!playerUrl.contains(mainUrl.removePrefix("https://").removePrefix("http://"))) {
-            Log.d(TAG, "loadLinks embed externo -> loadExtractor directo")
-            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+            Log.d(TAG, "loadLinks embed externo: $playerUrl")
+            when {
+                playerUrl.contains("xupalace.org/video/") -> {
+                    Log.d(TAG, "loadLinks xupalace video -> extrayendo go_to_playerVast")
+                    try {
+                        val xDoc = app.get(playerUrl, referer = data).document
+                        val links = xDoc.select("*[onclick*='go_to_playerVast']").mapNotNull { el ->
+                            Regex("""go_to_playerVast\('([^']+)'""").find(el.attr("onclick"))?.groupValues?.get(1)
+                        }
+                        if (links.isEmpty()) {
+                            Log.w(TAG, "loadLinks sin go_to_playerVast en xupalace")
+                            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+                        } else {
+                            Log.d(TAG, "loadLinks xupalace links=${links.size}: $links")
+                            links.amap { link ->
+                                loadExtractor(fixHostsTitle(link), playerUrl, subtitleCallback, callback)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "loadLinks xupalace error: ${e.message}")
+                        loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+                    }
+                }
+
+                playerUrl.contains("xupalace.org/uqlink.php") || playerUrl.contains("xupalace.org/ggtz") -> {
+                    Log.d(TAG, "loadLinks xupalace uqlink -> siguiendo iframe")
+                    try {
+                        val xDoc = app.get(playerUrl, referer = data).document
+                        val iframeSrc = xDoc.selectFirst("iframe")?.attr("src")
+                        if (iframeSrc != null) {
+                            loadExtractor(fixHostsTitle(fixUrl(iframeSrc)), playerUrl, subtitleCallback, callback)
+                        } else {
+                            loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "loadLinks xupalace uqlink error: ${e.message}")
+                        loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+                    }
+                }
+
+                else -> {
+                    Log.d(TAG, "loadLinks embed directo -> loadExtractor")
+                    loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, callback)
+                }
+            }
             return@coroutineScope true
         }
 
