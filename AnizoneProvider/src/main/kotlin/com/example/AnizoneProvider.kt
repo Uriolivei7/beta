@@ -237,13 +237,9 @@ class AnizoneProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("AniZone", "search: query='$query'")
-        initializeLiveWire()
-
-        val responseJson = liveWireBuilder(mapOf("search" to query), mutableListOf(), this.cookies, this.wireData, false)
-        Log.d("AniZone", "search: Livewire response keys=${responseJson.keys().asSequence().toList()}")
-        val doc = getHtmlFromWire(responseJson)
+        val doc = app.get("$mainUrl/anime?search=$query").document
         val items = doc.select("div[wire:key]")
-        Log.d("AniZone", "search: found ${items.size} div[wire:key] elements")
+        Log.d("AniZone", "search: found ${items.size} div[wire:key] elements via URL")
         return items.mapNotNull { toResult(it) }
     }
 
