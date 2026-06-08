@@ -21,7 +21,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
-import org.jsoup.Connection
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -250,24 +249,17 @@ class AnizoneProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         Log.d("AniZone", "load: url='$url'")
-        val r = Jsoup.connect(url)
-            .method(Connection.Method.GET).execute()
-        val doc = Jsoup.parse(r.body())
-        Log.d("AniZone", "load: HTTP ${r.statusCode()}, doc title='${doc.title()}'")
-        val cookie = r.cookies()
+        val req = app.get(url)
+        val doc = req.document
+        val cookie = req.cookies.toMutableMap()
+        Log.d("AniZone", "load: HTTP ${req.code}, doc title='${doc.title()}'")
         val wireData = mutableMapOf(
-            "wireSnapshot" to getSnapshot(doc=r.parse()),
+            "wireSnapshot" to getSnapshot(doc),
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
         )
-        val snapDiv = doc.selectFirst("div[wire:snapshot]")
-        Log.d("AniZone", "load: div[wire:snapshot] found=${snapDiv != null}")
-        val xData = snapDiv?.attr("x-data")
-        Log.d("AniZone", "load: x-data blank=${xData.isNullOrBlank()}")
-        val h1 = doc.selectFirst("h1")
-        Log.d("AniZone", "load: h1 found=${h1 != null}, text='${h1?.text()}'")
-        val title = xData?.let { extractTitle(it) }
-            ?: h1?.text()
-            ?: throw NotImplementedError("Unable to find title")
+        val title = doc.title()
+            .substringBefore(" — ")
+            .ifBlank { doc.title() }
         Log.d("AniZone", "load: extracted title='$title'")
         val bgImage = doc.selectFirst("main img")?.attr("src")
         val synopsis = doc.selectFirst(".sr-only + div")?.text() ?: ""
