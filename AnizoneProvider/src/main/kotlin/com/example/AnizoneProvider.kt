@@ -184,7 +184,7 @@ class AnizoneProvider : MainAPI() {
             val home: List<Element> = doc.select("div[wire:key]")
 
             return newHomePageResponse(
-                HomePageList(request.name, home.map { toResult(it) }, isHorizontalImages = false),
+                HomePageList(request.name, home.mapNotNull { toResult(it) }, isHorizontalImages = false),
                 hasNext = (doc.selectFirst(".h-12[x-intersect=\"\$wire.loadMore()\"]") != null)
             )
         } catch (e: Exception) {
@@ -197,22 +197,37 @@ class AnizoneProvider : MainAPI() {
     }
 
     private fun extractTitle(xData: String): String {
+        Log.d("AniZone", "extractTitle: xData starts with: ${xData.take(100)}")
         val jsonStr = Regex("JSON\\.parse\\('([^']+)'\\)").find(xData)?.groupValues?.getOrNull(1)
             ?.replace("\\u0022", "\"")?.replace("\\u0027", "'") ?: ""
+        Log.d("AniZone", "extractTitle: jsonStr from regex: ${jsonStr.take(100)}")
         val title = if (jsonStr.isNotBlank()) {
             try {
                 val json = JSONObject(jsonStr)
-                json.optString("5", json.optString("1", ""))
-            } catch (e: Exception) { "" }
+                val t = json.optString("5", json.optString("1", ""))
+                Log.d("AniZone", "extractTitle: parsed JSON, title='$t'")
+                t
+            } catch (e: Exception) {
+                Log.e("AniZone", "extractTitle: JSON parse error: ${e.message}")
+                ""
+            }
         } else ""
-        val fallback = Regex("window\\.getTitle\\(this\\.anmTitles,\\s*'([^']+)'\\)")
-            .find(xData)?.groupValues?.getOrNull(1) ?: ""
-        return title.ifEmpty { fallback }
+        if (title.isBlank()) {
+            val fallback = Regex("window\\.getTitle\\(this\\.anmTitles,\\s*'([^']+)'\\)")
+                .find(xData)?.groupValues?.getOrNull(1) ?: ""
+            Log.d("AniZone", "extractTitle: fallback='$fallback'")
+            return fallback
+        }
+        return title
     }
 
-    private fun toResult(post: Element): SearchResponse {
-        val title = extractTitle(post.attr("x-data"))
+    private fun toResult(post: Element): SearchResponse? {
+        val xData = post.attr("x-data")
+        Log.d("AniZone", "toResult: x-data empty=${xData.isBlank()}, wire:key=${post.attr("wire:key")}")
+        val title = extractTitle(xData)
         val url = post.selectFirst("a")?.attr("href") ?: ""
+        Log.d("AniZone", "toResult: title='$title' url='$url'")
+        if (title.isBlank() || url.isBlank()) return null
         return newMovieSearchResponse(title, url, TvType.Movie) {
             this.posterUrl = post.selectFirst("img")
                 ?.attr("src")
@@ -222,26 +237,38 @@ class AnizoneProvider : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun search(query: String): List<SearchResponse> {
-
+        Log.d("AniZone", "search: query='$query'")
         initializeLiveWire()
 
-        val doc = getHtmlFromWire(liveWireBuilder(mapOf("search" to query),mutableListOf(), this.cookies,
-            this.wireData,false))
-        return doc.select("div[wire:key]").mapNotNull { toResult(it) }
+        val responseJson = liveWireBuilder(mapOf("search" to query), mutableListOf(), this.cookies, this.wireData, false)
+        Log.d("AniZone", "search: Livewire response keys=${responseJson.keys().asSequence().toList()}")
+        val doc = getHtmlFromWire(responseJson)
+        val items = doc.select("div[wire:key]")
+        Log.d("AniZone", "search: found ${items.size} div[wire:key] elements")
+        return items.mapNotNull { toResult(it) }
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d("AniZone", "load: url='$url'")
         val r = Jsoup.connect(url)
             .method(Connection.Method.GET).execute()
         val doc = Jsoup.parse(r.body())
+        Log.d("AniZone", "load: HTTP ${r.statusCode()}, doc title='${doc.title()}'")
         val cookie = r.cookies()
         val wireData = mutableMapOf(
             "wireSnapshot" to getSnapshot(doc=r.parse()),
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
         )
-        val title = doc.selectFirst("div[wire:snapshot]")?.attr("x-data")?.let { extractTitle(it) }
-            ?: doc.selectFirst("h1")?.text()
+        val snapDiv = doc.selectFirst("div[wire:snapshot]")
+        Log.d("AniZone", "load: div[wire:snapshot] found=${snapDiv != null}")
+        val xData = snapDiv?.attr("x-data")
+        Log.d("AniZone", "load: x-data blank=${xData.isNullOrBlank()}")
+        val h1 = doc.selectFirst("h1")
+        Log.d("AniZone", "load: h1 found=${h1 != null}, text='${h1?.text()}'")
+        val title = xData?.let { extractTitle(it) }
+            ?: h1?.text()
             ?: throw NotImplementedError("Unable to find title")
+        Log.d("AniZone", "load: extracted title='$title'")
         val bgImage = doc.selectFirst("main img")?.attr("src")
         val synopsis = doc.selectFirst(".sr-only + div")?.text() ?: ""
         val rowLines = doc.select("span.inline-block").map { it.text() }
