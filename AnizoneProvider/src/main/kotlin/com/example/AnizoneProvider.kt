@@ -17,7 +17,6 @@ import com.lagradost.cloudstream3.newAnimeLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -29,8 +28,6 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 import android.util.Log
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
 import com.lagradost.cloudstream3.newSubtitleFile
 
 class AnizoneProvider : MainAPI() {
@@ -123,14 +120,9 @@ class AnizoneProvider : MainAPI() {
             )
         )
 
-        val jsonString = payload.toJson()
-
-        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-        val requestBody = jsonString.toRequestBody(mediaType)
-
         val req = app.post(
             url = "$mainUrl/livewire/update",
-            requestBody = requestBody,
+            json = payload,
             headers = mapOf(
                 "X-CSRF-TOKEN" to wireCreds["token"]!!
             ),
@@ -204,14 +196,26 @@ class AnizoneProvider : MainAPI() {
         }
     }
 
-    private fun toResult(post: Element): SearchResponse {
-        val title = post.selectFirst("img")?.attr("alt") ?: ""
-        val url = post.selectFirst("a")?.attr("href") ?: ""
+    private fun extractTitle(xData: String): String {
+        val jsonStr = Regex("JSON\\.parse\\('([^']+)'\\)").find(xData)?.groupValues?.getOrNull(1)
+            ?.replace("\\u0022", "\"")?.replace("\\u0027", "'") ?: ""
+        val title = if (jsonStr.isNotBlank()) {
+            try {
+                val json = JSONObject(jsonStr)
+                json.optString("5", json.optString("1", ""))
+            } catch (e: Exception) { "" }
+        } else ""
+        val fallback = Regex("window\\.getTitle\\(this\\.anmTitles,\\s*'([^']+)'\\)")
+            .find(xData)?.groupValues?.getOrNull(1) ?: ""
+        return title.ifEmpty { fallback }
+    }
 
+    private fun toResult(post: Element): SearchResponse {
+        val title = extractTitle(post.attr("x-data"))
+        val url = post.selectFirst("a")?.attr("href") ?: ""
         return newMovieSearchResponse(title, url, TvType.Movie) {
             this.posterUrl = post.selectFirst("img")
                 ?.attr("src")
-
         }
     }
 
@@ -235,7 +239,8 @@ class AnizoneProvider : MainAPI() {
             "wireSnapshot" to getSnapshot(doc=r.parse()),
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
         )
-        val title = doc.selectFirst("h1")?.text()
+        val title = doc.selectFirst("div[wire:snapshot]")?.attr("x-data")?.let { extractTitle(it) }
+            ?: doc.selectFirst("h1")?.text()
             ?: throw NotImplementedError("Unable to find title")
         val bgImage = doc.selectFirst("main img")?.attr("src")
         val synopsis = doc.selectFirst(".sr-only + div")?.text() ?: ""
