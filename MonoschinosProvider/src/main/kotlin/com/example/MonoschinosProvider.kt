@@ -35,16 +35,6 @@ class MonoschinosProvider : MainAPI() {
             TvType.Anime,
     )
 
-    private suspend fun getToken(url: String): Map<String, String> {
-        val maintas = app.get(url)
-        val token = maintas.document.selectFirst("html head meta[name=csrf-token]")?.attr("content") ?: ""
-        val cookies = maintas.cookies
-        latestToken = token
-        latestCookie = cookies
-        return latestCookie
-    }
-
-
     override suspend fun getMainPage(page: Int, request : MainPageRequest): HomePageResponse {
         val urls = listOf(
                 Pair("$mainUrl/emision", "Recientes"),
@@ -124,8 +114,17 @@ class MonoschinosProvider : MainAPI() {
     )
 
     override suspend fun load(url: String): LoadResponse {
-        getToken(url)
-        val doc = app.get(url, timeout = 120).document
+        val firstReq = app.get(url, timeout = 120)
+        val doc = firstReq.document
+        val cookies = firstReq.cookies
+        val token = doc.selectFirst("html head meta[name=csrf-token]")?.attr("content") ?: ""
+        latestCookie = cookies
+        latestToken = token
+
+        if (doc.selectFirst(".caplist") == null) {
+            throw ErrorLoadingException("Cloudflare bloqueó el acceso o la página cambió de estructura")
+        }
+
         val caplist = doc.selectFirst(".caplist")!!.attr("data-ajax")
         val poster = doc.selectFirst("img.w-100")!!.attr("data-src")
         val backimage = doc.selectFirst("img.rounded-3")!!.attr("data-src")
@@ -156,8 +155,8 @@ class MonoschinosProvider : MainAPI() {
                         "Sec-Fetch-Site" to "same-origin",
                         "TE" to "trailers"
                 ),
-                cookies = latestCookie,
-               data = mapOf("_token" to latestToken)).parsed<CapList>()
+                cookies = cookies,
+               data = mapOf("_token" to token)).parsed<CapList>()
 
         val allEpisodes = capJson.eps ?: capJson.caps ?: emptyList()
 
