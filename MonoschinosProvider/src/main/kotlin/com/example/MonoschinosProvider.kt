@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -9,6 +10,7 @@ import kotlin.collections.ArrayList
 
 class MonoschinosProvider : MainAPI() {
     companion object {
+        private val TAG = "MonosChinos"
         fun getType(t: String): TvType {
             return if (t.contains("OVA") || t.contains("Especial")) TvType.OVA
             else if (t.contains("Pelicula")) TvType.AnimeMovie
@@ -114,18 +116,29 @@ class MonoschinosProvider : MainAPI() {
     )
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d(TAG, "load: url=$url")
         val firstReq = app.get(url, timeout = 120)
+        Log.d(TAG, "load: HTTP ${firstReq.code}, url final=${firstReq.url}")
         val doc = firstReq.document
         val cookies = firstReq.cookies
         val token = doc.selectFirst("html head meta[name=csrf-token]")?.attr("content") ?: ""
+        Log.d(TAG, "load: token='${token.take(20)}', cookies=${cookies.size}")
         latestCookie = cookies
         latestToken = token
 
+        Log.d(TAG, "load: HTML title='${doc.title()}', body length=${doc.text().length}")
+        Log.d(TAG, "load: .caplist found=${doc.selectFirst(".caplist") != null}")
+        Log.d(TAG, "load: img.w-100 found=${doc.selectFirst("img.w-100") != null}")
+        Log.d(TAG, "load: .fs-2 found=${doc.selectFirst(".fs-2") != null}")
+
         if (doc.selectFirst(".caplist") == null) {
+            Log.e(TAG, "load: .caplist NO ENCONTRADO — posible bloqueo Cloudflare o cambio de HTML")
+            Log.d(TAG, "load: HTML snippet (500 chars): ${doc.html().take(500)}")
             throw ErrorLoadingException("Cloudflare bloqueó el acceso o la página cambió de estructura")
         }
 
         val caplist = doc.selectFirst(".caplist")!!.attr("data-ajax")
+        Log.d(TAG, "load: caplist url=$caplist")
         val poster = doc.selectFirst("img.w-100")!!.attr("data-src")
         val backimage = doc.selectFirst("img.rounded-3")!!.attr("data-src")
         val title = doc.selectFirst(".fs-2")!!.text()
@@ -137,6 +150,9 @@ class MonoschinosProvider : MainAPI() {
             "Finalizado" -> ShowStatus.Completed
             else -> null
         }
+        Log.d(TAG, "load: title='$title' type='$type' status=$status poster=$poster")
+
+        Log.d(TAG, "load: POST a caplist con token='${token.take(20)}' y ${cookies.size} cookies")
         val capJson = app.post(caplist,
                 headers = mapOf(
                         "Host" to "monoschinos2.com",
@@ -157,6 +173,7 @@ class MonoschinosProvider : MainAPI() {
                 ),
                 cookies = cookies,
                data = mapOf("_token" to token)).parsed<CapList>()
+        Log.d(TAG, "load: POST OK, eps=${capJson.eps?.size ?: 0} caps=${capJson.caps?.size ?: 0}")
 
         val allEpisodes = capJson.eps ?: capJson.caps ?: emptyList()
 
