@@ -23,7 +23,7 @@ class MonoschinosProvider : MainAPI() {
         var latestToken = ""
     }
 
-    override var mainUrl = "https://monoschinos2.com"
+    override var mainUrl = "https://monoschinos.st"
     override var name = "MonosChinos"
     override var lang = "mx"
     override val hasMainPage = true
