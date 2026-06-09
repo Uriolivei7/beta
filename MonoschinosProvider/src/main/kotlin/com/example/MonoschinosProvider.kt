@@ -152,10 +152,11 @@ class MonoschinosProvider : MainAPI() {
         }
         Log.d(TAG, "load: title='$title' type='$type' status=$status poster=$poster")
 
-        Log.d(TAG, "load: POST a caplist con token='${token.take(20)}' y ${cookies.size} cookies")
+        val caplistHost = caplist.substringAfter("://").substringBefore("/")
+        Log.d(TAG, "load: POST a caplist (host=$caplistHost) con token='${token.take(20)}' y ${cookies.size} cookies")
         val capJson = app.post(caplist,
                 headers = mapOf(
-                        "Host" to "monoschinos2.com",
+                        "Host" to caplistHost,
                         "User-Agent" to USER_AGENT,
                         "Accept" to "application/json, text/javascript, */*; q=0.01",
                         "Accept-Language" to "en-US,en;q=0.5",
@@ -164,7 +165,7 @@ class MonoschinosProvider : MainAPI() {
                         "X-Requested-With" to "XMLHttpRequest",
                         "Origin" to mainUrl,
                         "DNT" to "1",
-                        "Alt-Used" to "monoschinos2.com",
+                        "Alt-Used" to caplistHost,
                         "Connection" to "keep-alive",
                         "Sec-Fetch-Dest" to "empty",
                         "Sec-Fetch-Mode" to "cors",
