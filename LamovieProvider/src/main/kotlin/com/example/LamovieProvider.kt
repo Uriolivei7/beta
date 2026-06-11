@@ -291,9 +291,8 @@ class LamovieProvider : MainAPI() {
         val embeds = response?.data?.embeds ?: emptyList()
 
         val safeSubCallback: (SubtitleFile) -> Unit = { sub ->
-            val label = sub.label.ifBlank { "Subtitle" }
-            if (label != sub.label) {
-                subtitleCallback.invoke(newSubtitleFile(label, sub.url))
+            if (sub.lang.isBlank()) {
+                subtitleCallback.invoke(SubtitleFile("Subtitle", sub.url))
             } else {
                 subtitleCallback.invoke(sub)
             }
