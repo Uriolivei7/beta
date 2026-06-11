@@ -290,6 +290,15 @@ class LamovieProvider : MainAPI() {
         val response = try { parseJson<PlayerResponse>(res) } catch (e: Exception) { null }
         val embeds = response?.data?.embeds ?: emptyList()
 
+        val safeSubCallback: (SubtitleFile) -> Unit = { sub ->
+            val label = sub.label.ifBlank { "Subtitle" }
+            if (label != sub.label) {
+                subtitleCallback.invoke(newSubtitleFile(label, sub.url))
+            } else {
+                subtitleCallback.invoke(sub)
+            }
+        }
+
         embeds.forEach { embed ->
             val rawUrl = embed.url ?: return@forEach
 
@@ -303,13 +312,13 @@ class LamovieProvider : MainAPI() {
 
                     if (realUrl.isNotBlank()) {
                         Log.d(TAG, "Logs: Iframe interno encontrado: $realUrl")
-                        loadExtractor(realUrl, "$mainUrl/", subtitleCallback, callback)
+                        loadExtractor(realUrl, "$mainUrl/", safeSubCallback, callback)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Logs Error: Fallo en el iframe -> ${e.message}")
                 }
             } else {
-                loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
+                loadExtractor(embedUrl, "$mainUrl/", safeSubCallback, callback)
             }
         }
         return true
