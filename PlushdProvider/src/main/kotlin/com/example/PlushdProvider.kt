@@ -360,37 +360,51 @@ class PlushdProvider : MainAPI() {
                         val m3u8Host = if (m3u8raw.startsWith("http")) m3u8raw else "https://cdn2.turboviplay.com/$m3u8raw"
                         Log.d("PlushdProvider-Direct", "M3U8 raw: ${m3u8raw.take(100)}")
                         Log.d("PlushdProvider-Direct", "M3U8 final: ${m3u8Host.take(100)}")
+
+                        val m3u8Headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to "https://turbovidhls.com/",
+                            "Origin" to "https://turbovidhls.com"
+                        )
                         try {
-                            val m3u8Content = app.get(m3u8Host, headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to "https://turbovidhls.com/"
-                            )).text
+                            val m3u8Content = app.get(m3u8Host, headers = m3u8Headers).text
                             if (m3u8Content.trimStart().startsWith("#EXTM3U") || m3u8Content.contains(".ts") || m3u8Content.contains(".m3u8")) {
                                 Log.d("PlushdProvider-Direct", "M3U8 válido, ${m3u8Content.length} chars")
                                 Log.d("PlushdProvider-Direct", "Primeras líneas M3U8: ${m3u8Content.take(300)}")
 
                                 val variantUrl = Regex("""https?://[^\s"'`,;]+\.m3u8[^\s"'`,;]*""")
                                     .findAll(m3u8Content).map { it.value }.toList().firstOrNull()
-                                val videoUrl = variantUrl ?: m3u8Host
-                                val cdnReferer = try {
-                                    val u = URL(m3u8Host)
-                                    "${u.protocol}://${u.host}/"
-                                } catch (e: Exception) { "https://cdn2.turboviplay.com/" }
 
-                                Log.d("PlushdProvider-Direct", "Video URL final: ${videoUrl.take(100)}, referer: $cdnReferer")
+                                if (variantUrl != null) {
+                                    Log.d("PlushdProvider-Direct", "Verificando variante: ${variantUrl.take(100)}")
+                                    val variantContent = app.get(variantUrl, headers = mapOf(
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                        "Referer" to m3u8Host,
+                                        "Origin" to "https://turbovidhls.com"
+                                    )).text
+                                    if (variantContent.trimStart().startsWith("#EXTM3U") || variantContent.contains("#EXTINF")) {
+                                        Log.d("PlushdProvider-Direct", "Variante válida, ${variantContent.take(200)}")
+                                    } else {
+                                        Log.w("PlushdProvider-Direct", "Variante no es playlist: ${variantContent.take(200)}")
+                                    }
+                                }
+
+                                val videoUrl = variantUrl ?: m3u8Host
+                                Log.d("PlushdProvider-Direct", "Video URL final: ${videoUrl.take(100)}")
 
                                 @Suppress("DEPRECATION")
                                 val link = ExtractorLink(
                                     source = "TurboVid",
                                     name = "TurboVid - Latino",
                                     url = videoUrl,
-                                    referer = cdnReferer,
+                                    referer = "https://turbovidhls.com/",
                                     quality = Qualities.Unknown.value,
                                     type = ExtractorLinkType.VIDEO
                                 )
                                 link.headers = mapOf(
                                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                    "Referer" to cdnReferer
+                                    "Referer" to "https://turbovidhls.com/",
+                                    "Origin" to "https://turbovidhls.com"
                                 )
                                 callback.invoke(link)
                                 true
@@ -444,7 +458,7 @@ class PlushdProvider : MainAPI() {
             val jsSrc = page.selectFirst("script[src^=/assets/index-]")?.attr("src") ?: ""
             if (jsSrc.isBlank()) {
                 Log.w(tag, "No se encontró JS bundle en SPA")
-                return true
+                return false
             }
 
             val jsUrl = "${baseUrl.trimEnd('/')}$jsSrc"
@@ -536,10 +550,10 @@ class PlushdProvider : MainAPI() {
             }
 
             Log.w(tag, "No se encontraron URLs de video en SPA (JS bundle sin URLs directas)")
-            return true
+            return false
         } catch (e: Exception) {
             Log.e(tag, "Error SPA: ${e.message}")
-            return true
+            return false
         }
     }
 
