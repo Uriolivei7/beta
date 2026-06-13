@@ -400,7 +400,8 @@ class PlushdProvider : MainAPI() {
                     url.contains("rpmstream.live") ||
                     url.contains("upns.pro") ||
                     url.contains("strp2p.com") ||
-                    url.contains("4meplayer.pro")
+                    url.contains("4meplayer.pro") ||
+                    url.contains("pelisplusto")
                 ) -> {
                     Log.d("PlushdProvider-Direct", "SPA hash URL detectada: ${url.take(100)}")
                     tryExtractFromSpaPage(url, referer, callback, subtitleCallback)
@@ -479,36 +480,47 @@ class PlushdProvider : MainAPI() {
                 return true
             }
 
-            val apiUrls = Regex("""["'`](/api/[^\s"'`,;]+)["'`]""")
-                .findAll(jsContent).map { it.groupValues[1] }.toList().distinct()
-            if (apiUrls.isNotEmpty()) {
-                Log.d(tag, "Posibles endpoints API en JS bundle: ${apiUrls.take(5)}")
-                val apiUrl = "${baseUrl.trimEnd('/')}${apiUrls.first()}"
-                Log.d(tag, "Intentando API: $apiUrl")
-                try {
-                    val apiResponse = app.get(apiUrl, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer" to baseUrl,
-                        "Accept" to "application/json"
-                    )).text
-                    Log.d(tag, "API response: ${apiResponse.take(200)}")
-                    val vidUrl = Regex("""(https?://[^\s"'`,;]+\.(?:m3u8|mp4)[^\s"'`,;]*)""")
-                        .find(apiResponse)?.value ?: ""
-                    if (vidUrl.isNotBlank()) {
-                        Log.d(tag, "Video URL desde API: ${vidUrl.take(100)}")
-                        @Suppress("DEPRECATION")
-                        callback.invoke(ExtractorLink(
-                            source = "SPA Video",
-                            name = "SPA Video - Latino",
-                            url = vidUrl,
-                            referer = baseUrl,
-                            quality = Qualities.Unknown.value,
-                            type = ExtractorLinkType.VIDEO
-                        ))
-                        return true
+            val apiEndpoints = Regex("""["'`](/api/[^\s"'`,;?]+)(\?[^\s"'`,;]*)?""")
+                .findAll(jsContent).map { m ->
+                    val path = m.groupValues[1]
+                    val qs = m.groupValues[2]
+                    val hasParam = qs.contains("=")
+                    Pair(path, qs)
+                }.toList().distinctBy { it.first }
+            if (apiEndpoints.isNotEmpty()) {
+                Log.d(tag, "Posibles endpoints API en JS bundle: ${apiEndpoints.take(5).map { it.first + it.second }}")
+                for ((path, qs) in apiEndpoints) {
+                    val apiUrl = if (qs.contains("=")) {
+                        "${baseUrl.trimEnd('/')}$path${qs}$hash"
+                    } else {
+                        "${baseUrl.trimEnd('/')}$path$qs"
                     }
-                } catch (e: Exception) {
-                    Log.w(tag, "Error al llamar API: ${e.message}")
+                    Log.d(tag, "Intentando API: $apiUrl")
+                    try {
+                        val apiResponse = app.get(apiUrl, headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to baseUrl,
+                            "Accept" to "application/json"
+                        )).text
+                        Log.d(tag, "API response: ${apiResponse.take(200)}")
+                        val vidUrl = Regex("""(https?://[^\s"'`,;]+\.(?:m3u8|mp4)[^\s"'`,;]*)""")
+                            .find(apiResponse)?.value ?: ""
+                        if (vidUrl.isNotBlank()) {
+                            Log.d(tag, "Video URL desde API: ${vidUrl.take(100)}")
+                            @Suppress("DEPRECATION")
+                            callback.invoke(ExtractorLink(
+                                source = "SPA Video",
+                                name = "SPA Video - Latino",
+                                url = vidUrl,
+                                referer = baseUrl,
+                                quality = Qualities.Unknown.value,
+                                type = ExtractorLinkType.VIDEO
+                            ))
+                            return true
+                        }
+                    } catch (e: Exception) {
+                        Log.w(tag, "Error al llamar API ${path}: ${e.message}")
+                    }
                 }
             }
 

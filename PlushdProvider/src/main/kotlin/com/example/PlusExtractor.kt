@@ -16,7 +16,7 @@ class PelisplusUpnsPro2 : VidStack() {
     override var name = "PelisplusStrp2p"
 }
 class PelisplusUpnsPro3 : VidStack() {
-    override var mainUrl = "https://pelisplus.4meplayer.pro"
+    override var mainUrl = "https://pelisplusto.4meplayer.pro"
     override var name = "Pelisplus4meplayer"
 }
 class PelisplusRpmstreamLive : VidStack() {
