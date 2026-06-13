@@ -433,7 +433,7 @@ class PlushdProvider : MainAPI() {
             val jsSrc = page.selectFirst("script[src^=/assets/index-]")?.attr("src") ?: ""
             if (jsSrc.isBlank()) {
                 Log.w(tag, "No se encontró JS bundle en SPA")
-                return true
+                return false
             }
 
             val jsUrl = "${baseUrl.trimEnd('/')}$jsSrc"
@@ -525,10 +525,10 @@ class PlushdProvider : MainAPI() {
             }
 
             Log.w(tag, "No se encontraron URLs de video en SPA (JS bundle sin URLs directas)")
-            return true
+            return false
         } catch (e: Exception) {
             Log.e(tag, "Error SPA: ${e.message}")
-            return true
+            return false
         }
     }
 
