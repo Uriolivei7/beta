@@ -5,6 +5,8 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import java.net.URL
@@ -219,6 +221,7 @@ class PlushdProvider : MainAPI() {
             .replaceFirst("https://doodstream.com", "https://dood.la")
             .replaceFirst("https://streamtape.com", "https://streamtape.cc")
             .replace("https://sblanh.com", "https://lvturbo.com")
+            .replaceFirst("https://emturbovid.com", "https://turbovidhls.com")
     }
 
     private val REGEX_LINK = Pattern.compile(
@@ -304,23 +307,29 @@ class PlushdProvider : MainAPI() {
                     return@forEachIndexed
                 }
 
-                val extractorReferer = try {
-                    val urlObject = URL(fixedLink)
-                    urlObject.protocol + "://" + urlObject.host + "/"
-                } catch (e: Exception) {
-                    Log.e(tag, "[#$index] Error al parsear URL para Referer: ${e.message}")
-                    url
-                }
-                Log.d(tag, "[#$index] extractorReferer: $extractorReferer")
+                val processed = tryHandleDirectVideo(fixedLink, data, callback, loggingSubtitleCallback)
+                if (processed) {
+                    linksFound = true
+                    Log.d(tag, "[#$index] OK (directo)")
+                } else {
+                    val extractorReferer = try {
+                        val urlObject = URL(fixedLink)
+                        urlObject.protocol + "://" + urlObject.host + "/"
+                    } catch (e: Exception) {
+                        Log.e(tag, "[#$index] Error al parsear URL para Referer: ${e.message}")
+                        url
+                    }
+                    Log.d(tag, "[#$index] extractorReferer: $extractorReferer")
 
-                loadExtractor(
-                    url = fixedLink,
-                    referer = extractorReferer,
-                    subtitleCallback = loggingSubtitleCallback,
-                    callback = callback
-                )
-                linksFound = true
-                Log.d(tag, "[#$index] OK")
+                    loadExtractor(
+                        url = fixedLink,
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = callback
+                    )
+                    linksFound = true
+                    Log.d(tag, "[#$index] OK (loadExtractor)")
+                }
             } catch (e: Exception) {
                 Log.e(tag, "[#$index] Error: ${e.message}")
             }
@@ -330,6 +339,121 @@ class PlushdProvider : MainAPI() {
 
         Log.d("PlushdProvider", "=== loadLinks FIN: linksFound=$linksFound ===")
         return linksFound
+    }
+
+    private suspend fun tryHandleDirectVideo(
+        url: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ): Boolean {
+        return try {
+            when {
+                url.contains("turbovidhls.com") || url.contains("emturbovid.com") -> {
+                    Log.d("PlushdProvider-Direct", "turbovid detectado, extrayendo M3U8 directo de: $url")
+                    val page = app.get(url, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer" to referer
+                    )).document
+                    val m3u8 = page.selectFirst("#video_player")?.attr("data-hash") ?: ""
+                    if (m3u8.isNotBlank()) {
+                        Log.d("PlushdProvider-Direct", "M3U8 encontrado: ${m3u8.take(100)}")
+                        @Suppress("DEPRECATION")
+                        callback.invoke(ExtractorLink(
+                            source = "TurboVid",
+                            name = "TurboVid - Latino",
+                            url = m3u8,
+                            referer = "https://turbovidhls.com/",
+                            quality = Qualities.Unknown.value,
+                            type = ExtractorLinkType.VIDEO
+                        ))
+                        true
+                    } else {
+                        Log.w("PlushdProvider-Direct", "No se encontró data-hash en turbovid")
+                        false
+                    }
+                }
+                url.contains("#") && (
+                    url.contains("rpmstream.live") ||
+                    url.contains("upns.pro") ||
+                    url.contains("strp2p.com") ||
+                    url.contains("4meplayer.pro")
+                ) -> {
+                    Log.d("PlushdProvider-Direct", "SPA hash URL detectada: ${url.take(100)}")
+                    tryExtractFromSpaPage(url, referer, callback, subtitleCallback)
+                }
+                else -> false
+            }
+        } catch (e: Exception) {
+            Log.e("PlushdProvider-Direct", "Error: ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun tryExtractFromSpaPage(
+        url: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ): Boolean {
+        try {
+            val baseUrl = url.substringBefore("#")
+            val page = app.get(baseUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to referer
+            )).document
+
+            val jsSrc = page.selectFirst("script[src^=/assets/index-]")?.attr("src") ?: ""
+            if (jsSrc.isBlank()) {
+                Log.w("PlushdProvider-Direct", "No se encontró JS bundle en SPA")
+                return false
+            }
+
+            val jsUrl = "${baseUrl.trimEnd('/')}$jsSrc"
+            Log.d("PlushdProvider-Direct", "Fetcheando JS bundle: $jsUrl")
+            val jsContent = app.get(jsUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to baseUrl
+            )).text
+
+            val m3u8Urls = Regex("""(https?://[^\s"'`,;]+\.m3u8[^\s"'`,;]*)""")
+                .findAll(jsContent).map { it.value }.toList().distinct()
+            if (m3u8Urls.isNotEmpty()) {
+                Log.d("PlushdProvider-Direct", "M3U8 en JS bundle: ${m3u8Urls.first().take(100)}")
+                @Suppress("DEPRECATION")
+                callback.invoke(ExtractorLink(
+                    source = "SPA Video",
+                    name = "SPA Video - Latino",
+                    url = m3u8Urls.first(),
+                    referer = baseUrl,
+                    quality = Qualities.Unknown.value,
+                    type = ExtractorLinkType.VIDEO
+                ))
+                return true
+            }
+
+            val mp4Urls = Regex("""(https?://[^\s"'`,;]+\.mp4[^\s"'`,;]*)""")
+                .findAll(jsContent).map { it.value }.toList().distinct()
+            if (mp4Urls.isNotEmpty()) {
+                Log.d("PlushdProvider-Direct", "MP4 en JS bundle: ${mp4Urls.first().take(100)}")
+                @Suppress("DEPRECATION")
+                callback.invoke(ExtractorLink(
+                    source = "SPA Video",
+                    name = "SPA Video - Latino",
+                    url = mp4Urls.first(),
+                    referer = baseUrl,
+                    quality = Qualities.Unknown.value,
+                    type = ExtractorLinkType.VIDEO
+                ))
+                return true
+            }
+
+            Log.w("PlushdProvider-Direct", "No se encontraron URLs de video en JS bundle")
+            return false
+        } catch (e: Exception) {
+            Log.e("PlushdProvider-Direct", "Error SPA: ${e.message}")
+            return false
+        }
     }
 
     private suspend fun extractUrlFromPlayerPage(playerDoc: org.jsoup.nodes.Document, index: Int = -1): String {
