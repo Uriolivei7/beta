@@ -10,6 +10,7 @@ import org.jsoup.nodes.Element
 import java.net.URL
 import java.util.regex.Pattern
 import kotlinx.coroutines.delay
+import kotlin.random.Random
 
 class PlushdProvider : MainAPI() {
     override var mainUrl = "https://tioplus.app"
@@ -241,58 +242,76 @@ class PlushdProvider : MainAPI() {
 
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to data
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+            "Referer" to "$mainUrl/",
+            "Cache-Control" to "no-cache, no-store, must-revalidate",
+            "Pragma" to "no-cache"
         )
 
         val doc = app.get(data, headers = headers).document
+
+        val serverItems = doc.select("div ul.subselect li")
+        Log.d("PlushdProvider", "=== loadLinks: ${serverItems.size} servidores encontrados en página ===")
 
         val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
             Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
             subtitleCallback.invoke(file)
         }
 
-        doc.select("div ul.subselect li").toList().forEach { serverLi ->
+        serverItems.toList().forEachIndexed { index, serverLi ->
+            val tag = "PlushdProvider-Server"
             try {
                 val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@forEach
+                if (serverData.isNullOrEmpty()) {
+                    Log.w(tag, "[#$index] data-server vacío, saltando")
+                    return@forEachIndexed
+                }
 
                 val decoded = String(Base64.decode(serverData, Base64.DEFAULT))
+                Log.d(tag, "[#$index] decoded: ${decoded.take(120)}")
 
-                val url = if (!REGEX_LINK.matcher(decoded).matches()) {
+                val isPlayerPath = !REGEX_LINK.matcher(decoded).matches()
+                val url = if (isPlayerPath) {
                     "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
                 } else {
                     decoded
                 }
+                Log.d(tag, "[#$index] usará ${if (isPlayerPath) "PLAYER" else "DIRECT"}: ${url.take(120)}")
 
                 val videoUrl = if (url.contains("/player/")) {
-                    val playerDoc = app.get(url, headers = headers).document
-                    val script = playerDoc.selectFirst("script:containsData(window.onload)")?.data() ?: ""
-                    fetchUrls(script).firstOrNull() ?: ""
+                    val playerHeaders = headers + mapOf("Referer" to data)
+                    Log.d(tag, "[#$index] fetcheando player page: $url")
+                    val playerDoc = app.get(url, headers = playerHeaders).document
+                    Log.d(tag, "[#$index] HTML player page: ${playerDoc.html().length} chars")
+                    extractUrlFromPlayerPage(playerDoc, index)
                 } else {
                     url
                 }
 
                 if (videoUrl.isBlank()) {
-                    Log.w("PlushdProvider", "No se pudo obtener URL del servidor")
-                    return@forEach
+                    Log.w(tag, "[#$index] videoUrl en blanco después de extracción")
+                    return@forEachIndexed
                 }
+                Log.d(tag, "[#$index] videoUrl raw: ${videoUrl.take(120)}")
 
                 val fixedLink = fixPelisplusHostsLinks(videoUrl)
-                    .replace("https://sblanh.com", "https://lvturbo.com")
                     .replace(Regex("""([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https://ww3.pelisplus.to.*"""), "")
+                Log.d(tag, "[#$index] fixedLink: ${fixedLink.take(120)}")
 
                 if (fixedLink.isBlank()) {
-                    Log.w("PlushdProvider", "URL en blanco después de procesar")
-                    return@forEach
+                    Log.w(tag, "[#$index] fixedLink en blanco después de fixPelisplusHostsLinks")
+                    return@forEachIndexed
                 }
 
                 val extractorReferer = try {
                     val urlObject = URL(fixedLink)
                     urlObject.protocol + "://" + urlObject.host + "/"
                 } catch (e: Exception) {
-                    Log.e("PlushdProvider", "Error al parsear URL para Referer: ${e.message}")
+                    Log.e(tag, "[#$index] Error al parsear URL para Referer: ${e.message}")
                     url
                 }
+                Log.d(tag, "[#$index] extractorReferer: $extractorReferer")
 
                 loadExtractor(
                     url = fixedLink,
@@ -301,14 +320,58 @@ class PlushdProvider : MainAPI() {
                     callback = callback
                 )
                 linksFound = true
+                Log.d(tag, "[#$index] OK")
             } catch (e: Exception) {
-                Log.e("PlushdProvider", "Error al procesar el servidor: ${e.message}")
+                Log.e(tag, "[#$index] Error: ${e.message}")
             }
 
-            delay(1500L)
+            delay(Random.nextLong(800L, 2500L))
         }
 
+        Log.d("PlushdProvider", "=== loadLinks FIN: linksFound=$linksFound ===")
         return linksFound
+    }
+
+    private suspend fun extractUrlFromPlayerPage(playerDoc: org.jsoup.nodes.Document, index: Int = -1): String {
+        val tag = "PlushdProvider-Player"
+        Log.d(tag, "[#$index] HTML total: ${playerDoc.html().length} chars")
+
+        val strategies = listOf(
+            "window.onload" to { doc: org.jsoup.nodes.Document ->
+                val script = doc.selectFirst("script:containsData(window.onload)")?.data() ?: ""
+                fetchUrls(script).firstOrNull() ?: ""
+            },
+            "iframe[src]" to { doc: org.jsoup.nodes.Document ->
+                doc.selectFirst("iframe[src]")?.attr("src") ?: ""
+            },
+            "script.mp4" to { doc: org.jsoup.nodes.Document ->
+                doc.select("script").firstOrNull { it.data().contains("https://") && it.data().contains(".mp4") }
+                    ?.let { fetchUrls(it.data()).firstOrNull() } ?: ""
+            },
+            "script.m3u8" to { doc: org.jsoup.nodes.Document ->
+                doc.select("script").firstOrNull { it.data().contains("https://") && it.data().contains("m3u8") }
+                    ?.let { fetchUrls(it.data()).firstOrNull() } ?: ""
+            },
+            "video source[src]" to { doc: org.jsoup.nodes.Document ->
+                doc.selectFirst("video source[src], video[src]")?.attr("src") ?: ""
+            },
+            "a[href]" to { doc: org.jsoup.nodes.Document ->
+                doc.selectFirst("a[href$=\".mp4\"], a[href$=\".m3u8\"]")?.attr("href") ?: ""
+            },
+        )
+
+        for ((name, extract) in strategies) {
+            val url = extract(playerDoc)
+            if (url.isNotBlank()) {
+                Log.d(tag, "[#$index] Estrategia '$name' OK: ${url.take(100)}")
+                return url
+            } else {
+                Log.d(tag, "[#$index] Estrategia '$name' no encontró URL")
+            }
+        }
+
+        Log.w(tag, "[#$index] Ninguna estrategia encontró URL")
+        return ""
     }
 
 }
