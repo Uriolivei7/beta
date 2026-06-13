@@ -355,19 +355,42 @@ class PlushdProvider : MainAPI() {
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         "Referer" to referer
                     )).document
-                    val m3u8 = page.selectFirst("#video_player")?.attr("data-hash") ?: ""
-                    if (m3u8.isNotBlank()) {
-                        Log.d("PlushdProvider-Direct", "M3U8 encontrado: ${m3u8.take(100)}")
-                        @Suppress("DEPRECATION")
-                        callback.invoke(ExtractorLink(
-                            source = "TurboVid",
-                            name = "TurboVid - Latino",
-                            url = m3u8,
-                            referer = "https://turbovidhls.com/",
-                            quality = Qualities.Unknown.value,
-                            type = ExtractorLinkType.VIDEO
-                        ))
-                        true
+                    val m3u8raw = page.selectFirst("#video_player")?.attr("data-hash") ?: ""
+                    if (m3u8raw.isNotBlank()) {
+                        val m3u8Host = if (m3u8raw.startsWith("http")) m3u8raw else "https://cdn2.turboviplay.com/$m3u8raw"
+                        Log.d("PlushdProvider-Direct", "M3U8 raw: ${m3u8raw.take(100)}")
+                        Log.d("PlushdProvider-Direct", "M3U8 final: ${m3u8Host.take(100)}")
+                        try {
+                            val m3u8Content = app.get(m3u8Host, headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to "https://turbovidhls.com/"
+                            )).text
+                            if (m3u8Content.trimStart().startsWith("#EXTM3U") || m3u8Content.contains(".ts") || m3u8Content.contains(".m3u8")) {
+                                Log.d("PlushdProvider-Direct", "M3U8 válido, ${m3u8Content.length} chars")
+                                Log.d("PlushdProvider-Direct", "Primeras líneas M3U8: ${m3u8Content.take(300)}")
+                                @Suppress("DEPRECATION")
+                                val link = ExtractorLink(
+                                    source = "TurboVid",
+                                    name = "TurboVid - Latino",
+                                    url = m3u8Host,
+                                    referer = "https://turbovidhls.com/",
+                                    quality = Qualities.Unknown.value,
+                                    type = ExtractorLinkType.VIDEO
+                                )
+                                link.headers = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                    "Referer" to "https://turbovidhls.com/"
+                                )
+                                callback.invoke(link)
+                                true
+                            } else {
+                                Log.w("PlushdProvider-Direct", "M3U8 response no es playlist: ${m3u8Content.take(200)}")
+                                false
+                            }
+                        } catch (e: Exception) {
+                            Log.e("PlushdProvider-Direct", "Error al verificar M3U8: ${e.message}")
+                            false
+                        }
                     } else {
                         Log.w("PlushdProvider-Direct", "No se encontró data-hash en turbovid")
                         false
@@ -396,8 +419,11 @@ class PlushdProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
         subtitleCallback: (SubtitleFile) -> Unit
     ): Boolean {
+        val tag = "PlushdProvider-SPA"
         try {
             val baseUrl = url.substringBefore("#")
+            val hash = url.substringAfter("#", "")
+            Log.d(tag, "URL base: $baseUrl, hash: $hash")
             val page = app.get(baseUrl, headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer" to referer
@@ -405,12 +431,12 @@ class PlushdProvider : MainAPI() {
 
             val jsSrc = page.selectFirst("script[src^=/assets/index-]")?.attr("src") ?: ""
             if (jsSrc.isBlank()) {
-                Log.w("PlushdProvider-Direct", "No se encontró JS bundle en SPA")
-                return false
+                Log.w(tag, "No se encontró JS bundle en SPA")
+                return true
             }
 
             val jsUrl = "${baseUrl.trimEnd('/')}$jsSrc"
-            Log.d("PlushdProvider-Direct", "Fetcheando JS bundle: $jsUrl")
+            Log.d(tag, "Fetcheando JS bundle: $jsUrl")
             val jsContent = app.get(jsUrl, headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer" to baseUrl
@@ -419,23 +445,28 @@ class PlushdProvider : MainAPI() {
             val m3u8Urls = Regex("""(https?://[^\s"'`,;]+\.m3u8[^\s"'`,;]*)""")
                 .findAll(jsContent).map { it.value }.toList().distinct()
             if (m3u8Urls.isNotEmpty()) {
-                Log.d("PlushdProvider-Direct", "M3U8 en JS bundle: ${m3u8Urls.first().take(100)}")
+                Log.d(tag, "M3U8 en JS bundle: ${m3u8Urls.first().take(100)}")
                 @Suppress("DEPRECATION")
-                callback.invoke(ExtractorLink(
+                val link = ExtractorLink(
                     source = "SPA Video",
                     name = "SPA Video - Latino",
                     url = m3u8Urls.first(),
                     referer = baseUrl,
                     quality = Qualities.Unknown.value,
                     type = ExtractorLinkType.VIDEO
-                ))
+                )
+                link.headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to baseUrl
+                )
+                callback.invoke(link)
                 return true
             }
 
             val mp4Urls = Regex("""(https?://[^\s"'`,;]+\.mp4[^\s"'`,;]*)""")
                 .findAll(jsContent).map { it.value }.toList().distinct()
             if (mp4Urls.isNotEmpty()) {
-                Log.d("PlushdProvider-Direct", "MP4 en JS bundle: ${mp4Urls.first().take(100)}")
+                Log.d(tag, "MP4 en JS bundle: ${mp4Urls.first().take(100)}")
                 @Suppress("DEPRECATION")
                 callback.invoke(ExtractorLink(
                     source = "SPA Video",
@@ -448,11 +479,44 @@ class PlushdProvider : MainAPI() {
                 return true
             }
 
-            Log.w("PlushdProvider-Direct", "No se encontraron URLs de video en JS bundle")
-            return false
+            val apiUrls = Regex("""["'`](/api/[^\s"'`,;]+)["'`]""")
+                .findAll(jsContent).map { it.groupValues[1] }.toList().distinct()
+            if (apiUrls.isNotEmpty()) {
+                Log.d(tag, "Posibles endpoints API en JS bundle: ${apiUrls.take(5)}")
+                val apiUrl = "${baseUrl.trimEnd('/')}${apiUrls.first()}"
+                Log.d(tag, "Intentando API: $apiUrl")
+                try {
+                    val apiResponse = app.get(apiUrl, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer" to baseUrl,
+                        "Accept" to "application/json"
+                    )).text
+                    Log.d(tag, "API response: ${apiResponse.take(200)}")
+                    val vidUrl = Regex("""(https?://[^\s"'`,;]+\.(?:m3u8|mp4)[^\s"'`,;]*)""")
+                        .find(apiResponse)?.value ?: ""
+                    if (vidUrl.isNotBlank()) {
+                        Log.d(tag, "Video URL desde API: ${vidUrl.take(100)}")
+                        @Suppress("DEPRECATION")
+                        callback.invoke(ExtractorLink(
+                            source = "SPA Video",
+                            name = "SPA Video - Latino",
+                            url = vidUrl,
+                            referer = baseUrl,
+                            quality = Qualities.Unknown.value,
+                            type = ExtractorLinkType.VIDEO
+                        ))
+                        return true
+                    }
+                } catch (e: Exception) {
+                    Log.w(tag, "Error al llamar API: ${e.message}")
+                }
+            }
+
+            Log.w(tag, "No se encontraron URLs de video en SPA (JS bundle sin URLs directas)")
+            return true
         } catch (e: Exception) {
-            Log.e("PlushdProvider-Direct", "Error SPA: ${e.message}")
-            return false
+            Log.e(tag, "Error SPA: ${e.message}")
+            return true
         }
     }
 
