@@ -54,17 +54,12 @@ class PlushdProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        var title = this.selectFirst("a h2")?.text() ?: return null
-        val link = (this.selectFirst("a.itemA")?.attr("href") ?: return null) + "?pl=phd"
+        val title = this.selectFirst("a h2")?.text() ?: return null
+        val link = this.selectFirst("a.itemA")?.attr("href") ?: return null
         val img = this.selectFirst("picture img")?.attr("data-src")
 
         val yearRegex = Regex("""\s*\((\d{4})\)$""")
-        val match = yearRegex.find(title)
-        val year = match?.groupValues?.get(1)?.toIntOrNull()
-
-        if (match != null) {
-            title = title.replace(yearRegex, "").trim()
-        }
+        val year = yearRegex.find(title)?.groupValues?.get(1)?.toIntOrNull()
 
         val searchType = when {
             link.contains("/serie") -> TvType.TvSeries
@@ -100,8 +95,7 @@ class PlushdProvider : MainAPI() {
     )
 
     override suspend fun load(url: String): LoadResponse? {
-        val cleanUrl = url.replace("?pl=phd", "")
-        val doc = app.get(cleanUrl).document
+        val doc = app.get(url).document
 
         val tvType = when {
             url.contains("/serie") -> TvType.TvSeries
@@ -111,7 +105,7 @@ class PlushdProvider : MainAPI() {
             else -> TvType.TvSeries
         }
 
-        val title = doc.selectFirst(".slugh1")?.text()?.replace(Regex("""\s*\(\d{4}\)$"""), "")?.trim() ?: ""
+        val title = doc.selectFirst(".slugh1")?.text()?.trim() ?: ""
         val year = doc.selectFirst("span:contains(Año) a")?.text()?.toIntOrNull()
 
         val backimage = doc.selectFirst(".bg")?.attr("style")?.let {
@@ -156,7 +150,7 @@ class PlushdProvider : MainAPI() {
                                 val epNum = info.episode
                                 val img = info.image
                                 val realimg = if (img.isNullOrEmpty()) null else "https://image.tmdb.org/t/p/w342${img.replace("\\/", "/")}"
-                                val epurl = "$cleanUrl/season/$seasonNum/episode/$epNum"
+                                val epurl = "$url/season/$seasonNum/episode/$epNum"
                                 if (epTitle != null && seasonNum != null && epNum != null) {
                                     epi.add(newEpisode(epurl) {
                                         this.name = epTitle
@@ -176,7 +170,7 @@ class PlushdProvider : MainAPI() {
 
         return when (tvType) {
             TvType.TvSeries, TvType.Anime, TvType.AsianDrama -> {
-                newTvSeriesLoadResponse(title, cleanUrl, tvType, epi) {
+                newTvSeriesLoadResponse(title, url, tvType, epi) {
                     this.posterUrl = verticalPoster
                     this.backgroundPosterUrl = backimage
                     this.plot = description
@@ -185,7 +179,7 @@ class PlushdProvider : MainAPI() {
                 }
             }
             TvType.Movie -> {
-                newMovieLoadResponse(title, cleanUrl, tvType, cleanUrl) {
+                newMovieLoadResponse(title, url, tvType, url) {
                     this.posterUrl = verticalPoster
                     this.backgroundPosterUrl = backimage
                     this.plot = description
