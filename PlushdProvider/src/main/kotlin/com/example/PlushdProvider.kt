@@ -329,14 +329,18 @@ class PlushdProvider : MainAPI() {
                 }
                 Log.d(tag, "[#$index] extractorReferer: $extractorReferer")
 
-                loadExtractor(
+                val found = loadExtractor(
                     url = fixedLink,
                     referer = extractorReferer,
                     subtitleCallback = loggingSubtitleCallback,
                     callback = callback
                 )
-                linksFound = true
-                Log.d(tag, "[#$index] OK (loadExtractor)")
+                if (found) {
+                    linksFound = true
+                    Log.d(tag, "[#$index] OK (loadExtractor)")
+                } else {
+                    Log.w(tag, "[#$index] loadExtractor no encontró extractor")
+                }
             } catch (e: Exception) {
                 Log.e(tag, "[#$index] Error: ${e.message}")
             }
