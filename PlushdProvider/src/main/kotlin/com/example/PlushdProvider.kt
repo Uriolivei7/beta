@@ -5,8 +5,6 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import java.net.URL
@@ -307,29 +305,38 @@ class PlushdProvider : MainAPI() {
                     return@forEachIndexed
                 }
 
-                val processed = tryHandleDirectVideo(fixedLink, data, callback, loggingSubtitleCallback)
-                if (processed) {
-                    linksFound = true
-                    Log.d(tag, "[#$index] OK (directo)")
-                } else {
-                    val extractorReferer = try {
-                        val urlObject = URL(fixedLink)
-                        urlObject.protocol + "://" + urlObject.host + "/"
-                    } catch (e: Exception) {
-                        Log.e(tag, "[#$index] Error al parsear URL para Referer: ${e.message}")
-                        url
-                    }
-                    Log.d(tag, "[#$index] extractorReferer: $extractorReferer")
-
-                    loadExtractor(
-                        url = fixedLink,
-                        referer = extractorReferer,
-                        subtitleCallback = loggingSubtitleCallback,
-                        callback = callback
-                    )
-                    linksFound = true
-                    Log.d(tag, "[#$index] OK (loadExtractor)")
+                if (fixedLink.contains("turbovidhls.com")) {
+                    Log.w(tag, "[#$index] turbovid (error 3003), saltando")
+                    return@forEachIndexed
                 }
+                if (fixedLink.contains("#") && (
+                        fixedLink.contains("upns.pro") ||
+                        fixedLink.contains("rpmstream.live") ||
+                        fixedLink.contains("strp2p.com") ||
+                        fixedLink.contains("4meplayer.pro") ||
+                        fixedLink.contains("pelisplusto")
+                    )) {
+                    Log.w(tag, "[#$index] SPA hash (error 2001), saltando")
+                    return@forEachIndexed
+                }
+
+                val extractorReferer = try {
+                    val urlObject = URL(fixedLink)
+                    urlObject.protocol + "://" + urlObject.host + "/"
+                } catch (e: Exception) {
+                    Log.e(tag, "[#$index] Error al parsear URL para Referer: ${e.message}")
+                    url
+                }
+                Log.d(tag, "[#$index] extractorReferer: $extractorReferer")
+
+                loadExtractor(
+                    url = fixedLink,
+                    referer = extractorReferer,
+                    subtitleCallback = loggingSubtitleCallback,
+                    callback = callback
+                )
+                linksFound = true
+                Log.d(tag, "[#$index] OK (loadExtractor)")
             } catch (e: Exception) {
                 Log.e(tag, "[#$index] Error: ${e.message}")
             }
@@ -339,114 +346,6 @@ class PlushdProvider : MainAPI() {
 
         Log.d("PlushdProvider", "=== loadLinks FIN: linksFound=$linksFound ===")
         return linksFound
-    }
-
-    private suspend fun tryHandleDirectVideo(
-        url: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit,
-        subtitleCallback: (SubtitleFile) -> Unit
-    ): Boolean {
-        return try {
-            when {
-                url.contains("turbovidhls.com") || url.contains("emturbovid.com") -> {
-                    Log.d("PlushdProvider-Direct", "turbovid detectado, extrayendo M3U8 directo de: $url")
-                    val page = app.get(url, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer" to referer
-                    )).document
-                    val m3u8raw = page.selectFirst("#video_player")?.attr("data-hash") ?: ""
-                    if (m3u8raw.isNotBlank()) {
-                        val m3u8Host = if (m3u8raw.startsWith("http")) m3u8raw else "https://cdn2.turboviplay.com/$m3u8raw"
-                        Log.d("PlushdProvider-Direct", "M3U8 raw: ${m3u8raw.take(100)}")
-                        Log.d("PlushdProvider-Direct", "M3U8 final: ${m3u8Host.take(100)}")
-
-                        val m3u8Headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer" to "https://turbovidhls.com/",
-                            "Origin" to "https://turbovidhls.com"
-                        )
-                        try {
-                            val m3u8Content = app.get(m3u8Host, headers = m3u8Headers).text
-                            if (m3u8Content.trimStart().startsWith("#EXTM3U") || m3u8Content.contains(".ts") || m3u8Content.contains(".m3u8")) {
-                                Log.d("PlushdProvider-Direct", "M3U8 válido, ${m3u8Content.length} chars")
-                                Log.d("PlushdProvider-Direct", "Primeras líneas M3U8: ${m3u8Content.take(300)}")
-
-                                val variantUrl = Regex("""https?://[^\s"'`,;]+\.m3u8[^\s"'`,;]*""")
-                                    .findAll(m3u8Content).map { it.value }.toList().firstOrNull()
-
-                                if (variantUrl != null) {
-                                    Log.d("PlushdProvider-Direct", "Verificando variante: ${variantUrl.take(100)}")
-                                    val variantContent = app.get(variantUrl, headers = mapOf(
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                        "Referer" to m3u8Host,
-                                        "Origin" to "https://turbovidhls.com"
-                                    )).text
-                                    if (variantContent.trimStart().startsWith("#EXTM3U") || variantContent.contains("#EXTINF")) {
-                                        Log.d("PlushdProvider-Direct", "Variante válida, ${variantContent.take(200)}")
-                                    } else {
-                                        Log.w("PlushdProvider-Direct", "Variante no es playlist: ${variantContent.take(200)}")
-                                    }
-                                }
-
-                                val videoUrl = variantUrl ?: m3u8Host
-                                Log.d("PlushdProvider-Direct", "Video URL final: ${videoUrl.take(100)}")
-
-                                @Suppress("DEPRECATION")
-                                val link = ExtractorLink(
-                                    source = "TurboVid",
-                                    name = "TurboVid - Latino",
-                                    url = videoUrl,
-                                    referer = "https://turbovidhls.com/",
-                                    quality = Qualities.Unknown.value,
-                                    type = ExtractorLinkType.VIDEO
-                                )
-                                link.headers = mapOf(
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                    "Referer" to "https://turbovidhls.com/",
-                                    "Origin" to "https://turbovidhls.com"
-                                )
-                                callback.invoke(link)
-                                true
-                            } else {
-                                Log.w("PlushdProvider-Direct", "M3U8 response no es playlist: ${m3u8Content.take(200)}")
-                                false
-                            }
-                        } catch (e: Exception) {
-                            Log.e("PlushdProvider-Direct", "Error al verificar M3U8: ${e.message}")
-                            false
-                        }
-                    } else {
-                        Log.w("PlushdProvider-Direct", "No se encontró data-hash en turbovid")
-                        false
-                    }
-                }
-                url.contains("#") && (
-                    url.contains("rpmstream.live") ||
-                    url.contains("upns.pro") ||
-                    url.contains("strp2p.com") ||
-                    url.contains("4meplayer.pro") ||
-                    url.contains("pelisplusto")
-                ) -> {
-                    Log.d("PlushdProvider-Direct", "SPA hash URL detectada: ${url.take(100)}")
-                    tryExtractFromSpaPage(url, referer, callback, subtitleCallback)
-                }
-                else -> false
-            }
-        } catch (e: Exception) {
-            Log.e("PlushdProvider-Direct", "Error: ${e.message}")
-            false
-        }
-    }
-
-    private suspend fun tryExtractFromSpaPage(
-        url: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit,
-        subtitleCallback: (SubtitleFile) -> Unit
-    ): Boolean {
-        Log.d("PlushdProvider-SPA", "SPA ocultado (requiere JS, no extraíble): ${url.take(80)}")
-        return true
     }
 
     private suspend fun extractUrlFromPlayerPage(playerDoc: org.jsoup.nodes.Document, index: Int = -1): String {
@@ -490,5 +389,4 @@ class PlushdProvider : MainAPI() {
         Log.w(tag, "[#$index] Ninguna estrategia encontró URL")
         return ""
     }
-
 }
