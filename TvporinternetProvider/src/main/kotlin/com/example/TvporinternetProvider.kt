@@ -83,13 +83,17 @@ class TvporinternetProvider : MainAPI() {
             requestHeaders["Referer"] = referer
         }
 
-        return try {
-            val res = app.get(url, timeout = timeoutMs, headers = requestHeaders)
-            if (res.isSuccessful) res.text else null
-        } catch (e: Exception) {
-            Log.e("TvporInternet", "safeAppGet error: ${e.message}")
-            null
+        for (attempt in 1..2) {
+            try {
+                val res = app.get(url, timeout = timeoutMs, headers = requestHeaders)
+                if (res.isSuccessful) return res.text
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("TvporInternet", "safeAppGet error (intento $attempt): ${e::class.simpleName} - ${e.message}")
+            }
         }
+        return null
     }
 
     private fun getCategory(title: String): String {
