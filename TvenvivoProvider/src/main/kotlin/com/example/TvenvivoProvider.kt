@@ -85,7 +85,8 @@ class TvenvivoProvider : MainAPI() {
 
         for (attempt in 1..2) {
             try {
-                val res = app.get(url, timeout = timeoutMs, headers = requestHeaders)
+                val interceptor = if (attempt > 1) cfKiller else null
+                val res = app.get(url, timeout = timeoutMs * attempt, headers = requestHeaders, interceptor = interceptor)
                 if (res.isSuccessful) return res.text
             } catch (e: CancellationException) {
                 throw e
