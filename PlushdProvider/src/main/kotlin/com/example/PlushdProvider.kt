@@ -5,17 +5,14 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.jsoup.nodes.Element
 import java.net.URL
 import java.util.regex.Pattern
 
 class PlushdProvider : MainAPI() {
-    private val extractorScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-
     override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
@@ -249,89 +246,98 @@ class PlushdProvider : MainAPI() {
             subtitleCallback.invoke(file)
         }
 
-        data class ServerInfo(val url: String, val referer: String)
+        var hasValidServer = false
+        coroutineScope {
+            serverItems.toList().forEach { serverLi ->
+                launch {
+                    val tag = "PlushdProvider-Server"
+                    try {
+                        val serverData = serverLi.attr("data-server")
+                        if (serverData.isNullOrEmpty()) return@launch
 
-        val validServers = serverItems.toList().amap { serverLi ->
-            val tag = "PlushdProvider-Server"
-            try {
-                val serverData = serverLi.attr("data-server")
-                if (serverData.isNullOrEmpty()) return@amap null
+                        val decoded = String(Base64.decode(serverData, Base64.DEFAULT))
+                        Log.d(tag, "decoded: ${decoded.take(120)}")
 
-                val decoded = String(Base64.decode(serverData, Base64.DEFAULT))
-                Log.d(tag, "decoded: ${decoded.take(120)}")
+                        val isPlayerPath = !REGEX_LINK.matcher(decoded).matches()
+                        val url = if (isPlayerPath) {
+                            "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
+                        } else {
+                            decoded
+                        }
+                        Log.d(tag, "usará ${if (isPlayerPath) "PLAYER" else "DIRECT"}: ${url.take(120)}")
 
-                val isPlayerPath = !REGEX_LINK.matcher(decoded).matches()
-                val url = if (isPlayerPath) {
-                    "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
-                } else {
-                    decoded
+                        val videoUrl = if (url.contains("/player/")) {
+                            val playerHeaders = headers + mapOf("Referer" to data)
+                            Log.d(tag, "fetcheando player page: $url")
+                            val playerDoc = app.get(url, headers = playerHeaders).document
+                            Log.d(tag, "HTML player page: ${playerDoc.html().length} chars")
+                            extractUrlFromPlayerPage(playerDoc)
+                        } else {
+                            url
+                        }
+
+                        if (videoUrl.isBlank()) {
+                            Log.w(tag, "videoUrl en blanco después de extracción")
+                            return@launch
+                        }
+                        Log.d(tag, "videoUrl raw: ${videoUrl.take(120)}")
+
+                        val fixedLink = fixPelisplusHostsLinks(videoUrl)
+                            .replace(Regex("""([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https://ww3.pelisplus.to.*"""), "")
+                        Log.d(tag, "fixedLink: ${fixedLink.take(120)}")
+
+                        if (fixedLink.isBlank()) {
+                            Log.w(tag, "fixedLink en blanco después de fixPelisplusHostsLinks")
+                            return@launch
+                        }
+
+                        if (fixedLink.contains("turbovidhls.com")) {
+                            Log.w(tag, "turbovid (error 3003), saltando")
+                            return@launch
+                        }
+                        if (fixedLink.contains("#") && (
+                                fixedLink.contains("upns.pro") ||
+                                fixedLink.contains("rpmstream.live") ||
+                                fixedLink.contains("strp2p.com") ||
+                                fixedLink.contains("4meplayer.pro") ||
+                                fixedLink.contains("pelisplusto")
+                            )) {
+                            Log.w(tag, "SPA hash (error 2001), saltando")
+                            return@launch
+                        }
+
+                        hasValidServer = true
+
+                        val extractorReferer = try {
+                            val urlObject = URL(fixedLink)
+                            urlObject.protocol + "://" + urlObject.host + "/"
+                        } catch (e: Exception) {
+                            Log.e(tag, "Error al parsear URL para Referer: ${e.message}")
+                            url
+                        }
+                        Log.d(tag, "extractorReferer: $extractorReferer")
+
+                        withTimeout(7000) {
+                            Log.d(tag, "llamando loadExtractor...")
+                            loadExtractor(
+                                url = fixedLink,
+                                referer = extractorReferer,
+                                subtitleCallback = loggingSubtitleCallback,
+                                callback = callback
+                            )
+                            Log.d(tag, "OK (loadExtractor)")
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Log.w(tag, "loadExtractor timed out (>7s)")
+                    } catch (e: Exception) {
+                        Log.e(tag, "Error: ${e.message}")
+                    }
                 }
-                Log.d(tag, "usará ${if (isPlayerPath) "PLAYER" else "DIRECT"}: ${url.take(120)}")
-
-                val videoUrl = if (url.contains("/player/")) {
-                    val playerHeaders = headers + mapOf("Referer" to data)
-                    Log.d(tag, "fetcheando player page: $url")
-                    val playerDoc = app.get(url, headers = playerHeaders).document
-                    Log.d(tag, "HTML player page: ${playerDoc.html().length} chars")
-                    extractUrlFromPlayerPage(playerDoc)
-                } else {
-                    url
-                }
-
-                if (videoUrl.isBlank()) {
-                    Log.w(tag, "videoUrl en blanco después de extracción")
-                    return@amap null
-                }
-                Log.d(tag, "videoUrl raw: ${videoUrl.take(120)}")
-
-                val fixedLink = fixPelisplusHostsLinks(videoUrl)
-                    .replace(Regex("""([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https://ww3.pelisplus.to.*"""), "")
-                Log.d(tag, "fixedLink: ${fixedLink.take(120)}")
-
-                if (fixedLink.isBlank()) return@amap null
-
-                if (fixedLink.contains("turbovidhls.com")) {
-                    Log.w(tag, "turbovid (error 3003), saltando")
-                    return@amap null
-                }
-                if (fixedLink.contains("#") && (
-                        fixedLink.contains("upns.pro") ||
-                        fixedLink.contains("rpmstream.live") ||
-                        fixedLink.contains("strp2p.com") ||
-                        fixedLink.contains("4meplayer.pro") ||
-                        fixedLink.contains("pelisplusto")
-                    )) {
-                    Log.w(tag, "SPA hash (error 2001), saltando")
-                    return@amap null
-                }
-
-                val extractorReferer = try {
-                    val urlObject = URL(fixedLink)
-                    urlObject.protocol + "://" + urlObject.host + "/"
-                } catch (e: Exception) {
-                    Log.e(tag, "Error al parsear URL para Referer: ${e.message}")
-                    url
-                }
-                Log.d(tag, "extractorReferer: $extractorReferer")
-                ServerInfo(fixedLink, extractorReferer)
-            } catch (e: Exception) {
-                Log.e(tag, "Error: ${e.message}")
-                null
             }
-        }.filterNotNull()
-
-        if (validServers.isEmpty()) {
-            Log.d("PlushdProvider", "=== loadLinks FIN: sin servidores válidos ===")
-            return false
         }
 
-        Log.d("PlushdProvider", "=== ${validServers.size} servidores válidos, lanzando extractores ===")
-        validServers.forEach { (url, referer) ->
-            extractorScope.launch {
-                loadExtractor(url, referer, loggingSubtitleCallback, callback)
-            }
-        }
-        return true
+        Log.d("PlushdProvider", "=== loadLinks FIN: hasValidServer=$hasValidServer ===")
+        return hasValidServer
     }
 
     private suspend fun extractUrlFromPlayerPage(playerDoc: org.jsoup.nodes.Document): String {
