@@ -158,7 +158,7 @@
     "status": 1,
     "version": 1,
     "apiVersion": 1,
-    "name": "IPTVm3u",
+    "name": "IPTV",
     "internalName": "IptvProvider",
     "authors": ["Ranita"],
     "description": "Plugin para listas IPTV",
