@@ -9,6 +9,10 @@ import com.lagradost.cloudstream3.AcraApplication.Companion.getKey
 @CloudstreamPlugin
 class IPTVPlugin : Plugin() {
     override fun load(context: Context) {
+        reload()
+    }
+
+    init {
         this.openSettings = {
             try {
                 val activity = it as? AppCompatActivity
@@ -19,7 +23,6 @@ class IPTVPlugin : Plugin() {
             } catch (e: Exception) {
             }
         }
-        reload()
     }
 
     fun reload() {

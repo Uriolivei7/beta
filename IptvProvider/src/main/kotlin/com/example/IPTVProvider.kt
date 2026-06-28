@@ -24,7 +24,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     val headers = mapOf("User-Agent" to "Player (Linux; Android 14)")
 
     companion object {
-        private const val LOG_TAG = "IPTVProvider"
+        private const val LOG_TAG = "IPTV_POSTER"
     }
 
     private fun getSafePosterUrl(url: String?): String {
@@ -33,9 +33,10 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                 !url.startsWith("http", ignoreCase = true)
 
         val finalUrl = if (isInvalid) {
-            Log.d(LOG_TAG, "getSafePosterUrl: URL '$url' inválida, usando vacía")
+            Log.d(LOG_TAG, "Original URL '$url' es INVÁLIDA o no HTTP. Usando URL VACÍA.")
             ""
         } else {
+            Log.d(LOG_TAG, "Original URL '$url' es VÁLIDA. Usando URL original.")
             url
         }
 
@@ -43,10 +44,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.d(LOG_TAG, "=== getMainPage: name=$name, mainUrl=$mainUrl ===")
         items[name] = IptvPlaylistParser().parseM3U(app.get(mainUrl, headers = headers).text)
-        val parsed = items[name]
-        Log.d(LOG_TAG, "getMainPage: playlist cargada, items=${parsed?.items?.size ?: 0}")
 
         return newHomePageResponse(
             items[name]!!.items.groupBy { it.attributes["group-title"] }.map { group ->
@@ -55,6 +53,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                     val streamurl = item.url.toString()
                     val channelname = item.title.toString()
                     val posterurl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
+                    Log.d(LOG_TAG, "MAIN PAGE | Canal: $channelname | Póster final: $posterurl")
                     val chGroup = item.attributes["group-title"].toString()
                     val key = item.attributes["key"].toString()
                     val keyid = item.attributes["keyid"].toString()
@@ -75,17 +74,15 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(LOG_TAG, "=== search: query=$query, mainUrl=$mainUrl ===")
         if (items[name] == null) {
-            Log.d(LOG_TAG, "search: playlist vacía, cargando...")
             items[name] = IptvPlaylistParser().parseM3U(app.get(mainUrl, headers = headers).text)
-            Log.d(LOG_TAG, "search: playlist cargada, items=${items[name]?.items?.size ?: 0}")
         }
 
         return items[name]!!.items.filter { it.title.toString().lowercase().contains(query.lowercase()) }.map { item ->
             val streamurl = item.url.toString()
             val channelname = item.title.toString()
             val posterurl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
+            Log.d(LOG_TAG, "SEARCH | Canal: $channelname | Póster final: $posterurl")
             val chGroup = item.attributes["group-title"].toString()
             val key = item.attributes["key"].toString()
             val keyid = item.attributes["keyid"].toString()
@@ -103,13 +100,9 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(LOG_TAG, "=== load: name=$name ===")
         val loadData = parseJson<LoadData>(url)
-        Log.d(LOG_TAG, "load: title=${loadData.title}, url=${loadData.url.take(80)}, group=${loadData.group}")
         if (items[name] == null) {
-            Log.d(LOG_TAG, "load: playlist vacía, cargando...")
             items[name] = IptvPlaylistParser().parseM3U(app.get(mainUrl, headers = headers).text)
-            Log.d(LOG_TAG, "load: playlist cargada, items=${items[name]?.items?.size ?: 0}")
         }
         val recommendations = mutableListOf<LiveSearchResponse>()
         for (item in items[name]!!.items) {
@@ -119,6 +112,7 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                 val rcChannelName = item.title.toString()
                 if (rcChannelName == loadData.title) continue
                 val rcPosterUrl = getSafePosterUrl(item.attributes["tvg-logo"].toString())
+                Log.d(LOG_TAG, "REC | Canal Rec: $rcChannelName | Póster final: $rcPosterUrl")
                 val rcChGroup = item.attributes["group-title"].toString()
                 val key = item.attributes["key"].toString()
                 val keyid = item.attributes["keyid"].toString()
@@ -132,7 +126,6 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
                 })
             }
         }
-        Log.d(LOG_TAG, "load: recomendaciones=${recommendations.size}")
 
         return newLiveStreamLoadResponse(
             name = loadData.title,
@@ -148,56 +141,35 @@ class IPTVProvider(mainUrl: String, name: String) : MainAPI() {
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        Log.d(LOG_TAG, "=== loadLinks: name=$name ===")
-        try {
-            val loadData = parseJson<LoadData>(data)
-            Log.d(LOG_TAG, "loadLinks: title=${loadData.title}, url=${loadData.url.take(80)}")
-            if (items[name] == null) {
-                Log.w(LOG_TAG, "loadLinks: playlist vacía, recargando...")
-                items[name] = IptvPlaylistParser().parseM3U(app.get(mainUrl, headers = headers).text)
-                Log.d(LOG_TAG, "loadLinks: playlist recargada, items=${items[name]?.items?.size ?: 0}")
-            } else {
-                Log.d(LOG_TAG, "loadLinks: playlist disponible, items=${items[name]?.items?.size ?: 0}")
-            }
-            val item = items[name]!!.items.firstOrNull { it.url == loadData.url }
-            if (item == null) {
-                Log.e(LOG_TAG, "loadLinks: URL no encontrada en playlist: ${loadData.url.take(80)}")
-                return false
-            }
-            Log.d(LOG_TAG, "loadLinks: item encontrado, headers=${item.headers}")
-            if (loadData.url.contains(".mpd")) {
-                Log.d(LOG_TAG, "loadLinks: es MPD (DRM)")
-                callback.invoke(
-                    newDrmExtractorLink(
-                        source = loadData.title,
-                        name = this.name,
-                        url = loadData.url,
-                        uuid = UUID.randomUUID(),
-                    ) {
-                        kid = loadData.keyid.toString().trim()
-                        key = loadData.key.toString().trim()
-                    }
-                )
-            } else {
-                Log.d(LOG_TAG, "loadLinks: es HLS/MPEGTS, creando ExtractorLink")
-                callback.invoke(
-                    newExtractorLink(
-                        source = loadData.title,
-                        name = this.name,
-                        url = loadData.url,
-                    ) {
-                        headers = item.headers
-                        referer = item.headers["referrer"] ?: ""
-                    }
-                )
-            }
-            Log.d(LOG_TAG, "loadLinks: OK, callback invocado")
-            return true
-        } catch (e: Exception) {
-            Log.e(LOG_TAG, "loadLinks: EXCEPCIÓN: ${e::class.simpleName}: ${e.message}")
-            e.printStackTrace()
-            return false
+        val loadData = parseJson<LoadData>(data)
+        val item = items[name]!!.items.first { it.url == loadData.url }
+        val response = checkLinkType(loadData.url, item.headers)
+        val isM3u8 = if (response == "m3u8") true else false
+        if (loadData.url.contains(".mpd")) {
+            callback.invoke(
+                newDrmExtractorLink(
+                    source = loadData.title,
+                    name = this.name,
+                    url = loadData.url,
+                    uuid = UUID.randomUUID(),
+                ) {
+                    kid = loadData.keyid.toString().trim()
+                    key = loadData.key.toString().trim()
+                }
+            )
+        } else {
+            callback.invoke(
+                newExtractorLink(
+                    source = loadData.title,
+                    name = this.name,
+                    url = loadData.url,
+                ) {
+                    headers = item.headers
+                    referer = item.headers["referrer"] ?: ""
+                }
+            )
         }
+        return true
     }
 
     @Suppress("ObjectLiteralToLambda")
