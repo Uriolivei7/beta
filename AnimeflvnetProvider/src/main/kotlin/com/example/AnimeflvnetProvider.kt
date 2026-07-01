@@ -280,9 +280,19 @@ class AnimeflvnetProvider : MainAPI() {
         var linksFound = false
 
         try {
-            val doc = app.get(data).document
-            val scripts = doc.select("script")
+            val doc = app.get(data)
+            val document = doc.document
+            val rawHtml = doc.text
+            val scripts = document.select("script")
             Log.d(tag, "Scripts encontrados: ${scripts.size}")
+
+            // Log all script src attributes to identify external JS files
+            scripts.forEachIndexed { i, s ->
+                val src = s.attr("src")
+                if (src.isNotBlank()) {
+                    Log.d(tag, "Script[$i] src: $src")
+                }
+            }
 
             var animeId: String? = null
             var episodeId: String? = null
@@ -303,7 +313,7 @@ class AnimeflvnetProvider : MainAPI() {
 
             Log.d(tag, "animeId=$animeId episodeId=$episodeId inlineVideosJson=${inlineVideosJson?.take(100)}")
 
-            // Try #1: inline JSON (if not empty array)
+            // Try #1: inline JSON (if found and not empty array)
             if (!inlineVideosJson.isNullOrBlank() && inlineVideosJson != "[]") {
                 Log.d(tag, "Intentando inline JSON")
                 try {
@@ -320,73 +330,132 @@ class AnimeflvnetProvider : MainAPI() {
                 }
             }
 
-            // Try #2: API endpoint (POST)
+            // Try #2: API endpoints following animeflv.net patterns
             if (!linksFound && animeId != null && episodeId != null) {
-                val apiUrls = listOf(
-                    "https://www3.animeflv.net/api/episode/sources",
-                    "https://www3.animeflv.net/api/episode",
-                    "https://animeflv.net/api/episode/sources",
+                val postData = mapOf("anime_id" to animeId!!, "episode_id" to episodeId!!)
+                val apiHeaders = mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "application/json, text/javascript, */*; q=0.01",
                 )
-                for (apiUrl in apiUrls) {
+
+                val apiAttempts = mutableListOf<Pair<String, suspend () -> String>>()
+                apiAttempts.add("POST /api/animes/episode" to {
+                    app.post("https://www3.animeflv.net/api/animes/episode",
+                        data = postData, referer = data, headers = apiHeaders).text
+                })
+                apiAttempts.add("POST /api/episode" to {
+                    app.post("https://www3.animeflv.net/api/episode",
+                        data = postData, referer = data, headers = apiHeaders).text
+                })
+                apiAttempts.add("GET /api/episode/$episodeId" to {
+                    app.get("https://www3.animeflv.net/api/episode/$episodeId",
+                        referer = data, headers = apiHeaders).text
+                })
+                apiAttempts.add("GET /api/animes/episode/$episodeId" to {
+                    app.get("https://www3.animeflv.net/api/animes/episode/$episodeId",
+                        referer = data, headers = apiHeaders).text
+                })
+
+                for ((apiName, attempt) in apiAttempts) {
                     if (linksFound) break
                     try {
-                        Log.d(tag, "Intentando API: $apiUrl")
-                        val response = app.post(
-                            apiUrl,
-                            data = mapOf("anime_id" to animeId!!, "episode_id" to episodeId!!),
-                            referer = data,
-                            headers = mapOf(
-                                "X-Requested-With" to "XMLHttpRequest",
-                                "Accept" to "application/json, text/javascript, */*; q=0.01",
-                            )
-                        ).text
-                        Log.d(tag, "API response: ${response.take(200)}")
+                        val response = attempt()
 
-                        if (response.isBlank() || response == "[]" || response == "{}") continue
+                        if (response.isBlank() || response.startsWith("<!") || response == "[]" || response == "{}") {
+                            Log.w(tag, "API $apiName respuesta inválida: ${response.take(100)}")
+                            continue
+                        }
 
+                        Log.d(tag, "API $apiName response: ${response.take(300)}")
+
+                        // Try parsing as EpisodeSourcesResponse, then MainServers, then raw code array
+                        var sourcesFound = false
                         try {
-                            val epResponse = parseJson<EpisodeSourcesResponse>(response)
-                            val allSources = epResponse.sources.sub + epResponse.sources.lat +
-                                    epResponse.sources.eng + epResponse.sources.vose
-                            Log.d(tag, "API devolvió ${allSources.size} fuentes")
-                            for (source in allSources) {
-                                if (processServerCode(source.code, data, subtitleCallback, callback, tag)) {
-                                    linksFound = true
+                            val epResponse = tryParseJson<EpisodeSourcesResponse>(response)
+                            if (epResponse != null) {
+                                val allSources = epResponse.sources.sub + epResponse.sources.lat +
+                                        epResponse.sources.eng + epResponse.sources.vose
+                                Log.d(tag, "API devolvió EpisodeSourcesResponse con ${allSources.size} fuentes")
+                                for (source in allSources) {
+                                    if (processServerCode(source.code, data, subtitleCallback, callback, tag)) {
+                                        linksFound = true
+                                        sourcesFound = true
+                                    }
                                 }
                             }
-                        } catch (e1: Exception) {
+                        } catch (_: Exception) {}
+
+                        if (!sourcesFound) {
                             try {
-                                val serversResponse = parseJson<MainServers>(response)
-                                val allServers = serversResponse.sub + serversResponse.lat +
-                                        serversResponse.eng + serversResponse.vose
-                                Log.d(tag, "API devolvió ${allServers.size} servidores")
-                                for (server in allServers) {
-                                    if (processServerCode(server.code, data, subtitleCallback, callback, tag)) {
+                                val mainServers = tryParseJson<MainServers>(response)
+                                if (mainServers != null) {
+                                    val allServers = mainServers.sub + mainServers.lat +
+                                            mainServers.eng + mainServers.vose
+                                    Log.d(tag, "API devolvió MainServers con ${allServers.size} servidores")
+                                    for (server in allServers) {
+                                        if (processServerCode(server.code, data, subtitleCallback, callback, tag)) {
+                                            linksFound = true
+                                            sourcesFound = true
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+
+                        if (!sourcesFound) {
+                            try {
+                                val rawCodes = parseJson<List<String>>(response)
+                                Log.d(tag, "API devolvió lista de ${rawCodes.size} códigos")
+                                for (code in rawCodes) {
+                                    if (processServerCode(code, data, subtitleCallback, callback, tag)) {
                                         linksFound = true
                                     }
                                 }
-                            } catch (e2: Exception) {
-                                Log.w(tag, "Fallo parseo API $apiUrl: ${e1.message}, ${e2.message}")
-                            }
+                            } catch (_: Exception) {}
                         }
                     } catch (e: Exception) {
-                        Log.w(tag, "Fallo llamada API $apiUrl: ${e.message}")
+                        Log.w(tag, "Fallo llamada API $apiName: ${e.message}")
                     }
                 }
             }
 
-            // Try #3: search all scripts for any URL-like patterns
+            // Try #3: search raw HTML for JSON data or video URLs
             if (!linksFound) {
-                Log.d(tag, "Intentando extracción directa de URLs")
-                for (script in scripts) {
-                    val scriptData = script.data()
-                    val urls = Regex("""https?://[^\s"'<>]+\.(?:m3u8|mp4)""").findAll(scriptData)
-                    for (urlMatch in urls) {
-                        val videoUrl = urlMatch.value
-                        Log.d(tag, "URL directa encontrada: ${videoUrl.take(100)}")
-                        if (processServerCode(videoUrl, data, subtitleCallback, callback, tag)) {
-                            linksFound = true
-                        }
+                Log.d(tag, "Intentando extracción directa del HTML")
+                // Look for any JSON-like data in the raw HTML
+                val jsonPatterns = listOf(
+                    Regex("""videos\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL),
+                    Regex("""sources\s*[:=]\s*(\[.*?\]);?""", RegexOption.DOT_MATCHES_ALL),
+                    Regex("""["']code["']\s*:\s*["']([^"']+)["']"""),
+                    Regex("""https?://[^\s"'<>]+\.(?:m3u8|mp4)"""),
+                )
+                for (pattern in jsonPatterns) {
+                    val matches = pattern.findAll(rawHtml)
+                    for (match in matches) {
+                        val value = match.value
+                        Log.d(tag, "Patrón '${pattern.pattern.take(30)}' encontró: ${value.take(100)}")
+                    }
+                }
+
+                // Try extracting video URLs from any data attributes
+                val videoElements = document.select("[data-video], [data-src*='.mp4'], [data-src*='.m3u8']")
+                Log.d(tag, "Elementos con data-video: ${videoElements.size}")
+                for (el in videoElements) {
+                    val videoUrl = el.attr("data-video").ifBlank { el.attr("data-src") }
+                    Log.d(tag, "Video URL data attr: ${videoUrl.take(100)}")
+                    if (processServerCode(videoUrl, data, subtitleCallback, callback, tag)) {
+                        linksFound = true
+                    }
+                }
+
+                // Try extracting from iframes
+                val iframes = document.select("iframe[src]")
+                Log.d(tag, "Iframes encontrados: ${iframes.size}")
+                for (iframe in iframes) {
+                    val src = iframe.attr("src")
+                    Log.d(tag, "Iframe src: ${src.take(100)}")
+                    if (processServerCode(src, data, subtitleCallback, callback, tag)) {
+                        linksFound = true
                     }
                 }
             }
@@ -421,6 +490,14 @@ class AnimeflvnetProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e(tag, "Error: ${code.take(60)} - ${e.message}")
             false
+        }
+    }
+
+    private inline fun <reified T> tryParseJson(json: String): T? {
+        return try {
+            parseJson<T>(json)
+        } catch (_: Exception) {
+            null
         }
     }
 }
