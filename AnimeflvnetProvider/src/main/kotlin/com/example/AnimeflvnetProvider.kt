@@ -229,49 +229,61 @@ class AnimeflvnetProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val tag = "AnimeFlvProvider"
+        Log.d(tag, "=== loadLinks: $data ===")
         try {
             val doc = app.get(data).document
             var linksFound = false
 
-            doc.select("script").forEach { script ->
-                if (script.data().contains("var videos = {") || script.data()
-                        .contains("var anime_id =") || script.data().contains("server")
-                ) {
-                    println("Script encontrado: ${script.data().substring(0, minOf(script.data().length, 500))}")
+            val scripts = doc.select("script")
+            Log.d(tag, "Scripts encontrados: ${scripts.size}")
 
-                    val serversRegex = Regex("var videos = (\\{\"SUB\":\\[\\{.*?\\}\\]\\});")
-                    val serversplain = serversRegex.find(script.data())?.destructured?.component1() ?: ""
+            for (script in scripts) {
+                val scriptData = script.data()
+                if (!scriptData.contains("var videos =") && !scriptData.contains("server")) {
+                    continue
+                }
+                Log.d(tag, "Script relevante: ${scriptData.take(300)}")
 
-                    if (serversplain.isBlank()) {
-                        println("No se encontró JSON válido en el script")
-                        return@forEach
-                    }
+                val serversRegex = Regex("""var videos\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+                val match = serversRegex.find(scriptData)
+                if (match == null) {
+                    Log.w(tag, "Regex no encontró var videos en script")
+                    continue
+                }
+                val serversJson = match.groupValues[1]
+                Log.d(tag, "JSON extraído: ${serversJson.take(200)}")
 
-                    try {
-                        val json = parseJson<MainServers>(serversplain)
+                try {
+                    val json = parseJson<MainServers>(serversJson)
+                    Log.d(tag, "JSON parseado: ${json.sub.size} servidores SUB")
 
-                        val serverJobs = coroutineScope {
-                            json.sub.map { sub ->
-                                async {
-                                    val code = sub.code
-                                    println("Procesando servidor con código: $code")
-                                    loadExtractor(code, data, subtitleCallback, callback)
+                    json.sub.forEach { sub ->
+                        Log.d(tag, "Servidor code: ${sub.code.take(100)}")
+                        try {
+                            withTimeout(7000) {
+                                loadExtractor(sub.code, data, subtitleCallback, callback).let { success ->
+                                    if (success) {
+                                        linksFound = true
+                                        Log.d(tag, "loadExtractor OK para: ${sub.code.take(60)}")
+                                    }
                                 }
                             }
+                        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                            Log.w(tag, "loadExtractor timeout para: ${sub.code.take(60)}")
+                        } catch (e: Exception) {
+                            Log.e(tag, "Error en loadExtractor para ${sub.code.take(60)}: ${e.message}")
                         }
-
-                        if (serverJobs.awaitAll().any { it }) {
-                            linksFound = true
-                        }
-
-                    } catch (e: Exception) {
-                        println("Error al analizar JSON: ${e.message}, JSON: $serversplain")
                     }
+                } catch (e: Exception) {
+                    Log.e(tag, "Error al parsear JSON: ${e.message}")
                 }
             }
+
+            Log.d(tag, "=== loadLinks FIN: linksFound=$linksFound ===")
             return linksFound
         } catch (e: Exception) {
-            println("Error general en loadLinks: ${e.message}")
+            Log.e(tag, "Error general en loadLinks: ${e.message}")
             return false
         }
     }
