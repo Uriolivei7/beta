@@ -2,13 +2,12 @@ package com.example
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import java.util.*
 import android.util.Log
-import com.lagradost.cloudstream3.amap
 import kotlinx.coroutines.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 
 class AnimeflvnetProvider : MainAPI() {
     companion object {
@@ -214,12 +213,59 @@ class AnimeflvnetProvider : MainAPI() {
     }
 
     data class MainServers(
-            @JsonProperty("SUB")
-            val sub: List<Sub>,
+        @JsonProperty("SUB")
+        val sub: List<Sub> = emptyList(),
+        @JsonProperty("LAT")
+        val lat: List<Sub> = emptyList(),
+        @JsonProperty("ENG")
+        val eng: List<Sub> = emptyList(),
+        @JsonProperty("VOSE")
+        val vose: List<Sub> = emptyList(),
     )
 
     data class Sub(
-            val code: String,
+        val code: String,
+    )
+
+    data class EpisodeResponse(
+        @JsonProperty("anime_id")
+        val animeId: String = "",
+        @JsonProperty("episode_id")
+        val episodeId: String = "",
+        @JsonProperty("anime")
+        val anime: String = "",
+        @JsonProperty("episode")
+        val episode: String = "",
+        @JsonProperty("date")
+        val date: String = "",
+    )
+
+    data class EpisodeSourcesResponse(
+        @JsonProperty("anime_id")
+        val animeId: String = "",
+        @JsonProperty("episode_id")
+        val episodeId: String = "",
+        @JsonProperty("sources")
+        val sources: Sources = Sources(),
+    )
+
+    data class Sources(
+        @JsonProperty("SUB")
+        val sub: List<SourceEntry> = emptyList(),
+        @JsonProperty("LAT")
+        val lat: List<SourceEntry> = emptyList(),
+        @JsonProperty("ENG")
+        val eng: List<SourceEntry> = emptyList(),
+        @JsonProperty("VOSE")
+        val vose: List<SourceEntry> = emptyList(),
+    )
+
+    data class SourceEntry(
+        val code: String,
+        @JsonProperty("title")
+        val title: String? = null,
+        @JsonProperty("type")
+        val type: String? = null,
     )
 
 
@@ -231,52 +277,117 @@ class AnimeflvnetProvider : MainAPI() {
     ): Boolean {
         val tag = "AnimeFlvProvider"
         Log.d(tag, "=== loadLinks: $data ===")
+        var linksFound = false
+
         try {
             val doc = app.get(data).document
-            var linksFound = false
-
             val scripts = doc.select("script")
             Log.d(tag, "Scripts encontrados: ${scripts.size}")
 
+            var animeId: String? = null
+            var episodeId: String? = null
+            var inlineVideosJson: String? = null
+
             for (script in scripts) {
                 val scriptData = script.data()
-                if (!scriptData.contains("var videos =") && !scriptData.contains("server")) {
-                    continue
-                }
-                Log.d(tag, "Script relevante: ${scriptData.take(300)}")
 
-                val serversRegex = Regex("""var videos\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
-                val match = serversRegex.find(scriptData)
-                if (match == null) {
-                    Log.w(tag, "Regex no encontró var videos en script")
-                    continue
-                }
-                val serversJson = match.groupValues[1]
-                Log.d(tag, "JSON extraído: ${serversJson.take(200)}")
+                val animeIdMatch = Regex("""var anime_id\s*=\s*(\d+);""").find(scriptData)
+                if (animeIdMatch != null) animeId = animeIdMatch.groupValues[1]
 
+                val episodeIdMatch = Regex("""var episode_id\s*=\s*(\d+);""").find(scriptData)
+                if (episodeIdMatch != null) episodeId = episodeIdMatch.groupValues[1]
+
+                val videosMatch = Regex("""var videos\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(scriptData)
+                if (videosMatch != null) inlineVideosJson = videosMatch.groupValues[1]
+            }
+
+            Log.d(tag, "animeId=$animeId episodeId=$episodeId inlineVideosJson=${inlineVideosJson?.take(100)}")
+
+            // Try #1: inline JSON (if not empty array)
+            if (!inlineVideosJson.isNullOrBlank() && inlineVideosJson != "[]") {
+                Log.d(tag, "Intentando inline JSON")
                 try {
-                    val json = parseJson<MainServers>(serversJson)
-                    Log.d(tag, "JSON parseado: ${json.sub.size} servidores SUB")
-
-                    json.sub.forEach { sub ->
-                        Log.d(tag, "Servidor code: ${sub.code.take(100)}")
-                        try {
-                            withTimeout(7000) {
-                                loadExtractor(sub.code, data, subtitleCallback, callback).let { success ->
-                                    if (success) {
-                                        linksFound = true
-                                        Log.d(tag, "loadExtractor OK para: ${sub.code.take(60)}")
-                                    }
-                                }
-                            }
-                        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                            Log.w(tag, "loadExtractor timeout para: ${sub.code.take(60)}")
-                        } catch (e: Exception) {
-                            Log.e(tag, "Error en loadExtractor para ${sub.code.take(60)}: ${e.message}")
+                    val serversJson = parseJson<MainServers>(inlineVideosJson)
+                    val allServers = serversJson.sub + serversJson.lat + serversJson.eng + serversJson.vose
+                    Log.d(tag, "Servidores inline: ${allServers.size}")
+                    for (server in allServers) {
+                        if (processServerCode(server.code, data, subtitleCallback, callback, tag)) {
+                            linksFound = true
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(tag, "Error al parsear JSON: ${e.message}")
+                    Log.w(tag, "Fallo inline JSON: ${e.message}")
+                }
+            }
+
+            // Try #2: API endpoint (POST)
+            if (!linksFound && animeId != null && episodeId != null) {
+                val apiUrls = listOf(
+                    "https://www3.animeflv.net/api/episode/sources",
+                    "https://www3.animeflv.net/api/episode",
+                    "https://animeflv.net/api/episode/sources",
+                )
+                for (apiUrl in apiUrls) {
+                    if (linksFound) break
+                    try {
+                        Log.d(tag, "Intentando API: $apiUrl")
+                        val response = app.post(
+                            apiUrl,
+                            data = mapOf("anime_id" to animeId!!, "episode_id" to episodeId!!),
+                            referer = data,
+                            headers = mapOf(
+                                "X-Requested-With" to "XMLHttpRequest",
+                                "Accept" to "application/json, text/javascript, */*; q=0.01",
+                            )
+                        ).text
+                        Log.d(tag, "API response: ${response.take(200)}")
+
+                        if (response.isBlank() || response == "[]" || response == "{}") continue
+
+                        try {
+                            val epResponse = parseJson<EpisodeSourcesResponse>(response)
+                            val allSources = epResponse.sources.sub + epResponse.sources.lat +
+                                    epResponse.sources.eng + epResponse.sources.vose
+                            Log.d(tag, "API devolvió ${allSources.size} fuentes")
+                            for (source in allSources) {
+                                if (processServerCode(source.code, data, subtitleCallback, callback, tag)) {
+                                    linksFound = true
+                                }
+                            }
+                        } catch (e1: Exception) {
+                            try {
+                                val serversResponse = parseJson<MainServers>(response)
+                                val allServers = serversResponse.sub + serversResponse.lat +
+                                        serversResponse.eng + serversResponse.vose
+                                Log.d(tag, "API devolvió ${allServers.size} servidores")
+                                for (server in allServers) {
+                                    if (processServerCode(server.code, data, subtitleCallback, callback, tag)) {
+                                        linksFound = true
+                                    }
+                                }
+                            } catch (e2: Exception) {
+                                Log.w(tag, "Fallo parseo API $apiUrl: ${e1.message}, ${e2.message}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(tag, "Fallo llamada API $apiUrl: ${e.message}")
+                    }
+                }
+            }
+
+            // Try #3: search all scripts for any URL-like patterns
+            if (!linksFound) {
+                Log.d(tag, "Intentando extracción directa de URLs")
+                for (script in scripts) {
+                    val scriptData = script.data()
+                    val urls = Regex("""https?://[^\s"'<>]+\.(?:m3u8|mp4)""").findAll(scriptData)
+                    for (urlMatch in urls) {
+                        val videoUrl = urlMatch.value
+                        Log.d(tag, "URL directa encontrada: ${videoUrl.take(100)}")
+                        if (processServerCode(videoUrl, data, subtitleCallback, callback, tag)) {
+                            linksFound = true
+                        }
+                    }
                 }
             }
 
@@ -285,6 +396,31 @@ class AnimeflvnetProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e(tag, "Error general en loadLinks: ${e.message}")
             return false
+        }
+    }
+
+    private suspend fun processServerCode(
+        code: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        tag: String
+    ): Boolean {
+        if (code.isBlank()) return false
+        Log.d(tag, "Procesando: ${code.take(100)}")
+        return try {
+            withTimeout(7000) {
+                val success = loadExtractor(code, referer, subtitleCallback, callback)
+                if (success) Log.d(tag, "OK: ${code.take(60)}")
+                else Log.d(tag, "loadExtractor devolvió false: ${code.take(60)}")
+                success
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.w(tag, "Timeout: ${code.take(60)}")
+            false
+        } catch (e: Exception) {
+            Log.e(tag, "Error: ${code.take(60)} - ${e.message}")
+            false
         }
     }
 }
