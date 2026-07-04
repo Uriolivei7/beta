@@ -142,8 +142,6 @@ class LacartoonsProvider : MainAPI() {
             val link = rawLink.replaceFirst("https://short.ink/", "https://abysscdn.com/?v=")
             if (link != rawLink) {
                 Log.d("LACartoonsProvider", "[#$index] short.ink replaced → $link")
-            } else if (rawLink.contains("cubeembed")) {
-                Log.w("LACartoonsProvider", "[#$index] cubeembed URL detected — this embed requires JavaScript (SPA with encrypted API) and will likely fail with VidStack extractor")
             }
 
             val finalLink = fixHostsLinks(link)

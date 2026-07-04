@@ -76,26 +76,24 @@ class Cubeembed : ExtractorApi() {
             }
         }
 
-        val m3u8Url = if (cfUrl.isNotEmpty()) {
-            Log.d("Cubeembed", "Using cf URL instead of source")
-            cfUrl
-        } else {
-            Log.w("Cubeembed", "cf URL empty, falling back to source")
-            source
+        if (cfUrl.isNotEmpty()) {
+            Log.d("Cubeembed", "CF M3U8: $cfUrl")
+            callback.invoke(
+                newExtractorLink(this.name, "$name (CF)", cfUrl, ExtractorLinkType.M3U8) {
+                    this.referer = url
+                    this.quality = Qualities.Unknown.value
+                }
+            )
         }
-
-        Log.d("Cubeembed", "M3U8 URL: $m3u8Url")
-        callback.invoke(
-            newExtractorLink(
-                source = this.name,
-                name = this.name,
-                url = m3u8Url,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = url
-                this.quality = Qualities.Unknown.value
-            }
-        )
+        if (source.isNotEmpty()) {
+            Log.d("Cubeembed", "Source M3U8: $source")
+            callback.invoke(
+                newExtractorLink(this.name, "$name (Source)", source, ExtractorLinkType.M3U8) {
+                    this.referer = url
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+        }
     }
 
     private fun getBaseUrl(url: String): String {
