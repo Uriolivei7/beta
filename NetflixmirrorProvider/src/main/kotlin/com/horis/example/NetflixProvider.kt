@@ -225,7 +225,7 @@ class NetflixProvider : MainAPI() {
         val videoHeaders = mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
-        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title)
+        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
             for (track in tracks) {

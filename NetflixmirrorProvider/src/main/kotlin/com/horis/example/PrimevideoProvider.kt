@@ -288,7 +288,7 @@ class PrimevideoProvider : MainAPI() {
         val videoHeaders = mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
 
         // New flow: play.php → playlist.php
-        val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title)
+        val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
             for (track in tracks) {

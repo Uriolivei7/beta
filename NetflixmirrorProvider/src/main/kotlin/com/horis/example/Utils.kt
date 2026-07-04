@@ -205,8 +205,8 @@ val newTvBaseHeaders = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma"        to "no-cache",
     "Expires"       to "0",
-    "X-Requested-With" to "XMLHttpRequest",
-    "User-Agent"    to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+    "X-Requested-With" to "NetmirrorNewTV v1.0",
+    "User-Agent"    to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
     "Accept"        to "application/json, text/plain, */*"
 )
 
@@ -450,9 +450,14 @@ suspend fun getPlaylistUrl(
     mainUrl: String,
     ott: String,
     id: String,
-    title: String
+    title: String,
+    cookie: String = ""
 ): Pair<String, List<PlaylistTrack>>? {
-    val domains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
+    val domains = (playPhpDomains + listOf(mainUrl.trimEnd('/'))).distinct()
+    val cookieHeader = buildString {
+        append("hd=on")
+        if (cookie.isNotBlank()) append("; t_hash_t=$cookie")
+    }
 
     var playHash: String? = null
     var timestamp: String = "0"
@@ -467,7 +472,7 @@ suspend fun getPlaylistUrl(
                 headers = buildNewTvHeaders(ott, mapOf(
                     "Referer" to "$domain/home",
                     "Origin" to domain,
-                    "X-Requested-With" to "XMLHttpRequest",
+                    "Cookie" to cookieHeader,
                     "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
                 ))
             )
@@ -496,7 +501,10 @@ suspend fun getPlaylistUrl(
     try {
         val playlistBody = app.get(
             "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$playHash",
-            headers = buildNewTvHeaders(ott, mapOf("Referer" to "$mainUrl"))
+            headers = buildNewTvHeaders(ott, mapOf(
+                "Referer" to "$mainUrl",
+                "Cookie" to cookieHeader
+            ))
         ).text
         Log.d("PlayPhp", "playlist response=$playlistBody")
         val parsed = tryParseJson<List<PlaylistResponse>>(playlistBody)
