@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
+import kotlin.random.Random
 import okhttp3.Interceptor
 import okhttp3.Response
 
@@ -63,10 +64,14 @@ class NetflixProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val rawResponse = app.get(
-            "$apiBase/newtv/post.php?id=$id",
-            headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).text
+        val rawResponse = retryOnDbError {
+            val text = app.get(
+                "$apiBase/newtv/post.php?id=$id",
+                headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
+            ).text
+            checkDbError(text)
+            text
+        }
         Log.d("NetflixProvider", "RAW post response: $rawResponse")
         val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
 
@@ -218,10 +223,12 @@ class NetflixProvider : MainAPI() {
         Log.d("NetflixProvider", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
 
         val rawPlayer = retryOnDbError {
-            app.get(
+            val text = app.get(
                 "$apiBase/newtv/player.php?id=$id",
                 headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
+            checkDbError(text)
+            text
         }
         Log.d("NetflixProvider", "loadLinks RAW player response: $rawPlayer")
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
@@ -232,8 +239,10 @@ class NetflixProvider : MainAPI() {
             return false
         }
 
+        val m3u8Referer = response.referer ?: apiBase
+        kotlinx.coroutines.delay((1000L..3000L).random())
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = response.referer ?: apiBase
+            this.referer = m3u8Referer
         })
         Log.d("NetflixProvider", "loadLinks SUCCESS: video_link=${response.video_link}")
         return true
@@ -241,12 +250,14 @@ class NetflixProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val m3u8Referer = extractorLink.referer
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 if (request.url.toString().contains(".m3u8")) {
                     val newRequest = request.newBuilder()
                         .header("Cookie", "hd=on")
+                        .apply { m3u8Referer?.let { header("Referer", it) } }
                         .build()
                     return chain.proceed(newRequest)
                 }

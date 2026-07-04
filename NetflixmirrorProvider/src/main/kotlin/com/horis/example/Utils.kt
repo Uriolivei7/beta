@@ -179,7 +179,7 @@ suspend fun <T> retryOnDbError(maxRetries: Int = 3, block: suspend () -> T): T {
         } catch (e: Exception) {
             lastException = e
             val msg = e.message.orEmpty() + e.cause?.message.orEmpty()
-            if (msg.contains("Too many connections") || msg.contains("1040") || msg.contains("08004")) {
+            if (msg.contains("Too many connections") || msg.contains("1040") || msg.contains("08004") || msg.contains("HY000")) {
                 Log.d("Retry", "DB connection pool full (attempt ${attempt + 1}/$maxRetries), retrying in ${(attempt + 1) * 2}s")
                 kotlinx.coroutines.delay(((attempt + 1) * 2000L))
             } else {
@@ -188,6 +188,13 @@ suspend fun <T> retryOnDbError(maxRetries: Int = 3, block: suspend () -> T): T {
         }
     }
     throw lastException ?: Exception("Retry failed after $maxRetries attempts")
+}
+
+/** Check raw API text for MySQL error HTML and throw for retryOnDbError to catch */
+fun checkDbError(text: String) {
+    if (text.startsWith("<") && (text.contains("mysqli_connect") || text.contains("Too many connections") || text.contains("1040"))) {
+        throw Exception("mysqli_connect(): Too many connections (detected in response body)")
+    }
 }
 
 // ---------------------------------------------------------------------------
