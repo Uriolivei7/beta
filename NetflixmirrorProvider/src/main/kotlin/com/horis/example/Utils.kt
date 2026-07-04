@@ -131,17 +131,44 @@ suspend fun bypass(mainUrl: String): String {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    // Get addhash from main page (required by verify.php)
-    val addhash = try {
-        val homeHtml = app.get("$mainUrl/home", headers = bypassHeaders).text
-        org.jsoup.Jsoup.parse(homeHtml).selectFirst("input[name=addhash]")?.attr("value")
-            ?: Regex("""["']addhash["']\s*:\s*["']([^"']+)""").find(homeHtml)?.groupValues?.getOrNull(1)
-            ?: ""
+    // Get addhash from main page following redirects (net52.cc → net22.cc/verify2)
+    var addhash = ""
+    try {
+        val redirectClient = app.baseClient.newBuilder()
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+        val redirectRequest = Request.Builder()
+            .url("$mainUrl/home")
+            .apply { bypassHeaders.forEach { (k, v) -> addHeader(k, v) } }
+            .build()
+        redirectClient.newCall(redirectRequest).execute().use { resp ->
+            val finalUrl = resp.request.url.toString()
+            val body = resp.body?.string().orEmpty()
+            Log.d("bypass", "redirect ended at $finalUrl body.len=${body.length}")
+            // Try URL parameter first
+            addhash = Regex("""[?&]addhash=([^&]+)""").find(finalUrl)?.groupValues?.getOrNull(1).orEmpty()
+            if (addhash.isBlank()) {
+                val doc = org.jsoup.Jsoup.parse(body)
+                addhash = doc.selectFirst("input[name=addhash]")?.attr("value").orEmpty()
+            }
+            if (addhash.isBlank()) {
+                addhash = Regex("""["']addhash["']\s*[:=]\s*["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
+            }
+            if (addhash.isBlank()) {
+                addhash = Regex("""addhash[^=]*=["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
+            }
+        }
     } catch (e: Exception) {
         Log.d("bypass", "addhash extraction failed: ${e.message}")
-        ""
     }
-    Log.d("bypass", "mainUrl=$mainUrl addhash.length=${addhash.length}")
+    Log.d("bypass", "addhash.length=${addhash.length} addhash=${addhash.take(20)}")
+
+    val verifyHeaders = bypassHeaders + mapOf(
+        "Origin" to "https://net22.cc",
+        "Referer" to "https://net22.cc/verify2",
+        "Content-Type" to "application/x-www-form-urlencoded"
+    )
 
     val client = app.baseClient.newBuilder()
         .followRedirects(false)
@@ -157,21 +184,26 @@ suspend fun bypass(mainUrl: String): String {
             val request = Request.Builder()
                 .url("$mainUrl/verify.php")
                 .post(formBody)
-                .apply { bypassHeaders.forEach { (k, v) -> addHeader(k, v) } }
+                .apply { verifyHeaders.forEach { (k, v) -> addHeader(k, v) } }
                 .build()
             client.newCall(request).execute().use { response ->
-                val cookie = response.headers("Set-Cookie")
-                    .firstOrNull { it.startsWith("t_hash_t=") }
-                    ?.substringAfter("t_hash_t=")
-                    ?.substringBefore(";")
-                    .orEmpty()
-                if (cookie.isNotEmpty()) {
-                    NetflixMirrorStorage.saveCookie(cookie)
-                    Log.d("bypass", "Got cookie on attempt $count")
-                    return cookie
+                val respBody = response.body?.string().orEmpty()
+                val statusCode = response.code
+                Log.d("bypass", "verify.php status=$statusCode body=${respBody.take(200)}")
+                if (statusCode in 200..399 || respBody.contains("success", ignoreCase = true) || respBody.contains("ok", ignoreCase = true)) {
+                    val cookie = response.headers("Set-Cookie")
+                        .firstOrNull { it.startsWith("t_hash_t=") }
+                        ?.substringAfter("t_hash_t=")
+                        ?.substringBefore(";")
+                        .orEmpty()
+                    if (cookie.isNotEmpty()) {
+                        NetflixMirrorStorage.saveCookie(cookie)
+                        Log.d("bypass", "Got cookie on attempt $count: ${cookie.take(20)}")
+                        return cookie
+                    }
                 }
+                Log.d("bypass", "Attempt $count: no valid cookie, resp=$respBody")
             }
-            Log.d("bypass", "Attempt $count no cookie, delay+retry")
             kotlinx.coroutines.delay(2000)
         } catch (e: Exception) {
             Log.w("bypass", "Attempt $count failed: ${e.message}")
