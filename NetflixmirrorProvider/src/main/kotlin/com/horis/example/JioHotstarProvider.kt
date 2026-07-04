@@ -18,6 +18,23 @@ class JioHotstarProvider : MainAPI() {
 
     private val ott = "hs"
 
+    private val androidHeaders = mapOf(
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+        "Cache-Control" to "max-age=0",
+        "Connection" to "keep-alive",
+        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "same-origin",
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+        "X-Requested-With" to "XMLHttpRequest"
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val apiBase = resolveApiUrl()
 
@@ -190,7 +207,7 @@ class JioHotstarProvider : MainAPI() {
         val id = loadData.id
         val title = loadData.title
         val cookie = bypass(mainUrl)
-        val videoHeaders = mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
+        val videoHeaders = androidHeaders + mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
 
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie)
