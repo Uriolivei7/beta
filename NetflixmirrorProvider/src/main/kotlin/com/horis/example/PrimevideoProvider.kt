@@ -284,8 +284,27 @@ class PrimevideoProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val load = parseJson<NewTvLoadData>(data)
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
-        Log.d("Primevideo", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
 
+        // New flow: play.php → playlist.php
+        val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title)
+        if (playlistResult != null) {
+            val (m3u8Url, tracks) = playlistResult
+            for (track in tracks) {
+                if (track.kind == "captions" && !track.file.isNullOrBlank()) {
+                    val subUrl = if (track.file.startsWith("http")) track.file
+                                 else "https:${track.file.removePrefix("/")}"
+                    subtitleCallback(newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl))
+                }
+            }
+            Log.d("Primevideo", "loadLinks new flow SUCCESS: $m3u8Url")
+            callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+            })
+            return true
+        }
+
+        // Fallback to old player.php flow
+        Log.d("Primevideo", "loadLinks: fallback to player.php id=${load.id}")
         val rawResult = retryOnDbError {
             val text = app.get(
                 "$apiBase/newtv/player.php?id=${load.id}",
@@ -308,7 +327,7 @@ class PrimevideoProvider : MainAPI() {
         callback.invoke(newExtractorLink(name, name, result.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = m3u8Referer
         })
-        Log.d("Primevideo", "loadLinks SUCCESS: video_link=${result.video_link}")
+        Log.d("Primevideo", "loadLinks SUCCESS (player.php fallback): video_link=${result.video_link}")
         return true
     }
 

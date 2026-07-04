@@ -218,10 +218,30 @@ class NetflixProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         val apiBase = resolveApiUrl()
-        val id = parseJson<NewTvLoadData>(data).id
-        Log.d("NetflixProvider", "loadLinks: id=$id, apiBase=$apiBase, ott=$ott")
-        Log.d("NetflixProvider", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
+        val loadData = parseJson<NewTvLoadData>(data)
+        val id = loadData.id
+        val title = loadData.title
 
+        // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
+        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title)
+        if (playlistResult != null) {
+            val (m3u8Url, tracks) = playlistResult
+            for (track in tracks) {
+                if (track.kind == "captions" && !track.file.isNullOrBlank()) {
+                    val subUrl = if (track.file.startsWith("http")) track.file
+                                 else "https:${track.file.removePrefix("/")}"
+                    subtitleCallback(newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl))
+                }
+            }
+            Log.d("NetflixProvider", "loadLinks new flow SUCCESS: $m3u8Url")
+            callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+            })
+            return true
+        }
+
+        // Fallback to old player.php flow
+        Log.d("NetflixProvider", "loadLinks: fallback to player.php id=$id")
         val rawPlayer = retryOnDbError {
             val text = app.get(
                 "$apiBase/newtv/player.php?id=$id",
@@ -244,7 +264,7 @@ class NetflixProvider : MainAPI() {
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = m3u8Referer
         })
-        Log.d("NetflixProvider", "loadLinks SUCCESS: video_link=${response.video_link}")
+        Log.d("NetflixProvider", "loadLinks SUCCESS (player.php fallback): video_link=${response.video_link}")
         return true
     }
 

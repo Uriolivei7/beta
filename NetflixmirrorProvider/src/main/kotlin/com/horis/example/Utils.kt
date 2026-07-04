@@ -416,3 +416,102 @@ data class NewTvPlayerResponse(
     val video_link: String? = null,
     val referer: String? = null
 )
+
+// New playlist.php flow (play.php → playlist.php)
+
+data class PlayHashResponse(
+    val h: String? = null
+)
+
+data class PlaylistSource(
+    val file: String? = null,
+    val label: String? = null,
+    val type: String? = null,
+    val default: String? = null
+)
+
+data class PlaylistTrack(
+    val kind: String? = null,
+    val file: String? = null,
+    val label: String? = null,
+    val language: String? = null
+)
+
+data class PlaylistResponse(
+    val title: String? = null,
+    val image2: String? = null,
+    val sources: List<PlaylistSource>? = null,
+    val tracks: List<PlaylistTrack>? = null
+)
+
+val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
+
+suspend fun getPlaylistUrl(
+    mainUrl: String,
+    ott: String,
+    id: String,
+    title: String
+): Pair<String, List<PlaylistTrack>>? {
+    val domains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
+
+    var playHash: String? = null
+    var timestamp: String = "0"
+
+    for (domain in domains) {
+        try {
+            val resp = app.post(
+                "$domain/play.php",
+                requestBody = FormBody.Builder()
+                    .add("id", id)
+                    .build(),
+                headers = buildNewTvHeaders(ott, mapOf(
+                    "Referer" to "$domain/home",
+                    "Origin" to domain,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
+                ))
+            )
+            val text = resp.text.trim()
+            Log.d("PlayPhp", "Domain=$domain response=$text")
+            if (text.startsWith("{")) {
+                val parsed = tryParseJson<PlayHashResponse>(text)
+                val h = parsed?.h
+                if (!h.isNullOrBlank()) {
+                    playHash = h.removePrefix("in=")
+                    timestamp = playHash.split("::").getOrNull(2) ?: "0"
+                    Log.d("PlayPhp", "Got hash=$playHash ts=$timestamp from $domain")
+                    break
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
+        }
+    }
+
+    if (playHash.isNullOrBlank()) {
+        Log.w("PlayPhp", "All domains failed to get play hash")
+        return null
+    }
+
+    try {
+        val playlistBody = app.get(
+            "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$playHash",
+            headers = buildNewTvHeaders(ott, mapOf("Referer" to "$mainUrl"))
+        ).text
+        Log.d("PlayPhp", "playlist response=$playlistBody")
+        val parsed = tryParseJson<List<PlaylistResponse>>(playlistBody)
+        val first = parsed?.firstOrNull()
+        val sourceFile = first?.sources?.firstOrNull()?.file
+        val tracks = first?.tracks.orEmpty()
+        if (!sourceFile.isNullOrBlank()) {
+            val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
+                          else "$mainUrl${sourceFile.removePrefix("/")}"
+            Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size}")
+            return Pair(m3u8Url, tracks)
+        }
+    } catch (e: Exception) {
+        Log.w("PlayPhp", "playlist.php failed: ${e.message}")
+    }
+
+    return null
+}
