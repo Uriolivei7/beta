@@ -114,25 +114,24 @@ suspend fun bypass(mainUrl: String): String {
     }
 
     val newCookie = try {
-        throttle()
         val bypassHeaders = mapOf(
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br, zstd",
-            "Accept-Language" to "en-US,en;q=0.9",
+            "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
             "Cache-Control" to "max-age=0",
             "Connection" to "keep-alive",
             "Content-Type" to "application/x-www-form-urlencoded",
             "Origin" to "https://net22.cc",
             "Referer" to "https://net22.cc/verify2",
-            "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
+            "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
             "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
+            "sec-ch-ua-platform" to "\"Android\"",
             "Sec-Fetch-Dest" to "document",
             "Sec-Fetch-Mode" to "navigate",
             "Sec-Fetch-Site" to "same-origin",
             "Sec-Fetch-User" to "?1",
             "Upgrade-Insecure-Requests" to "1",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+            "X-Requested-With" to "XMLHttpRequest"
         )
         val formBody = FormBody.Builder()
             .add("g-recaptcha-response", UUID.randomUUID().toString())
@@ -183,9 +182,6 @@ suspend fun <T> retryOnDbError(maxRetries: Int = 3, block: suspend () -> T): T {
             if (msg.contains("Too many connections") || msg.contains("1040") || msg.contains("08004") || msg.contains("HY000")) {
                 Log.d("Retry", "DB connection pool full (attempt ${attempt + 1}/$maxRetries), retrying in ${(attempt + 1) * 2}s")
                 kotlinx.coroutines.delay(((attempt + 1) * 2000L))
-            } else if (msg.contains("Rate limited") || msg.contains("STOP Abuse")) {
-                Log.d("Retry", "Rate limited (attempt ${attempt + 1}/$maxRetries), retrying in ${(attempt + 1) * 10}s")
-                kotlinx.coroutines.delay(((attempt + 1) * 10_000L))
             } else {
                 throw e
             }
@@ -201,28 +197,6 @@ fun checkDbError(text: String) {
     }
 }
 
-/** Check raw text for server-side rate limiting ("STOP Abuse") */
-fun checkRateLimited(text: String) {
-    if (text.contains("Too Many Requests") || text.contains("STOP Abuse") || text.contains("You Just Need to Wait")) {
-        throw Exception("Rate limited: STOP Abuse detected in response")
-    }
-}
-
-/** Minimum interval (ms) enforced between requests to the same domain */
-private var lastRequestTime = 0L
-private const val MIN_REQUEST_INTERVAL_MS = 2000L
-
-/** Wait if needed to enforce minimum interval between requests */
-suspend fun throttle() {
-    val now = System.currentTimeMillis()
-    val elapsed = now - lastRequestTime
-    if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-        val wait = MIN_REQUEST_INTERVAL_MS - elapsed
-        kotlinx.coroutines.delay(wait)
-    }
-    lastRequestTime = System.currentTimeMillis()
-}
-
 // ---------------------------------------------------------------------------
 // NewTV shared infrastructure
 // ---------------------------------------------------------------------------
@@ -231,8 +205,8 @@ val newTvBaseHeaders = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma"        to "no-cache",
     "Expires"       to "0",
-    "X-Requested-With" to "NetmirrorNewTV v1.0",
-    "User-Agent"    to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
+    "X-Requested-With" to "XMLHttpRequest",
+    "User-Agent"    to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
     "Accept"        to "application/json, text/plain, */*"
 )
 
@@ -483,9 +457,8 @@ suspend fun getPlaylistUrl(
     var playHash: String? = null
     var timestamp: String = "0"
 
-    for ((attempt, domain) in domains.withIndex()) {
+    for (domain in domains) {
         try {
-            throttle()
             val resp = app.post(
                 "$domain/play.php",
                 requestBody = FormBody.Builder()
@@ -499,7 +472,6 @@ suspend fun getPlaylistUrl(
                 ))
             )
             val text = resp.text.trim()
-            checkRateLimited(text)
             Log.d("PlayPhp", "Domain=$domain response=$text")
             if (text.startsWith("{")) {
                 val parsed = tryParseJson<PlayHashResponse>(text)
@@ -512,13 +484,7 @@ suspend fun getPlaylistUrl(
                 }
             }
         } catch (e: Exception) {
-            val isRateLimit = e.message?.contains("Rate limited") == true
-            if (isRateLimit && attempt < domains.lastIndex) {
-                Log.w("PlayPhp", "Rate limited on $domain, waiting 10s before next domain")
-                kotlinx.coroutines.delay(10_000L)
-            } else {
-                Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
-            }
+            Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
         }
     }
 
@@ -528,7 +494,6 @@ suspend fun getPlaylistUrl(
     }
 
     try {
-        throttle()
         val playlistBody = app.get(
             "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$playHash",
             headers = buildNewTvHeaders(ott, mapOf("Referer" to "$mainUrl"))

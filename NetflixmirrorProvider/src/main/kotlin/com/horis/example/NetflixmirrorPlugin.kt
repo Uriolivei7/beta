@@ -10,7 +10,6 @@ open class NetflixmirrorPlugin: Plugin() {
         NetflixMirrorStorage.init(context.applicationContext)
         registerMainAPI(NetflixProvider())
         registerMainAPI(PrimevideoProvider())
-        registerMainAPI(JioHotstarProvider())
     }
 
 }

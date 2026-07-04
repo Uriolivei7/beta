@@ -203,7 +203,7 @@ class JioHotstarProvider : MainAPI() {
             }
             Log.d("JioHotstar", "loadLinks new flow SUCCESS: $m3u8Url")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
-                this.referer = mainUrl
+                this.referer = "$mainUrl/mobile/home?app=1"
             })
             return true
         }
@@ -211,13 +211,11 @@ class JioHotstarProvider : MainAPI() {
         // Fallback to old player.php flow
         Log.d("JioHotstar", "loadLinks: fallback to player.php id=$id")
         val rawPlayer = retryOnDbError {
-            throttle()
             val text = app.get(
                 "$apiBase/newtv/player.php?id=$id",
                 headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
             checkDbError(text)
-            checkRateLimited(text)
             text
         }
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
@@ -235,14 +233,12 @@ class JioHotstarProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val m3u8Referer = extractorLink.referer
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 if (request.url.toString().contains(".m3u8")) {
                     val newRequest = request.newBuilder()
                         .header("Cookie", "hd=on")
-                        .apply { m3u8Referer?.let { header("Referer", it) } }
                         .build()
                     return chain.proceed(newRequest)
                 }
