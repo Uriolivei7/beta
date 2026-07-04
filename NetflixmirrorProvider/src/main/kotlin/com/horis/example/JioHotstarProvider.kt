@@ -179,10 +179,11 @@ class JioHotstarProvider : MainAPI() {
             headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response.video_link.isNullOrBlank()) return false
 
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = response.referer ?: apiBase
+            this.headers = mapOf("Referer" to (response.referer ?: apiBase))
         })
         return true
     }

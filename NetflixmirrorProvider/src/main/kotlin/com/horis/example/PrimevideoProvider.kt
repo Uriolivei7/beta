@@ -278,12 +278,13 @@ class PrimevideoProvider : MainAPI() {
             headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
         Log.d("Primevideo", "loadLinks result=${result}")
-        if (result.status != "ok" || result.video_link.isNullOrBlank()) {
-            Log.e("Primevideo", "loadLinks FAILED: status=${result.status}, video_link=${result.video_link}")
+        if (result.video_link.isNullOrBlank()) {
+            Log.e("Primevideo", "loadLinks FAILED: video_link is empty, status=${result.status}")
             return false
         }
         callback.invoke(newExtractorLink(name, name, result.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = result.referer ?: apiBase
+            this.headers = mapOf("Referer" to (result.referer ?: apiBase))
         })
         return true
     }
