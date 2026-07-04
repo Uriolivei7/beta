@@ -306,11 +306,13 @@ class PrimevideoProvider : MainAPI() {
         // Fallback to old player.php flow
         Log.d("Primevideo", "loadLinks: fallback to player.php id=${load.id}")
         val rawResult = retryOnDbError {
+            throttle()
             val text = app.get(
                 "$apiBase/newtv/player.php?id=${load.id}",
                 headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
             checkDbError(text)
+            checkRateLimited(text)
             text
         }
         Log.d("Primevideo", "loadLinks RAW player response: $rawResult")

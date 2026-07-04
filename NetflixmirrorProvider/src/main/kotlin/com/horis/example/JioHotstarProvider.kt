@@ -211,11 +211,13 @@ class JioHotstarProvider : MainAPI() {
         // Fallback to old player.php flow
         Log.d("JioHotstar", "loadLinks: fallback to player.php id=$id")
         val rawPlayer = retryOnDbError {
+            throttle()
             val text = app.get(
                 "$apiBase/newtv/player.php?id=$id",
                 headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
             checkDbError(text)
+            checkRateLimited(text)
             text
         }
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)

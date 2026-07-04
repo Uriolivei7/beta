@@ -114,6 +114,7 @@ suspend fun bypass(mainUrl: String): String {
     }
 
     val newCookie = try {
+        throttle()
         val bypassHeaders = mapOf(
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Encoding" to "gzip, deflate, br, zstd",
@@ -182,6 +183,9 @@ suspend fun <T> retryOnDbError(maxRetries: Int = 3, block: suspend () -> T): T {
             if (msg.contains("Too many connections") || msg.contains("1040") || msg.contains("08004") || msg.contains("HY000")) {
                 Log.d("Retry", "DB connection pool full (attempt ${attempt + 1}/$maxRetries), retrying in ${(attempt + 1) * 2}s")
                 kotlinx.coroutines.delay(((attempt + 1) * 2000L))
+            } else if (msg.contains("Rate limited") || msg.contains("STOP Abuse")) {
+                Log.d("Retry", "Rate limited (attempt ${attempt + 1}/$maxRetries), retrying in ${(attempt + 1) * 10}s")
+                kotlinx.coroutines.delay(((attempt + 1) * 10_000L))
             } else {
                 throw e
             }
@@ -195,6 +199,28 @@ fun checkDbError(text: String) {
     if (text.startsWith("<") && (text.contains("mysqli_connect") || text.contains("Too many connections") || text.contains("1040"))) {
         throw Exception("mysqli_connect(): Too many connections (detected in response body)")
     }
+}
+
+/** Check raw text for server-side rate limiting ("STOP Abuse") */
+fun checkRateLimited(text: String) {
+    if (text.contains("Too Many Requests") || text.contains("STOP Abuse") || text.contains("You Just Need to Wait")) {
+        throw Exception("Rate limited: STOP Abuse detected in response")
+    }
+}
+
+/** Minimum interval (ms) enforced between requests to the same domain */
+private var lastRequestTime = 0L
+private const val MIN_REQUEST_INTERVAL_MS = 2000L
+
+/** Wait if needed to enforce minimum interval between requests */
+suspend fun throttle() {
+    val now = System.currentTimeMillis()
+    val elapsed = now - lastRequestTime
+    if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+        val wait = MIN_REQUEST_INTERVAL_MS - elapsed
+        kotlinx.coroutines.delay(wait)
+    }
+    lastRequestTime = System.currentTimeMillis()
 }
 
 // ---------------------------------------------------------------------------
@@ -457,8 +483,9 @@ suspend fun getPlaylistUrl(
     var playHash: String? = null
     var timestamp: String = "0"
 
-    for (domain in domains) {
+    for ((attempt, domain) in domains.withIndex()) {
         try {
+            throttle()
             val resp = app.post(
                 "$domain/play.php",
                 requestBody = FormBody.Builder()
@@ -472,6 +499,7 @@ suspend fun getPlaylistUrl(
                 ))
             )
             val text = resp.text.trim()
+            checkRateLimited(text)
             Log.d("PlayPhp", "Domain=$domain response=$text")
             if (text.startsWith("{")) {
                 val parsed = tryParseJson<PlayHashResponse>(text)
@@ -484,7 +512,13 @@ suspend fun getPlaylistUrl(
                 }
             }
         } catch (e: Exception) {
-            Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
+            val isRateLimit = e.message?.contains("Rate limited") == true
+            if (isRateLimit && attempt < domains.lastIndex) {
+                Log.w("PlayPhp", "Rate limited on $domain, waiting 10s before next domain")
+                kotlinx.coroutines.delay(10_000L)
+            } else {
+                Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
+            }
         }
     }
 
@@ -494,6 +528,7 @@ suspend fun getPlaylistUrl(
     }
 
     try {
+        throttle()
         val playlistBody = app.get(
             "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$playHash",
             headers = buildNewTvHeaders(ott, mapOf("Referer" to "$mainUrl"))
