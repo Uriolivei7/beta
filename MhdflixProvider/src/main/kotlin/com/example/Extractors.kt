@@ -119,9 +119,23 @@ class MhdflixCubeembed : ExtractorApi() {
             )
         }
         if (source.isNotEmpty()) {
-            Log.d("MhdflixCubeembed", "Source M3U8: $source")
+            val sourceHttp = source.replaceFirst("https://", "http://")
+            Log.d("MhdflixCubeembed", "Source M3U8 (HTTP): $sourceHttp")
             callback.invoke(
-                newExtractorLink(this.name, "$name (Source)", source, ExtractorLinkType.M3U8) {
+                newExtractorLink(this.name, "$name (Source)", sourceHttp, ExtractorLinkType.M3U8) {
+                    this.referer = url
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+        }
+        val hlsTiktok = Regex("\"hlsVideoTiktok\":\"(.*?)\"").find(decryptedText)
+            ?.groupValues?.get(1)
+            ?.replace("\\/", "/") ?: ""
+        if (hlsTiktok.isNotEmpty()) {
+            val tiktokUrl = "$baseUrl$hlsTiktok"
+            Log.d("MhdflixCubeembed", "TikTok M3U8: $tiktokUrl")
+            callback.invoke(
+                newExtractorLink(this.name, "$name (TikTok)", tiktokUrl, ExtractorLinkType.M3U8) {
                     this.referer = url
                     this.quality = Qualities.Unknown.value
                 }
