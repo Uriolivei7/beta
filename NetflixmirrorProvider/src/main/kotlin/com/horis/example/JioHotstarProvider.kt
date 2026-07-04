@@ -189,6 +189,8 @@ class JioHotstarProvider : MainAPI() {
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
         val title = loadData.title
+        val cookie = bypass(mainUrl)
+        val videoHeaders = mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
 
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title)
@@ -198,12 +200,15 @@ class JioHotstarProvider : MainAPI() {
                 if (track.kind == "captions" && !track.file.isNullOrBlank()) {
                     val subUrl = if (track.file.startsWith("http")) track.file
                                  else "https:${track.file.removePrefix("/")}"
-                    subtitleCallback(newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl))
+                    val subFile = newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl)
+                    subFile.headers = mapOf("Referer" to "$mainUrl/")
+                    subtitleCallback(subFile)
                 }
             }
             Log.d("JioHotstar", "loadLinks new flow SUCCESS: $m3u8Url")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
                 this.referer = "$mainUrl/mobile/home?app=1"
+                this.headers = videoHeaders
             })
             return true
         }
@@ -226,6 +231,7 @@ class JioHotstarProvider : MainAPI() {
         kotlinx.coroutines.delay(Random.nextLong(1000L, 3000L))
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = m3u8Referer
+            this.headers = videoHeaders
         })
         Log.d("JioHotstar", "loadLinks SUCCESS (player.php fallback): video_link=${response.video_link}")
         return true

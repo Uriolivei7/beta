@@ -284,6 +284,8 @@ class PrimevideoProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val load = parseJson<NewTvLoadData>(data)
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
+        val cookie = bypass(mainUrl)
+        val videoHeaders = mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
 
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title)
@@ -293,12 +295,15 @@ class PrimevideoProvider : MainAPI() {
                 if (track.kind == "captions" && !track.file.isNullOrBlank()) {
                     val subUrl = if (track.file.startsWith("http")) track.file
                                  else "https:${track.file.removePrefix("/")}"
-                    subtitleCallback(newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl))
+                    val subFile = newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl)
+                    subFile.headers = mapOf("Referer" to "$mainUrl/")
+                    subtitleCallback(subFile)
                 }
             }
             Log.d("Primevideo", "loadLinks new flow SUCCESS: $m3u8Url")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
                 this.referer = "$mainUrl/mobile/home?app=1"
+                this.headers = videoHeaders
             })
             return true
         }
@@ -326,6 +331,7 @@ class PrimevideoProvider : MainAPI() {
         kotlinx.coroutines.delay(Random.nextLong(1000L, 3000L))
         callback.invoke(newExtractorLink(name, name, result.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = m3u8Referer
+            this.headers = videoHeaders
         })
         Log.d("Primevideo", "loadLinks SUCCESS (player.php fallback): video_link=${result.video_link}")
         return true
