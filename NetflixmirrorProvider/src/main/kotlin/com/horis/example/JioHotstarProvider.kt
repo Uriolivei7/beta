@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
+import okhttp3.Interceptor
+import okhttp3.Response
 
 class JioHotstarProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -179,12 +181,27 @@ class JioHotstarProvider : MainAPI() {
             headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.video_link.isNullOrBlank()) return false
+        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
 
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = "https://netmirror.gg"
-            this.headers = mapOf("Referer" to "https://netmirror.gg", "Origin" to "https://netmirror.gg")
+            this.referer = response.referer ?: apiBase
         })
         return true
+    }
+
+    @Suppress("ObjectLiteralToLambda")
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                if (request.url.toString().contains(".m3u8")) {
+                    val newRequest = request.newBuilder()
+                        .header("Cookie", "hd=on")
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+                return chain.proceed(request)
+            }
+        }
     }
 }

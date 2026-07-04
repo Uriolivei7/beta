@@ -5,6 +5,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
+import okhttp3.Interceptor
+import okhttp3.Response
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -223,16 +225,31 @@ class NetflixProvider : MainAPI() {
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 
         Log.d("NetflixProvider", "loadLinks parsed: status=${response.status}, video_link=${response.video_link}, referer=${response.referer}")
-        if (response.video_link.isNullOrBlank()) {
-            Log.e("NetflixProvider", "loadLinks FAILED: no video_link")
+        if (response.status != "ok" || response.video_link.isNullOrBlank()) {
+            Log.e("NetflixProvider", "loadLinks FAILED: status=${response.status} video_link=${response.video_link}")
             return false
         }
 
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = "https://netmirror.gg"
-            this.headers = mapOf("Referer" to "https://netmirror.gg", "Origin" to "https://netmirror.gg")
+            this.referer = response.referer ?: apiBase
         })
         Log.d("NetflixProvider", "loadLinks SUCCESS: video_link=${response.video_link}")
         return true
+    }
+
+    @Suppress("ObjectLiteralToLambda")
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                if (request.url.toString().contains(".m3u8")) {
+                    val newRequest = request.newBuilder()
+                        .header("Cookie", "hd=on")
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+                return chain.proceed(request)
+            }
+        }
     }
 }
