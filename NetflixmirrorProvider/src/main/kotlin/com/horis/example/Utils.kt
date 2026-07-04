@@ -1,6 +1,7 @@
 package com.horis.example
 
 import com.fasterxml.jackson.core.json.JsonReadFeature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -51,6 +52,15 @@ inline fun <reified T : Any> parseJson(text: String): T = JSONParser.parse(text,
 
 inline fun <reified T : Any> tryParseJson(text: String): T? =
     try { JSONParser.parseSafe(text, T::class) } catch (_: Exception) { null }
+
+inline fun <reified T : Any> tryParseJsonList(text: String): List<T>? {
+    val mapper = jacksonObjectMapper().configure(
+        com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
+    ).configure(
+        com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
+    )
+    return try { mapper.readValue(text, object : TypeReference<List<T>>() {}) } catch (_: Exception) { null }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -553,7 +563,7 @@ suspend fun getPlaylistUrl(
             ))
         ).text
         Log.d("PlayPhp", "playlist response=$playlistBody")
-        val parsed = tryParseJson<List<PlaylistResponse>>(playlistBody)
+        val parsed = tryParseJsonList<PlaylistResponse>(playlistBody)
         val first = parsed?.firstOrNull()
         val sourceFile = first?.sources?.firstOrNull()?.file
         val tracks = first?.tracks.orEmpty()
