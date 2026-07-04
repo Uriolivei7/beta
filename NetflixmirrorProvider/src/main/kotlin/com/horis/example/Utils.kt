@@ -72,7 +72,9 @@ val newTvBaseHeaders = mapOf(
     "Expires"       to "0",
     "X-Requested-With" to "NetmirrorNewTV v1.0",
     "User-Agent"    to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
-    "Accept"        to "application/json, text/plain, */*"
+    "Accept"        to "application/json, text/plain, */*",
+    "Referer"       to "https://netmirror.gg",
+    "Origin"        to "https://netmirror.gg"
 )
 
 val newTvDomains = listOf(

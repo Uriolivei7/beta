@@ -8,7 +8,7 @@ import java.net.URLEncoder
 class JioHotstarProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
-    override var mainUrl = "https://net20.cc"
+    override var mainUrl = "https://netmirror.gg"
     override var name = "JioHotstar"
     override val hasMainPage = true
 
@@ -182,8 +182,8 @@ class JioHotstarProvider : MainAPI() {
         if (response.video_link.isNullOrBlank()) return false
 
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = response.referer ?: apiBase
-            this.headers = mapOf("Referer" to (response.referer ?: apiBase))
+            this.referer = "https://netmirror.gg"
+            this.headers = mapOf("Referer" to "https://netmirror.gg", "Origin" to "https://netmirror.gg")
         })
         return true
     }

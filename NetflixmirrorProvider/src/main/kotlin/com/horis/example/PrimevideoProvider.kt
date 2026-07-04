@@ -9,7 +9,7 @@ import android.util.Log
 class PrimevideoProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "en"
-    override var mainUrl = "https://net52.cc"
+    override var mainUrl = "https://netmirror.gg"
     override var name = "PrimeVideo"
     override val hasMainPage = true
 
@@ -272,20 +272,27 @@ class PrimevideoProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val load = parseJson<NewTvLoadData>(data)
-        Log.d("Primevideo", "loadLinks: playbackId=${load.id}")
-        val result = app.get(
+        Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
+        Log.d("Primevideo", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
+
+        val rawResult = app.get(
             "$apiBase/newtv/player.php?id=${load.id}",
             headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
-        Log.d("Primevideo", "loadLinks result=${result}")
+        ).text
+        Log.d("Primevideo", "loadLinks RAW player response: $rawResult")
+        val result = JSONParser.parse(rawResult, NewTvPlayerResponse::class)
+
+        Log.d("Primevideo", "loadLinks parsed: status=${result.status}, video_link=${result.video_link}, referer=${result.referer}")
         if (result.video_link.isNullOrBlank()) {
-            Log.e("Primevideo", "loadLinks FAILED: video_link is empty, status=${result.status}")
+            Log.e("Primevideo", "loadLinks FAILED: no video_link")
             return false
         }
+
         callback.invoke(newExtractorLink(name, name, result.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = result.referer ?: apiBase
-            this.headers = mapOf("Referer" to (result.referer ?: apiBase))
+            this.referer = "https://netmirror.gg"
+            this.headers = mapOf("Referer" to "https://netmirror.gg", "Origin" to "https://netmirror.gg")
         })
+        Log.d("Primevideo", "loadLinks SUCCESS: video_link=${result.video_link}")
         return true
     }
 }

@@ -9,7 +9,7 @@ import java.net.URLEncoder
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "en"
-    override var mainUrl = "https://net52.cc"
+    override var mainUrl = "https://netmirror.gg"
     override var name = "Netflix"
     override val hasMainPage = true
 
@@ -212,18 +212,27 @@ class NetflixProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvLoadData>(data).id
+        Log.d("NetflixProvider", "loadLinks: id=$id, apiBase=$apiBase, ott=$ott")
+        Log.d("NetflixProvider", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
 
-        val response = app.get(
+        val rawPlayer = app.get(
             "$apiBase/newtv/player.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text
+        Log.d("NetflixProvider", "loadLinks RAW player response: $rawPlayer")
+        val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 
-        if (response.video_link.isNullOrBlank()) return false
+        Log.d("NetflixProvider", "loadLinks parsed: status=${response.status}, video_link=${response.video_link}, referer=${response.referer}")
+        if (response.video_link.isNullOrBlank()) {
+            Log.e("NetflixProvider", "loadLinks FAILED: no video_link")
+            return false
+        }
 
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = response.referer ?: apiBase
-            this.headers = mapOf("Referer" to (response.referer ?: apiBase))
+            this.referer = "https://netmirror.gg"
+            this.headers = mapOf("Referer" to "https://netmirror.gg", "Origin" to "https://netmirror.gg")
         })
+        Log.d("NetflixProvider", "loadLinks SUCCESS: video_link=${response.video_link}")
         return true
     }
 }
