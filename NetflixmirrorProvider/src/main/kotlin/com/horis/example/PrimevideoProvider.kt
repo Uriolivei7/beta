@@ -12,7 +12,7 @@ import okhttp3.Response
 class PrimevideoProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "en"
-    override var mainUrl = "https://netmirror.gg"
+    override var mainUrl = "https://net52.cc"
     override var name = "PrimeVideo"
     override val hasMainPage = true
 

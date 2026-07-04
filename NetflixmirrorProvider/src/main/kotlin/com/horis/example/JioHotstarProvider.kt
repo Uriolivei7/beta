@@ -11,7 +11,7 @@ import okhttp3.Response
 class JioHotstarProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
-    override var mainUrl = "https://netmirror.gg"
+    override var mainUrl = "https://net52.cc"
     override var name = "JioHotstar"
     override val hasMainPage = true
 
