@@ -220,14 +220,14 @@ class NetflixProvider : MainAPI() {
         val rawPlayer = retryOnDbError {
             app.get(
                 "$apiBase/newtv/player.php?id=$id",
-                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
+                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
         }
         Log.d("NetflixProvider", "loadLinks RAW player response: $rawPlayer")
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 
         Log.d("NetflixProvider", "loadLinks parsed: status=${response.status}, video_link=${response.video_link}, referer=${response.referer}")
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) {
+        if (response.status != "ok" && response.status != "otp" || response.video_link.isNullOrBlank()) {
             Log.e("NetflixProvider", "loadLinks FAILED: status=${response.status} video_link=${response.video_link}")
             return false
         }

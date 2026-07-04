@@ -284,14 +284,14 @@ class PrimevideoProvider : MainAPI() {
         val rawResult = retryOnDbError {
             app.get(
                 "$apiBase/newtv/player.php?id=${load.id}",
-                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
+                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
         }
         Log.d("Primevideo", "loadLinks RAW player response: $rawResult")
         val result = JSONParser.parse(rawResult, NewTvPlayerResponse::class)
 
         Log.d("Primevideo", "loadLinks parsed: status=${result.status}, video_link=${result.video_link}, referer=${result.referer}")
-        if (result.status != "ok" || result.video_link.isNullOrBlank()) {
+        if (result.status != "ok" && result.status != "otp" || result.video_link.isNullOrBlank()) {
             Log.e("Primevideo", "loadLinks FAILED: status=${result.status} video_link=${result.video_link}")
             return false
         }

@@ -185,12 +185,12 @@ class JioHotstarProvider : MainAPI() {
         val rawPlayer = retryOnDbError {
             app.get(
                 "$apiBase/newtv/player.php?id=$id",
-                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
+                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
         }
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response.status != "ok" && response.status != "otp" || response.video_link.isNullOrBlank()) return false
 
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = response.referer ?: apiBase
