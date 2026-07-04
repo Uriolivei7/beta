@@ -79,7 +79,7 @@ class Cubeembed : ExtractorApi() {
         if (cfUrl.isNotEmpty()) {
             Log.d("Cubeembed", "CF M3U8: $cfUrl")
             callback.invoke(
-                newExtractorLink(this.name, "$name (CF)", cfUrl, ExtractorLinkType.M3U8) {
+                newExtractorLink(this.name, "$name CF", cfUrl, ExtractorLinkType.M3U8) {
                     this.referer = url
                     this.quality = Qualities.Unknown.value
                 }
@@ -89,7 +89,7 @@ class Cubeembed : ExtractorApi() {
             val sourceHttp = source.replaceFirst("https://", "http://")
             Log.d("Cubeembed", "Source M3U8 (HTTP): $sourceHttp")
             callback.invoke(
-                newExtractorLink(this.name, "$name (Source)", sourceHttp, ExtractorLinkType.M3U8) {
+                newExtractorLink(this.name, "$name ", sourceHttp, ExtractorLinkType.M3U8) {
                     this.referer = url
                     this.quality = Qualities.Unknown.value
                 }
