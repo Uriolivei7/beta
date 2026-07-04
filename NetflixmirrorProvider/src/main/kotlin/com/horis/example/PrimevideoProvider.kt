@@ -64,10 +64,12 @@ class PrimevideoProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
-        val rawResponse = app.get(
-            "$apiBase/newtv/post.php?id=$id",
-            headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).text
+        val rawResponse = retryOnDbError {
+            app.get(
+                "$apiBase/newtv/post.php?id=$id",
+                headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
+            ).text
+        }
         Log.d("Primevideo", "RAW post response: $rawResponse")
         val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
         Log.d("Primevideo", "ua=${data.ua}")
@@ -234,11 +236,13 @@ class PrimevideoProvider : MainAPI() {
         val seenIds = mutableSetOf<String>()
         var pg = page
         while (true) {
-            val rawEp = app.get(
-                "$apiBase/newtv/episodes.php",
-                params = mapOf("id" to sid, "page" to pg.toString()),
-                headers = buildNewTvHeaders(ott)
-            ).text
+            val rawEp = retryOnDbError {
+                app.get(
+                    "$apiBase/newtv/episodes.php",
+                    params = mapOf("id" to sid, "page" to pg.toString()),
+                    headers = buildNewTvHeaders(ott)
+                ).text
+            }
             Log.d("Primevideo", "RAW episodes page=$pg: $rawEp")
             val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
 
@@ -277,10 +281,12 @@ class PrimevideoProvider : MainAPI() {
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
         Log.d("Primevideo", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
 
-        val rawResult = app.get(
-            "$apiBase/newtv/player.php?id=${load.id}",
-            headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
-        ).text
+        val rawResult = retryOnDbError {
+            app.get(
+                "$apiBase/newtv/player.php?id=${load.id}",
+                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
+            ).text
+        }
         Log.d("Primevideo", "loadLinks RAW player response: $rawResult")
         val result = JSONParser.parse(rawResult, NewTvPlayerResponse::class)
 

@@ -217,10 +217,12 @@ class NetflixProvider : MainAPI() {
         Log.d("NetflixProvider", "loadLinks: id=$id, apiBase=$apiBase, ott=$ott")
         Log.d("NetflixProvider", "loadLinks headers: ${buildNewTvHeaders(ott, mapOf("Usertoken" to ""))}")
 
-        val rawPlayer = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
-        ).text
+        val rawPlayer = retryOnDbError {
+            app.get(
+                "$apiBase/newtv/player.php?id=$id",
+                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
+            ).text
+        }
         Log.d("NetflixProvider", "loadLinks RAW player response: $rawPlayer")
         val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 

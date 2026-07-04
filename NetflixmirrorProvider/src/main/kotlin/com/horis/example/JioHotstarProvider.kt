@@ -62,10 +62,13 @@ class JioHotstarProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val data = app.get(
-            "$apiBase/newtv/post.php?id=$id",
-            headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-        ).parsed<NewTvPostResponse>()
+        val rawResponse = retryOnDbError {
+            app.get(
+                "$apiBase/newtv/post.php?id=$id",
+                headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
+            ).text
+        }
+        val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -146,11 +149,14 @@ class JioHotstarProvider : MainAPI() {
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
-            val data = app.get(
-                "$apiBase/newtv/episodes.php",
-                params = mapOf("id" to sid, "page" to pg.toString()),
-                headers = buildNewTvHeaders(ott)
-            ).parsed<NewTvEpisodesResponse>()
+            val rawEp = retryOnDbError {
+                app.get(
+                    "$apiBase/newtv/episodes.php",
+                    params = mapOf("id" to sid, "page" to pg.toString()),
+                    headers = buildNewTvHeaders(ott)
+                ).text
+            }
+            val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
 
             data.episodes.orEmpty().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
@@ -176,10 +182,13 @@ class JioHotstarProvider : MainAPI() {
         val apiBase = resolveApiUrl()
         val id = parseJson<NewTvLoadData>(data).id
 
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        val rawPlayer = retryOnDbError {
+            app.get(
+                "$apiBase/newtv/player.php?id=$id",
+                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to ""))
+            ).text
+        }
+        val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 
         if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
 

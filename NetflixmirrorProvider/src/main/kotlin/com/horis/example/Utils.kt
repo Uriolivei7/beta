@@ -168,6 +168,29 @@ suspend fun bypass(mainUrl: String): String {
 }
 
 // ---------------------------------------------------------------------------
+// Retry helper for transient MySQL "Too many connections" errors
+// ---------------------------------------------------------------------------
+
+suspend fun <T> retryOnDbError(maxRetries: Int = 3, block: suspend () -> T): T {
+    var lastException: Exception? = null
+    repeat(maxRetries) { attempt ->
+        try {
+            return block()
+        } catch (e: Exception) {
+            lastException = e
+            val msg = e.message.orEmpty() + e.cause?.message.orEmpty()
+            if (msg.contains("Too many connections") || msg.contains("1040") || msg.contains("08004")) {
+                Log.d("Retry", "DB connection pool full (attempt ${attempt + 1}/$maxRetries), retrying in ${(attempt + 1) * 2}s")
+                kotlinx.coroutines.delay(((attempt + 1) * 2000L))
+            } else {
+                throw e
+            }
+        }
+    }
+    throw lastException ?: Exception("Retry failed after $maxRetries attempts")
+}
+
+// ---------------------------------------------------------------------------
 // NewTV shared infrastructure
 // ---------------------------------------------------------------------------
 
