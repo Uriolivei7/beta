@@ -676,7 +676,8 @@ suspend fun getPlaylistUrl(
     ott: String,
     id: String,
     title: String,
-    cookie: String = ""
+    cookie: String = "",
+    apiBase: String? = null
 ): Pair<String, List<PlaylistTrack>>? {
     val domains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
 
@@ -762,6 +763,9 @@ suspend fun getPlaylistUrl(
             PmVariant("in=p_end", "in", playHashPEnd)
         )
         for (tryDomain in pmTryDomains) {
+            // net52.cc blocks requests from same origin — it expects Referer/Origin from net22.cc
+            val pmOrigin = if (tryDomain.contains("net52")) "https://net22.cc" else tryDomain
+            val pmReferer = if (tryDomain.contains("net52")) "https://net22.cc/play.php?id=$id" else "$tryDomain/"
             // Try with just id (no hash) – page may self-generate
             try {
                 val noHashUrl = "$tryDomain/play.php?id=$id"
@@ -769,8 +773,8 @@ suspend fun getPlaylistUrl(
                 val noHashResp = app.get(noHashUrl, headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Origin" to tryDomain,
-                    "Referer" to "$tryDomain/",
+                    "Origin" to pmOrigin,
+                    "Referer" to pmReferer,
                     "Cookie" to cookie
                 ))
                 val nb = noHashResp.text
@@ -807,8 +811,8 @@ suspend fun getPlaylistUrl(
                     val pmResp = app.get(pmUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Origin" to tryDomain,
-                        "Referer" to "$tryDomain/",
+                        "Origin" to pmOrigin,
+                        "Referer" to pmReferer,
                         "Cookie" to cookie
                     ))
                     val body = pmResp.text
@@ -937,6 +941,35 @@ suspend fun getPlaylistUrl(
                     }
                 } catch (e: Exception) {
                     Log.w("PlayPhp", "playlist attempt failed ($plDomain ${variant.param}=${variant.value}): ${e.message}")
+                }
+            }
+        }
+        // Fallback: try API player.php with the hash (mobile app approach)
+        if (foundSource == null && apiBase != null) {
+            val hashParam = java.net.URLEncoder.encode(cleanHash, "UTF-8")
+            for (plParam in listOf("h", "in")) {
+                try {
+                    val playerUrl = "$apiBase/newtv/player.php?id=$id&$plParam=$hashParam"
+                    Log.d("PlayPhp", "Trying API player.php: $playerUrl")
+                    val playerResp = app.get(playerUrl, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                        "Accept" to "application/json, text/plain, */*",
+                        "Ott" to ott,
+                        "Usertoken" to "",
+                        "Referer" to "$mainUrl/",
+                        "Cookie" to cookie
+                    ))
+                    val parsed = tryParseJson<NewTvPlayerResponse>(playerResp.text)
+                    if (parsed != null && (parsed.status == "ok" || parsed.status == "otp") && !parsed.video_link.isNullOrBlank()) {
+                        Log.d("PlayPhp", "API player.php SUCCESS: ${parsed.video_link}")
+                        Log.e("PLAYURL", parsed.video_link)
+                        foundSource = Pair(parsed.video_link, emptyList())
+                        break
+                    } else {
+                        Log.d("PlayPhp", "API player.php no valid source: status=${parsed?.status} link=${parsed?.video_link}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("PlayPhp", "API player.php failed ($plParam): ${e.message}")
                 }
             }
         }

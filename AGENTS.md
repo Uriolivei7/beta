@@ -40,7 +40,9 @@
 - Domain priority changed: `mainUrl` (net52.cc) tried first in play.php POST API loop
 - **KEY INSIGHT**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2`. net52.cc accepts requests with the right Referer.
 - **UPDATE (Jul 5, 2026)**: net22.cc is **DEAD** (`Unable to resolve host`). Can't use parent page approach.
-- **NEW TRY**: Add `::ep::p::TOKEN2` format variants to play.php and playlist.php calls. The curl example shows play.php accepts `in=...::ep::p::TOKEN3` format (not `::ep::i::`). Maybe net52.cc blocks `::ep::i::` hashes.
+- **NEW TRY (Jul 5, 2026)**: Add `::ep::p::TOKEN2` format variants to play.php and playlist.php calls. The curl example shows play.php accepts `in=...::ep::p::TOKEN3` format (not `::ep::i::`). Maybe net52.cc blocks `::ep::i::` hashes.
+- **KEY INSIGHT**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2` and `Origin: net22.cc`. net52.cc rejects play.php with err:1003 when called with `Referer: net52.cc/` and `Origin: net52.cc`. **The Referer/Origin matters** — net52.cc expects cross-origin requests from net22.cc.
+- **NEW TRY (Jul 5, 2026 v2)**: When calling `net52.cc/play.php`, set `Referer: https://net22.cc/play.php?id=X` and `Origin: https://net22.cc` (same as the real iframe flow). net22.cc DNS is dead but we only need the header value as a string.
 
 ## DEBUG MODE
 - In `Utils.kt`, `Log.e("PLAYURL", url)` prints the final M3U8 URL at ERROR level for easy copy-paste
@@ -56,7 +58,18 @@
 
 ## Current Status (Jul 5, 2026)
 
-### The ::ep::99 problem
+### Key insight: Mobile app API vs Web domains
+- **Web domains** (net52.cc, net11.cc): play.php POST works → returns hash. playlist.php converts hash to URL.
+  - net11.cc playlist.php returns `::ep::99` (degraded, fails for long episodes)
+  - net52.cc playlist.php returns `unknown::ep` (needs PM cookies)
+- **API domain** (from `checknewtv.php` → `resolveApiUrl()`): `post.php`, `player.php`, etc.
+  - `player.php?id=X` returns video URL (watermarked in fallback)
+  - **Maybe app calls `player.php?id=X&h=HASH` with the play hash → clean URL?**
+
+### New try: API player.php with hash (Jul 5, 2026 v3)
+- When playlist.php fails on ALL web domains, fall back to `$apiBase/newtv/player.php?id=$id&h=$hash`
+- Passes `h=` and `in=` variants with the 3-part clean hash
+- Mobile app may use this endpoint instead of playlist.php
 - `::ep::p::TOKEN3` = clean format (from curl example, works with proper auth)
 - `::ep::99` = degraded format (missing TOKEN3, preview/limited)
 - `::ep::i::` = internal/watermarked format (from play.php POST, **don't** send to playlist.php)
@@ -88,6 +101,19 @@ Theory: `::ep::99` segments exist on net11.cc only for short episodes. net52.cc 
 - Maybe net52.cc play.php only accepts `::ep::p::` format (rejects `::ep::i::`)
 - Added `playHashP` = `TOKEN1::TOKEN2::TIMESTAMP::ep::p::TOKEN2` and `playHashPEnd`
 - Added to HTTP PM variants, playlist.php variants, and WebView URLs
+- **Result**: All variants still return err:1003 on net52.cc. Not a hash format issue.
+
+### New Try: Fake Referer/Origin (Jul 5, 2026 v2)
+- bypass() succeeds on net52.cc/verify.php with `Referer: net22.cc/verify2`, `Origin: net22.cc`
+- play.php returns err:1003 with `Referer: net52.cc/`, `Origin: net52.cc`
+- **Hypothesis**: net52.cc requires cross-origin Referer (net22.cc) for play.php too
+- Changed code: when tryDomain is net52.cc, set `Origin: https://net22.cc`, `Referer: https://net22.cc/play.php?id=X`
+- net22.cc DNS dead but header value works as a string
+
+### New Try: API player.php with hash (Jul 5, 2026 v3)
+- When playlist.php fails on ALL web domains, fall back to `$apiBase/newtv/player.php?id=$id&h=$hash`
+- Passes `h=` and `in=` variants with the 3-part clean hash
+- Mobile app may use this endpoint instead of playlist.php
 
 ### Verified Working URL (curl example)
 ```

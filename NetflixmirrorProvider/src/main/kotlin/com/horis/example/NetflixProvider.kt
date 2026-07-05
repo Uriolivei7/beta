@@ -231,7 +231,7 @@ class NetflixProvider : MainAPI() {
         val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/")
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
-        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie)
+        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
             for (track in tracks) {

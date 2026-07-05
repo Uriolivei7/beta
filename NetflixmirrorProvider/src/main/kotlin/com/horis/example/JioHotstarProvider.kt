@@ -210,7 +210,7 @@ class JioHotstarProvider : MainAPI() {
         val videoHeaders = androidHeaders + mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
 
         // New flow: play.php → playlist.php
-        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie)
+        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
             for (track in tracks) {

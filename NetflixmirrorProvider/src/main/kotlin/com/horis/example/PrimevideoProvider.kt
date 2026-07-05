@@ -294,7 +294,7 @@ class PrimevideoProvider : MainAPI() {
         val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/")
 
         // New flow: play.php → playlist.php
-        val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie)
+        val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
             for (track in tracks) {
