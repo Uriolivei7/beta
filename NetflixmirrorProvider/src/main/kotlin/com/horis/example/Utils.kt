@@ -526,8 +526,6 @@ data class PlaylistResponse(
 
 val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
 
-private val fallbackCdns = listOf("s26.nm-cdn5.top", "s23.nm-cdn9.top", "s01.nm-cdn30.top")
-
 fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
         val req = chain.request()
@@ -536,24 +534,34 @@ fun m3u8CdnFixInterceptor(): Interceptor {
         try {
             resp = chain.proceed(req)
         } catch (e: Exception) {
-            Log.d("CdnFix", "Request FAILED: $url - ${e.message}")
+            val srcHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+            if (srcHost.contains("nm-cdn") || srcHost.contains("imgcdn")) {
+                Log.d("CdnFix", "CDN unreachable, will retry via proxy: $url - ${e.message}")
+            }
             throw e
         }
         if (url.contains(".m3u8")) {
             val body = resp.body?.string() ?: return@Interceptor resp
-            if (body.startsWith("#EXT")) {
-                if (body.contains("https:///files/")) {
-                    val cdnRegex = Regex("https://([^/\"]+)/files/")
-                    val cdn = cdnRegex.find(body)?.groupValues?.get(1) ?: fallbackCdns.firstOrNull()
-                    if (cdn != null) {
-                        val fixed = body.replace("https:///files/", "https://$cdn/files/")
-                        Log.d("CdnFix", "Fixed CDN URLs in M3U8 ($cdn): $url")
-                        val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
-                        return@Interceptor resp.newBuilder().body(fixedBody).build()
+            if (!body.startsWith("#EXT")) {
+                Log.d("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length}")
+                return@Interceptor resp
+            }
+            val srcHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1) ?: return@Interceptor resp
+            val cdnRegex = Regex("https://([^/\"]+)/files/")
+            val allCdns = cdnRegex.findAll(body).map { it.groupValues[1] }.toSet()
+            if (allCdns.isEmpty() && !body.contains("https:///files/")) return@Interceptor resp
+            val fixed = body
+                .replace("https:///files/", "https://$srcHost/files/")
+                .let { b ->
+                    allCdns.fold(b) { acc, cdn ->
+                        if (cdn != srcHost) acc.replace("https://$cdn/files/", "https://$srcHost/files/")
+                        else acc
                     }
                 }
-            } else {
-                Log.d("CdnFix", "M3U8 response NOT valid: $url status=${resp.code} len=${body.length} start=${body.take(100)}")
+            if (fixed != body || allCdns.any { it != srcHost }) {
+                Log.d("CdnFix", "Rerouted CDN->$srcHost in M3U8: $url (cdns=$allCdns)")
+                val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
+                return@Interceptor resp.newBuilder().body(fixedBody).build()
             }
         }
         resp
