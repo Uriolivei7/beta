@@ -735,6 +735,12 @@ suspend fun getPlaylistUrl(
         val b64rawUrl = Base64.encodeToString(rawHash.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
         val b64play = Base64.encodeToString(playHash.toByteArray(), Base64.NO_WRAP)
         val b64clean = Base64.encodeToString(cleanHash.toByteArray(), Base64.NO_WRAP)
+        // Try ::ep::p:: format (what playlist.php returns with proper auth)
+        val parts = playHash.split("::")
+        val first3 = parts.take(3)
+        val playHashP = first3.joinToString("::") + "::ep::p::" + parts.getOrElse(1) { "" }  // TOKEN2 as placeholder TOKEN3
+        val playHashPEnd = first3.joinToString("::") + "::ep::p::"  // no TOKEN3
+        val b64playP = Base64.encodeToString(playHashP.toByteArray(), Base64.NO_WRAP)
 
         // Extract postMessage cookies from play.php HTML (user_token, t_hash_p, ott)
         // These are set via JavaScript postMessage, not HTTP headers.
@@ -750,7 +756,10 @@ suspend fun getPlaylistUrl(
             PmVariant("h=b64raw", "h", b64raw),
             PmVariant("h=b64raw_urlsafe", "h", b64rawUrl),
             PmVariant("h=b64play", "h", b64play),
-            PmVariant("h=b64clean", "h", b64clean)
+            PmVariant("h=b64clean", "h", b64clean),
+            PmVariant("in=p_part", "in", playHashP),
+            PmVariant("h=b64playP", "h", b64playP),
+            PmVariant("in=p_end", "in", playHashPEnd)
         )
         for (tryDomain in pmTryDomains) {
             // Try with just id (no hash) – page may self-generate
@@ -854,7 +863,8 @@ suspend fun getPlaylistUrl(
                 "https://net11.cc/play.php?id=$id",
                 "https://net52.cc/play.php?id=$id",
                 "https://net52.cc/play.php?h=$b64rawUrl",
-                "https://net52.cc/play.php?h=$encodedRawHash"
+                "https://net52.cc/play.php?h=$encodedRawHash",
+                "https://net52.cc/play.php?h=$b64playP"           // ::ep::p::TOKEN2 format
             )
             for (wvUrl in wvUrls) {
                 Log.d("PlayPhp", "PM WebView trying: $wvUrl")
@@ -891,7 +901,11 @@ suspend fun getPlaylistUrl(
             PlVariant("h", playHash),      // h=5-part with ::ep::i::
             PlVariant("h", rawHash),       // h=in=5-part (raw from API)
             PlVariant("in", cleanHash),    // in=3-part
-            PlVariant("in", playHash)      // in=5-part with ::ep::i::
+            PlVariant("in", playHash),     // in=5-part with ::ep::i::
+            PlVariant("h", playHashP),     // h=::ep::p::TOKEN2 (placeholder)
+            PlVariant("in", playHashP),    // in=::ep::p::TOKEN2 (placeholder)
+            PlVariant("h", playHashPEnd),  // h=::ep::p:: (empty TOKEN3)
+            PlVariant("in", playHashPEnd)  // in=::ep::p:: (empty TOKEN3)
         )
         var foundSource: Pair<String, List<PlaylistTrack>>? = null
         outer@ for (plDomain in playlistDomains) {

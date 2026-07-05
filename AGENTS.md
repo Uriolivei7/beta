@@ -35,11 +35,12 @@
 - `Utils.kt:getPlaylistUrl()` extraction approaches:
   1. GET `play.php?in=...` with `Accept: text/html` → find iframe src (HTTP, fails: err:1003/null)
   2. Fetch iframe URL → regex for `parent.postMessage(...)` (HTTP, fails: same)
-  3. **WebView** fallback: load parent page `net22.cc/play.php?id=X` (auto-renders iframe with correct Referer)
+  3. **WebView** fallback: load parent page first, let it render iframe naturally (auto-Referer)
 - **net11.cc does NOT need postMessage cookies** — its playlist.php returns valid M3U8 even without them (but with degraded `::ep::99` format)
 - Domain priority changed: `mainUrl` (net52.cc) tried first in play.php POST API loop
-- **KEY INSIGHT**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2`. net52.cc accepts requests with the right Referer. play.php likely needs `Referer: net22.cc/play.php?id=X` too.
-- **NEW APPROACH (Jul 5, 2026)**: Load `net22.cc/play.php?id=X` in WebView first. The page auto-generates the hash via internal POST, renders an iframe → `net52.cc/play.php?h=BASE64(hash)` with correct Referer. This avoids manually constructing the Base64 URL and sets the right Referer naturally.
+- **KEY INSIGHT**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2`. net52.cc accepts requests with the right Referer.
+- **UPDATE (Jul 5, 2026)**: net22.cc is **DEAD** (`Unable to resolve host`). Can't use parent page approach.
+- **NEW TRY**: Add `::ep::p::TOKEN2` format variants to play.php and playlist.php calls. The curl example shows play.php accepts `in=...::ep::p::TOKEN3` format (not `::ep::i::`). Maybe net52.cc blocks `::ep::i::` hashes.
 
 ## DEBUG MODE
 - In `Utils.kt`, `Log.e("PLAYURL", url)` prints the final M3U8 URL at ERROR level for easy copy-paste
@@ -81,6 +82,12 @@ Theory: `::ep::99` segments exist on net11.cc only for short episodes. net52.cc 
 - WebView naturally loads the iframe with correct Referer
 - Our JS interceptor catches postMessage from the iframe
 - No need to manually construct Base64 URL or set custom Referer
+
+### New Try: ::ep::p:: format (Jul 5, 2026)
+- The curl example shows play.php with `in=...::ep::p::TOKEN3` (not `::ep::i::`)
+- Maybe net52.cc play.php only accepts `::ep::p::` format (rejects `::ep::i::`)
+- Added `playHashP` = `TOKEN1::TOKEN2::TIMESTAMP::ep::p::TOKEN2` and `playHashPEnd`
+- Added to HTTP PM variants, playlist.php variants, and WebView URLs
 
 ### Verified Working URL (curl example)
 ```
