@@ -229,9 +229,11 @@ class NetflixProvider : MainAPI() {
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
         val title = loadData.title
+        // Force fresh bypass to see verify.php response body
+        NetflixMirrorStorage.clearCookie()
         val cookie = bypass(mainUrl)
 
-        // Probe: verify.php response body + userver with various jjoii
+        // Probe: various jjoii values
         val uHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/", "Origin" to mainUrl)
         // verify.php response body
         try {
@@ -271,6 +273,12 @@ class NetflixProvider : MainAPI() {
                 Log.d("NetflixProvider", "userver(empty+t_hash) code=${uResp.code} body=${uResp.text.take(300)}")
             } catch (e: Exception) { Log.d("NetflixProvider", "userver(empty+t_hash) failed: ${e.message}") }
         }
+        // userver with base64(id) as jjoii
+        try {
+            val b64 = java.util.Base64.getEncoder().encodeToString(id.toByteArray())
+            val uResp = app.post("https://userver.net52.cc/?jjoii=$b64", headers = uHeaders)
+            Log.d("NetflixProvider", "userver(b64) code=${uResp.code} body=${uResp.text.take(300)}")
+        } catch (e: Exception) { Log.d("NetflixProvider", "userver(b64) failed: ${e.message}") }
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
