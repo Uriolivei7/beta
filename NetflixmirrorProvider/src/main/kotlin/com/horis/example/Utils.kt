@@ -1000,10 +1000,11 @@ suspend fun getPlaylistUrl(
             }
         }
         // Try direct M3U8 URL (curl example pattern) as fallback — bypass playlist.php
-        val directVariants = mutableListOf(
-            PlVariant("in", cleanHash), PlVariant("in", playHash), PlVariant("in", playHashP)
-        )
+        // Order matters: more specific/validated hashes first (::ep::p::TOKEN3 with real TOKEN3)
+        val directVariants = mutableListOf<PlVariant>()
         hashWithP?.let { directVariants.add(PlVariant("in", it)) }
+        directVariants.add(PlVariant("in", playHashP))
+        directVariants.add(PlVariant("in", playHash))
         // Also try hashes from weakFallback (playlist.php-validated ::ep::99/::ep hashes with cached t_hash_t as TOKEN1)
         if (weakFallback != null) {
             val wfHash = weakFallback.first.substringAfter("?in=").substringBefore("&")
@@ -1015,6 +1016,8 @@ suspend fun getPlaylistUrl(
                 Log.d("PlayPhp", "Added weakFallback hash to direct M3U8 variants: $wfHash")
             }
         }
+        directVariants.add(PlVariant("in", cleanHash))  // clean hash last — known 10-min preview
+        // Try all variants, keep the one with the largest body (most complete playlist)
         for (plDomain in playlistDomains) {
             for (variant in directVariants) {
                 try {
@@ -1029,16 +1032,16 @@ suspend fun getPlaylistUrl(
                     val body = m3u8Resp.text
                     Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
                     if (body.startsWith("#EXTM3U") && !body.contains("unknown")) {
-                        Log.d("PlayPhp", "Direct M3U8 SUCCESS: $m3u8Url")
+                        Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
                         Log.e("PLAYURL", m3u8Url)
-                        foundSource = Pair(m3u8Url, emptyList())
-                        break
+                        if (foundSource == null || body.length > (foundSource?.first?.length ?: 0)) {
+                            foundSource = Pair(m3u8Url, emptyList())
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w("PlayPhp", "Direct M3U8 failed ($plDomain): ${e.message}")
                 }
             }
-            if (foundSource != null) break
         }
         // Try API player.php with the hash - only if we have NO valid source yet (don't overwrite direct M3U8)
         if (apiBase != null && foundSource == null) {
@@ -1052,7 +1055,7 @@ suspend fun getPlaylistUrl(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Accept" to "application/json, text/plain, */*",
                 "Ott" to ott,
-                "Usertoken" to "",
+                "Usertoken" to (mergedPmCookies["user_token"] ?: ""),
                 "Referer" to "https://net52.cc",
                 "Cookie" to cookie
             )
