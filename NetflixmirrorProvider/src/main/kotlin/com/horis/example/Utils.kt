@@ -565,7 +565,8 @@ suspend fun getPlaylistUrl(
         Log.d("PlayPhp", "playlist response=$playlistBody")
         val parsed = tryParseJsonList<PlaylistResponse>(playlistBody)
         val first = parsed?.firstOrNull()
-        val sourceFile = first?.sources?.firstOrNull()?.file
+        val hashToken = playHash.split("::").firstOrNull() ?: ""
+        val sourceFile = first?.sources?.firstOrNull()?.file?.replace("unknown", hashToken)
         val tracks = first?.tracks.orEmpty()
         if (!sourceFile.isNullOrBlank()) {
             val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
