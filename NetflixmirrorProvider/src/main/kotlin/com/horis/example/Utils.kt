@@ -719,52 +719,55 @@ suspend fun getPlaylistUrl(
     val hlsDomains = listOf("https://net52.cc", "https://net11.cc").distinct()
     var tracks: List<PlaylistTrack> = emptyList()
     var sourceUrl: String? = null
-    try {
-        val plResp = app.get(
-            "${hlsDomains.first()}/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
-            headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                "Accept" to "*/*",
-                "X-Requested-With" to "NetmirrorNewTV v1.0"
-            )
-        )
-        val parsed = tryParseJsonList<PlaylistResponse>(plResp.text)
-        val first = parsed?.firstOrNull()
-        if (first != null) {
-            tracks = first.tracks.orEmpty()
-            sourceUrl = first.sources?.firstOrNull()?.file?.takeIf { it?.startsWith("http") == true }
-        }
-        Log.d("PlayPhp", "Playlist tracks=${tracks.size} sourceUrl=$sourceUrl")
-    } catch (e: Exception) {
-        Log.w("PlayPhp", "Playlist subtitle fetch failed: ${e.message}")
-    }
-    if (sourceUrl != null) {
+    // Try playlist.php with cookie + cross-origin headers for hash exchange
+    val plHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        "Accept" to "*/*",
+        "X-Requested-With" to "NetmirrorNewTV v1.0",
+        "Referer" to "https://net22.cc/play.php?id=$id",
+        "Origin" to "https://net22.cc"
+    ) + if (cookie.isNotBlank()) mapOf("Cookie" to cookie) else emptyMap()
+    val m3u8Headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept" to "*/*"
+    ) + if (cookie.isNotBlank()) mapOf("Cookie" to cookie) else emptyMap()
+    for (hlsDomain in hlsDomains) {
         try {
-            val body = app.get(sourceUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Accept" to "*/*"
-            )).text
-            if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                Log.d("PlayPhp", "Source M3U8 OK: $sourceUrl (len=${body.length})")
-                Log.e("PLAYURL", sourceUrl)
-                return Pair(sourceUrl, tracks)
+            val plResp = app.get(
+                "$hlsDomain/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
+                headers = plHeaders
+            )
+            Log.d("PlayPhp", "playlist.php $hlsDomain raw=${plResp.text.take(300)}")
+            val parsed = tryParseJsonList<PlaylistResponse>(plResp.text)
+            val first = parsed?.firstOrNull()
+            if (first != null) {
+                tracks = first.tracks.orEmpty()
+                val src = first.sources?.firstOrNull()?.file
+                if (!src.isNullOrBlank()) {
+                    sourceUrl = if (src.startsWith("http")) src else "https:${src.removePrefix("/")}"
+                }
             }
-            Log.d("PlayPhp", "Source M3U8 body invalid: ${body.take(200)}")
+            Log.d("PlayPhp", "Playlist $hlsDomain tracks=${tracks.size} sourceUrl=$sourceUrl")
+            if (sourceUrl != null) {
+                val body = app.get(sourceUrl, headers = m3u8Headers).text
+                if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
+                    Log.d("PlayPhp", "Source M3U8 OK: $sourceUrl (len=${body.length})")
+                    Log.e("PLAYURL", sourceUrl)
+                    return Pair(sourceUrl, tracks)
+                }
+                Log.d("PlayPhp", "Source M3U8 body invalid: ${body.take(200)}")
+                sourceUrl = null
+            }
         } catch (e: Exception) {
-            Log.w("PlayPhp", "Source M3U8 failed: ${e.message}")
+            Log.w("PlayPhp", "playlist.php $hlsDomain failed: ${e.message}")
         }
     }
+    // Fallback: try direct M3U8 with 3-part hash on all HLS domains
     for (hlsDomain in hlsDomains) {
         try {
             val m3u8Url = "$hlsDomain/hls/$id.m3u8?in=$cleanHash"
             Log.d("PlayPhp", "Trying direct M3U8: $m3u8Url")
-            val m3u8Resp = app.get(
-                m3u8Url, headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    "Accept" to "*/*"
-                )
-            )
-            val body = m3u8Resp.text
+            val body = app.get(m3u8Url, headers = m3u8Headers).text
             Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
             if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
                 Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
