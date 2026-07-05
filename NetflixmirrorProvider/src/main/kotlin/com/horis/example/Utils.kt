@@ -548,16 +548,18 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             }
             val cdnRegex = Regex("https://([^/\"]+)/files/")
             val allCdns = cdnRegex.findAll(body).map { it.groupValues[1] }.toSet()
-            if (allCdns.isEmpty() && !body.contains("https:///files/")) return@Interceptor resp
+            val hasBroken = body.contains("https:///files/")
+            if (allCdns.isEmpty() && !hasBroken) return@Interceptor resp
+            // Replace CDN domains and /files/ → /hls/ (tv.imgcdn.kim uses /hls/, not /files/)
             val fixed = body
-                .replace("https:///files/", "https://tv.imgcdn.kim/files/")
+                .replace("https:///files/", "https://tv.imgcdn.kim/hls/")
                 .let { b ->
                     allCdns.fold(b) { acc, cdn ->
-                        acc.replace("https://$cdn/files/", "https://tv.imgcdn.kim/files/")
+                        acc.replace("https://$cdn/files/", "https://tv.imgcdn.kim/hls/")
                     }
                 }
             if (fixed != body) {
-                Log.d("CdnFix", "Rerouted CDN->tv.imgcdn.kim in M3U8: $url")
+                Log.d("CdnFix", "Rerouted CDN->tv.imgcdn.kim/hls in M3U8: $url")
                 val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
                 return@Interceptor resp.newBuilder().body(fixedBody).build()
             }

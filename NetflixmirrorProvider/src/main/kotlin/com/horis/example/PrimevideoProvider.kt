@@ -292,22 +292,6 @@ class PrimevideoProvider : MainAPI() {
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
         val cookie = bypass(mainUrl)
 
-        // Probe check.php and userver endpoints
-        for (probeUrl in listOf(
-            "$mainUrl/check.php",
-            "https://net11.cc/check.php",
-            "$mainUrl/newtv/check.php",
-            "https://net11.cc/newtv/check.php",
-            "https://userver.net52.cc/?jjoii=${load.id}"
-        )) {
-            try {
-                val resp = app.get(probeUrl, headers = androidHeaders + mapOf("Cookie" to cookie))
-                Log.d("Primevideo", "Probe $probeUrl: ${resp.text.take(300)}")
-            } catch (e: Exception) {
-                Log.d("Primevideo", "Probe $probeUrl failed: ${e.message}")
-            }
-        }
-
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie, apiBase)
         if (playlistResult != null) {
