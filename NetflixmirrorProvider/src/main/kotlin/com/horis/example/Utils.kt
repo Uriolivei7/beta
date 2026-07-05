@@ -1019,8 +1019,8 @@ suspend fun getPlaylistUrl(
             }
             if (foundSource != null) break
         }
-        // Try API player.php with the hash (mobile app approach) — even if we have a weak fallback
-        if (apiBase != null) {
+        // Try API player.php with the hash - only if we have NO valid source yet (don't overwrite direct M3U8)
+        if (apiBase != null && foundSource == null) {
             // Try multiple hash formats: clean 3-part, full 5-part, ::ep::p:: format
             val apiHashVariants = listOf(
                 "clean" to cleanHash,
