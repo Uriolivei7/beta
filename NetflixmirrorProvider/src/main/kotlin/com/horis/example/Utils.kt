@@ -687,9 +687,9 @@ suspend fun getPlaylistUrl(
     for (domain in domains) {
         try {
             val browserHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
-                "Referer" to "$domain/home",
+                "Referer" to "$domain/",
                 "Origin" to domain,
                 "Cookie" to cookie,
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
@@ -893,8 +893,14 @@ suspend fun getPlaylistUrl(
                     var sourceFile = first?.sources?.firstOrNull()?.file
                     val tracks = first?.tracks.orEmpty()
                     if (!sourceFile.isNullOrBlank() && !sourceFile.contains("unknown")) {
-                        val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
+                        var m3u8Url = if (sourceFile.startsWith("http")) sourceFile
                                       else "${plDomain.trimEnd('/')}/${sourceFile.removePrefix("/")}"
+                        // Prefer net52.cc CDN (may have better episode availability)
+                        if (m3u8Url.startsWith("https://net11.cc/") && m3u8Url.contains("m3u8")) {
+                            val net52Url = m3u8Url.replace("https://net11.cc", "https://net52.cc")
+                            Log.d("PlayPhp", "Also trying net52.cc CDN: $net52Url")
+                            m3u8Url = net52Url
+                        }
                         Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size} (domain=$plDomain ${variant.param}=${variant.value})")
                         Log.e("PLAYURL", m3u8Url)
                         foundSource = Pair(m3u8Url, tracks)
