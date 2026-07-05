@@ -570,9 +570,8 @@ suspend fun getPlaylistUrl(
         val sourceFile = first?.sources?.firstOrNull()?.file
         val tracks = first?.tracks.orEmpty()
         if (!sourceFile.isNullOrBlank()) {
-            val baseUrl = playDomain.ifBlank { mainUrl.trimEnd('/') }
             val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
-                          else "${baseUrl}/${sourceFile.removePrefix("/")}"
+                          else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
             val fixedUrl = m3u8Url.replace("unknown::ep", playHash)
             Log.d("PlayPhp", "M3U8 url=$fixedUrl tracks=${tracks.size}")
             return Pair(fixedUrl, tracks)
