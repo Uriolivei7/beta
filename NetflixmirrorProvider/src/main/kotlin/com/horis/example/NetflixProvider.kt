@@ -229,6 +229,17 @@ class NetflixProvider : MainAPI() {
         val title = loadData.title
         val cookie = bypass(mainUrl)
 
+        // Probe userver.net52.cc with various jjoii values
+        try {
+            val tHash = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
+            for (jjoii in listOf(id, tHash ?: "", "$id::$ott")) {
+                val uResp = app.get("https://userver.net52.cc/?jjoii=$jjoii", headers = androidHeaders + mapOf("Cookie" to cookie))
+                Log.d("NetflixProvider", "userver jjoii=$jjoii: ${uResp.text.take(200)}")
+            }
+        } catch (e: Exception) {
+            Log.d("NetflixProvider", "userver probe failed: ${e.message}")
+        }
+
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
@@ -287,6 +298,6 @@ class NetflixProvider : MainAPI() {
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return m3u8CdnFixInterceptor()
+        return null
     }
 }

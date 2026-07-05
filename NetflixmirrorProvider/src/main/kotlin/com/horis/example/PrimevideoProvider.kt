@@ -351,6 +351,6 @@ class PrimevideoProvider : MainAPI() {
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return m3u8CdnFixInterceptor()
+        return null
     }
 }

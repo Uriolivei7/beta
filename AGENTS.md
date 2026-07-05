@@ -58,45 +58,45 @@
 
 ## Current Status (Jul 5, 2026)
 
-### Key insight: All endpoints return preview-only without Cloudflare session
-- **net52.cc**: ALL hash variants on direct M3U8 (`cleanHash`, `playHash`, `hashWithP`, `playHashP`) return **same 3463 bytes** — preview M3U8. Hash format does NOT affect auth level.
-- **net52.cc play.php**: `err:1002/1003` for all formats including `::ep::p::TOKEN3` with real t_hash_t
-- **net52.cc playlist.php**: `unknown::ep` for all hash variants — hash exchange fails server-side
-- **net52.cc home**: Cloudflare JS challenge (5595 bytes "Just a moment...")
-- **net11.cc**: play.php returns hash ✓ → playlist.php returns `::ep::99` (degraded/preview)
-- **net11.cc direct M3U8**: Returns 3160-2908 bytes with **broken CDN URLs** (`https:///files/...` triple slash)
-- **API player.php** (`tv.imgcdn.kim`): Returns M3U8 but only 10-min preview regardless of hash
-
-### Root Cause
-- net52.cc requires Cloudflare session + proper auth cookies for full episode access
-- Without solving Cloudflare JS challenge, all endpoints serve preview-only
-- No hash format workaround (`::ep::p::TOKEN3`, `::ep::99`, `::ep::i::`) bypasses server-side auth
-
-### Bug Fixes Applied (Jul 5, 2026 v4)
-1. **`playlist.php` cross-origin headers**: net52.cc now sends `Origin: net22.cc`, `Referer: net22.cc/play.php?id=X` (same as play.php pattern) — may change `unknown::ep` response
-2. **Direct M3U8 cross-origin**: Added `Origin` header + changed `Referer` to cross-origin for net52.cc
-3. **Body comparison bug**: `foundSource` was comparing `body.length > URL_string.length` (always true for valid M3U8), making LAST variant/domain always win. Fixed to track `bestBodyLen` — now largest body wins (net52.cc 3463 bytes preferred over net11.cc 3160 bytes)
-4. **Play.php POST Referer**: Changed from `net22.cc/verify2` to `net22.cc/play.php?id=$id` for net52.cc (matching expected iframe flow)
+### Summary
+- play.php→playlist.php flow WORKS on net11.cc: returns valid M3U8 with `::ep::99` format
+- **CDN domains `s*.nm-cdn*.top` are PRIVATE/INTERNAL** — give NXDOMAIN (no public DNS)
+- No publicly accessible CDN serves the segment paths (`/files/...` or `/hls/...`) → all 404
+- The HLS streaming approach via netmirror API is FUNDAMENTALLY BLOCKED by private CDN infrastructure
 
 ### What Works
-- net52.cc bypass (verify.php) successfully returns `t_hash_t`: `verify.php status=200 cookies={hd=on, t_hash_t=...}`
-- net11.cc play.php returns hash with `::ep::i::` format ✓
-- net11.cc playlist.php returns M3U8 URL with `::ep::99` format ✓
-- Direct M3U8 on net52.cc returns 3463 bytes (10-min preview) with proper CDN `s23.nm-cdn9.top`
+- net52.cc bypass (verify.php) → `t_hash_t` cookie ✓
+- net11.cc play.php → hash ✓
+- net11.cc playlist.php → M3U8 URL with `::ep::99` ✓
+- Main M3U8 is valid (#EXTM3U, proper structure) ✓
+- player.php fallback → M3U8 on `tv.imgcdn.kim` with watermark/stop ✓
 
 ### What Does NOT Work
-- Full episode playback — all paths give 10-min preview or broken URLs
-- net52.cc play.php — err:1002/1003 regardless of hash format or headers
-- net52.cc playlist.php — `unknown::ep` regardless of hash format or headers (even after cross-origin fix)
-- net11.cc direct M3U8 — broken CDN URLs (`https:///files/...`)
-- `::ep::99` long episodes — fail with `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED`
+- CDN segment URLs → NXDOMAIN (`s*.nm-cdn*.top`) or 404 (any public CDN)
+- No path substitution works (`/files/` → `/hls/`, different CDN hosts)
+- `check.php` — doesn't exist on net52.cc or net11.cc
+- `userver.net52.cc/?jjoii=X` — returns "User ID Expired" (needs auth token)
+- Interceptor CDN rewrites — reset to null (all strategies exhausted)
 
-### Remaining unknowns
-- Is there a different API endpoint (not player.php, playlist.php) that returns full episodes?
-- Does net52.cc playlist.php change behavior with cross-origin headers (needs testing)?
-- Is there a way to solve Cloudflare from within the app (Headless Chrome, etc.)?
+### Root Cause
+- The video segments are hosted on private CDN servers (`sXX.nm-cdnYY.top`) that are only accessible from within the netmirror network
+- Without internal network access or proper Cloudflare session, segments are unreachable
+- No amount of header/path tweaking can make inaccessible CDNs work
 
-## Prime Video Status
-- playlist.php returns "Video ID not found!" for ott=pv (non-Netflix titles) — expected
-- Falls back to player.php which returns watermarked/stopped video
-- No fix yet for Prime Video clean URLs
+### API Endpoints Probed
+| Endpoint | Result |
+|---|---|
+| `/check.php` (all domains) | 404 / "File not found." |
+| `/newtv/check.php` (all domains) | 404 (Apache) |
+| `userver.net52.cc/?jjoii=ID` | "User ID Expired." |
+| `net52.cc/hls/ID.m3u8?in=unknown::ep` | 404 |
+| `net11.cc/hls/ID.m3u8?in=::ep::99` | **Valid M3U8** ✓ (but CDN segments NXDOMAIN) |
+
+### Prime Video Status
+- Same as Netflix — play.php→playlist.php returns M3U8 but CDN segments not accessible
+- player.php fallback — watermarked/stopped video
+
+### Next Steps (if any)
+- **Decompile current netmirror app** to find the `userver` jjoii token algorithm
+- **Implement local HTTP proxy** that serves modified M3U8 with all segment requests proxied through the same endpoint as the M3U8 (requires server-side proxying)
+- **Accept player.php fallback** (watermarked) as the only working playback option
