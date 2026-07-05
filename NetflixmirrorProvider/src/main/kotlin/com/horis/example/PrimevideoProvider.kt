@@ -292,6 +292,14 @@ class PrimevideoProvider : MainAPI() {
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
         val cookie = bypass(mainUrl)
 
+        // Try check.php for streamtape download link
+        try {
+            val checkResp = app.get("$mainUrl/check.php", headers = androidHeaders + mapOf("Cookie" to cookie))
+            Log.d("Primevideo", "check.php raw: ${checkResp.text.take(500)}")
+        } catch (e: Exception) {
+            Log.d("Primevideo", "check.php failed: ${e.message}")
+        }
+
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie, apiBase)
         if (playlistResult != null) {

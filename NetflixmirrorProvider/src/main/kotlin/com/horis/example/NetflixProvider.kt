@@ -229,6 +229,14 @@ class NetflixProvider : MainAPI() {
         val title = loadData.title
         val cookie = bypass(mainUrl)
 
+        // Try check.php for streamtape download link
+        try {
+            val checkResp = app.get("$mainUrl/check.php", headers = androidHeaders + mapOf("Cookie" to cookie))
+            Log.d("NetflixProvider", "check.php raw: ${checkResp.text.take(500)}")
+        } catch (e: Exception) {
+            Log.d("NetflixProvider", "check.php failed: ${e.message}")
+        }
+
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
