@@ -58,83 +58,43 @@
 
 ## Current Status (Jul 5, 2026)
 
-### Key insight: Mobile app API vs Web domains
-- **Web domains** (net52.cc, net11.cc): play.php POST works → returns hash. playlist.php converts hash to URL.
-  - net11.cc playlist.php returns `::ep::99` (degraded, fails for long episodes)
-  - net52.cc playlist.php returns `unknown::ep` (needs PM cookies)
-- **API domain** (from `checknewtv.php` → `resolveApiUrl()`): `post.php`, `player.php`, etc.
-  - `player.php?id=X` returns video URL (watermarked in fallback)
-  - **Maybe app calls `player.php?id=X&h=HASH` with the play hash → clean URL?**
+### Key insight: All endpoints return preview-only without Cloudflare session
+- **net52.cc**: ALL hash variants on direct M3U8 (`cleanHash`, `playHash`, `hashWithP`, `playHashP`) return **same 3463 bytes** — preview M3U8. Hash format does NOT affect auth level.
+- **net52.cc play.php**: `err:1002/1003` for all formats including `::ep::p::TOKEN3` with real t_hash_t
+- **net52.cc playlist.php**: `unknown::ep` for all hash variants — hash exchange fails server-side
+- **net52.cc home**: Cloudflare JS challenge (5595 bytes "Just a moment...")
+- **net11.cc**: play.php returns hash ✓ → playlist.php returns `::ep::99` (degraded/preview)
+- **net11.cc direct M3U8**: Returns 3160-2908 bytes with **broken CDN URLs** (`https:///files/...` triple slash)
+- **API player.php** (`tv.imgcdn.kim`): Returns M3U8 but only 10-min preview regardless of hash
 
-### New try: API player.php with hash (Jul 5, 2026 v3)
-- When playlist.php fails on ALL web domains, fall back to `$apiBase/newtv/player.php?id=$id&h=$hash`
-- Passes `h=` and `in=` variants with the 3-part clean hash
-- Mobile app may use this endpoint instead of playlist.php
-- `::ep::p::TOKEN3` = clean format (from curl example, works with proper auth)
-- `::ep::99` = degraded format (missing TOKEN3, preview/limited)
-- `::ep::i::` = internal/watermarked format (from play.php POST, **don't** send to playlist.php)
+### Root Cause
+- net52.cc requires Cloudflare session + proper auth cookies for full episode access
+- Without solving Cloudflare JS challenge, all endpoints serve preview-only
+- No hash format workaround (`::ep::p::TOKEN3`, `::ep::99`, `::ep::i::`) bypasses server-side auth
 
-net52.cc playlist.php returns `unknown::ep` → fails completely (needs PM cookies)
-net11.cc playlist.php returns `::ep::99` → works for **short** episodes (1-2, ~26min), **fails** for long episode 9 (59min) with `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED`
+### Bug Fixes Applied (Jul 5, 2026 v4)
+1. **`playlist.php` cross-origin headers**: net52.cc now sends `Origin: net22.cc`, `Referer: net22.cc/play.php?id=X` (same as play.php pattern) — may change `unknown::ep` response
+2. **Direct M3U8 cross-origin**: Added `Origin` header + changed `Referer` to cross-origin for net52.cc
+3. **Body comparison bug**: `foundSource` was comparing `body.length > URL_string.length` (always true for valid M3U8), making LAST variant/domain always win. Fixed to track `bestBodyLen` — now largest body wins (net52.cc 3463 bytes preferred over net11.cc 3160 bytes)
+4. **Play.php POST Referer**: Changed from `net22.cc/verify2` to `net22.cc/play.php?id=$id` for net52.cc (matching expected iframe flow)
 
-Theory: `::ep::99` segments exist on net11.cc only for short episodes. net52.cc CDN swap served episode 9's first ~10min (watermarked) but net11.cc has no segments at all for episode 9 with `::ep::99` format.
+### What Works
+- net52.cc bypass (verify.php) successfully returns `t_hash_t`: `verify.php status=200 cookies={hd=on, t_hash_t=...}`
+- net11.cc play.php returns hash with `::ep::i::` format ✓
+- net11.cc playlist.php returns M3U8 URL with `::ep::99` format ✓
+- Direct M3U8 on net52.cc returns 3463 bytes (10-min preview) with proper CDN `s23.nm-cdn9.top`
 
-### CDN Swap fails
-- Replacing net11.cc→net52.cc in the M3U8 URL breaks ALL episodes
-- net52.cc CDN only serves `::ep::p::TOKEN3` segments, not `::ep::99` segments
-- Episodes 1-2 work on net11.cc CDN because its `::ep::99` segments exist for shorter episodes
-
-### BREAKTHROUGH: Fake Referer/Origin changed err:1003 → err:1002 (Jul 5, 2026)
-- **When sending `Origin: net22.cc` + `Referer: net22.cc/play.php?id=X` to net52.cc play.php GET:**
-  - Error CHANGED from `err:1003` (body len=98) to `err:1002` (body len=34)
-  - This proves net52.cc processes the request differently with cross-origin headers
-  - Theory: `err:1003` = origin/referer validation failed; `err:1002` = hash format validation failed
-  - **Progress**: we passed origin check, now failing at a different check
-- **New bypass POST change**: `Utils.kt:688-697` now also sends cross-origin `Referer: net22.cc/verify2` + `Origin: net22.cc` when POSTing to net52.cc/play.php
-  - May let us get a net52.cc-style hash (with `::ep::p::` format instead of `::ep::i::`)
-
-### ::ep::99 weak fallback + API player.php (Jul 5, 2026)
-- **Problem**: API player.php fallback was NEVER triggered because `::ep::99` didn't contain "unknown" — code accepted it as valid
-- **Fix**: `Utils.kt:940-947` — when playlist.php returns M3U8 with `::ep::99`, store it as `weakFallback`, then try API player.php with hash
-- **New flow**:
-  1. Try playlist.php on all domains (net52.cc → unknown, net11.cc → ::ep::99)
-  2. If `::ep::99` found → save as weak fallback → try API player.php with hash
-  3. If API player.php succeeds → use its clean URL
-  4. If API player.php fails → use `::ep::99` fallback
-- API player.php now tries 3 hash formats (clean 3-part, full 5-part, ::ep::p::) with both `h=` and `in=` params
-- API player.php headers aligned with original fallback: `Referer: https://net52.cc`
-
-### Current Code Changes (Jul 5, 2026)
-1. `bypass()` POST to net52.cc now uses `Origin: net22.cc`, `Referer: net22.cc/verify2` (cross-origin)
-2. `::ep::99` treated as weak fallback — API player.php tried even when ::ep::99 succeeds
-3. API player.php tries 3 hash formats × 2 param names = 6 combinations
-4. API player.php uses `Referer: https://net52.cc` (matching original fallback)
-5. Default PM cookies: `user_token=id`, `t_hash_p=t_hash_t` (from bypass) instead of empty
-6. Added direct M3U8 URL fallback: `/hls/ID.m3u8?in=HASH` (curl example pattern)
-7. `bypass()` now logs cached cookie status and Home page body (first 500 chars)
-
-### Confirmed: net52.cc/home has Cloudflare challenge
-- `home page len=5595 first 500=<!DOCTYPE html>...Just a moment...` — Cloudflare JS challenge
-- Cannot extract play hash from home page
-
-### Confirmed: API player.php with hash returns M3U8 but only 10-min preview
-- URL: `https://tv.imgcdn.kim/newtv/hls/nf/81936153.m3u8` — plays but limited to ~10 min
-- Probably watermarked/preview version regardless of hash parameter
-- NOT a full replacement for playlist.php flow
+### What Does NOT Work
+- Full episode playback — all paths give 10-min preview or broken URLs
+- net52.cc play.php — err:1002/1003 regardless of hash format or headers
+- net52.cc playlist.php — `unknown::ep` regardless of hash format or headers (even after cross-origin fix)
+- net11.cc direct M3U8 — broken CDN URLs (`https:///files/...`)
+- `::ep::99` long episodes — fail with `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED`
 
 ### Remaining unknowns
-- Does faking `user_token=id` + `t_hash_p=t_hash_t` change net52.cc playlist.php response?
-- Does direct M3U8 URL (`/hls/ID.m3u8?in=HASH`) work on net52.cc?
-- Is net52.cc play.php err:1002 a permanent block, or is there a header/param we haven't tried?
-
-### Verified Working URL (curl example)
-```
-curl 'https://net52.cc/hls/81936153.m3u8?in=TOKEN1::TOKEN2b::TIMESTAMP::ep::p::TOKEN3' \
-  -H 'referer: https://net52.cc/play.php?id=81936153&in=TOKEN1::TOKEN2a::TIMESTAMP::ep::p::TOKEN3'
-```
-- TOKEN2 changes between referer and M3U8 URL (playlist.php re-issues it)
-- TOKEN3 stays the same
-- Domain: net52.cc (not net22.cc / mainUrl)
+- Is there a different API endpoint (not player.php, playlist.php) that returns full episodes?
+- Does net52.cc playlist.php change behavior with cross-origin headers (needs testing)?
+- Is there a way to solve Cloudflare from within the app (Headless Chrome, etc.)?
 
 ## Prime Video Status
 - playlist.php returns "Video ID not found!" for ott=pv (non-Netflix titles) — expected

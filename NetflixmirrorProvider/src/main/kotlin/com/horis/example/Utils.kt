@@ -689,9 +689,9 @@ suspend fun getPlaylistUrl(
 
     for (domain in domains) {
         try {
-            // net52.cc blocks same-origin — send net22.cc Referer/Origin (cross-origin)
-            val bypassOrigin = if (domain.contains("net52")) "https://net22.cc" else domain
-            val bypassReferer = if (domain.contains("net52")) "https://net22.cc/verify2" else "$domain/"
+            // net52.cc blocks same-origin — send net11.cc Referer/Origin (cross-origin, net22.cc DNS dead)
+            val bypassOrigin = if (domain.contains("net52")) "https://net11.cc" else domain
+            val bypassReferer = if (domain.contains("net52")) "https://net11.cc/play.php?id=$id" else "$domain/"
             val browserHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
@@ -806,9 +806,9 @@ suspend fun getPlaylistUrl(
         )
         pmHashWithP?.let { pmVariants.add(PmVariant("in=p_token", "in", it)) }
         for (tryDomain in pmTryDomains) {
-            // net52.cc blocks requests from same origin — it expects Referer/Origin from net22.cc
-            val pmOrigin = if (tryDomain.contains("net52")) "https://net22.cc" else tryDomain
-            val pmReferer = if (tryDomain.contains("net52")) "https://net22.cc/play.php?id=$id" else "$tryDomain/"
+            // net52.cc blocks requests from same origin — it expects Referer/Origin from net11.cc (net22.cc DNS dead)
+            val pmOrigin = if (tryDomain.contains("net52")) "https://net11.cc" else tryDomain
+            val pmReferer = if (tryDomain.contains("net52")) "https://net11.cc/play.php?id=$id" else "$tryDomain/"
             // Try with just id (no hash) – page may self-generate
             try {
                 val noHashUrl = "$tryDomain/play.php?id=$id"
@@ -906,7 +906,6 @@ suspend fun getPlaylistUrl(
         if (pmCookies.isEmpty() && pluginContext != null) {
             val encodedRawHash = java.net.URLEncoder.encode(rawHash, "UTF-8")
             val wvUrls = listOf(
-                "https://net22.cc/play.php?id=$id",
                 "https://net11.cc/play.php?id=$id",
                 "https://net52.cc/play.php?id=$id",
                 "https://net52.cc/play.php?h=$b64rawUrl",
@@ -966,12 +965,15 @@ suspend fun getPlaylistUrl(
                 try {
                     val plUrl = "$plDomain/playlist.php?id=$id&t=$title&tm=$timestamp&${variant.param}=${variant.value}"
                     Log.d("PlayPhp", "Trying playlist: $plUrl")
+                    // net52.cc blocks same-origin — send net11.cc Referer/Origin (cross-origin, net22.cc DNS dead)
+                    val plOrigin = if (plDomain.contains("net52")) "https://net11.cc" else plDomain
+                    val plReferer = if (plDomain.contains("net52")) "https://net11.cc/play.php?id=$id&${variant.param}=${variant.value}" else "$plDomain/play.php?id=$id&${variant.param}=${variant.value}"
                     val plResp = app.get(plUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                         "Accept" to "*/*",
                         "X-Requested-With" to "NetmirrorNewTV v1.0",
-                        "Origin" to plDomain,
-                        "Referer" to "$plDomain/play.php?id=$id&${variant.param}=${variant.value}",
+                        "Origin" to plOrigin,
+                        "Referer" to plReferer,
                         "Cookie" to mergedCookie
                     ))
                     val body = plResp.text
@@ -1018,15 +1020,19 @@ suspend fun getPlaylistUrl(
         }
         directVariants.add(PlVariant("in", cleanHash))  // clean hash last — known 10-min preview
         // Try all variants, keep the one with the largest body (most complete playlist)
+        var bestBodyLen = 0
         for (plDomain in playlistDomains) {
             for (variant in directVariants) {
                 try {
                     val m3u8Url = "$plDomain/hls/$id.m3u8?${variant.param}=${variant.value}"
                     Log.d("PlayPhp", "Trying direct M3U8: $m3u8Url")
+                    val m3u8Origin = if (plDomain.contains("net52")) "https://net11.cc" else plDomain
+                    val m3u8Referer = if (plDomain.contains("net52")) "https://net11.cc/play.php?id=$id" else "$plDomain/play.php?id=$id"
                     val m3u8Resp = app.get(m3u8Url, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                         "Accept" to "*/*",
-                        "Referer" to "$plDomain/play.php?id=$id",
+                        "Origin" to m3u8Origin,
+                        "Referer" to m3u8Referer,
                         "Cookie" to mergedCookie
                     ))
                     val body = m3u8Resp.text
@@ -1034,8 +1040,9 @@ suspend fun getPlaylistUrl(
                     if (body.startsWith("#EXTM3U") && !body.contains("unknown")) {
                         Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
                         Log.e("PLAYURL", m3u8Url)
-                        if (foundSource == null || body.length > (foundSource?.first?.length ?: 0)) {
+                        if (foundSource == null || body.length > bestBodyLen) {
                             foundSource = Pair(m3u8Url, emptyList())
+                            bestBodyLen = body.length
                         }
                     }
                 } catch (e: Exception) {
