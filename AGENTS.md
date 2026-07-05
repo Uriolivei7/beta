@@ -51,7 +51,33 @@
 - `PrimevideoProvider.kt:loadLinks()` — same structure as Netflix
 - `PrimevideoProvider.kt:getVideoInterceptor()` — returns null (no interceptor)
 
-## Verified Working URL (curl example)
+## Current Status (Jul 5, 2026)
+
+### The ::ep::99 problem
+- `::ep::p::TOKEN3` = clean format (from curl example, works with proper auth)
+- `::ep::99` = degraded format (5 mins? 10 mins? watermarked/preview)
+- `::ep::i::` = internal/watermarked format (from play.php POST, **don't** send to playlist.php)
+
+net52.cc playlist.php returns `unknown::ep` → fails completely
+net11.cc playlist.php returns `::ep::99` → plays but watermarked/cut short
+
+### CDN Swap works
+- M3U8 URL now loads from `net52.cc` CDN instead of net11.cc
+- Same `::ep::99` format, same degraded content
+
+### Root Cause: Can't get postMessage cookies (user_token, t_hash_p, ott)
+- net52.cc blocks **ALL** requests with `err:1003` (POST, GET, WebView)
+- These cookies are needed for playlist.php to return `::ep::p::TOKEN3` (clean format)
+- Without them, playlist.php returns either `unknown::ep` (net52) or `::ep::99` (net11)
+
+### Current Approach: h=BASE64 variants
+- The iframe auth page URL is **`net52.cc/play.php?h=BASE64(hash)`**
+- play.php POST returns `h=in=TOKEN1::TOKEN2::TIMESTAMP::ep::i::`
+- We now compute Base64 variants (standard + URL-safe) of the hash and pass as `h=` param
+- Trying both `id+&h=` format and standalone `?h=` format (iframe format)
+- Added to both HTTP PM extraction and WebView fallback
+
+### Verified Working URL (curl example)
 ```
 curl 'https://net52.cc/hls/81936153.m3u8?in=TOKEN1::TOKEN2b::TIMESTAMP::ep::p::TOKEN3' \
   -H 'referer: https://net52.cc/play.php?id=81936153&in=TOKEN1::TOKEN2a::TIMESTAMP::ep::p::TOKEN3'

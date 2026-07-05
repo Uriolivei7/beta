@@ -728,6 +728,13 @@ suspend fun getPlaylistUrl(
         // Send only the first 3 parts (token::hash::timestamp) to playlist.php
         // The extra ::ep::i:: from play.php is for internal use and shouldn't be sent
         val cleanHash = playHash.split("::").take(3).joinToString("::")
+        val rawHash = "in=$playHash"
+
+        // Base64 variants for the h= parameter (net52.cc iframe format)
+        val b64raw = Base64.encodeToString(rawHash.toByteArray(), Base64.NO_WRAP)
+        val b64rawUrl = Base64.encodeToString(rawHash.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
+        val b64play = Base64.encodeToString(playHash.toByteArray(), Base64.NO_WRAP)
+        val b64clean = Base64.encodeToString(cleanHash.toByteArray(), Base64.NO_WRAP)
 
         // Extract postMessage cookies from play.php HTML (user_token, t_hash_p, ott)
         // These are set via JavaScript postMessage, not HTTP headers.
@@ -739,7 +746,11 @@ suspend fun getPlaylistUrl(
         val pmVariants = listOf(
             PmVariant("in=3part", "in", cleanHash),
             PmVariant("in=5part", "in", playHash),
-            PmVariant("h=5part", "h", playHash)
+            PmVariant("h=5part", "h", playHash),
+            PmVariant("h=b64raw", "h", b64raw),
+            PmVariant("h=b64raw_urlsafe", "h", b64rawUrl),
+            PmVariant("h=b64play", "h", b64play),
+            PmVariant("h=b64clean", "h", b64clean)
         )
         for (tryDomain in pmTryDomains) {
             // Try with just id (no hash) – page may self-generate
@@ -835,9 +846,20 @@ suspend fun getPlaylistUrl(
 
         // WebView fallback: when HTTP PM extraction failed, try loading play.php in a real WebView
         if (pmCookies.isEmpty() && pluginContext != null) {
+            val encodedRawHash = java.net.URLEncoder.encode(rawHash, "UTF-8")
             val wvUrls = listOf(
+                // Standard formats with id
                 "https://net52.cc/play.php?id=$id",
-                "https://net52.cc/play.php?id=$id&in=$cleanHash"
+                "https://net52.cc/play.php?id=$id&in=$cleanHash",
+                "https://net52.cc/play.php?id=$id&h=$b64raw",
+                "https://net52.cc/play.php?id=$id&h=$b64rawUrl",
+                "https://net52.cc/play.php?id=$id&h=$b64play",
+                // Iframe auth format (no id param, just h=)
+                "https://net52.cc/play.php?h=$b64raw",
+                "https://net52.cc/play.php?h=$b64rawUrl",
+                "https://net52.cc/play.php?h=$b64play",
+                "https://net52.cc/play.php?h=$b64clean",
+                "https://net52.cc/play.php?h=$encodedRawHash"
             )
             for (wvUrl in wvUrls) {
                 Log.d("PlayPhp", "PM WebView trying: $wvUrl")
@@ -863,7 +885,6 @@ suspend fun getPlaylistUrl(
 
         // Try multiple playlist.php request formats
         val playlistDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
-        val rawHash = "in=$playHash" // same format as play.php response
         data class PlVariant(val param: String, val value: String)
         val playlistVariants = listOf(
             PlVariant("h", cleanHash),     // h=3-part (current approach)
