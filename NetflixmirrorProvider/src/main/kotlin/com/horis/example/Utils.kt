@@ -570,7 +570,7 @@ suspend fun getPlaylistUrl(
         // Strategy: fetch the play.php HTML page with id&in params → find iframe src
         // → fetch iframe (net52.cc/play.php?h=...) → extract postMessage data
         val pmCookies = mutableMapOf<String, String>()
-        val pmTryDomains = listOf(mainUrl.trimEnd('/'), "https://net52.cc", playDomain).distinct()
+        val pmTryDomains = (playPhpDomains + mainUrl.trimEnd('/')).distinct()
         data class PmVariant(val label: String, val param: String, val value: String)
         val pmVariants = listOf(
             PmVariant("in=3part", "in", cleanHash),
@@ -700,6 +700,8 @@ suspend fun getPlaylistUrl(
                     val plResp = app.get(plUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                         "Accept" to "*/*",
+                        "X-Requested-With" to "NetmirrorNewTV v1.0",
+                        "Origin" to plDomain,
                         "Referer" to "$plDomain/play.php?id=$id&${variant.param}=${variant.value}",
                         "Cookie" to mergedCookie
                     ))
