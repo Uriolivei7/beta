@@ -201,15 +201,16 @@ suspend fun bypass(mainUrl: String): String {
                 val statusCode = response.code
                 Log.d("bypass", "verify.php status=$statusCode body=${respBody.take(200)}")
                 if (statusCode in 200..399 || respBody.contains("success", ignoreCase = true) || respBody.contains("ok", ignoreCase = true)) {
-                    val cookie = response.headers("Set-Cookie")
-                        .firstOrNull { it.startsWith("t_hash_t=") }
-                        ?.substringAfter("t_hash_t=")
-                        ?.substringBefore(";")
-                        .orEmpty()
-                    if (cookie.isNotEmpty()) {
-                        NetflixMirrorStorage.saveCookie(cookie)
-                        Log.d("bypass", "Got cookie on attempt $count: ${cookie.take(20)}")
-                        return cookie
+                    val allCookies = response.headers("Set-Cookie").map {
+                        val name = it.substringBefore("=")
+                        val value = it.substringAfter("=").substringBefore(";")
+                        "$name=$value"
+                    }.joinToString("; ")
+                    val hasT_hash_t = allCookies.contains("t_hash_t=")
+                    if (hasT_hash_t && allCookies.isNotEmpty()) {
+                        NetflixMirrorStorage.saveCookie(allCookies)
+                        Log.d("bypass", "Got cookies: $allCookies")
+                        return allCookies
                     }
                 }
                 Log.d("bypass", "Attempt $count: no valid cookie, resp=$respBody")
@@ -510,7 +511,6 @@ suspend fun getPlaylistUrl(
     cookie: String = ""
 ): Pair<String, List<PlaylistTrack>>? {
     val domains = (playPhpDomains + listOf(mainUrl.trimEnd('/'))).distinct()
-    val cookieHeader = if (cookie.isNotBlank()) "t_hash_t=$cookie" else ""
 
     var playHash: String? = null
     var timestamp: String = "0"
@@ -523,7 +523,7 @@ suspend fun getPlaylistUrl(
                 "Accept" to "*/*",
                 "Referer" to "$domain/home",
                 "Origin" to domain,
-                "Cookie" to cookieHeader,
+                "Cookie" to cookie,
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
             )
             val resp = app.post(
@@ -566,7 +566,7 @@ suspend fun getPlaylistUrl(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
                 "Referer" to "$mainUrl/play.php?id=$id&in=$cleanHash",
-                "Cookie" to cookieHeader
+                "Cookie" to cookie
             )
         ).text
         Log.d("PlayPhp", "playlist response=$playlistBody")

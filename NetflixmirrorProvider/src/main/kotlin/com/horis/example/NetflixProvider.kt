@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import kotlin.random.Random
 import okhttp3.Interceptor
-import okhttp3.Response
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -228,7 +227,7 @@ class NetflixProvider : MainAPI() {
         val id = loadData.id
         val title = loadData.title
         val cookie = bypass(mainUrl)
-        val videoHeaders = androidHeaders + mapOf("Cookie" to "hd=on; t_hash_t=$cookie", "Referer" to "$mainUrl/")
+        val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/")
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie)
@@ -282,19 +281,6 @@ class NetflixProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val existing = request.header("Cookie") ?: ""
-                    val newCookie = if ("hd=on" in existing) existing else "hd=on; $existing"
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", newCookie.trimEnd(';', ' '))
-                        .build()
-                    return chain.proceed(newRequest)
-                }
-                return chain.proceed(request)
-            }
-        }
+        return null
     }
 }

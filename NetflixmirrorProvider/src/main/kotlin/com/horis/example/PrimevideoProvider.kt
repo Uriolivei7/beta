@@ -7,7 +7,6 @@ import java.net.URLEncoder
 import android.util.Log
 import kotlin.random.Random
 import okhttp3.Interceptor
-import okhttp3.Response
 
 class PrimevideoProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -291,7 +290,7 @@ class PrimevideoProvider : MainAPI() {
         val load = parseJson<NewTvLoadData>(data)
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
         val cookie = bypass(mainUrl)
-        val videoHeaders = androidHeaders + mapOf("Cookie" to "hd=on; t_hash_t=$cookie", "Referer" to "$mainUrl/")
+        val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/")
 
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie)
@@ -346,19 +345,6 @@ class PrimevideoProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val existing = request.header("Cookie") ?: ""
-                    val newCookie = if ("hd=on" in existing) existing else "hd=on; $existing"
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", newCookie.trimEnd(';', ' '))
-                        .build()
-                    return chain.proceed(newRequest)
-                }
-                return chain.proceed(request)
-            }
-        }
+        return null
     }
 }
