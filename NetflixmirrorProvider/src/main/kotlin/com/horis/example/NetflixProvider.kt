@@ -281,7 +281,39 @@ class NetflixProvider : MainAPI() {
             Log.d("NetflixProvider", "userver(b64) code=${uResp.code} body=${uResp.text.take(300)}")
         } catch (e: Exception) { Log.d("NetflixProvider", "userver(b64) failed: ${e.message}") }
 
-        // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
+        // New flow: mobile/hls/ID.m3u8 with t_hash_t as in param
+        val tHashValue2 = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
+        if (tHashValue2 != null) {
+            val decodedHash = java.net.URLDecoder.decode(tHashValue2, "UTF-8")
+            val hlsUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$decodedHash&hd=on&lang=eng"
+            Log.d("NetflixProvider", "Trying mobile/hls: $hlsUrl")
+            try {
+                val resp = app.get(hlsUrl, headers = androidHeaders + mapOf(
+                    "Cookie" to cookie,
+                    "Referer" to "$mainUrl/mobile/home?app=1",
+                    "Origin" to mainUrl
+                ))
+                val body = resp.text
+                Log.d("NetflixProvider", "mobile/hls response: ${body.take(500)}")
+                // Parse response for CDN M3U8 URL
+                val cdnM3u8 = Regex("https://[^\n\r\"']+m3u8[^\n\r\"']*").find(body)?.value
+                if (cdnM3u8 != null) {
+                    Log.d("NetflixProvider", "CDN M3U8 found: $cdnM3u8")
+                    val videoHeaders = androidHeaders + mapOf(
+                        "Cookie" to cookie,
+                        "Referer" to "$mainUrl/mobile/home?app=1"
+                    )
+                    callback.invoke(newExtractorLink(name, name, cdnM3u8, type = ExtractorLinkType.M3U8) {
+                        this.headers = videoHeaders
+                    })
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.d("NetflixProvider", "mobile/hls failed: ${e.message}")
+            }
+        }
+
+        // Fallback: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
