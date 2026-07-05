@@ -744,7 +744,7 @@ suspend fun getPlaylistUrl(
                 tracks = first.tracks.orEmpty()
                 val src = first.sources?.firstOrNull()?.file
                 if (!src.isNullOrBlank()) {
-                    sourceUrl = if (src.startsWith("http")) src else "https:${src.removePrefix("/")}"
+                    sourceUrl = if (src.startsWith("http")) src else "${hlsDomain}${src}"
                 }
             }
             Log.d("PlayPhp", "Playlist $hlsDomain tracks=${tracks.size} sourceUrl=$sourceUrl")
