@@ -567,20 +567,23 @@ suspend fun getPlaylistUrl(
 
         // Extract postMessage cookies from play.php HTML (user_token, t_hash_p, ott)
         // These are set via JavaScript postMessage, not HTTP headers.
-        // Strategy: fetch the net22.cc play.php page → find iframe src (net52.cc/play.php?h=...)
-        // → fetch iframe → extract postMessage data
+        // Strategy: fetch the play.php HTML page with id&in params → find iframe src
+        // → fetch iframe (net52.cc/play.php?h=...) → extract postMessage data
         val pmCookies = mutableMapOf<String, String>()
-        for (tryDomain in listOf(playDomain, mainUrl.trimEnd('/')).distinct()) {
+        val pmTryDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
+        for (tryDomain in pmTryDomains) {
             try {
-                val pmUrl = "$tryDomain/play.php?in=$cleanHash"
-                Log.d("PlayPhp", "Fetching postMessage cookies from $pmUrl")
+                val pmUrl = "$tryDomain/play.php?id=$id&in=$cleanHash"
+                Log.d("PlayPhp", "Fetching play.php HTML from $pmUrl")
                 val pmResp = app.get(pmUrl, headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Origin" to tryDomain,
                     "Referer" to "$tryDomain/",
                     "Cookie" to cookie
                 ))
                 val body = pmResp.text
+                Log.d("PlayPhp", "play.php HTML body len=${body.length} start=${body.take(200)}")
 
                 // Step A: find iframe src (points to net52.cc/play.php?h=...)
                 val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(body)?.groupValues?.getOrNull(1)
@@ -608,7 +611,7 @@ suspend fun getPlaylistUrl(
                     val k = match.groupValues[1]
                     val v = match.groupValues[2]
                     if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
-                        pmCookies.putIfAbsent(k, v)
+                        if (!pmCookies.containsKey(k)) pmCookies[k] = v
                         Log.d("PlayPhp", "PM cookie from main page: $k=$v")
                     }
                 }
@@ -619,15 +622,16 @@ suspend fun getPlaylistUrl(
             }
         }
 
-        // Fallback: try requesting with h= parameter (some play.php versions use this)
+        // Fallback: try requesting with h= parameter (some versions use this)
         if (pmCookies.isEmpty()) {
-            for (tryDomain in listOf(playDomain, mainUrl.trimEnd('/')).distinct()) {
+            for (tryDomain in pmTryDomains) {
                 try {
-                    val hUrl = "$tryDomain/play.php?h=$playHash"
+                    val hUrl = "$tryDomain/play.php?id=$id&h=$playHash"
                     Log.d("PlayPhp", "Fallback PM via h=: $hUrl")
                     val hResp = app.get(hUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Origin" to tryDomain,
                         "Referer" to "$tryDomain/",
                         "Cookie" to cookie
                     ))
@@ -635,7 +639,7 @@ suspend fun getPlaylistUrl(
                         val k = match.groupValues[1]
                         val v = match.groupValues[2]
                         if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
-                            pmCookies.putIfAbsent(k, v)
+                            if (!pmCookies.containsKey(k)) pmCookies[k] = v
                             Log.d("PlayPhp", "PM cookie from h= param: $k=$v")
                         }
                     }
@@ -657,31 +661,49 @@ suspend fun getPlaylistUrl(
             cMap.map { "${it.key}=${it.value}" }.joinToString("; ")
         } else cookie
 
-        val playlistBody = app.get(
-            "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
-            headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                "Accept" to "*/*",
-                "Referer" to "$mainUrl/play.php?id=$id&in=$cleanHash",
-                "Cookie" to mergedCookie
-            )
-        ).text
-        Log.d("PlayPhp", "playlist response=$playlistBody")
-        val parsed = tryParseJsonList<PlaylistResponse>(playlistBody)
-        val first = parsed?.firstOrNull()
-        var sourceFile = first?.sources?.firstOrNull()?.file
-        val tracks = first?.tracks.orEmpty()
-        if (!sourceFile.isNullOrBlank()) {
-            if (sourceFile.contains("unknown")) {
-                Log.d("PlayPhp", "playlist.php returned unknown placeholder, falling through to player.php")
-            } else {
-                val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
-                              else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
-                Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size}")
-                Log.e("PLAYURL", m3u8Url)
-                return Pair(m3u8Url, tracks)
+        // Try multiple playlist.php request formats
+        val playlistDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
+        val rawHash = "in=$playHash" // same format as play.php response
+        data class PlVariant(val param: String, val value: String)
+        val playlistVariants = listOf(
+            PlVariant("h", cleanHash),     // h=3-part (current approach)
+            PlVariant("h", playHash),      // h=5-part with ::ep::i::
+            PlVariant("h", rawHash),       // h=in=5-part (raw from API)
+            PlVariant("in", cleanHash),    // in=3-part
+            PlVariant("in", playHash)      // in=5-part with ::ep::i::
+        )
+        var foundSource: Pair<String, List<PlaylistTrack>>? = null
+        outer@ for (plDomain in playlistDomains) {
+            for (variant in playlistVariants) {
+                try {
+                    val plUrl = "$plDomain/playlist.php?id=$id&t=$title&tm=$timestamp&${variant.param}=${variant.value}"
+                    Log.d("PlayPhp", "Trying playlist: $plUrl")
+                    val plResp = app.get(plUrl, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
+                        "Referer" to "$plDomain/play.php?id=$id&${variant.param}=${variant.value}",
+                        "Cookie" to mergedCookie
+                    ))
+                    val body = plResp.text
+                    Log.d("PlayPhp", "playlist response len=${body.length} body=${body.take(300)}")
+                    val parsed = tryParseJsonList<PlaylistResponse>(body)
+                    val first = parsed?.firstOrNull()
+                    var sourceFile = first?.sources?.firstOrNull()?.file
+                    val tracks = first?.tracks.orEmpty()
+                    if (!sourceFile.isNullOrBlank() && !sourceFile.contains("unknown")) {
+                        val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
+                                      else "${plDomain.trimEnd('/')}/${sourceFile.removePrefix("/")}"
+                        Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size} (domain=$plDomain ${variant.param}=${variant.value})")
+                        Log.e("PLAYURL", m3u8Url)
+                        foundSource = Pair(m3u8Url, tracks)
+                        break@outer
+                    }
+                } catch (e: Exception) {
+                    Log.w("PlayPhp", "playlist attempt failed ($plDomain ${variant.param}=${variant.value}): ${e.message}")
+                }
             }
         }
+        if (foundSource != null) return foundSource
     } catch (e: Exception) {
         Log.w("PlayPhp", "playlist.php failed: ${e.message}")
     }
