@@ -106,14 +106,26 @@ Theory: `::ep::99` segments exist on net11.cc only for short episodes. net52.cc 
 
 ### Current Code Changes (Jul 5, 2026)
 1. `bypass()` POST to net52.cc now uses `Origin: net22.cc`, `Referer: net22.cc/verify2` (cross-origin)
-2. `::ep::99` treated as weak fallback (not final answer) — API player.php tried even when ::ep::99 succeeds
+2. `::ep::99` treated as weak fallback — API player.php tried even when ::ep::99 succeeds
 3. API player.php tries 3 hash formats × 2 param names = 6 combinations
 4. API player.php uses `Referer: https://net52.cc` (matching original fallback)
+5. Default PM cookies: `user_token=id`, `t_hash_p=t_hash_t` (from bypass) instead of empty
+6. Added direct M3U8 URL fallback: `/hls/ID.m3u8?in=HASH` (curl example pattern)
+7. `bypass()` now logs cached cookie status and Home page body (first 500 chars)
+
+### Confirmed: net52.cc/home has Cloudflare challenge
+- `home page len=5595 first 500=<!DOCTYPE html>...Just a moment...` — Cloudflare JS challenge
+- Cannot extract play hash from home page
+
+### Confirmed: API player.php with hash returns M3U8 but only 10-min preview
+- URL: `https://tv.imgcdn.kim/newtv/hls/nf/81936153.m3u8` — plays but limited to ~10 min
+- Probably watermarked/preview version regardless of hash parameter
+- NOT a full replacement for playlist.php flow
 
 ### Remaining unknowns
-- Does `err:1002` mean "wrong hash format"? If so, what format does net52.cc play.php expect?
-- Does bypass() POST with net22.cc Referer now succeed on net52.cc? (changed but untested)
-- Does API player.php with hash return clean URL? (changed to always try but untested)
+- Does faking `user_token=id` + `t_hash_p=t_hash_t` change net52.cc playlist.php response?
+- Does direct M3U8 URL (`/hls/ID.m3u8?in=HASH`) work on net52.cc?
+- Is net52.cc play.php err:1002 a permanent block, or is there a header/param we haven't tried?
 
 ### Verified Working URL (curl example)
 ```

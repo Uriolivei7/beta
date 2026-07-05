@@ -132,6 +132,7 @@ object NetflixMirrorStorage {
 suspend fun bypass(mainUrl: String): String {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
     if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+        Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
         return savedCookie
     }
 
@@ -922,11 +923,12 @@ suspend fun getPlaylistUrl(
         }
 
         // Merge postMessage cookies into existing cookie string
-        // Also inject default/empty values when extraction failed (server may check existence)
+        // Also inject default values when extraction failed (server may check existence)
+        val tHashT = cookie.split(";").map { it.trim() }.firstOrNull { it.startsWith("t_hash_t=") }?.substringAfter("=") ?: ""
         val defaultPmCookies = mapOf(
             "ott" to ott,
-            "user_token" to "",
-            "t_hash_p" to ""
+            "user_token" to id,
+            "t_hash_p" to tHashT
         )
         val mergedPmCookies = if (pmCookies.isNotEmpty()) pmCookies else defaultPmCookies
         val cMap = mutableMapOf<String, String>()
@@ -990,6 +992,32 @@ suspend fun getPlaylistUrl(
                     Log.w("PlayPhp", "playlist attempt failed ($plDomain ${variant.param}=${variant.value}): ${e.message}")
                 }
             }
+        }
+        // Try direct M3U8 URL (curl example pattern) as fallback — bypass playlist.php
+        for (plDomain in playlistDomains) {
+            for (variant in listOf(PlVariant("in", cleanHash), PlVariant("in", playHash), PlVariant("in", playHashP))) {
+                try {
+                    val m3u8Url = "$plDomain/hls/$id.m3u8?${variant.param}=${variant.value}"
+                    Log.d("PlayPhp", "Trying direct M3U8: $m3u8Url")
+                    val m3u8Resp = app.get(m3u8Url, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
+                        "Referer" to "$plDomain/play.php?id=$id",
+                        "Cookie" to mergedCookie
+                    ))
+                    val body = m3u8Resp.text
+                    Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
+                    if (body.startsWith("#EXTM3U") && !body.contains("unknown")) {
+                        Log.d("PlayPhp", "Direct M3U8 SUCCESS: $m3u8Url")
+                        Log.e("PLAYURL", m3u8Url)
+                        foundSource = Pair(m3u8Url, emptyList())
+                        break
+                    }
+                } catch (e: Exception) {
+                    Log.w("PlayPhp", "Direct M3U8 failed ($plDomain): ${e.message}")
+                }
+            }
+            if (foundSource != null) break
         }
         // Try API player.php with the hash (mobile app approach) — even if we have a weak fallback
         if (apiBase != null) {
