@@ -750,11 +750,12 @@ suspend fun getPlaylistUrl(
             Log.d("PlayPhp", "Playlist $hlsDomain tracks=${tracks.size} sourceUrl=$sourceUrl")
             if (sourceUrl != null) {
                 val body = app.get(sourceUrl, headers = m3u8Headers).text
-                if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                    Log.d("PlayPhp", "Source M3U8 OK: $sourceUrl (len=${body.length})")
-                    Log.e("PLAYURL", sourceUrl)
-                    return Pair(sourceUrl, tracks)
-                }
+            if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
+                Log.d("PlayPhp", "Source M3U8 OK: $sourceUrl (len=${body.length})")
+                Log.d("PlayPhp", "Source M3U8 body: ${body.take(1500)}")
+                Log.e("PLAYURL", sourceUrl)
+                return Pair(sourceUrl, tracks)
+            }
                 Log.d("PlayPhp", "Source M3U8 body invalid: ${body.take(200)}")
                 sourceUrl = null
             }
@@ -771,6 +772,7 @@ suspend fun getPlaylistUrl(
             Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
             if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
                 Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
+                Log.d("PlayPhp", "Direct M3U8 body: ${body.take(1500)}")
                 Log.e("PLAYURL", m3u8Url)
                 return Pair(m3u8Url, tracks)
             }
