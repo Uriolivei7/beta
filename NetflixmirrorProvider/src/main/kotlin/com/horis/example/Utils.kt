@@ -557,8 +557,11 @@ suspend fun getPlaylistUrl(
     }
 
     try {
+        // Send only the first 3 parts (token::hash::timestamp) to playlist.php
+        // The extra ::ep::i:: from play.php is for internal use and shouldn't be sent
+        val cleanHash = playHash.split("::").take(3).joinToString("::")
         val playlistBody = app.get(
-            "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$playHash",
+            "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
             headers = buildNewTvHeaders(ott, mapOf(
                 "Referer" to "$mainUrl",
                 "Cookie" to cookieHeader
@@ -567,15 +570,19 @@ suspend fun getPlaylistUrl(
         Log.d("PlayPhp", "playlist response=$playlistBody")
         val parsed = tryParseJsonList<PlaylistResponse>(playlistBody)
         val first = parsed?.firstOrNull()
-        val sourceFile = first?.sources?.firstOrNull()?.file
+        var sourceFile = first?.sources?.firstOrNull()?.file
         val tracks = first?.tracks.orEmpty()
         if (!sourceFile.isNullOrBlank()) {
+            // If the response already has a full hash (no "unknown"), use it directly
+            if (sourceFile.contains("unknown")) {
+                sourceFile = sourceFile.replace("unknown::ep", playHash)
+                Log.d("PlayPhp", "Replaced unknown::ep with playHash")
+            }
             val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
                           else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
-            val fixedUrl = m3u8Url.replace("unknown::ep", playHash)
-            Log.d("PlayPhp", "M3U8 url=$fixedUrl tracks=${tracks.size}")
-            Log.e("PLAYURL", fixedUrl)
-            return Pair(fixedUrl, tracks)
+            Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size}")
+            Log.e("PLAYURL", m3u8Url)
+            return Pair(m3u8Url, tracks)
         }
     } catch (e: Exception) {
         Log.w("PlayPhp", "playlist.php failed: ${e.message}")
