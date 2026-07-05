@@ -84,36 +84,36 @@ Theory: `::ep::99` segments exist on net11.cc only for short episodes. net52.cc 
 - net52.cc CDN only serves `::ep::p::TOKEN3` segments, not `::ep::99` segments
 - Episodes 1-2 work on net11.cc CDN because its `::ep::99` segments exist for shorter episodes
 
-### Root Cause: Can't get postMessage cookies (user_token, t_hash_p, ott)
-- net52.cc blocks **ALL** play.php requests with `err:1003` (POST, GET, WebView) unless correct Referer is set
-- **However**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2`
-- This proves net52.cc accepts requests with the right Referer chain
-- The iframe URL `net52.cc/play.php?h=BASE64(hash)` is loaded from parent `net22.cc/play.php?id=X`, giving it `Referer: net22.cc/play.php?id=X`
+### BREAKTHROUGH: Fake Referer/Origin changed err:1003 → err:1002 (Jul 5, 2026)
+- **When sending `Origin: net22.cc` + `Referer: net22.cc/play.php?id=X` to net52.cc play.php GET:**
+  - Error CHANGED from `err:1003` (body len=98) to `err:1002` (body len=34)
+  - This proves net52.cc processes the request differently with cross-origin headers
+  - Theory: `err:1003` = origin/referer validation failed; `err:1002` = hash format validation failed
+  - **Progress**: we passed origin check, now failing at a different check
+- **New bypass POST change**: `Utils.kt:688-697` now also sends cross-origin `Referer: net22.cc/verify2` + `Origin: net22.cc` when POSTing to net52.cc/play.php
+  - May let us get a net52.cc-style hash (with `::ep::p::` format instead of `::ep::i::`)
 
-### New Approach: Load parent page iframe naturally
-- Load `net22.cc/play.php?id=X` in WebView first → page auto-generates hash, renders iframe
-- WebView naturally loads the iframe with correct Referer
-- Our JS interceptor catches postMessage from the iframe
-- No need to manually construct Base64 URL or set custom Referer
+### ::ep::99 weak fallback + API player.php (Jul 5, 2026)
+- **Problem**: API player.php fallback was NEVER triggered because `::ep::99` didn't contain "unknown" — code accepted it as valid
+- **Fix**: `Utils.kt:940-947` — when playlist.php returns M3U8 with `::ep::99`, store it as `weakFallback`, then try API player.php with hash
+- **New flow**:
+  1. Try playlist.php on all domains (net52.cc → unknown, net11.cc → ::ep::99)
+  2. If `::ep::99` found → save as weak fallback → try API player.php with hash
+  3. If API player.php succeeds → use its clean URL
+  4. If API player.php fails → use `::ep::99` fallback
+- API player.php now tries 3 hash formats (clean 3-part, full 5-part, ::ep::p::) with both `h=` and `in=` params
+- API player.php headers aligned with original fallback: `Referer: https://net52.cc`
 
-### New Try: ::ep::p:: format (Jul 5, 2026)
-- The curl example shows play.php with `in=...::ep::p::TOKEN3` (not `::ep::i::`)
-- Maybe net52.cc play.php only accepts `::ep::p::` format (rejects `::ep::i::`)
-- Added `playHashP` = `TOKEN1::TOKEN2::TIMESTAMP::ep::p::TOKEN2` and `playHashPEnd`
-- Added to HTTP PM variants, playlist.php variants, and WebView URLs
-- **Result**: All variants still return err:1003 on net52.cc. Not a hash format issue.
+### Current Code Changes (Jul 5, 2026)
+1. `bypass()` POST to net52.cc now uses `Origin: net22.cc`, `Referer: net22.cc/verify2` (cross-origin)
+2. `::ep::99` treated as weak fallback (not final answer) — API player.php tried even when ::ep::99 succeeds
+3. API player.php tries 3 hash formats × 2 param names = 6 combinations
+4. API player.php uses `Referer: https://net52.cc` (matching original fallback)
 
-### New Try: Fake Referer/Origin (Jul 5, 2026 v2)
-- bypass() succeeds on net52.cc/verify.php with `Referer: net22.cc/verify2`, `Origin: net22.cc`
-- play.php returns err:1003 with `Referer: net52.cc/`, `Origin: net52.cc`
-- **Hypothesis**: net52.cc requires cross-origin Referer (net22.cc) for play.php too
-- Changed code: when tryDomain is net52.cc, set `Origin: https://net22.cc`, `Referer: https://net22.cc/play.php?id=X`
-- net22.cc DNS dead but header value works as a string
-
-### New Try: API player.php with hash (Jul 5, 2026 v3)
-- When playlist.php fails on ALL web domains, fall back to `$apiBase/newtv/player.php?id=$id&h=$hash`
-- Passes `h=` and `in=` variants with the 3-part clean hash
-- Mobile app may use this endpoint instead of playlist.php
+### Remaining unknowns
+- Does `err:1002` mean "wrong hash format"? If so, what format does net52.cc play.php expect?
+- Does bypass() POST with net22.cc Referer now succeed on net52.cc? (changed but untested)
+- Does API player.php with hash return clean URL? (changed to always try but untested)
 
 ### Verified Working URL (curl example)
 ```

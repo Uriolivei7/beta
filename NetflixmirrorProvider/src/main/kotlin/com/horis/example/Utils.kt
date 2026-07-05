@@ -687,11 +687,14 @@ suspend fun getPlaylistUrl(
 
     for (domain in domains) {
         try {
+            // net52.cc blocks same-origin — send net22.cc Referer/Origin (cross-origin)
+            val bypassOrigin = if (domain.contains("net52")) "https://net22.cc" else domain
+            val bypassReferer = if (domain.contains("net52")) "https://net22.cc/verify2" else "$domain/"
             val browserHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
-                "Referer" to "$domain/",
-                "Origin" to domain,
+                "Referer" to bypassReferer,
+                "Origin" to bypassOrigin,
                 "Cookie" to cookie,
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
             )
@@ -742,6 +745,7 @@ suspend fun getPlaylistUrl(
         val playHashP = first3.joinToString("::") + "::ep::p::" + parts.getOrElse(1) { "" }  // TOKEN2 as placeholder TOKEN3
         val playHashPEnd = first3.joinToString("::") + "::ep::p::"  // no TOKEN3
         val b64playP = Base64.encodeToString(playHashP.toByteArray(), Base64.NO_WRAP)
+        val b64playPEnd = Base64.encodeToString(playHashPEnd.toByteArray(), Base64.NO_WRAP)
 
         // Extract postMessage cookies from play.php HTML (user_token, t_hash_p, ott)
         // These are set via JavaScript postMessage, not HTTP headers.
@@ -760,7 +764,8 @@ suspend fun getPlaylistUrl(
             PmVariant("h=b64clean", "h", b64clean),
             PmVariant("in=p_part", "in", playHashP),
             PmVariant("h=b64playP", "h", b64playP),
-            PmVariant("in=p_end", "in", playHashPEnd)
+            PmVariant("in=p_end", "in", playHashPEnd),
+            PmVariant("h=b64playPEnd", "h", b64playPEnd)
         )
         for (tryDomain in pmTryDomains) {
             // net52.cc blocks requests from same origin — it expects Referer/Origin from net22.cc
@@ -868,7 +873,8 @@ suspend fun getPlaylistUrl(
                 "https://net52.cc/play.php?id=$id",
                 "https://net52.cc/play.php?h=$b64rawUrl",
                 "https://net52.cc/play.php?h=$encodedRawHash",
-                "https://net52.cc/play.php?h=$b64playP"           // ::ep::p::TOKEN2 format
+                "https://net52.cc/play.php?h=$b64playP",           // ::ep::p::TOKEN2 format
+                "https://net52.cc/play.php?h=$b64playPEnd"      // ::ep::p:: format (empty TOKEN3)
             )
             for (wvUrl in wvUrls) {
                 Log.d("PlayPhp", "PM WebView trying: $wvUrl")
@@ -912,6 +918,7 @@ suspend fun getPlaylistUrl(
             PlVariant("in", playHashPEnd)  // in=::ep::p:: (empty TOKEN3)
         )
         var foundSource: Pair<String, List<PlaylistTrack>>? = null
+        var weakFallback: Pair<String, List<PlaylistTrack>>? = null   // ::ep::99 format
         outer@ for (plDomain in playlistDomains) {
             for (variant in playlistVariants) {
                 try {
@@ -936,42 +943,64 @@ suspend fun getPlaylistUrl(
                                       else "${plDomain.trimEnd('/')}/${sourceFile.removePrefix("/")}"
                         Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size} (domain=$plDomain ${variant.param}=${variant.value})")
                         Log.e("PLAYURL", m3u8Url)
-                        foundSource = Pair(m3u8Url, tracks)
-                        break@outer
+                        if (m3u8Url.contains("::ep::99")) {
+                            // ::ep::99 is degraded — store as weak fallback, keep checking
+                            weakFallback = Pair(m3u8Url, tracks)
+                            Log.d("PlayPhp", "::ep::99 saved as weak fallback, trying API player.php...")
+                        } else {
+                            foundSource = Pair(m3u8Url, tracks)
+                            break@outer
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w("PlayPhp", "playlist attempt failed ($plDomain ${variant.param}=${variant.value}): ${e.message}")
                 }
             }
         }
-        // Fallback: try API player.php with the hash (mobile app approach)
-        if (foundSource == null && apiBase != null) {
-            val hashParam = java.net.URLEncoder.encode(cleanHash, "UTF-8")
-            for (plParam in listOf("h", "in")) {
-                try {
-                    val playerUrl = "$apiBase/newtv/player.php?id=$id&$plParam=$hashParam"
-                    Log.d("PlayPhp", "Trying API player.php: $playerUrl")
-                    val playerResp = app.get(playerUrl, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                        "Accept" to "application/json, text/plain, */*",
-                        "Ott" to ott,
-                        "Usertoken" to "",
-                        "Referer" to "$mainUrl/",
-                        "Cookie" to cookie
-                    ))
-                    val parsed = tryParseJson<NewTvPlayerResponse>(playerResp.text)
-                    if (parsed != null && (parsed.status == "ok" || parsed.status == "otp") && !parsed.video_link.isNullOrBlank()) {
-                        Log.d("PlayPhp", "API player.php SUCCESS: ${parsed.video_link}")
-                        Log.e("PLAYURL", parsed.video_link)
-                        foundSource = Pair(parsed.video_link, emptyList())
-                        break
-                    } else {
-                        Log.d("PlayPhp", "API player.php no valid source: status=${parsed?.status} link=${parsed?.video_link}")
+        // Try API player.php with the hash (mobile app approach) — even if we have a weak fallback
+        if (apiBase != null) {
+            // Try multiple hash formats: clean 3-part, full 5-part, ::ep::p:: format
+            val apiHashVariants = listOf(
+                "clean" to cleanHash,
+                "full" to playHash,
+                "p_part" to playHashP
+            )
+            val playerHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept" to "application/json, text/plain, */*",
+                "Ott" to ott,
+                "Usertoken" to "",
+                "Referer" to "https://net52.cc",
+                "Cookie" to cookie
+            )
+            for ((hLabel, hVal) in apiHashVariants) {
+                for (plParam in listOf("h", "in")) {
+                    try {
+                        val playerUrl = "$apiBase/newtv/player.php?id=$id&$plParam=${java.net.URLEncoder.encode(hVal, "UTF-8")}"
+                        Log.d("PlayPhp", "Trying API player.php ($hLabel $plParam): $playerUrl")
+                        val playerResp = app.get(playerUrl, headers = playerHeaders)
+                        val parsed = tryParseJson<NewTvPlayerResponse>(playerResp.text)
+                        if (parsed != null && (parsed.status == "ok" || parsed.status == "otp") && !parsed.video_link.isNullOrBlank()) {
+                            Log.d("PlayPhp", "API player.php SUCCESS: ${parsed.video_link}")
+                            Log.e("PLAYURL", parsed.video_link)
+                            foundSource = Pair(parsed.video_link, emptyList())
+                            break
+                        } else {
+                            Log.d("PlayPhp", "API player.php no valid source ($hLabel $plParam): status=${parsed?.status} link=${parsed?.video_link}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w("PlayPhp", "API player.php failed ($hLabel $plParam): ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w("PlayPhp", "API player.php failed ($plParam): ${e.message}")
                 }
+                if (foundSource != null) break
             }
+        }
+        // Use API result if found, otherwise fall back to ::ep::99
+        if (foundSource != null) return foundSource
+        if (weakFallback != null) {
+            Log.d("PlayPhp", "Using ::ep::99 fallback: ${weakFallback.first}")
+            Log.e("PLAYURL", weakFallback.first)
+            foundSource = weakFallback
         }
         if (foundSource != null) return foundSource
     } catch (e: Exception) {
