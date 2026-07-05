@@ -536,7 +536,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
         } catch (e: Exception) {
             val srcHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
             if (srcHost.contains("nm-cdn") || srcHost.contains("imgcdn")) {
-                Log.d("CdnFix", "CDN unreachable, will retry via proxy: $url - ${e.message}")
+                Log.d("CdnFix", "CDN unreachable, using hls path: $url - ${e.message}")
             }
             throw e
         }
@@ -550,16 +550,16 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val cdnRegex = Regex("https://([^/\"]+)/files/")
             val allCdns = cdnRegex.findAll(body).map { it.groupValues[1] }.toSet()
             if (allCdns.isEmpty() && !body.contains("https:///files/")) return@Interceptor resp
+            // Replace CDN domains AND change /files/ → /hls/ so net11.cc serves the sub-M3U8s
             val fixed = body
-                .replace("https:///files/", "https://$srcHost/files/")
+                .replace("https:///files/", "https://$srcHost/hls/")
                 .let { b ->
                     allCdns.fold(b) { acc, cdn ->
-                        if (cdn != srcHost) acc.replace("https://$cdn/files/", "https://$srcHost/files/")
-                        else acc
+                        acc.replace("https://$cdn/files/", "https://$srcHost/hls/")
                     }
                 }
-            if (fixed != body || allCdns.any { it != srcHost }) {
-                Log.d("CdnFix", "Rerouted CDN->$srcHost in M3U8: $url (cdns=$allCdns)")
+            if (fixed != body) {
+                Log.d("CdnFix", "Rerouted CDN->$srcHost/hls in M3U8: $url (cdns=$allCdns)")
                 val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
                 return@Interceptor resp.newBuilder().body(fixedBody).build()
             }
