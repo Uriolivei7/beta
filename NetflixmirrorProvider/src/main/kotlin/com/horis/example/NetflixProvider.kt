@@ -23,7 +23,8 @@ class NetflixProvider : MainAPI() {
     private val androidHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
         "Accept" to "*/*",
-        "Connection" to "keep-alive"
+        "Connection" to "keep-alive",
+        "X-Requested-With" to "app.netmirror.netmirrornew"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -275,7 +276,7 @@ class NetflixProvider : MainAPI() {
         }
         // userver with base64(id) as jjoii
         try {
-            val b64 = java.util.Base64.getEncoder().encodeToString(id.toByteArray())
+            val b64 = android.util.Base64.encodeToString(id.toByteArray(), android.util.Base64.NO_WRAP)
             val uResp = app.post("https://userver.net52.cc/?jjoii=$b64", headers = uHeaders)
             Log.d("NetflixProvider", "userver(b64) code=${uResp.code} body=${uResp.text.take(300)}")
         } catch (e: Exception) { Log.d("NetflixProvider", "userver(b64) failed: ${e.message}") }
