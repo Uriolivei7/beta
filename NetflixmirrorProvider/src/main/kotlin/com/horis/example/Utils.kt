@@ -19,9 +19,19 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.SharedPreferences
+import android.annotation.SuppressLint
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import okhttp3.FormBody
 import okhttp3.Request
 import java.util.UUID
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 // ---------------------------------------------------------------------------
 // JSON / HTTP
@@ -47,6 +57,9 @@ val JSONParser = object : ResponseParser {
 val app = Requests(responseParser = JSONParser).apply {
     defaultHeaders = mapOf("User-Agent" to USER_AGENT)
 }
+
+/** Plugin context for WebView operations – set by NetflixmirrorPlugin.load() */
+var pluginContext: android.content.Context? = null
 
 inline fun <reified T : Any> parseJson(text: String): T = JSONParser.parse(text, T::class)
 
@@ -507,6 +520,145 @@ data class PlaylistResponse(
 
 val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
 
+// ---------------------------------------------------------------------------
+// WebView-based postMessage cookie capture (user_token, t_hash_p, ott, hd)
+// ---------------------------------------------------------------------------
+
+private var pmWv: WebView? = null
+
+private fun destroyPmWv() {
+    try { pmWv?.destroy() } catch (_: Exception) {}
+    pmWv = null
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+suspend fun capturePmCookiesViaWebView(
+    loadUrl: String,
+    existingCookie: String = ""
+): Map<String, String> {
+    val ctx = pluginContext ?: run {
+        Log.e("PlayPhp", "capturePmCookiesViaWebView: pluginContext null")
+        return emptyMap()
+    }
+    return withContext(Dispatchers.Main) {
+        suspendCoroutine { cont ->
+            var resumed = false
+            val handler = Handler(Looper.getMainLooper())
+            val timeoutRunnable = Runnable {
+                if (!resumed) {
+                    resumed = true
+                    Log.d("PlayPhp", "PM WebView timeout")
+                    cont.resume(emptyMap())
+                }
+            }
+            handler.postDelayed(timeoutRunnable, 30000)
+            try {
+                destroyPmWv()
+                CookieManager.getInstance().setAcceptCookie(true)
+                if (existingCookie.isNotBlank()) {
+                    existingCookie.split(";").forEach { part ->
+                        val kv = part.trim().split("=", limit = 2)
+                        if (kv.size == 2) CookieManager.getInstance().setCookie("https://net52.cc", "${kv[0]}=${kv[1]}")
+                    }
+                }
+                val view = WebView(ctx.applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                }
+                pmWv = view
+                val captured = mutableMapOf<String, String>()
+
+                class PmJsBridge {
+                    @android.webkit.JavascriptInterface
+                    fun onPostMessage(json: String) {
+                        if (resumed) return
+                        try {
+                            val obj = org.json.JSONObject(json)
+                            for (key in listOf("user_token", "t_hash_p", "ott", "hd")) {
+                                if (obj.has(key)) captured[key] = obj.getString(key)
+                            }
+                            if (captured.containsKey("user_token") && captured.containsKey("t_hash_p")) {
+                                resumed = true
+                                handler.removeCallbacksAndMessages(null)
+                                destroyPmWv()
+                                cont.resume(captured.toMap())
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                view.addJavascriptInterface(PmJsBridge(), "PmBridge")
+
+                view.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(v: WebView, u: String) {
+                        v.evaluateJavascript("""
+                            (function() {
+                                var origPM = window.postMessage;
+                                window.postMessage = function(msg, to, tr) {
+                                    if (typeof msg === 'string' && msg.indexOf('=') > 0) {
+                                        var eq = msg.indexOf('=');
+                                        var key = msg.substring(0, eq);
+                                        var val = msg.substring(eq + 1);
+                                        if (key === 'user_token' || key === 't_hash_p' || key === 'ott' || key === 'hd') {
+                                            var o = {};
+                                            o[key] = val;
+                                            if (window.PmBridge) PmBridge.onPostMessage(JSON.stringify(o));
+                                        }
+                                    }
+                                    return origPM.call(window, msg, to, tr);
+                                };
+                                window.addEventListener('message', function(e) {
+                                    if (typeof e.data === 'string' && e.data.indexOf('=') > 0) {
+                                        var eq = e.data.indexOf('=');
+                                        var key = e.data.substring(0, eq);
+                                        var val = e.data.substring(eq + 1);
+                                        if (key === 'user_token' || key === 't_hash_p' || key === 'ott' || key === 'hd') {
+                                            var o = {};
+                                            o[key] = val;
+                                            if (window.PmBridge) PmBridge.onPostMessage(JSON.stringify(o));
+                                        }
+                                    }
+                                });
+                            })();
+                        """.trimIndent(), null)
+
+                        handler.post(object : Runnable {
+                            var attempts = 0
+                            override fun run() {
+                                if (resumed) return
+                                if (captured.containsKey("user_token") && captured.containsKey("t_hash_p")) {
+                                    resumed = true
+                                    handler.removeCallbacksAndMessages(null)
+                                    destroyPmWv()
+                                    cont.resume(captured.toMap())
+                                    return
+                                }
+                                if (attempts++ > 60) {
+                                    if (!resumed) {
+                                        resumed = true
+                                        handler.removeCallbacksAndMessages(null)
+                                        destroyPmWv()
+                                        Log.d("PlayPhp", "PM WebView poll exhausted. captured=$captured")
+                                        cont.resume(captured.toMap())
+                                    }
+                                    return
+                                }
+                                handler.postDelayed(this, 500)
+                            }
+                        })
+                    }
+                }
+                view.loadUrl(loadUrl)
+            } catch (e: Exception) {
+                Log.e("PlayPhp", "PM WebView error: ${e.message}")
+                if (!resumed) { resumed = true; destroyPmWv(); cont.resume(emptyMap()) }
+            }
+        }
+    }
+}
+
 suspend fun getPlaylistUrl(
     mainUrl: String,
     ott: String,
@@ -667,6 +819,23 @@ suspend fun getPlaylistUrl(
                 }
             }
             if (pmCookies.isNotEmpty()) break
+        }
+
+        // WebView fallback: when HTTP PM extraction failed, try loading play.php in a real WebView
+        if (pmCookies.isEmpty() && pluginContext != null) {
+            val wvUrls = listOf(
+                "https://net52.cc/play.php?id=$id",
+                "https://net52.cc/play.php?id=$id&in=$cleanHash"
+            )
+            for (wvUrl in wvUrls) {
+                Log.d("PlayPhp", "PM WebView trying: $wvUrl")
+                val wvResult = capturePmCookiesViaWebView(wvUrl, cookie)
+                if (wvResult.isNotEmpty()) {
+                    pmCookies.putAll(wvResult)
+                    Log.d("PlayPhp", "PM WebView got cookies: $wvResult")
+                    break
+                }
+            }
         }
 
         // Merge postMessage cookies into existing cookie string

@@ -14,6 +14,7 @@ class NetflixProvider : MainAPI() {
     override var mainUrl = "https://net52.cc"
     override var name = "Netflix"
     override val hasMainPage = true
+    override val usesWebView = true
 
     private val ott = "nf"
 

@@ -14,6 +14,7 @@ class PrimevideoProvider : MainAPI() {
     override var mainUrl = "https://net52.cc"
     override var name = "PrimeVideo"
     override val hasMainPage = true
+    override val usesWebView = true
 
     private val ott = "pv"
 
