@@ -124,66 +124,73 @@ suspend fun bypass(mainUrl: String): String {
 
     NetflixMirrorStorage.clearCookie()
 
-    val bypassHeaders = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "Cache-Control" to "max-age=0",
-        "Connection" to "keep-alive",
-        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1",
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "XMLHttpRequest"
-    )
-
-    // Get addhash from main page following redirects (net52.cc → net22.cc/verify2)
-    var addhash = ""
-    try {
-        val redirectClient = app.baseClient.newBuilder()
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .build()
-        val redirectRequest = Request.Builder()
-            .url("$mainUrl/home")
-            .apply { bypassHeaders.forEach { (k, v) -> addHeader(k, v) } }
-            .build()
-        redirectClient.newCall(redirectRequest).execute().use { resp ->
-            val finalUrl = resp.request.url.toString()
-            val body = resp.body?.string().orEmpty()
-            Log.d("bypass", "redirect ended at $finalUrl body.len=${body.length}")
-            // Try URL parameter first
-            addhash = Regex("""[?&]addhash=([^&]+)""").find(finalUrl)?.groupValues?.getOrNull(1).orEmpty()
-            if (addhash.isBlank()) {
-                val doc = org.jsoup.Jsoup.parse(body)
-                addhash = doc.selectFirst("input[name=addhash]")?.attr("value").orEmpty()
-            }
-            if (addhash.isBlank()) {
-                addhash = Regex("""["']addhash["']\s*[:=]\s*["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
-            }
-            if (addhash.isBlank()) {
-                addhash = Regex("""addhash[^=]*=["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
-            }
+    val allCookies = mutableMapOf<String, String>()
+    fun captureCookies(resp: okhttp3.Response) {
+        resp.headers("Set-Cookie").forEach { raw ->
+            val name = raw.substringBefore("=")
+            val value = raw.substringAfter("=").substringBefore(";")
+            if (name.isNotBlank()) allCookies[name] = value
         }
-    } catch (e: Exception) {
-        Log.d("bypass", "addhash extraction failed: ${e.message}")
     }
-    Log.d("bypass", "addhash.length=${addhash.length} addhash=${addhash.take(20)}")
 
-    val verifyHeaders = bypassHeaders + mapOf(
-        "Origin" to "https://net22.cc",
-        "Referer" to "https://net22.cc/verify2",
-        "Content-Type" to "application/x-www-form-urlencoded"
+    val browserHeaders = mapOf(
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        "Connection" to "keep-alive"
     )
 
     val client = app.baseClient.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
         .build()
+
+    // Step 1: visit $mainUrl/home → redirects to net22.cc/verify2 (or similar)
+    var addhash = ""
+    try {
+        var currentUrl = "$mainUrl/home"
+        for (hop in 0..5) {
+            val req = Request.Builder()
+                .url(currentUrl)
+                .apply { browserHeaders.forEach { (k, v) -> addHeader(k, v) } }
+                .apply {
+                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+                    if (cookieStr.isNotBlank()) addHeader("Cookie", cookieStr)
+                }
+                .build()
+            client.newCall(req).execute().use { resp ->
+                captureCookies(resp)
+                val location = resp.header("Location")
+                if (location != null) {
+                    currentUrl = if (location.startsWith("http")) location else "$mainUrl$location"
+                } else {
+                    val body = resp.body?.string().orEmpty()
+                    Log.d("bypass", "final url=$currentUrl body.len=${body.length}")
+                    addhash = Regex("""[?&]addhash=([^&]+)""").find(currentUrl)?.groupValues?.getOrNull(1).orEmpty()
+                    if (addhash.isBlank()) {
+                        val doc = org.jsoup.Jsoup.parse(body)
+                        addhash = doc.selectFirst("input[name=addhash]")?.attr("value").orEmpty()
+                    }
+                    if (addhash.isBlank()) {
+                        addhash = Regex("""["']addhash["']\s*[:=]\s*["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
+                    }
+                    break
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.d("bypass", "redirect failed: ${e.message}")
+    }
+    Log.d("bypass", "addhash=${addhash.take(20)} cookies so far=$allCookies")
+
+    // Step 2: POST to verify.php with fake recaptcha
+    val verifyHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        "Accept" to "*/*",
+        "Origin" to "https://net22.cc",
+        "Referer" to "https://net22.cc/verify2",
+        "Content-Type" to "application/x-www-form-urlencoded"
+    )
 
     for (count in 0..3) {
         try {
@@ -195,25 +202,22 @@ suspend fun bypass(mainUrl: String): String {
                 .url("$mainUrl/verify.php")
                 .post(formBody)
                 .apply { verifyHeaders.forEach { (k, v) -> addHeader(k, v) } }
-                .build()
-            client.newCall(request).execute().use { response ->
-                val respBody = response.body?.string().orEmpty()
-                val statusCode = response.code
-                Log.d("bypass", "verify.php status=$statusCode body=${respBody.take(200)}")
-                if (statusCode in 200..399 || respBody.contains("success", ignoreCase = true) || respBody.contains("ok", ignoreCase = true)) {
-                    val allCookies = response.headers("Set-Cookie").map {
-                        val name = it.substringBefore("=")
-                        val value = it.substringAfter("=").substringBefore(";")
-                        "$name=$value"
-                    }.joinToString("; ")
-                    val hasT_hash_t = allCookies.contains("t_hash_t=")
-                    if (hasT_hash_t && allCookies.isNotEmpty()) {
-                        NetflixMirrorStorage.saveCookie(allCookies)
-                        Log.d("bypass", "Got cookies: $allCookies")
-                        return allCookies
-                    }
+                .apply {
+                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+                    if (cookieStr.isNotBlank()) addHeader("Cookie", cookieStr)
                 }
-                Log.d("bypass", "Attempt $count: no valid cookie, resp=$respBody")
+                .build()
+            client.newCall(request).execute().use { resp ->
+                captureCookies(resp)
+                val respBody = resp.body?.string().orEmpty()
+                Log.d("bypass", "verify.php status=${resp.code} cookies=$allCookies body=${respBody.take(200)}")
+                if (allCookies.containsKey("t_hash_t")) {
+                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+                    NetflixMirrorStorage.saveCookie(cookieStr)
+                    Log.d("bypass", "Got all cookies: $cookieStr")
+                    return cookieStr
+                }
+                Log.d("bypass", "Attempt $count: no t_hash_t, resp=$respBody")
             }
             kotlinx.coroutines.delay(2000)
         } catch (e: Exception) {
@@ -560,13 +564,106 @@ suspend fun getPlaylistUrl(
         // Send only the first 3 parts (token::hash::timestamp) to playlist.php
         // The extra ::ep::i:: from play.php is for internal use and shouldn't be sent
         val cleanHash = playHash.split("::").take(3).joinToString("::")
+
+        // Extract postMessage cookies from play.php HTML (user_token, t_hash_p, ott)
+        // These are set via JavaScript postMessage, not HTTP headers.
+        // Strategy: fetch the net22.cc play.php page → find iframe src (net52.cc/play.php?h=...)
+        // → fetch iframe → extract postMessage data
+        val pmCookies = mutableMapOf<String, String>()
+        for (tryDomain in listOf(playDomain, mainUrl.trimEnd('/')).distinct()) {
+            try {
+                val pmUrl = "$tryDomain/play.php?in=$cleanHash"
+                Log.d("PlayPhp", "Fetching postMessage cookies from $pmUrl")
+                val pmResp = app.get(pmUrl, headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Referer" to "$tryDomain/",
+                    "Cookie" to cookie
+                ))
+                val body = pmResp.text
+
+                // Step A: find iframe src (points to net52.cc/play.php?h=...)
+                val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(body)?.groupValues?.getOrNull(1)
+                if (!iframeSrc.isNullOrBlank()) {
+                    val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$tryDomain$iframeSrc"
+                    Log.d("PlayPhp", "Fetching iframe: $iframeUrl")
+                    val iframeResp = app.get(iframeUrl, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Referer" to pmUrl,
+                        "Cookie" to cookie
+                    ))
+                    Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(iframeResp.text).forEach { match ->
+                        val k = match.groupValues[1]
+                        val v = match.groupValues[2]
+                        if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
+                            pmCookies[k] = v
+                            Log.d("PlayPhp", "PM cookie from iframe: $k=$v")
+                        }
+                    }
+                }
+
+                // Step B: also check the main page directly for any inline postMessage
+                Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(body).forEach { match ->
+                    val k = match.groupValues[1]
+                    val v = match.groupValues[2]
+                    if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
+                        pmCookies.putIfAbsent(k, v)
+                        Log.d("PlayPhp", "PM cookie from main page: $k=$v")
+                    }
+                }
+
+                if (pmCookies.isNotEmpty()) break
+            } catch (e: Exception) {
+                Log.w("PlayPhp", "PM cookies failed for $tryDomain: ${e.message}")
+            }
+        }
+
+        // Fallback: try requesting with h= parameter (some play.php versions use this)
+        if (pmCookies.isEmpty()) {
+            for (tryDomain in listOf(playDomain, mainUrl.trimEnd('/')).distinct()) {
+                try {
+                    val hUrl = "$tryDomain/play.php?h=$playHash"
+                    Log.d("PlayPhp", "Fallback PM via h=: $hUrl")
+                    val hResp = app.get(hUrl, headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Referer" to "$tryDomain/",
+                        "Cookie" to cookie
+                    ))
+                    Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(hResp.text).forEach { match ->
+                        val k = match.groupValues[1]
+                        val v = match.groupValues[2]
+                        if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
+                            pmCookies.putIfAbsent(k, v)
+                            Log.d("PlayPhp", "PM cookie from h= param: $k=$v")
+                        }
+                    }
+                    if (pmCookies.isNotEmpty()) break
+                } catch (e: Exception) {
+                    Log.w("PlayPhp", "PM cookies via h= failed for $tryDomain: ${e.message}")
+                }
+            }
+        }
+
+        // Merge postMessage cookies into existing cookie string
+        val mergedCookie = if (pmCookies.isNotEmpty()) {
+            val cMap = mutableMapOf<String, String>()
+            cookie.split(";").forEach { part ->
+                val kv = part.trim().split("=", limit = 2)
+                if (kv.size == 2 && kv[0].isNotBlank()) cMap[kv[0]] = kv[1]
+            }
+            cMap.putAll(pmCookies)
+            cMap.map { "${it.key}=${it.value}" }.joinToString("; ")
+        } else cookie
+
         val playlistBody = app.get(
             "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
             headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
                 "Referer" to "$mainUrl/play.php?id=$id&in=$cleanHash",
-                "Cookie" to cookie
+                "Cookie" to mergedCookie
             )
         ).text
         Log.d("PlayPhp", "playlist response=$playlistBody")
@@ -575,16 +672,15 @@ suspend fun getPlaylistUrl(
         var sourceFile = first?.sources?.firstOrNull()?.file
         val tracks = first?.tracks.orEmpty()
         if (!sourceFile.isNullOrBlank()) {
-            // If the response already has a full hash (no "unknown"), use it directly
             if (sourceFile.contains("unknown")) {
-                sourceFile = sourceFile.replace("unknown::ep", playHash)
-                Log.d("PlayPhp", "Replaced unknown::ep with playHash")
+                Log.d("PlayPhp", "playlist.php returned unknown placeholder, falling through to player.php")
+            } else {
+                val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
+                              else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
+                Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size}")
+                Log.e("PLAYURL", m3u8Url)
+                return Pair(m3u8Url, tracks)
             }
-            val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
-                          else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
-            Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size}")
-            Log.e("PLAYURL", m3u8Url)
-            return Pair(m3u8Url, tracks)
         }
     } catch (e: Exception) {
         Log.w("PlayPhp", "playlist.php failed: ${e.message}")
