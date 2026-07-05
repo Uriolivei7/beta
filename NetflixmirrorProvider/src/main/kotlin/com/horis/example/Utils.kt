@@ -845,9 +845,13 @@ suspend fun getPlaylistUrl(
         }
 
         // WebView fallback: when HTTP PM extraction failed, try loading play.php in a real WebView
+        // The parent page (net22.cc/play.php?id=X) renders an iframe → net52.cc/play.php?h=BASE64(hash)
+        // Loading the parent page lets the page build the iframe URL naturally, with correct Referer.
         if (pmCookies.isEmpty() && pluginContext != null) {
             val encodedRawHash = java.net.URLEncoder.encode(rawHash, "UTF-8")
             val wvUrls = listOf(
+                "https://net22.cc/play.php?id=$id",
+                "https://net11.cc/play.php?id=$id",
                 "https://net52.cc/play.php?id=$id",
                 "https://net52.cc/play.php?h=$b64rawUrl",
                 "https://net52.cc/play.php?h=$encodedRawHash"

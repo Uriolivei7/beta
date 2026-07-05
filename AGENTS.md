@@ -35,9 +35,11 @@
 - `Utils.kt:getPlaylistUrl()` extraction approaches:
   1. GET `play.php?in=...` with `Accept: text/html` → find iframe src (HTTP, fails: err:1003/null)
   2. Fetch iframe URL → regex for `parent.postMessage(...)` (HTTP, fails: same)
-  3. **WebView** fallback: loads net52.cc/play.php in hidden WebView, injects JS to intercept postMessage (also fails: err:1003 in WebView too)
+  3. **WebView** fallback: load parent page `net22.cc/play.php?id=X` (auto-renders iframe with correct Referer)
 - **net11.cc does NOT need postMessage cookies** — its playlist.php returns valid M3U8 even without them (but with degraded `::ep::99` format)
 - Domain priority changed: `mainUrl` (net52.cc) tried first in play.php POST API loop
+- **KEY INSIGHT**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2`. net52.cc accepts requests with the right Referer. play.php likely needs `Referer: net22.cc/play.php?id=X` too.
+- **NEW APPROACH (Jul 5, 2026)**: Load `net22.cc/play.php?id=X` in WebView first. The page auto-generates the hash via internal POST, renders an iframe → `net52.cc/play.php?h=BASE64(hash)` with correct Referer. This avoids manually constructing the Base64 URL and sets the right Referer naturally.
 
 ## DEBUG MODE
 - In `Utils.kt`, `Log.e("PLAYURL", url)` prints the final M3U8 URL at ERROR level for easy copy-paste
@@ -55,27 +57,30 @@
 
 ### The ::ep::99 problem
 - `::ep::p::TOKEN3` = clean format (from curl example, works with proper auth)
-- `::ep::99` = degraded format (5 mins? 10 mins? watermarked/preview)
+- `::ep::99` = degraded format (missing TOKEN3, preview/limited)
 - `::ep::i::` = internal/watermarked format (from play.php POST, **don't** send to playlist.php)
 
-net52.cc playlist.php returns `unknown::ep` → fails completely
-net11.cc playlist.php returns `::ep::99` → plays but watermarked/cut short
+net52.cc playlist.php returns `unknown::ep` → fails completely (needs PM cookies)
+net11.cc playlist.php returns `::ep::99` → works for **short** episodes (1-2, ~26min), **fails** for long episode 9 (59min) with `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED`
 
-### CDN Swap works
-- M3U8 URL now loads from `net52.cc` CDN instead of net11.cc
-- Same `::ep::99` format, same degraded content
+Theory: `::ep::99` segments exist on net11.cc only for short episodes. net52.cc CDN swap served episode 9's first ~10min (watermarked) but net11.cc has no segments at all for episode 9 with `::ep::99` format.
+
+### CDN Swap fails
+- Replacing net11.cc→net52.cc in the M3U8 URL breaks ALL episodes
+- net52.cc CDN only serves `::ep::p::TOKEN3` segments, not `::ep::99` segments
+- Episodes 1-2 work on net11.cc CDN because its `::ep::99` segments exist for shorter episodes
 
 ### Root Cause: Can't get postMessage cookies (user_token, t_hash_p, ott)
-- net52.cc blocks **ALL** requests with `err:1003` (POST, GET, WebView)
-- These cookies are needed for playlist.php to return `::ep::p::TOKEN3` (clean format)
-- Without them, playlist.php returns either `unknown::ep` (net52) or `::ep::99` (net11)
+- net52.cc blocks **ALL** play.php requests with `err:1003` (POST, GET, WebView) unless correct Referer is set
+- **However**: `bypass()` successfully POSTs to `net52.cc/verify.php` with `Referer: net22.cc/verify2`
+- This proves net52.cc accepts requests with the right Referer chain
+- The iframe URL `net52.cc/play.php?h=BASE64(hash)` is loaded from parent `net22.cc/play.php?id=X`, giving it `Referer: net22.cc/play.php?id=X`
 
-### Current Approach: h=BASE64 variants
-- The iframe auth page URL is **`net52.cc/play.php?h=BASE64(hash)`**
-- play.php POST returns `h=in=TOKEN1::TOKEN2::TIMESTAMP::ep::i::`
-- We now compute Base64 variants (standard + URL-safe) of the hash and pass as `h=` param
-- Trying both `id+&h=` format and standalone `?h=` format (iframe format)
-- Added to both HTTP PM extraction and WebView fallback
+### New Approach: Load parent page iframe naturally
+- Load `net22.cc/play.php?id=X` in WebView first → page auto-generates hash, renders iframe
+- WebView naturally loads the iframe with correct Referer
+- Our JS interceptor catches postMessage from the iframe
+- No need to manually construct Base64 URL or set custom Referer
 
 ### Verified Working URL (curl example)
 ```
