@@ -28,7 +28,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import okhttp3.FormBody
+import okhttp3.Interceptor
+import okhttp3.MediaType
 import okhttp3.Request
+import okhttp3.ResponseBody
 import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -521,6 +524,36 @@ data class PlaylistResponse(
 )
 
 val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
+
+private val fallbackCdns = listOf("s26.nm-cdn5.top", "s23.nm-cdn9.top", "s01.nm-cdn30.top")
+
+fun m3u8CdnFixInterceptor(): Interceptor {
+    return Interceptor { chain ->
+        val resp = chain.proceed(chain.request())
+        val url = chain.request().url.toString()
+        if (url.contains(".m3u8")) {
+            val body = resp.body?.string() ?: return@Interceptor resp
+            if (!body.contains("https:///files/")) return@Interceptor resp
+            val cdnRegex = Regex("https://([^/\"]+)/files/")
+            val cdn = cdnRegex.find(body)?.groupValues?.get(1) ?: fallbackCdns.firstOrNull()
+            if (cdn != null) {
+                val fixed = body.replace("https:///files/", "https://$cdn/files/")
+                Log.d("CdnFix", "Fixed CDN URLs in M3U8 ($cdn): $url")
+                val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
+                return@Interceptor resp.newBuilder().body(fixedBody).build()
+            }
+        }
+        resp
+    }
+}
+
+fun fixM3u8Cdn(body: String): String? {
+    val cdnRegex = Regex("https://([^/\"]+)/files/")
+    val cdn = cdnRegex.find(body)?.groupValues?.get(1)
+        ?: return null
+    val fixed = body.replace("https:///files/", "https://$cdn/files/")
+    return if (fixed != body) fixed else null
+}
 
 // ---------------------------------------------------------------------------
 // WebView-based postMessage cookie capture (user_token, t_hash_p, ott, hd)

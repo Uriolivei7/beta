@@ -344,8 +344,7 @@ class PrimevideoProvider : MainAPI() {
         return true
     }
 
-    @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return null
+        return m3u8CdnFixInterceptor()
     }
 }
