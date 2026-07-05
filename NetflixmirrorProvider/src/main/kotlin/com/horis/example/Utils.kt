@@ -570,84 +570,103 @@ suspend fun getPlaylistUrl(
         // Strategy: fetch the play.php HTML page with id&in params → find iframe src
         // → fetch iframe (net52.cc/play.php?h=...) → extract postMessage data
         val pmCookies = mutableMapOf<String, String>()
-        val pmTryDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
+        val pmTryDomains = listOf(mainUrl.trimEnd('/'), "https://net52.cc", playDomain).distinct()
+        data class PmVariant(val label: String, val param: String, val value: String)
+        val pmVariants = listOf(
+            PmVariant("in=3part", "in", cleanHash),
+            PmVariant("in=5part", "in", playHash),
+            PmVariant("h=5part", "h", playHash)
+        )
         for (tryDomain in pmTryDomains) {
+            // Try with just id (no hash) – page may self-generate
             try {
-                val pmUrl = "$tryDomain/play.php?id=$id&in=$cleanHash"
-                Log.d("PlayPhp", "Fetching play.php HTML from $pmUrl")
-                val pmResp = app.get(pmUrl, headers = mapOf(
+                val noHashUrl = "$tryDomain/play.php?id=$id"
+                Log.d("PlayPhp", "PM trying no-hash on $tryDomain: $noHashUrl")
+                val noHashResp = app.get(noHashUrl, headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Origin" to tryDomain,
                     "Referer" to "$tryDomain/",
                     "Cookie" to cookie
                 ))
-                val body = pmResp.text
-                Log.d("PlayPhp", "play.php HTML body len=${body.length} start=${body.take(200)}")
-
-                // Step A: find iframe src (points to net52.cc/play.php?h=...)
-                val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(body)?.groupValues?.getOrNull(1)
+                val nb = noHashResp.text
+                Log.d("PlayPhp", "PM no-hash body len=${nb.length} start=${nb.take(200)}")
+                val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(nb)?.groupValues?.getOrNull(1)
                 if (!iframeSrc.isNullOrBlank()) {
+                    Log.d("PlayPhp", "PM no-hash iframe: $iframeSrc")
                     val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$tryDomain$iframeSrc"
-                    Log.d("PlayPhp", "Fetching iframe: $iframeUrl")
                     val iframeResp = app.get(iframeUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Referer" to pmUrl,
+                        "Referer" to noHashUrl,
                         "Cookie" to cookie
                     ))
                     Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(iframeResp.text).forEach { match ->
-                        val k = match.groupValues[1]
-                        val v = match.groupValues[2]
-                        if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
-                            pmCookies[k] = v
-                            Log.d("PlayPhp", "PM cookie from iframe: $k=$v")
-                        }
+                        val k = match.groupValues[1]; val v = match.groupValues[2]
+                        if (k in setOf("user_token", "t_hash_p", "ott", "hd")) { pmCookies[k] = v; Log.d("PlayPhp", "PM cookie from no-hash iframe: $k=$v") }
                     }
                 }
-
-                // Step B: also check the main page directly for any inline postMessage
-                Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(body).forEach { match ->
-                    val k = match.groupValues[1]
-                    val v = match.groupValues[2]
-                    if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
-                        if (!pmCookies.containsKey(k)) pmCookies[k] = v
-                        Log.d("PlayPhp", "PM cookie from main page: $k=$v")
-                    }
+                Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(nb).forEach { match ->
+                    val k = match.groupValues[1]; val v = match.groupValues[2]
+                    if (k in setOf("user_token", "t_hash_p", "ott", "hd")) { if (!pmCookies.containsKey(k)) pmCookies[k] = v; Log.d("PlayPhp", "PM cookie from no-hash inline: $k=$v") }
                 }
-
-                if (pmCookies.isNotEmpty()) break
             } catch (e: Exception) {
-                Log.w("PlayPhp", "PM cookies failed for $tryDomain: ${e.message}")
+                Log.w("PlayPhp", "PM no-hash failed ($tryDomain): ${e.message}")
             }
-        }
+            if (pmCookies.isNotEmpty()) break
 
-        // Fallback: try requesting with h= parameter (some versions use this)
-        if (pmCookies.isEmpty()) {
-            for (tryDomain in pmTryDomains) {
+            // Also try with hash params
+            for (pmV in pmVariants) {
                 try {
-                    val hUrl = "$tryDomain/play.php?id=$id&h=$playHash"
-                    Log.d("PlayPhp", "Fallback PM via h=: $hUrl")
-                    val hResp = app.get(hUrl, headers = mapOf(
+                    val pmUrl = "$tryDomain/play.php?id=$id&${pmV.param}=${pmV.value}"
+                    Log.d("PlayPhp", "PM cookies trying $pmV.label on $tryDomain: $pmUrl")
+                    val pmResp = app.get(pmUrl, headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                         "Origin" to tryDomain,
                         "Referer" to "$tryDomain/",
                         "Cookie" to cookie
                     ))
-                    Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(hResp.text).forEach { match ->
+                    val body = pmResp.text
+                    Log.d("PlayPhp", "PM $pmV.label body len=${body.length} start=${body.take(200)}")
+
+                    // Find iframe src (points to net52.cc/play.php?h=...)
+                    val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(body)?.groupValues?.getOrNull(1)
+                    if (!iframeSrc.isNullOrBlank()) {
+                        val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$tryDomain$iframeSrc"
+                        Log.d("PlayPhp", "PM iframe found: $iframeUrl")
+                        val iframeResp = app.get(iframeUrl, headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            "Referer" to pmUrl,
+                            "Cookie" to cookie
+                        ))
+                        Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(iframeResp.text).forEach { match ->
+                            val k = match.groupValues[1]
+                            val v = match.groupValues[2]
+                            if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
+                                pmCookies[k] = v
+                                Log.d("PlayPhp", "PM cookie from iframe: $k=$v")
+                            }
+                        }
+                    }
+
+                    // Also check the main page for inline postMessage
+                    Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(body).forEach { match ->
                         val k = match.groupValues[1]
                         val v = match.groupValues[2]
                         if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
                             if (!pmCookies.containsKey(k)) pmCookies[k] = v
-                            Log.d("PlayPhp", "PM cookie from h= param: $k=$v")
+                            Log.d("PlayPhp", "PM cookie inline: $k=$v")
                         }
                     }
+
                     if (pmCookies.isNotEmpty()) break
                 } catch (e: Exception) {
-                    Log.w("PlayPhp", "PM cookies via h= failed for $tryDomain: ${e.message}")
+                    Log.w("PlayPhp", "PM cookies failed ($pmV.label on $tryDomain): ${e.message}")
                 }
             }
+            if (pmCookies.isNotEmpty()) break
         }
 
         // Merge postMessage cookies into existing cookie string
