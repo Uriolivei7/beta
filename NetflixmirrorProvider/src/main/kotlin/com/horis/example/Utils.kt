@@ -848,17 +848,8 @@ suspend fun getPlaylistUrl(
         if (pmCookies.isEmpty() && pluginContext != null) {
             val encodedRawHash = java.net.URLEncoder.encode(rawHash, "UTF-8")
             val wvUrls = listOf(
-                // Standard formats with id
                 "https://net52.cc/play.php?id=$id",
-                "https://net52.cc/play.php?id=$id&in=$cleanHash",
-                "https://net52.cc/play.php?id=$id&h=$b64raw",
-                "https://net52.cc/play.php?id=$id&h=$b64rawUrl",
-                "https://net52.cc/play.php?id=$id&h=$b64play",
-                // Iframe auth format (no id param, just h=)
-                "https://net52.cc/play.php?h=$b64raw",
                 "https://net52.cc/play.php?h=$b64rawUrl",
-                "https://net52.cc/play.php?h=$b64play",
-                "https://net52.cc/play.php?h=$b64clean",
                 "https://net52.cc/play.php?h=$encodedRawHash"
             )
             for (wvUrl in wvUrls) {
@@ -873,15 +864,20 @@ suspend fun getPlaylistUrl(
         }
 
         // Merge postMessage cookies into existing cookie string
-        val mergedCookie = if (pmCookies.isNotEmpty()) {
-            val cMap = mutableMapOf<String, String>()
-            cookie.split(";").forEach { part ->
-                val kv = part.trim().split("=", limit = 2)
-                if (kv.size == 2 && kv[0].isNotBlank()) cMap[kv[0]] = kv[1]
-            }
-            cMap.putAll(pmCookies)
-            cMap.map { "${it.key}=${it.value}" }.joinToString("; ")
-        } else cookie
+        // Also inject default/empty values when extraction failed (server may check existence)
+        val defaultPmCookies = mapOf(
+            "ott" to ott,
+            "user_token" to "",
+            "t_hash_p" to ""
+        )
+        val mergedPmCookies = if (pmCookies.isNotEmpty()) pmCookies else defaultPmCookies
+        val cMap = mutableMapOf<String, String>()
+        cookie.split(";").forEach { part ->
+            val kv = part.trim().split("=", limit = 2)
+            if (kv.size == 2 && kv[0].isNotBlank()) cMap[kv[0]] = kv[1]
+        }
+        cMap.putAll(mergedPmCookies)
+        val mergedCookie = cMap.map { "${it.key}=${it.value}" }.joinToString("; ")
 
         // Try multiple playlist.php request formats
         val playlistDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
@@ -916,12 +912,6 @@ suspend fun getPlaylistUrl(
                     if (!sourceFile.isNullOrBlank() && !sourceFile.contains("unknown")) {
                         var m3u8Url = if (sourceFile.startsWith("http")) sourceFile
                                       else "${plDomain.trimEnd('/')}/${sourceFile.removePrefix("/")}"
-                        // Prefer net52.cc CDN (may have better episode availability)
-                        if (m3u8Url.startsWith("https://net11.cc/") && m3u8Url.contains("m3u8")) {
-                            val net52Url = m3u8Url.replace("https://net11.cc", "https://net52.cc")
-                            Log.d("PlayPhp", "Also trying net52.cc CDN: $net52Url")
-                            m3u8Url = net52Url
-                        }
                         Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size} (domain=$plDomain ${variant.param}=${variant.value})")
                         Log.e("PLAYURL", m3u8Url)
                         foundSource = Pair(m3u8Url, tracks)
