@@ -789,7 +789,9 @@ suspend fun getPlaylistUrl(
         val pmCookies = mutableMapOf<String, String>()
         val pmTryDomains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
         data class PmVariant(val label: String, val param: String, val value: String)
-        val pmVariants = listOf(
+        val pmTHashT = cookie.split(";").map { it.trim() }.firstOrNull { it.startsWith("t_hash_t=") }?.substringAfter("=")?.let { raw -> try { java.net.URLDecoder.decode(raw, "UTF-8") } catch (e: Exception) { raw } }?.substringBefore("::") ?: ""
+        val pmHashWithP = if (pmTHashT.isNotBlank()) "$cleanHash::ep::p::$pmTHashT" else null
+        val pmVariants = mutableListOf(
             PmVariant("in=3part", "in", cleanHash),
             PmVariant("in=5part", "in", playHash),
             PmVariant("h=5part", "h", playHash),
@@ -802,6 +804,7 @@ suspend fun getPlaylistUrl(
             PmVariant("in=p_end", "in", playHashPEnd),
             PmVariant("h=b64playPEnd", "h", b64playPEnd)
         )
+        pmHashWithP?.let { pmVariants.add(PmVariant("in=p_token", "in", it)) }
         for (tryDomain in pmTryDomains) {
             // net52.cc blocks requests from same origin — it expects Referer/Origin from net22.cc
             val pmOrigin = if (tryDomain.contains("net52")) "https://net22.cc" else tryDomain
@@ -942,6 +945,9 @@ suspend fun getPlaylistUrl(
         // Try multiple playlist.php request formats
         val playlistDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
         data class PlVariant(val param: String, val value: String)
+        val tHashTRaw = try { java.net.URLDecoder.decode(tHashT, "UTF-8") } catch (e: Exception) { tHashT }
+        val tHashTToken = tHashTRaw.substringBefore("::")
+        val hashWithP = if (tHashTToken.isNotBlank()) "$cleanHash::ep::p::$tHashTToken" else null
         val playlistVariants = listOf(
             PlVariant("h", cleanHash),     // h=3-part (current approach)
             PlVariant("h", playHash),      // h=5-part with ::ep::i::
@@ -952,7 +958,7 @@ suspend fun getPlaylistUrl(
             PlVariant("in", playHashP),    // in=::ep::p::TOKEN2 (placeholder)
             PlVariant("h", playHashPEnd),  // h=::ep::p:: (empty TOKEN3)
             PlVariant("in", playHashPEnd)  // in=::ep::p:: (empty TOKEN3)
-        )
+        ) + (hashWithP?.let { listOf(PlVariant("h", it), PlVariant("in", it)) } ?: emptyList())
         var foundSource: Pair<String, List<PlaylistTrack>>? = null
         var weakFallback: Pair<String, List<PlaylistTrack>>? = null   // ::ep::99 format
         outer@ for (plDomain in playlistDomains) {
@@ -994,8 +1000,23 @@ suspend fun getPlaylistUrl(
             }
         }
         // Try direct M3U8 URL (curl example pattern) as fallback — bypass playlist.php
+        val directVariants = mutableListOf(
+            PlVariant("in", cleanHash), PlVariant("in", playHash), PlVariant("in", playHashP)
+        )
+        hashWithP?.let { directVariants.add(PlVariant("in", it)) }
+        // Also try hashes from weakFallback (playlist.php-validated ::ep::99/::ep hashes with cached t_hash_t as TOKEN1)
+        if (weakFallback != null) {
+            val wfHash = weakFallback.first.substringAfter("?in=").substringBefore("&")
+            if (wfHash.isNotBlank() && wfHash != cleanHash) {
+                directVariants.add(PlVariant("in", wfHash))
+                if (wfHash.endsWith("::99")) {
+                    directVariants.add(PlVariant("in", wfHash.removeSuffix("::99")))
+                }
+                Log.d("PlayPhp", "Added weakFallback hash to direct M3U8 variants: $wfHash")
+            }
+        }
         for (plDomain in playlistDomains) {
-            for (variant in listOf(PlVariant("in", cleanHash), PlVariant("in", playHash), PlVariant("in", playHashP))) {
+            for (variant in directVariants) {
                 try {
                     val m3u8Url = "$plDomain/hls/$id.m3u8?${variant.param}=${variant.value}"
                     Log.d("PlayPhp", "Trying direct M3U8: $m3u8Url")
