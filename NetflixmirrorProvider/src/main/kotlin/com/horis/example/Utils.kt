@@ -229,7 +229,7 @@ suspend fun bypass(mainUrl: String): String {
             client.newCall(request).execute().use { resp ->
                 captureCookies(resp)
                 val respBody = resp.body?.string().orEmpty()
-                Log.d("bypass", "verify.php status=${resp.code} cookies=$allCookies body=${respBody.take(200)}")
+                Log.d("bypass", "verify.php status=${resp.code} cookies=$allCookies body=${respBody.take(500)}")
                 if (allCookies.containsKey("t_hash_t")) {
                     val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
                     NetflixMirrorStorage.saveCookie(cookieStr)

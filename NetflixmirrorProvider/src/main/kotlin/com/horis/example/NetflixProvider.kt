@@ -248,21 +248,28 @@ class NetflixProvider : MainAPI() {
         } catch (e: Exception) {
             Log.d("NetflixProvider", "userver(ep_id) failed: ${e.message}")
         }
-        // userver with jjoii=empty + json body
-        try {
-            val rb = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull()!!, """{"id":"$id","ott":"$ott"}""")
-            val uResp = app.post("https://userver.net52.cc/", headers = uHeaders, requestBody = rb)
-            Log.d("NetflixProvider", "userver(empty+json) code=${uResp.code} body=${uResp.text.take(300)}")
-        } catch (e: Exception) {
-            Log.d("NetflixProvider", "userver(empty+json) failed: ${e.message}")
-        }
-        // userver with jjoii=url_encoded_post_url
-        val encUrl = java.net.URLEncoder.encode("$mainUrl/mobile/$ott/post.php?id=$id", "UTF-8")
-        try {
-            val uResp = app.post("https://userver.net52.cc/?jjoii=$encUrl", headers = uHeaders)
-            Log.d("NetflixProvider", "userver(url) code=${uResp.code} body=${uResp.text.take(300)}")
-        } catch (e: Exception) {
-            Log.d("NetflixProvider", "userver(url) failed: ${e.message}")
+        // userver with jjoii=t_hash_t token (URL decoded)
+        val tHashValue = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
+        if (tHashValue != null) {
+            val decoded = java.net.URLDecoder.decode(tHashValue, "UTF-8")
+            try {
+                val uResp = app.post("https://userver.net52.cc/?jjoii=$tHashValue", headers = uHeaders)
+                Log.d("NetflixProvider", "userver(t_hash_raw) code=${uResp.code} body=${uResp.text.take(300)}")
+            } catch (e: Exception) { Log.d("NetflixProvider", "userver(t_hash_raw) failed: ${e.message}") }
+            try {
+                val uResp = app.post("https://userver.net52.cc/?jjoii=$decoded", headers = uHeaders)
+                Log.d("NetflixProvider", "userver(t_hash_dec) code=${uResp.code} body=${uResp.text.take(300)}")
+            } catch (e: Exception) { Log.d("NetflixProvider", "userver(t_hash_dec) failed: ${e.message}") }
+            val firstPart = decoded.split("::").first()
+            try {
+                val uResp = app.post("https://userver.net52.cc/?jjoii=$firstPart", headers = uHeaders)
+                Log.d("NetflixProvider", "userver(t_hash_first) code=${uResp.code} body=${uResp.text.take(300)}")
+            } catch (e: Exception) { Log.d("NetflixProvider", "userver(t_hash_first) failed: ${e.message}") }
+            try {
+                val rb = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull()!!, """{"id":"$id","ott":"$ott","t_hash":"$decoded"}""")
+                val uResp = app.post("https://userver.net52.cc/", headers = uHeaders, requestBody = rb)
+                Log.d("NetflixProvider", "userver(empty+t_hash) code=${uResp.code} body=${uResp.text.take(300)}")
+            } catch (e: Exception) { Log.d("NetflixProvider", "userver(empty+t_hash) failed: ${e.message}") }
         }
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
