@@ -231,33 +231,38 @@ class NetflixProvider : MainAPI() {
         val title = loadData.title
         val cookie = bypass(mainUrl)
 
-        // POST to userver.net52.cc/?jjoii=ID → NewTvPlayerResponse{video_link, referer}
-        val userverUrl = "https://userver.net52.cc/?jjoii=$id"
-        val userverHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/", "Origin" to mainUrl)
-        // empty body
+        // Probe: verify.php response body + userver with various jjoii
+        val uHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/", "Origin" to mainUrl)
+        // verify.php response body
         try {
-            val uResp = app.post(userverUrl, headers = userverHeaders)
-            Log.d("NetflixProvider", "userver empty code=${uResp.code} body=${uResp.text.take(300)}")
+            val vResp = app.post("$mainUrl/verify.php", headers = mapOf("Origin" to "https://net22.cc", "Referer" to "https://net22.cc/verify2"),
+                requestBody = FormBody.Builder().add("g-recaptcha-response", "test").build())
+            Log.d("NetflixProvider", "verify body: ${vResp.text.take(300)}")
         } catch (e: Exception) {
-            Log.d("NetflixProvider", "userver empty failed: ${e.message}")
+            Log.d("NetflixProvider", "verify probe failed: ${e.message}")
         }
-        
+        // userver with jjoii=episode_id
+        try {
+            val uResp = app.post("https://userver.net52.cc/?jjoii=$id", headers = uHeaders)
+            Log.d("NetflixProvider", "userver(ep_id) code=${uResp.code} body=${uResp.text.take(300)}")
+        } catch (e: Exception) {
+            Log.d("NetflixProvider", "userver(ep_id) failed: ${e.message}")
+        }
+        // userver with jjoii=empty + json body
         try {
             val rb = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull()!!, """{"id":"$id","ott":"$ott"}""")
-            val uResp = app.post(userverUrl, headers = userverHeaders, requestBody = rb)
-            val playerResp = uResp.parsedSafe<NewTvPlayerResponse>()
-            Log.d("NetflixProvider", "userver json code=${uResp.code} body=${uResp.text.take(300)} parsed=$playerResp")
-            if (playerResp?.video_link != null) Log.e("PLAYURL", "userver M3U8: ${playerResp.video_link}")
+            val uResp = app.post("https://userver.net52.cc/", headers = uHeaders, requestBody = rb)
+            Log.d("NetflixProvider", "userver(empty+json) code=${uResp.code} body=${uResp.text.take(300)}")
         } catch (e: Exception) {
-            Log.d("NetflixProvider", "userver json failed: ${e.message}")
+            Log.d("NetflixProvider", "userver(empty+json) failed: ${e.message}")
         }
-        // form body
+        // userver with jjoii=url_encoded_post_url
+        val encUrl = java.net.URLEncoder.encode("$mainUrl/mobile/$ott/post.php?id=$id", "UTF-8")
         try {
-            val rb = FormBody.Builder().add("id", id).add("ott", ott).build()
-            val uResp = app.post(userverUrl, headers = userverHeaders, requestBody = rb)
-            Log.d("NetflixProvider", "userver form code=${uResp.code} body=${uResp.text.take(300)}")
+            val uResp = app.post("https://userver.net52.cc/?jjoii=$encUrl", headers = uHeaders)
+            Log.d("NetflixProvider", "userver(url) code=${uResp.code} body=${uResp.text.take(300)}")
         } catch (e: Exception) {
-            Log.d("NetflixProvider", "userver form failed: ${e.message}")
+            Log.d("NetflixProvider", "userver(url) failed: ${e.message}")
         }
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
