@@ -593,6 +593,18 @@ suspend fun capturePmCookiesViaWebView(
 
                 view.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(v: WebView, u: String) {
+                        // Check for err page and bail immediately
+                        v.evaluateJavascript("document.body ? document.body.innerText.substring(0,200) : ''") { text ->
+                            if (!resumed && text != null && (text.contains("err:") || text.contains("Page Not Found"))) {
+                                Log.d("PlayPhp", "PM WebView err page detected, bailing")
+                                resumed = true
+                                handler.removeCallbacksAndMessages(null)
+                                destroyPmWv()
+                                cont.resume(emptyMap())
+                                return@evaluateJavascript
+                            }
+                        }
+                        if (resumed) return
                         v.evaluateJavascript("""
                             (function() {
                                 var origPM = window.postMessage;
@@ -635,7 +647,7 @@ suspend fun capturePmCookiesViaWebView(
                                     cont.resume(captured.toMap())
                                     return
                                 }
-                                if (attempts++ > 60) {
+                                if (attempts++ > 20) {
                                     if (!resumed) {
                                         resumed = true
                                         handler.removeCallbacksAndMessages(null)
@@ -666,7 +678,7 @@ suspend fun getPlaylistUrl(
     title: String,
     cookie: String = ""
 ): Pair<String, List<PlaylistTrack>>? {
-    val domains = (playPhpDomains + listOf(mainUrl.trimEnd('/'))).distinct()
+    val domains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
 
     var playHash: String? = null
     var timestamp: String = "0"
@@ -722,7 +734,7 @@ suspend fun getPlaylistUrl(
         // Strategy: fetch the play.php HTML page with id&in params → find iframe src
         // → fetch iframe (net52.cc/play.php?h=...) → extract postMessage data
         val pmCookies = mutableMapOf<String, String>()
-        val pmTryDomains = (playPhpDomains + mainUrl.trimEnd('/')).distinct()
+        val pmTryDomains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
         data class PmVariant(val label: String, val param: String, val value: String)
         val pmVariants = listOf(
             PmVariant("in=3part", "in", cleanHash),
