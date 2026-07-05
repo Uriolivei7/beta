@@ -19,20 +19,9 @@ class PrimevideoProvider : MainAPI() {
     private val ott = "pv"
 
     private val androidHeaders = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "Cache-Control" to "max-age=0",
-        "Connection" to "keep-alive",
-        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1",
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "XMLHttpRequest"
+        "Accept" to "*/*",
+        "Connection" to "keep-alive"
     )
 
     private fun pvPoster(id: String): String = "https://imgcdn.kim/pv/v/$id.jpg"
@@ -302,7 +291,7 @@ class PrimevideoProvider : MainAPI() {
         val load = parseJson<NewTvLoadData>(data)
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
         val cookie = bypass(mainUrl)
-        val videoHeaders = androidHeaders + mapOf("Cookie" to "hd=on; t_hash_t=$cookie")
+        val videoHeaders = androidHeaders + mapOf("Cookie" to "hd=on; t_hash_t=$cookie", "Referer" to "$mainUrl/")
 
         // New flow: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie)
@@ -318,8 +307,8 @@ class PrimevideoProvider : MainAPI() {
                 }
             }
             Log.d("Primevideo", "loadLinks new flow SUCCESS: $m3u8Url")
+            Log.e("PLAYURL", m3u8Url)
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
-                this.referer = "$mainUrl/mobile/home?app=1"
                 this.headers = videoHeaders
             })
             return true
@@ -346,6 +335,7 @@ class PrimevideoProvider : MainAPI() {
 
         val m3u8Referer = result.referer ?: apiBase
         kotlinx.coroutines.delay(Random.nextLong(1000L, 3000L))
+        Log.e("PLAYURL", result.video_link)
         callback.invoke(newExtractorLink(name, name, result.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = m3u8Referer
             this.headers = videoHeaders
@@ -360,8 +350,10 @@ class PrimevideoProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 if (request.url.toString().contains(".m3u8")) {
+                    val existing = request.header("Cookie") ?: ""
+                    val newCookie = if ("hd=on" in existing) existing else "hd=on; $existing"
                     val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
+                        .header("Cookie", newCookie.trimEnd(';', ' '))
                         .build()
                     return chain.proceed(newRequest)
                 }

@@ -574,6 +574,7 @@ suspend fun getPlaylistUrl(
                           else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
             val fixedUrl = m3u8Url.replace("unknown::ep", playHash)
             Log.d("PlayPhp", "M3U8 url=$fixedUrl tracks=${tracks.size}")
+            Log.e("PLAYURL", fixedUrl)
             return Pair(fixedUrl, tracks)
         }
     } catch (e: Exception) {
