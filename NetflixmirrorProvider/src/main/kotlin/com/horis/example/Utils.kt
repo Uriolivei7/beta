@@ -517,6 +517,7 @@ suspend fun getPlaylistUrl(
 
     var playHash: String? = null
     var timestamp: String = "0"
+    var playDomain: String = ""
 
     for (domain in domains) {
         try {
@@ -540,6 +541,7 @@ suspend fun getPlaylistUrl(
                 if (!h.isNullOrBlank()) {
                     playHash = h.removePrefix("in=")
                     timestamp = playHash.split("::").getOrNull(2) ?: "0"
+                    playDomain = domain
                     Log.d("PlayPhp", "Got hash=$playHash ts=$timestamp from $domain")
                     break
                 }
@@ -565,14 +567,15 @@ suspend fun getPlaylistUrl(
         Log.d("PlayPhp", "playlist response=$playlistBody")
         val parsed = tryParseJsonList<PlaylistResponse>(playlistBody)
         val first = parsed?.firstOrNull()
-        val hashToken = playHash.split("::").firstOrNull() ?: ""
-        val sourceFile = first?.sources?.firstOrNull()?.file?.replace("unknown", hashToken)
+        val sourceFile = first?.sources?.firstOrNull()?.file
         val tracks = first?.tracks.orEmpty()
         if (!sourceFile.isNullOrBlank()) {
+            val baseUrl = playDomain.ifBlank { mainUrl.trimEnd('/') }
             val m3u8Url = if (sourceFile.startsWith("http")) sourceFile
-                          else "${mainUrl.trimEnd('/')}/${sourceFile.removePrefix("/")}"
-            Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size}")
-            return Pair(m3u8Url, tracks)
+                          else "${baseUrl}/${sourceFile.removePrefix("/")}"
+            val fixedUrl = m3u8Url.replace("unknown::ep", playHash)
+            Log.d("PlayPhp", "M3U8 url=$fixedUrl tracks=${tracks.size}")
+            return Pair(fixedUrl, tracks)
         }
     } catch (e: Exception) {
         Log.w("PlayPhp", "playlist.php failed: ${e.message}")
