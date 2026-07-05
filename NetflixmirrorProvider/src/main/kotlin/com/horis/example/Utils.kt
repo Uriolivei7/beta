@@ -510,10 +510,7 @@ suspend fun getPlaylistUrl(
     cookie: String = ""
 ): Pair<String, List<PlaylistTrack>>? {
     val domains = (playPhpDomains + listOf(mainUrl.trimEnd('/'))).distinct()
-    val cookieHeader = buildString {
-        append("hd=on")
-        if (cookie.isNotBlank()) append("; t_hash_t=$cookie")
-    }
+    val cookieHeader = if (cookie.isNotBlank()) "t_hash_t=$cookie" else ""
 
     var playHash: String? = null
     var timestamp: String = "0"
@@ -521,17 +518,20 @@ suspend fun getPlaylistUrl(
 
     for (domain in domains) {
         try {
+            val browserHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Referer" to "$domain/home",
+                "Origin" to domain,
+                "Cookie" to cookieHeader,
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
+            )
             val resp = app.post(
                 "$domain/play.php",
                 requestBody = FormBody.Builder()
                     .add("id", id)
                     .build(),
-                headers = buildNewTvHeaders(ott, mapOf(
-                    "Referer" to "$domain/home",
-                    "Origin" to domain,
-                    "Cookie" to cookieHeader,
-                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
-                ))
+                headers = browserHeaders
             )
             val text = resp.text.trim()
             Log.d("PlayPhp", "Domain=$domain response=$text")
@@ -562,10 +562,12 @@ suspend fun getPlaylistUrl(
         val cleanHash = playHash.split("::").take(3).joinToString("::")
         val playlistBody = app.get(
             "$mainUrl/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
-            headers = buildNewTvHeaders(ott, mapOf(
-                "Referer" to "$mainUrl",
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Referer" to "$mainUrl/play.php?id=$id&in=$cleanHash",
                 "Cookie" to cookieHeader
-            ))
+            )
         ).text
         Log.d("PlayPhp", "playlist response=$playlistBody")
         val parsed = tryParseJsonList<PlaylistResponse>(playlistBody)
