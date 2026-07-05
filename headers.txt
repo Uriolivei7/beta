@@ -1,0 +1,17 @@
+HTTP/1.1 301 Moved Permanently
+Date: Sun, 05 Jul 2026 17:34:33 GMT
+Content-Type: text/html; charset=UTF-8
+Transfer-Encoding: chunked
+Connection: keep-alive
+Cache-Control: max-age=10
+Pragma: no-cache
+Expires: 10
+Location: https://net11.cc/verify2
+Server: cloudflare
+Cf-Cache-Status: DYNAMIC
+Nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+Server-Timing: cfCacheStatus;desc="DYNAMIC"
+Server-Timing: cfEdge;dur=9,cfOrigin;dur=210
+Report-To: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=yG651gU4eZEYTKSlhkIp4ESucMDLniQryM6pr9%2FzQlT%2BLq3A%2BH66oZvKCN%2BbA%2F6%2F80U1i2PaYNxtCVq%2Bhg20ISS0VEmrHTEbynjUZ8XBS0IcW6o4S7HdEVw7jJ2F%2FvVMy60%2BdknG"}]}
+CF-RAY: a1681f03ad98a444-GRU
+

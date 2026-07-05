@@ -682,30 +682,18 @@ suspend fun getPlaylistUrl(
     apiBase: String? = null
 ): Pair<String, List<PlaylistTrack>>? {
     val domains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
-
     var playHash: String? = null
     var timestamp: String = "0"
-    var playDomain: String = ""
-
     for (domain in domains) {
         try {
-            // net52.cc blocks same-origin — send net11.cc Referer/Origin (cross-origin, net22.cc DNS dead)
-            val bypassOrigin = if (domain.contains("net52")) "https://net11.cc" else domain
-            val bypassReferer = if (domain.contains("net52")) "https://net11.cc/play.php?id=$id" else "$domain/"
-            val browserHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Accept" to "*/*",
-                "Referer" to bypassReferer,
-                "Origin" to bypassOrigin,
-                "Cookie" to cookie,
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
-            )
             val resp = app.post(
                 "$domain/play.php",
-                requestBody = FormBody.Builder()
-                    .add("id", id)
-                    .build(),
-                headers = browserHeaders
+                requestBody = FormBody.Builder().add("id", id).build(),
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                    "Accept" to "*/*",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
+                )
             )
             val text = resp.text.trim()
             Log.d("PlayPhp", "Domain=$domain response=$text")
@@ -715,7 +703,6 @@ suspend fun getPlaylistUrl(
                 if (!h.isNullOrBlank()) {
                     playHash = h.removePrefix("in=")
                     timestamp = playHash.split("::").getOrNull(2) ?: "0"
-                    playDomain = domain
                     Log.d("PlayPhp", "Got hash=$playHash ts=$timestamp from $domain")
                     break
                 }
@@ -724,381 +711,49 @@ suspend fun getPlaylistUrl(
             Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
         }
     }
-
-    // Also try to extract a play hash from $mainUrl/home page (may contain net52.cc-style hash)
-    try {
-        val homeUrl = "${domains.first()}/home"
-        Log.d("PlayPhp", "Trying to extract play hash from $homeUrl")
-        val homeResp = app.get(homeUrl, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept" to "text/html,*/*",
-            "Cookie" to cookie
-        ))
-        val body = homeResp.text
-        Log.d("PlayPhp", "home page len=${body.length} first 500=${body.take(500)}")
-        var h = Regex("""["']h["']\s*[:=]\s*["'](in=[^"']+)""").find(body)?.groupValues?.getOrNull(1)
-        if (h.isNullOrBlank()) {
-            h = Regex("""\bh=in=[a-f0-9:]{10,}""").find(body)?.value?.removePrefix("h=")
-        }
-        if (!h.isNullOrBlank()) {
-            val homeHash = h.removePrefix("in=")
-            // Prefer net52.cc-style hash (with ::ep::p:: format) over net11.cc hash (::ep::i::)
-            if (homeHash.contains("::ep::p::") || playHash.isNullOrBlank()) {
-                playHash = homeHash
-                timestamp = playHash.split("::").getOrNull(2) ?: "0"
-                playDomain = domains.first()
-                Log.d("PlayPhp", "Got hash from home page=$playHash ts=$timestamp")
-            } else {
-                Log.d("PlayPhp", "Home page hash is ::ep::i:: format, keeping existing")
-            }
-        } else {
-            Log.w("PlayPhp", "No play hash found in home page")
-        }
-    } catch (e: Exception) {
-        Log.w("PlayPhp", "Home page extraction failed: ${e.message}")
-    }
-
     if (playHash.isNullOrBlank()) {
         Log.w("PlayPhp", "All domains failed to get play hash")
         return null
     }
-
+    val cleanHash = playHash.split("::").take(3).joinToString("::")
+    val hlsDomains = listOf("https://net52.cc", "https://net11.cc").distinct()
+    var tracks: List<PlaylistTrack> = emptyList()
     try {
-        // Send only the first 3 parts (token::hash::timestamp) to playlist.php
-        // The extra ::ep::i:: from play.php is for internal use and shouldn't be sent
-        val cleanHash = playHash.split("::").take(3).joinToString("::")
-        val rawHash = "in=$playHash"
-
-        // Base64 variants for the h= parameter (net52.cc iframe format)
-        val b64raw = Base64.encodeToString(rawHash.toByteArray(), Base64.NO_WRAP)
-        val b64rawUrl = Base64.encodeToString(rawHash.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
-        val b64play = Base64.encodeToString(playHash.toByteArray(), Base64.NO_WRAP)
-        val b64clean = Base64.encodeToString(cleanHash.toByteArray(), Base64.NO_WRAP)
-        // Try ::ep::p:: format (what playlist.php returns with proper auth)
-        val parts = playHash.split("::")
-        val first3 = parts.take(3)
-        val playHashP = first3.joinToString("::") + "::ep::p::" + parts.getOrElse(1) { "" }  // TOKEN2 as placeholder TOKEN3
-        val playHashPEnd = first3.joinToString("::") + "::ep::p::"  // no TOKEN3
-        val b64playP = Base64.encodeToString(playHashP.toByteArray(), Base64.NO_WRAP)
-        val b64playPEnd = Base64.encodeToString(playHashPEnd.toByteArray(), Base64.NO_WRAP)
-
-        // Extract postMessage cookies from play.php HTML (user_token, t_hash_p, ott)
-        // These are set via JavaScript postMessage, not HTTP headers.
-        // Strategy: fetch the play.php HTML page with id&in params → find iframe src
-        // → fetch iframe (net52.cc/play.php?h=...) → extract postMessage data
-        val pmCookies = mutableMapOf<String, String>()
-        val pmTryDomains = (listOf(mainUrl.trimEnd('/')) + playPhpDomains).distinct()
-        data class PmVariant(val label: String, val param: String, val value: String)
-        val pmTHashT = cookie.split(";").map { it.trim() }.firstOrNull { it.startsWith("t_hash_t=") }?.substringAfter("=")?.let { raw -> try { java.net.URLDecoder.decode(raw, "UTF-8") } catch (e: Exception) { raw } }?.substringBefore("::") ?: ""
-        val pmHashWithP = if (pmTHashT.isNotBlank()) "$cleanHash::ep::p::$pmTHashT" else null
-        val pmVariants = mutableListOf(
-            PmVariant("in=3part", "in", cleanHash),
-            PmVariant("in=5part", "in", playHash),
-            PmVariant("h=5part", "h", playHash),
-            PmVariant("h=b64raw", "h", b64raw),
-            PmVariant("h=b64raw_urlsafe", "h", b64rawUrl),
-            PmVariant("h=b64play", "h", b64play),
-            PmVariant("h=b64clean", "h", b64clean),
-            PmVariant("in=p_part", "in", playHashP),
-            PmVariant("h=b64playP", "h", b64playP),
-            PmVariant("in=p_end", "in", playHashPEnd),
-            PmVariant("h=b64playPEnd", "h", b64playPEnd)
+        val plResp = app.get(
+            "${hlsDomains.first()}/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "X-Requested-With" to "NetmirrorNewTV v1.0"
+            )
         )
-        pmHashWithP?.let { pmVariants.add(PmVariant("in=p_token", "in", it)) }
-        for (tryDomain in pmTryDomains) {
-            // net52.cc blocks requests from same origin — it expects Referer/Origin from net11.cc (net22.cc DNS dead)
-            val pmOrigin = if (tryDomain.contains("net52")) "https://net11.cc" else tryDomain
-            val pmReferer = if (tryDomain.contains("net52")) "https://net11.cc/play.php?id=$id" else "$tryDomain/"
-            // Try with just id (no hash) – page may self-generate
-            try {
-                val noHashUrl = "$tryDomain/play.php?id=$id"
-                Log.d("PlayPhp", "PM trying no-hash on $tryDomain: $noHashUrl")
-                val noHashResp = app.get(noHashUrl, headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Origin" to pmOrigin,
-                    "Referer" to pmReferer,
-                    "Cookie" to cookie
-                ))
-                val nb = noHashResp.text
-                Log.d("PlayPhp", "PM no-hash body len=${nb.length} start=${nb.take(200)}")
-                val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(nb)?.groupValues?.getOrNull(1)
-                if (!iframeSrc.isNullOrBlank()) {
-                    Log.d("PlayPhp", "PM no-hash iframe: $iframeSrc")
-                    val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$tryDomain$iframeSrc"
-                    val iframeResp = app.get(iframeUrl, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Referer" to noHashUrl,
-                        "Cookie" to cookie
-                    ))
-                    Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(iframeResp.text).forEach { match ->
-                        val k = match.groupValues[1]; val v = match.groupValues[2]
-                        if (k in setOf("user_token", "t_hash_p", "ott", "hd")) { pmCookies[k] = v; Log.d("PlayPhp", "PM cookie from no-hash iframe: $k=$v") }
-                    }
-                }
-                Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(nb).forEach { match ->
-                    val k = match.groupValues[1]; val v = match.groupValues[2]
-                    if (k in setOf("user_token", "t_hash_p", "ott", "hd")) { if (!pmCookies.containsKey(k)) pmCookies[k] = v; Log.d("PlayPhp", "PM cookie from no-hash inline: $k=$v") }
-                }
-            } catch (e: Exception) {
-                Log.w("PlayPhp", "PM no-hash failed ($tryDomain): ${e.message}")
-            }
-            if (pmCookies.isNotEmpty()) break
-
-            // Also try with hash params
-            for (pmV in pmVariants) {
-                try {
-                    val pmUrl = "$tryDomain/play.php?id=$id&${pmV.param}=${pmV.value}"
-                    Log.d("PlayPhp", "PM cookies trying $pmV.label on $tryDomain: $pmUrl")
-                    val pmResp = app.get(pmUrl, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Origin" to pmOrigin,
-                        "Referer" to pmReferer,
-                        "Cookie" to cookie
-                    ))
-                    val body = pmResp.text
-                    Log.d("PlayPhp", "PM $pmV.label body len=${body.length} start=${body.take(200)}")
-
-                    // Find iframe src (points to net52.cc/play.php?h=...)
-                    val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"[^>]*>""").find(body)?.groupValues?.getOrNull(1)
-                    if (!iframeSrc.isNullOrBlank()) {
-                        val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$tryDomain$iframeSrc"
-                        Log.d("PlayPhp", "PM iframe found: $iframeUrl")
-                        val iframeResp = app.get(iframeUrl, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                            "Referer" to pmUrl,
-                            "Cookie" to cookie
-                        ))
-                        Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(iframeResp.text).forEach { match ->
-                            val k = match.groupValues[1]
-                            val v = match.groupValues[2]
-                            if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
-                                pmCookies[k] = v
-                                Log.d("PlayPhp", "PM cookie from iframe: $k=$v")
-                            }
-                        }
-                    }
-
-                    // Also check the main page for inline postMessage
-                    Regex("""parent\.postMessage\(\s*"([^"=]+)=([^"]*)"\s*,\s*"\*"\s*\)""").findAll(body).forEach { match ->
-                        val k = match.groupValues[1]
-                        val v = match.groupValues[2]
-                        if (k in setOf("user_token", "t_hash_p", "ott", "hd")) {
-                            if (!pmCookies.containsKey(k)) pmCookies[k] = v
-                            Log.d("PlayPhp", "PM cookie inline: $k=$v")
-                        }
-                    }
-
-                    if (pmCookies.isNotEmpty()) break
-                } catch (e: Exception) {
-                    Log.w("PlayPhp", "PM cookies failed ($pmV.label on $tryDomain): ${e.message}")
-                }
-            }
-            if (pmCookies.isNotEmpty()) break
-        }
-
-        // WebView fallback: when HTTP PM extraction failed, try loading play.php in a real WebView
-        // The parent page (net22.cc/play.php?id=X) renders an iframe → net52.cc/play.php?h=BASE64(hash)
-        // Loading the parent page lets the page build the iframe URL naturally, with correct Referer.
-        if (pmCookies.isEmpty() && pluginContext != null) {
-            val encodedRawHash = java.net.URLEncoder.encode(rawHash, "UTF-8")
-            val wvUrls = listOf(
-                "https://net11.cc/play.php?id=$id",
-                "https://net52.cc/play.php?id=$id",
-                "https://net52.cc/play.php?h=$b64rawUrl",
-                "https://net52.cc/play.php?h=$encodedRawHash",
-                "https://net52.cc/play.php?h=$b64playP",           // ::ep::p::TOKEN2 format
-                "https://net52.cc/play.php?h=$b64playPEnd"      // ::ep::p:: format (empty TOKEN3)
-            )
-            for (wvUrl in wvUrls) {
-                Log.d("PlayPhp", "PM WebView trying: $wvUrl")
-                val wvResult = capturePmCookiesViaWebView(wvUrl, cookie)
-                if (wvResult.isNotEmpty()) {
-                    pmCookies.putAll(wvResult)
-                    Log.d("PlayPhp", "PM WebView got cookies: $wvResult")
-                    break
-                }
-            }
-        }
-
-        // Merge postMessage cookies into existing cookie string
-        // Also inject default values when extraction failed (server may check existence)
-        val tHashT = cookie.split(";").map { it.trim() }.firstOrNull { it.startsWith("t_hash_t=") }?.substringAfter("=") ?: ""
-        val defaultPmCookies = mapOf(
-            "ott" to ott,
-            "user_token" to id,
-            "t_hash_p" to tHashT
-        )
-        val mergedPmCookies = if (pmCookies.isNotEmpty()) pmCookies else defaultPmCookies
-        val cMap = mutableMapOf<String, String>()
-        cookie.split(";").forEach { part ->
-            val kv = part.trim().split("=", limit = 2)
-            if (kv.size == 2 && kv[0].isNotBlank()) cMap[kv[0]] = kv[1]
-        }
-        cMap.putAll(mergedPmCookies)
-        val mergedCookie = cMap.map { "${it.key}=${it.value}" }.joinToString("; ")
-
-        // Try multiple playlist.php request formats
-        val playlistDomains = listOf("https://net52.cc", playDomain, mainUrl.trimEnd('/')).distinct()
-        data class PlVariant(val param: String, val value: String)
-        val tHashTRaw = try { java.net.URLDecoder.decode(tHashT, "UTF-8") } catch (e: Exception) { tHashT }
-        val tHashTToken = tHashTRaw.substringBefore("::")
-        val hashWithP = if (tHashTToken.isNotBlank()) "$cleanHash::ep::p::$tHashTToken" else null
-        val playlistVariants = listOf(
-            PlVariant("h", cleanHash),     // h=3-part (current approach)
-            PlVariant("h", playHash),      // h=5-part with ::ep::i::
-            PlVariant("h", rawHash),       // h=in=5-part (raw from API)
-            PlVariant("in", cleanHash),    // in=3-part
-            PlVariant("in", playHash),     // in=5-part with ::ep::i::
-            PlVariant("h", playHashP),     // h=::ep::p::TOKEN2 (placeholder)
-            PlVariant("in", playHashP),    // in=::ep::p::TOKEN2 (placeholder)
-            PlVariant("h", playHashPEnd),  // h=::ep::p:: (empty TOKEN3)
-            PlVariant("in", playHashPEnd)  // in=::ep::p:: (empty TOKEN3)
-        ) + (hashWithP?.let { listOf(PlVariant("h", it), PlVariant("in", it)) } ?: emptyList())
-        var foundSource: Pair<String, List<PlaylistTrack>>? = null
-        var weakFallback: Pair<String, List<PlaylistTrack>>? = null   // ::ep::99 format
-        outer@ for (plDomain in playlistDomains) {
-            for (variant in playlistVariants) {
-                try {
-                    val plUrl = "$plDomain/playlist.php?id=$id&t=$title&tm=$timestamp&${variant.param}=${variant.value}"
-                    Log.d("PlayPhp", "Trying playlist: $plUrl")
-                    // net52.cc blocks same-origin — send net11.cc Referer/Origin (cross-origin, net22.cc DNS dead)
-                    val plOrigin = if (plDomain.contains("net52")) "https://net11.cc" else plDomain
-                    val plReferer = if (plDomain.contains("net52")) "https://net11.cc/play.php?id=$id&${variant.param}=${variant.value}" else "$plDomain/play.php?id=$id&${variant.param}=${variant.value}"
-                    val plResp = app.get(plUrl, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                        "Accept" to "*/*",
-                        "X-Requested-With" to "NetmirrorNewTV v1.0",
-                        "Origin" to plOrigin,
-                        "Referer" to plReferer,
-                        "Cookie" to mergedCookie
-                    ))
-                    val body = plResp.text
-                    Log.d("PlayPhp", "playlist response len=${body.length} body=${body.take(300)}")
-                    val parsed = tryParseJsonList<PlaylistResponse>(body)
-                    val first = parsed?.firstOrNull()
-                    var sourceFile = first?.sources?.firstOrNull()?.file
-                    val tracks = first?.tracks.orEmpty()
-                    if (!sourceFile.isNullOrBlank() && !sourceFile.contains("unknown")) {
-                        var m3u8Url = if (sourceFile.startsWith("http")) sourceFile
-                                      else "${plDomain.trimEnd('/')}/${sourceFile.removePrefix("/")}"
-                        Log.d("PlayPhp", "M3U8 url=$m3u8Url tracks=${tracks.size} (domain=$plDomain ${variant.param}=${variant.value})")
-                        Log.e("PLAYURL", m3u8Url)
-                        if (m3u8Url.contains("::ep::99")) {
-                            // ::ep::99 is degraded — store as weak fallback, keep checking
-                            weakFallback = Pair(m3u8Url, tracks)
-                            Log.d("PlayPhp", "::ep::99 saved as weak fallback, trying API player.php...")
-                        } else {
-                            foundSource = Pair(m3u8Url, tracks)
-                            break@outer
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("PlayPhp", "playlist attempt failed ($plDomain ${variant.param}=${variant.value}): ${e.message}")
-                }
-            }
-        }
-        // Try direct M3U8 URL (curl example pattern) as fallback — bypass playlist.php
-        // Order matters: more specific/validated hashes first (::ep::p::TOKEN3 with real TOKEN3)
-        val directVariants = mutableListOf<PlVariant>()
-        hashWithP?.let { directVariants.add(PlVariant("in", it)) }
-        directVariants.add(PlVariant("in", playHashP))
-        directVariants.add(PlVariant("in", playHash))
-        // Also try hashes from weakFallback (playlist.php-validated ::ep::99/::ep hashes with cached t_hash_t as TOKEN1)
-        if (weakFallback != null) {
-            val wfHash = weakFallback.first.substringAfter("?in=").substringBefore("&")
-            if (wfHash.isNotBlank() && wfHash != cleanHash) {
-                directVariants.add(PlVariant("in", wfHash))
-                if (wfHash.endsWith("::99")) {
-                    directVariants.add(PlVariant("in", wfHash.removeSuffix("::99")))
-                }
-                Log.d("PlayPhp", "Added weakFallback hash to direct M3U8 variants: $wfHash")
-            }
-        }
-        directVariants.add(PlVariant("in", cleanHash))  // clean hash last — known 10-min preview
-        // Try all variants, keep the one with the largest body (most complete playlist)
-        var bestBodyLen = 0
-        for (plDomain in playlistDomains) {
-            for (variant in directVariants) {
-                try {
-                    val m3u8Url = "$plDomain/hls/$id.m3u8?${variant.param}=${variant.value}"
-                    Log.d("PlayPhp", "Trying direct M3U8: $m3u8Url")
-                    val m3u8Origin = if (plDomain.contains("net52")) "https://net11.cc" else plDomain
-                    val m3u8Referer = if (plDomain.contains("net52")) "https://net11.cc/play.php?id=$id" else "$plDomain/play.php?id=$id"
-                    val m3u8Resp = app.get(m3u8Url, headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                        "Accept" to "*/*",
-                        "Origin" to m3u8Origin,
-                        "Referer" to m3u8Referer,
-                        "Cookie" to mergedCookie
-                    ))
-                    val body = m3u8Resp.text
-                    Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
-                    if (body.startsWith("#EXTM3U") && !body.contains("unknown")) {
-                        Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
-                        Log.e("PLAYURL", m3u8Url)
-                        if (foundSource == null || body.length > bestBodyLen) {
-                            foundSource = Pair(m3u8Url, emptyList())
-                            bestBodyLen = body.length
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("PlayPhp", "Direct M3U8 failed ($plDomain): ${e.message}")
-                }
-            }
-        }
-        // Try API player.php with the hash - only if we have NO valid source yet (don't overwrite direct M3U8)
-        if (apiBase != null && foundSource == null) {
-            // Try multiple hash formats: clean 3-part, full 5-part, ::ep::p:: format
-            val apiHashVariants = listOf(
-                "clean" to cleanHash,
-                "full" to playHash,
-                "p_part" to playHashP
-            )
-            val playerHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Accept" to "application/json, text/plain, */*",
-                "Ott" to ott,
-                "Usertoken" to (mergedPmCookies["user_token"] ?: ""),
-                "Referer" to "https://net52.cc",
-                "Cookie" to cookie
-            )
-            for ((hLabel, hVal) in apiHashVariants) {
-                for (plParam in listOf("h", "in")) {
-                    try {
-                        val playerUrl = "$apiBase/newtv/player.php?id=$id&$plParam=${java.net.URLEncoder.encode(hVal, "UTF-8")}"
-                        Log.d("PlayPhp", "Trying API player.php ($hLabel $plParam): $playerUrl")
-                        val playerResp = app.get(playerUrl, headers = playerHeaders)
-                        val parsed = tryParseJson<NewTvPlayerResponse>(playerResp.text)
-                        if (parsed != null && (parsed.status == "ok" || parsed.status == "otp") && !parsed.video_link.isNullOrBlank()) {
-                            Log.d("PlayPhp", "API player.php SUCCESS: ${parsed.video_link}")
-                            Log.e("PLAYURL", parsed.video_link)
-                            foundSource = Pair(parsed.video_link, emptyList())
-                            break
-                        } else {
-                            Log.d("PlayPhp", "API player.php no valid source ($hLabel $plParam): status=${parsed?.status} link=${parsed?.video_link}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("PlayPhp", "API player.php failed ($hLabel $plParam): ${e.message}")
-                    }
-                }
-                if (foundSource != null) break
-            }
-        }
-        // Use API result if found, otherwise fall back to ::ep::99
-        if (foundSource != null) return foundSource
-        if (weakFallback != null) {
-            Log.d("PlayPhp", "Using ::ep::99 fallback: ${weakFallback.first}")
-            Log.e("PLAYURL", weakFallback.first)
-            foundSource = weakFallback
-        }
-        if (foundSource != null) return foundSource
+        val parsed = tryParseJsonList<PlaylistResponse>(plResp.text)
+        val first = parsed?.firstOrNull()
+        if (first != null) tracks = first.tracks.orEmpty()
+        Log.d("PlayPhp", "Playlist tracks: ${tracks.size}")
     } catch (e: Exception) {
-        Log.w("PlayPhp", "playlist.php failed: ${e.message}")
+        Log.w("PlayPhp", "Playlist subtitle fetch failed: ${e.message}")
     }
-
+    for (hlsDomain in hlsDomains) {
+        try {
+            val m3u8Url = "$hlsDomain/hls/$id.m3u8?in=$cleanHash"
+            Log.d("PlayPhp", "Trying direct M3U8: $m3u8Url")
+            val m3u8Resp = app.get(
+                m3u8Url, headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                    "Accept" to "*/*"
+                )
+            )
+            val body = m3u8Resp.text
+            Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
+            if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
+                Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
+                Log.e("PLAYURL", m3u8Url)
+                return Pair(m3u8Url, tracks)
+            }
+        } catch (e: Exception) {
+            Log.w("PlayPhp", "Direct M3U8 failed ($hlsDomain): ${e.message}")
+        }
+    }
     return null
 }
