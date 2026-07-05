@@ -31,6 +31,7 @@ import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.ResponseBody
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -529,18 +530,30 @@ private val fallbackCdns = listOf("s26.nm-cdn5.top", "s23.nm-cdn9.top", "s01.nm-
 
 fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
-        val resp = chain.proceed(chain.request())
-        val url = chain.request().url.toString()
+        val req = chain.request()
+        val url = req.url.toString()
+        val resp: Response
+        try {
+            resp = chain.proceed(req)
+        } catch (e: Exception) {
+            Log.d("CdnFix", "Request FAILED: $url - ${e.message}")
+            throw e
+        }
         if (url.contains(".m3u8")) {
             val body = resp.body?.string() ?: return@Interceptor resp
-            if (!body.contains("https:///files/")) return@Interceptor resp
-            val cdnRegex = Regex("https://([^/\"]+)/files/")
-            val cdn = cdnRegex.find(body)?.groupValues?.get(1) ?: fallbackCdns.firstOrNull()
-            if (cdn != null) {
-                val fixed = body.replace("https:///files/", "https://$cdn/files/")
-                Log.d("CdnFix", "Fixed CDN URLs in M3U8 ($cdn): $url")
-                val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
-                return@Interceptor resp.newBuilder().body(fixedBody).build()
+            if (body.startsWith("#EXT")) {
+                if (body.contains("https:///files/")) {
+                    val cdnRegex = Regex("https://([^/\"]+)/files/")
+                    val cdn = cdnRegex.find(body)?.groupValues?.get(1) ?: fallbackCdns.firstOrNull()
+                    if (cdn != null) {
+                        val fixed = body.replace("https:///files/", "https://$cdn/files/")
+                        Log.d("CdnFix", "Fixed CDN URLs in M3U8 ($cdn): $url")
+                        val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
+                        return@Interceptor resp.newBuilder().body(fixedBody).build()
+                    }
+                }
+            } else {
+                Log.d("CdnFix", "M3U8 response NOT valid: $url status=${resp.code} len=${body.length} start=${body.take(100)}")
             }
         }
         resp

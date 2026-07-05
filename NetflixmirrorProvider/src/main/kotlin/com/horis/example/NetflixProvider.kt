@@ -228,7 +228,6 @@ class NetflixProvider : MainAPI() {
         val id = loadData.id
         val title = loadData.title
         val cookie = bypass(mainUrl)
-        val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/")
 
         // New flow: play.php → playlist.php (uses different CDNs, avoids rate limiting)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
@@ -239,10 +238,16 @@ class NetflixProvider : MainAPI() {
                     val subUrl = if (track.file.startsWith("http")) track.file
                                  else "https:${track.file.removePrefix("/")}"
                     val subFile = newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl)
-                    subFile.headers = mapOf("Referer" to "$mainUrl/")
+                    subFile.headers = mapOf("Referer" to m3u8Url)
                     subtitleCallback(subFile)
                 }
             }
+            val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
+            val videoHeaders = androidHeaders + mapOf(
+                "Cookie" to cookie,
+                "Referer" to m3u8Url,
+                "Origin" to "https://$m3u8Domain"
+            )
             Log.d("NetflixProvider", "loadLinks new flow SUCCESS: $m3u8Url")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
                 this.headers = videoHeaders
@@ -270,6 +275,7 @@ class NetflixProvider : MainAPI() {
         }
 
         val m3u8Referer = response.referer ?: apiBase
+        val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to m3u8Referer)
         kotlinx.coroutines.delay((1000L..3000L).random())
         Log.e("PLAYURL", response.video_link)
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
