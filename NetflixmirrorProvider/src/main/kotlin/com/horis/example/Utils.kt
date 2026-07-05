@@ -534,9 +534,9 @@ fun m3u8CdnFixInterceptor(): Interceptor {
         try {
             resp = chain.proceed(req)
         } catch (e: Exception) {
-            val srcHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
-            if (srcHost.contains("nm-cdn") || srcHost.contains("imgcdn")) {
-                Log.d("CdnFix", "CDN unreachable, using hls path: $url - ${e.message}")
+            val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+            if (cdnHost.contains("nm-cdn") || cdnHost.contains("imgcdn")) {
+                Log.d("CdnFix", "CDN unreachable: $url - ${e.message}")
             }
             throw e
         }
@@ -546,20 +546,18 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 Log.d("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length}")
                 return@Interceptor resp
             }
-            val srcHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1) ?: return@Interceptor resp
             val cdnRegex = Regex("https://([^/\"]+)/files/")
             val allCdns = cdnRegex.findAll(body).map { it.groupValues[1] }.toSet()
             if (allCdns.isEmpty() && !body.contains("https:///files/")) return@Interceptor resp
-            // Replace CDN domains AND change /files/ → /hls/ so net11.cc serves the sub-M3U8s
             val fixed = body
-                .replace("https:///files/", "https://$srcHost/hls/")
+                .replace("https:///files/", "https://tv.imgcdn.kim/files/")
                 .let { b ->
                     allCdns.fold(b) { acc, cdn ->
-                        acc.replace("https://$cdn/files/", "https://$srcHost/hls/")
+                        acc.replace("https://$cdn/files/", "https://tv.imgcdn.kim/files/")
                     }
                 }
             if (fixed != body) {
-                Log.d("CdnFix", "Rerouted CDN->$srcHost/hls in M3U8: $url (cdns=$allCdns)")
+                Log.d("CdnFix", "Rerouted CDN->tv.imgcdn.kim in M3U8: $url")
                 val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
                 return@Interceptor resp.newBuilder().body(fixedBody).build()
             }
