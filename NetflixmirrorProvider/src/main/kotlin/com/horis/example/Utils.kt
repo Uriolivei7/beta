@@ -187,6 +187,7 @@ suspend fun bypass(mainUrl: String): String {
                     if (addhash.isBlank()) {
                         addhash = Regex("""["']addhash["']\s*[:=]\s*["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
                     }
+                    Log.d("bypass", "body first 500: ${body.take(500)}")
                     break
                 }
             }
@@ -721,6 +722,39 @@ suspend fun getPlaylistUrl(
         } catch (e: Exception) {
             Log.w("PlayPhp", "Domain=$domain failed: ${e.message}")
         }
+    }
+
+    // Also try to extract a play hash from $mainUrl/home page (may contain net52.cc-style hash)
+    try {
+        val homeUrl = "${domains.first()}/home"
+        Log.d("PlayPhp", "Trying to extract play hash from $homeUrl")
+        val homeResp = app.get(homeUrl, headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept" to "text/html,*/*",
+            "Cookie" to cookie
+        ))
+        val body = homeResp.text
+        Log.d("PlayPhp", "home page len=${body.length} first 500=${body.take(500)}")
+        var h = Regex("""["']h["']\s*[:=]\s*["'](in=[^"']+)""").find(body)?.groupValues?.getOrNull(1)
+        if (h.isNullOrBlank()) {
+            h = Regex("""\bh=in=[a-f0-9:]{10,}""").find(body)?.value?.removePrefix("h=")
+        }
+        if (!h.isNullOrBlank()) {
+            val homeHash = h.removePrefix("in=")
+            // Prefer net52.cc-style hash (with ::ep::p:: format) over net11.cc hash (::ep::i::)
+            if (homeHash.contains("::ep::p::") || playHash.isNullOrBlank()) {
+                playHash = homeHash
+                timestamp = playHash.split("::").getOrNull(2) ?: "0"
+                playDomain = domains.first()
+                Log.d("PlayPhp", "Got hash from home page=$playHash ts=$timestamp")
+            } else {
+                Log.d("PlayPhp", "Home page hash is ::ep::i:: format, keeping existing")
+            }
+        } else {
+            Log.w("PlayPhp", "No play hash found in home page")
+        }
+    } catch (e: Exception) {
+        Log.w("PlayPhp", "Home page extraction failed: ${e.message}")
     }
 
     if (playHash.isNullOrBlank()) {
