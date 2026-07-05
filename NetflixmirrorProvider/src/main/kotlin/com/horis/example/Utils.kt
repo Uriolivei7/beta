@@ -718,6 +718,7 @@ suspend fun getPlaylistUrl(
     val cleanHash = playHash.split("::").take(3).joinToString("::")
     val hlsDomains = listOf("https://net52.cc", "https://net11.cc").distinct()
     var tracks: List<PlaylistTrack> = emptyList()
+    var sourceUrl: String? = null
     try {
         val plResp = app.get(
             "${hlsDomains.first()}/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash",
@@ -729,10 +730,29 @@ suspend fun getPlaylistUrl(
         )
         val parsed = tryParseJsonList<PlaylistResponse>(plResp.text)
         val first = parsed?.firstOrNull()
-        if (first != null) tracks = first.tracks.orEmpty()
-        Log.d("PlayPhp", "Playlist tracks: ${tracks.size}")
+        if (first != null) {
+            tracks = first.tracks.orEmpty()
+            sourceUrl = first.sources?.firstOrNull()?.file?.takeIf { it?.startsWith("http") == true }
+        }
+        Log.d("PlayPhp", "Playlist tracks=${tracks.size} sourceUrl=$sourceUrl")
     } catch (e: Exception) {
         Log.w("PlayPhp", "Playlist subtitle fetch failed: ${e.message}")
+    }
+    if (sourceUrl != null) {
+        try {
+            val body = app.get(sourceUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept" to "*/*"
+            )).text
+            if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
+                Log.d("PlayPhp", "Source M3U8 OK: $sourceUrl (len=${body.length})")
+                Log.e("PLAYURL", sourceUrl)
+                return Pair(sourceUrl, tracks)
+            }
+            Log.d("PlayPhp", "Source M3U8 body invalid: ${body.take(200)}")
+        } catch (e: Exception) {
+            Log.w("PlayPhp", "Source M3U8 failed: ${e.message}")
+        }
     }
     for (hlsDomain in hlsDomains) {
         try {
