@@ -125,10 +125,12 @@ suspend fun bypass(mainUrl: String): String {
             else -> c
         }
     }
-    if (!savedCookie.isNullOrBlank() && savedCookie.length > 10 && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+    if (!savedCookie.isNullOrBlank() && savedCookie.length > 10 && System.currentTimeMillis() - savedTimestamp < 600_000) {
+        // TEMP: 10 min cache for testing
         Log.d("bypass", "Using cached cookie ts=${savedTimestamp}")
         return savedCookie
     }
+    Log.e("BYPASS", "Cache expired or empty, fetching new token")
     NetflixMirrorStorage.clearCookie()
 
     val apiBase = resolveApiUrl()
@@ -199,11 +201,11 @@ suspend fun bypass(mainUrl: String): String {
             ?.substringAfter("=")?.substringBefore(";")
         if (tHash != null) {
             NetflixMirrorStorage.saveCookie(tHash)
-            Log.d("bypass", "Fallback t_hash: ${tHash.take(60)}")
+            Log.e("BYPASS", "Fallback t_hash from Set-Cookie: ${tHash.take(60)}")
             return tHash
         }
     } catch (e: Exception) {
-        Log.w("bypass", "Fallback verify failed: ${e.message}")
+        Log.e("BYPASS", "Fallback verify failed: ${e.message}")
     }
 
     throw Exception("Failed to get auth token")
