@@ -187,48 +187,65 @@ suspend fun bypass(mainUrl: String): String {
     }
 
     // Fallback: try auth endpoints on mainUrl (net52.cc etc)
-    val fbHeaders = mapOf(
-        "User-Agent" to androidUA,
-        "Accept" to "*/*",
-        "Origin" to "https://net22.cc",
-        "Referer" to "https://net22.cc/verify2",
-        "Content-Type" to "application/x-www-form-urlencoded",
-        "X-Requested-With" to "app.netmirror.netmirrornew"
+    // Cloudflare blocks POST with X-Requested-With; try browser-like GET first
+    val browserHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.5",
+        "Referer" to "$mainUrl/",
+        "Origin" to mainUrl,
+        "Cache-Control" to "no-cache",
+        "Pragma" to "no-cache"
     )
     for (path in authPaths) {
+        try {
+            // Try GET with browser headers first
+            val getResp = app.get("$mainUrl$path", headers = browserHeaders)
+            Log.e("BYPASS", "FB GET $path code=${getResp.code} cookies=${getResp.headers.values("Set-Cookie")}")
+            val getBody = getResp.text.take(200)
+            if (!getBody.contains("Just a moment") && getResp.code < 400) {
+                val parsed = tryParseJson<NewTvTokenResponse>(getBody)
+                if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
+                    NetflixMirrorStorage.saveCookie(parsed.token_hash)
+                    Log.e("BYPASS", "FB GET $path token_hash: ${parsed.token_hash.take(60)}")
+                    return parsed.token_hash
+                }
+            }
+        } catch (_: Exception) { }
+
         try {
             val resp = app.post(
                 "$mainUrl$path",
                 requestBody = formBody,
-                headers = fbHeaders
+                headers = browserHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded")
             )
             val text = resp.text
-            Log.e("BYPASS", "FB $path code=${resp.code} body=${text.take(400)}")
-            if (resp.code >= 400) continue
+            Log.e("BYPASS", "FB POST $path code=${resp.code} body=${text.take(300)}")
+            if (resp.code >= 400 || text.contains("Just a moment")) continue
             val parsed = tryParseJson<NewTvTokenResponse>(text)
             if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
                 NetflixMirrorStorage.saveCookie(parsed.token_hash)
-                Log.e("BYPASS", "FB $path token_hash: ${parsed.token_hash.take(60)}")
+                Log.e("BYPASS", "FB POST $path token_hash: ${parsed.token_hash.take(60)}")
                 return parsed.token_hash
             }
             val alt = tryParseJson<Map<String, String>>(text)
             val altHash = alt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
             if (altHash != null) {
                 NetflixMirrorStorage.saveCookie(altHash)
-                Log.e("BYPASS", "FB $path alt hash: ${altHash.take(60)}")
+                Log.e("BYPASS", "FB POST $path alt hash: ${altHash.take(60)}")
                 return altHash
             }
             val allCookies = resp.headers.values("Set-Cookie")
-            Log.e("BYPASS", "FB $path Set-Cookie: $allCookies")
+            Log.e("BYPASS", "FB POST $path Set-Cookie: $allCookies")
             val tHash = allCookies.firstOrNull { it.startsWith("t_hash_t=") }
                 ?.substringAfter("=")?.substringBefore(";")
             if (tHash != null) {
                 NetflixMirrorStorage.saveCookie(tHash)
-                Log.e("BYPASS", "FB $path t_hash: ${tHash.take(60)}")
+                Log.e("BYPASS", "FB POST $path t_hash: ${tHash.take(60)}")
                 return tHash
             }
         } catch (e: Exception) {
-            Log.e("BYPASS", "FB $path failed: ${e.message}")
+            Log.e("BYPASS", "FB POST $path failed: ${e.message}")
         }
     }
 
