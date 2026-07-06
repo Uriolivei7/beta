@@ -666,19 +666,19 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val inParam = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
-            // Unify ALL known CDNs → net11.cc (catch private CDNs, broken CDNs)
-            val cdnUnified = Regex("https://s\\d+\\.(?:nm-cdn\\d+|freecdn\\d+)\\.top").replace(fixed) {
-                "https://net11.cc"
+            // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
+            if (fixed.contains("https:///files/")) {
+                fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")
+                Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
+            }
+            // Unify remaining known CDN domains → net11.cc/hls/ (private CDNs, if any)
+            val cdnUnified = Regex("https://s\\d+\\.(?:nm-cdn\\d+|freecdn\\d+)\\.top/files/").replace(fixed) {
+                "https://net11.cc/hls/"
             }
             if (cdnUnified != fixed) {
-                Log.d("CdnFix", "Unified CDN → net11.cc for: $url")
+                Log.d("CdnFix", "Unified CDN → net11.cc/hls/ for: $url")
             }
             fixed = cdnUnified
-            // Fix broken https:///files/ → net11.cc
-            if (fixed.contains("https:///files/")) {
-                fixed = fixed.replace("https:///files/", "https://net11.cc/files/")
-                Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc): $url")
-            }
             // Fix relative segment URLs missing the in= auth param
             if (inParam != null) {
                 // Use clean 3-part hash (strip ::ep::p::TOKEN3 suffix) for segments
