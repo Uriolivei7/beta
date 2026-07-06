@@ -179,8 +179,8 @@ suspend fun bypass(mainUrl: String): String {
     // Step 1: visit $mainUrl/home → redirects to net22.cc/verify2 (or similar)
     // Extract addhash from the redirect Location BEFORE following to dead net22.cc
     var addhash = ""
+    var currentUrl = "$mainUrl/home"
     try {
-        var currentUrl = "$mainUrl/home"
         for (hop in 0..5) {
             val req = Request.Builder()
                 .url(currentUrl)
