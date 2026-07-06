@@ -11,10 +11,8 @@ import com.lagradost.nicehttp.ResponseParser
 import kotlin.reflect.KClass
 import com.lagradost.api.Log
 import android.util.Base64
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.SharedPreferences
 import okhttp3.FormBody
@@ -291,54 +289,52 @@ private var resolvedApiUrl: String = ""
 
 suspend fun resolveApiUrl(): String {
     if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
-    return withContext(Dispatchers.IO) {
-        coroutineScope {
-            val deferreds = newTvDomains.map { encoded ->
-                async {
-                    val base = decodeBase64(encoded).trimEnd('/')
-                    try {
-                        val response = app.get("$base/checknewtv.php", headers = newTvBaseHeaders)
-                            .parsed<NewTvTokenResponse>()
-                        val tokenHash = response.token_hash
-                        if (!tokenHash.isNullOrBlank()) {
-                            decodeBase64(tokenHash).trimEnd('/')
-                        } else null
-                    } catch (e: Exception) {
-                        Log.d("NewTV", "checknewtv.php failed $base: ${e.message}")
-                        null
-                    }
+    return coroutineScope {
+        val deferreds = newTvDomains.map { encoded ->
+            async {
+                val base = decodeBase64(encoded).trimEnd('/')
+                try {
+                    val response = app.get("$base/checknewtv.php", headers = newTvBaseHeaders)
+                        .parsed<NewTvTokenResponse>()
+                    val tokenHash = response.token_hash
+                    if (!tokenHash.isNullOrBlank()) {
+                        decodeBase64(tokenHash).trimEnd('/')
+                    } else null
+                } catch (e: Exception) {
+                    Log.d("NewTV", "checknewtv.php failed $base: ${e.message}")
+                    null
                 }
             }
-            for (deferred in deferreds) {
-                val result = deferred.await()
-                if (result != null) {
-                    resolvedApiUrl = result
-                    Log.d("NewTV", "Resolved API URL: $resolvedApiUrl")
-                    return@coroutineScope resolvedApiUrl
-                }
-            }
-            // Fallback: try pinging domain roots directly
-            val pingDeferreds = newTvDomains.map { encoded ->
-                async {
-                    val base = decodeBase64(encoded).trimEnd('/')
-                    try {
-                        app.get(base, headers = newTvBaseHeaders)
-                        base
-                    } catch (_: Exception) { null }
-                }
-            }
-            for (d in pingDeferreds) {
-                val r = d.await()
-                if (r != null) {
-                    resolvedApiUrl = r
-                    Log.d("NewTV", "Ping-resolved API URL: $resolvedApiUrl")
-                    return@coroutineScope resolvedApiUrl
-                }
-            }
-            resolvedApiUrl = "https://net52.cc"
-            Log.d("NewTV", "All domains failed, falling back to $resolvedApiUrl")
-            return@coroutineScope resolvedApiUrl
         }
+        for (deferred in deferreds) {
+            val result = deferred.await()
+            if (result != null) {
+                resolvedApiUrl = result
+                Log.d("NewTV", "Resolved API URL: $resolvedApiUrl")
+                return@coroutineScope resolvedApiUrl
+            }
+        }
+        // Fallback: try pinging domain roots directly
+        val pingDeferreds = newTvDomains.map { encoded ->
+            async {
+                val base = decodeBase64(encoded).trimEnd('/')
+                try {
+                    app.get(base, headers = newTvBaseHeaders)
+                    base
+                } catch (_: Exception) { null }
+            }
+        }
+        for (d in pingDeferreds) {
+            val r = d.await()
+            if (r != null) {
+                resolvedApiUrl = r
+                Log.d("NewTV", "Ping-resolved API URL: $resolvedApiUrl")
+                return@coroutineScope resolvedApiUrl
+            }
+        }
+        resolvedApiUrl = "https://net52.cc"
+        Log.d("NewTV", "All domains failed, falling back to $resolvedApiUrl")
+        return@coroutineScope resolvedApiUrl
     }
 }
 
