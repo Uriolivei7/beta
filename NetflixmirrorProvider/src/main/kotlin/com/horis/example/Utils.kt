@@ -136,14 +136,8 @@ object NetflixMirrorStorage {
 suspend fun bypass(mainUrl: String): String {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
     if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
-        // Force re-auth if the cookie has ::ep::99 (degraded)
-        if (savedCookie.contains("::ep::99") || savedCookie.contains("%3A%3Aep%3A%3A99")) {
-            Log.d("bypass", "Cached cookie has degraded ::ep::99, forcing re-auth")
-            NetflixMirrorStorage.clearCookie()
-        } else {
-            Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
-            return savedCookie
-        }
+        Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
+        return savedCookie
     } else {
         NetflixMirrorStorage.clearCookie()
     }

@@ -242,15 +242,12 @@ class NetflixProvider : MainAPI() {
         val tHashCookie = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
         if (tHashCookie != null) {
             val decodedHash = java.net.URLDecoder.decode(tHashCookie, "UTF-8")
-                // Use ::ep::m suffix (mobile) instead of ::ep::99 (degraded)
-                .replace("::ep::99", "::ep::m")
-            // Also fix the cookie header itself — server may check Cookie tier, not just URL
-            val upgradedCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
+            // Use raw cookie as-is (don't upgrade ::ep::99 → ::ep::m, server detects hash tampering)
             val hlsUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$decodedHash&hd=on&lang=eng"
             Log.d("NetflixProvider", "Trying mobile/hls: $hlsUrl")
             try {
                 val resp = app.get(hlsUrl, headers = androidHeaders + mapOf(
-                    "Cookie" to upgradedCookie,
+                    "Cookie" to cookie,
                     "Referer" to "$mainUrl/mobile/home?app=1",
                     "Origin" to mainUrl
                 ))
@@ -263,7 +260,7 @@ class NetflixProvider : MainAPI() {
                     if (videoUrl != null) {
                         Log.d("NetflixProvider", "Video URL found: $videoUrl")
                         val videoHeaders = androidHeaders + mapOf(
-                            "Cookie" to upgradedCookie,
+                            "Cookie" to cookie,
                             "Referer" to "$mainUrl/mobile/home?app=1"
                         )
                         callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
@@ -274,7 +271,7 @@ class NetflixProvider : MainAPI() {
                     // Fallback: pass master URL directly
                     Log.d("NetflixProvider", "No video URL found, using master: $hlsUrl")
                     val masterHeaders = androidHeaders + mapOf(
-                        "Cookie" to upgradedCookie,
+                        "Cookie" to cookie,
                         "Referer" to "$mainUrl/mobile/home?app=1"
                     )
                     callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
@@ -302,7 +299,7 @@ class NetflixProvider : MainAPI() {
                 }
             }
             val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
-            val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
+            val plCookie = cookie // raw cookie as-is, no ::ep::99 → ::ep::m upgrade
             val videoHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
                 "Accept" to "*/*",
