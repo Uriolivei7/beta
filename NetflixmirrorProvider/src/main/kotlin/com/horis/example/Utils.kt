@@ -167,7 +167,6 @@ suspend fun bypass(mainUrl: String): String {
         "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
         "sec-ch-ua-mobile" to "?0",
         "sec-ch-ua-platform" to "\"Android\"",
-        "Accept-Encoding" to "gzip",
         "Cache-Control" to "max-age=0"
     )
 
@@ -257,7 +256,6 @@ suspend fun bypass(mainUrl: String): String {
                 "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
                 "sec-ch-ua-mobile" to "?0",
                 "sec-ch-ua-platform" to "\"Android\"",
-                "Accept-Encoding" to "gzip",
                 "Cache-Control" to "max-age=0"
             )
             val formBody = FormBody.Builder()
@@ -344,8 +342,7 @@ val newTvBaseHeaders = mapOf(
     "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
     "sec-ch-ua"     to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
     "sec-ch-ua-mobile" to "?0",
-    "sec-ch-ua-platform" to "\"Android\"",
-    "Accept-Encoding" to "gzip"
+    "sec-ch-ua-platform" to "\"Android\""
 )
 
 val newTvDomains = listOf(

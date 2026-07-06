@@ -29,7 +29,6 @@ class NetflixProvider : MainAPI() {
         "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
         "sec-ch-ua-mobile" to "?0",
         "sec-ch-ua-platform" to "\"Android\"",
-        "Accept-Encoding" to "gzip",
         "Cache-Control" to "max-age=0"
     )
 
