@@ -295,6 +295,7 @@ class PrimevideoProvider : MainAPI() {
         val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("PV", "bypass fail: ${e.message}"); "" }
         Log.e("PV", "token=${token.take(60)}")
 
+        val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")
         val attempts = buildList {
             add(Triple("cookie", "$apiBase/newtv/player.php?id=$id",
                 buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$token", "Referer" to apiBase))))
@@ -304,6 +305,14 @@ class PrimevideoProvider : MainAPI() {
                 buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$token", "Referer" to mainUrl))))
             add(Triple("fallback-plain", "$mainUrl/newtv/player.php?id=$id",
                 buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))))
+            add(Triple("q-token", "$apiBase/newtv/player.php?id=$id&token=$encodedToken",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
+            add(Triple("q-usertoken", "$apiBase/newtv/player.php?id=$id&usertoken=$encodedToken",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
+            add(Triple("q-hash", "$apiBase/newtv/player.php?id=$id&hash=$encodedToken",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
+            add(Triple("q-h", "$apiBase/newtv/player.php?id=$id&h=$encodedToken",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
         }
 
         for ((label, url, headers) in attempts) {
@@ -313,7 +322,7 @@ class PrimevideoProvider : MainAPI() {
                     checkDbError(t); t
                 }
                 val resp = tryParseJson<NewTvPlayerResponse>(raw)
-                Log.e("PV", "$label -> status=${resp?.status} link=${resp?.video_link?.take(60)}")
+                Log.e("PV", "$label -> status=${resp?.status} usertoken=${resp?.usertoken} link=${resp?.video_link?.take(60)}")
                 if (resp != null && resp.video_link != null) {
                     val ref = resp.referer ?: apiBase
                     Log.e("PLAYURL", resp.video_link)

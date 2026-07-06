@@ -151,23 +151,32 @@ suspend fun bypass(mainUrl: String): String {
             )
         )
         val text = resp.text
-        Log.d("bypass", "Verify status=${resp.code} body=${text.take(200)}")
+        Log.e("BYPASS", "verify $apiBase code=${resp.code} body=${text.take(500)}")
         val parsed = tryParseJson<NewTvTokenResponse>(text)
         if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
             NetflixMirrorStorage.saveCookie(parsed.token_hash)
-            Log.d("bypass", "Got token_hash: ${parsed.token_hash.take(60)}")
+            Log.e("BYPASS", "Got token_hash from JSON: ${parsed.token_hash.take(60)}")
             return parsed.token_hash
+        }
+        // Also try "hash" field (cncverse might use that name)
+        val parsedAlt = tryParseJson<Map<String, String>>(text)
+        val altHash = parsedAlt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
+        if (altHash != null) {
+            NetflixMirrorStorage.saveCookie(altHash)
+            Log.e("BYPASS", "Got hash from alt field: ${altHash.take(60)}")
+            return altHash
         }
         val tHashCandidates = resp.headers.values("Set-Cookie")
         val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
             ?.substringAfter("=")?.substringBefore(";")
         if (tHash != null) {
             NetflixMirrorStorage.saveCookie(tHash)
-            Log.d("bypass", "Got t_hash: ${tHash.take(60)}")
+            Log.e("BYPASS", "Got t_hash from Set-Cookie: ${tHash.take(60)}")
             return tHash
         }
+        Log.e("BYPASS", "verify.php response had no usable token")
     } catch (e: Exception) {
-        Log.w("bypass", "Verify on $apiBase failed: ${e.message}")
+        Log.e("BYPASS", "Verify on $apiBase failed: ${e.message}")
     }
 
     // Fallback: direct verify on mainUrl (net52.cc etc)
@@ -473,7 +482,8 @@ data class NewTvEpisodesResponse(
 data class NewTvPlayerResponse(
     val status: String? = null,
     val video_link: String? = null,
-    val referer: String? = null
+    val referer: String? = null,
+    val usertoken: String? = null
 )
 
 // New playlist.php flow (play.php → playlist.php)
