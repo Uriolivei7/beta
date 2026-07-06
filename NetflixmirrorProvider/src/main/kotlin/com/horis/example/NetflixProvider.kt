@@ -302,8 +302,9 @@ class NetflixProvider : MainAPI() {
                 }
             }
             val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
+            val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
             val videoHeaders = androidHeaders + mapOf(
-                "Cookie" to cookie,
+                "Cookie" to plCookie,
                 "Referer" to m3u8Url,
                 "Origin" to "https://$m3u8Domain"
             )
@@ -346,6 +347,6 @@ class NetflixProvider : MainAPI() {
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return null
+        return m3u8CdnFixInterceptor()
     }
 }

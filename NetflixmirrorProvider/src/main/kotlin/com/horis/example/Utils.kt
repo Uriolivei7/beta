@@ -619,20 +619,12 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 Log.d("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length}")
                 return@Interceptor resp
             }
-            val cdnRegex = Regex("https://([^/\"]+)/files/")
-            val allCdns = cdnRegex.findAll(body).map { it.groupValues[1] }.toSet()
-            val hasBroken = body.contains("https:///files/")
-            if (allCdns.isEmpty() && !hasBroken) return@Interceptor resp
-            // Replace CDN domains and /files/ → /hls/ (tv.imgcdn.kim uses /hls/, not /files/)
-            val fixed = body
-                .replace("https:///files/", "https://tv.imgcdn.kim/hls/")
-                .let { b ->
-                    allCdns.fold(b) { acc, cdn ->
-                        acc.replace("https://$cdn/files/", "https://tv.imgcdn.kim/hls/")
-                    }
-                }
-            if (fixed != body) {
-                Log.d("CdnFix", "Rerouted CDN->tv.imgcdn.kim/hls in M3U8: $url")
+            // Fix broken https:///files/ → use known working CDN
+            if (body.contains("https:///files/")) {
+                val cdnRegex = Regex("https://([^/\"]+)/files/")
+                val cdn = cdnRegex.find(body)?.groupValues?.get(1) ?: "s23.nm-cdn9.top"
+                val fixed = body.replace("https:///files/", "https://$cdn/files/")
+                Log.d("CdnFix", "Fixed broken CDN URLs using $cdn in M3U8: $url")
                 val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
                 return@Interceptor resp.newBuilder().body(fixedBody).build()
             }
@@ -644,7 +636,12 @@ fun m3u8CdnFixInterceptor(): Interceptor {
 fun fixM3u8Cdn(body: String): String? {
     val cdnRegex = Regex("https://([^/\"]+)/files/")
     val cdn = cdnRegex.find(body)?.groupValues?.get(1)
-        ?: return null
+    if (cdn == null) {
+        // No CDN found at all — use fallback for https:///files/ URLs
+        val fixed = body.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
+        if (fixed != body) return fixed
+        return null
+    }
     val fixed = body.replace("https:///files/", "https://$cdn/files/")
     return if (fixed != body) fixed else null
 }

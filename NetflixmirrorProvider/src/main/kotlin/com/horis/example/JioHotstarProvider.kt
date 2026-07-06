@@ -249,8 +249,9 @@ class JioHotstarProvider : MainAPI() {
             }
         }
 
-        val videoHeaders = androidHeaders + mapOf("Cookie" to cookie)
         // Fallback: play.php → playlist.php
+        val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
+        val videoHeaders = androidHeaders + mapOf("Cookie" to plCookie)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
@@ -297,17 +298,6 @@ class JioHotstarProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
-                }
-                return chain.proceed(request)
-            }
-        }
+        return m3u8CdnFixInterceptor()
     }
 }
