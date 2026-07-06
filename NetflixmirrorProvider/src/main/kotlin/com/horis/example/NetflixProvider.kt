@@ -230,61 +230,15 @@ class NetflixProvider : MainAPI() {
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
         val title = loadData.title
-        // Force fresh bypass to see verify.php response body
-        NetflixMirrorStorage.clearCookie()
+        // Get cookie (reuse cached if available)
         val cookie = bypass(mainUrl)
 
-        // Probe: various jjoii values
-        val uHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to "$mainUrl/", "Origin" to mainUrl)
-        // verify.php response body
-        try {
-            val vResp = app.post("$mainUrl/verify.php", headers = mapOf("Origin" to "https://net22.cc", "Referer" to "https://net22.cc/verify2"),
-                requestBody = FormBody.Builder().add("g-recaptcha-response", "test").build())
-            Log.d("NetflixProvider", "verify body: ${vResp.text.take(300)}")
-        } catch (e: Exception) {
-            Log.d("NetflixProvider", "verify probe failed: ${e.message}")
-        }
-        // userver with jjoii=episode_id
-        try {
-            val uResp = app.post("https://userver.net52.cc/?jjoii=$id", headers = uHeaders)
-            Log.d("NetflixProvider", "userver(ep_id) code=${uResp.code} body=${uResp.text.take(300)}")
-        } catch (e: Exception) {
-            Log.d("NetflixProvider", "userver(ep_id) failed: ${e.message}")
-        }
-        // userver with jjoii=t_hash_t token (URL decoded)
-        val tHashValue = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
-        if (tHashValue != null) {
-            val decoded = java.net.URLDecoder.decode(tHashValue, "UTF-8")
-            try {
-                val uResp = app.post("https://userver.net52.cc/?jjoii=$tHashValue", headers = uHeaders)
-                Log.d("NetflixProvider", "userver(t_hash_raw) code=${uResp.code} body=${uResp.text.take(300)}")
-            } catch (e: Exception) { Log.d("NetflixProvider", "userver(t_hash_raw) failed: ${e.message}") }
-            try {
-                val uResp = app.post("https://userver.net52.cc/?jjoii=$decoded", headers = uHeaders)
-                Log.d("NetflixProvider", "userver(t_hash_dec) code=${uResp.code} body=${uResp.text.take(300)}")
-            } catch (e: Exception) { Log.d("NetflixProvider", "userver(t_hash_dec) failed: ${e.message}") }
-            val firstPart = decoded.split("::").first()
-            try {
-                val uResp = app.post("https://userver.net52.cc/?jjoii=$firstPart", headers = uHeaders)
-                Log.d("NetflixProvider", "userver(t_hash_first) code=${uResp.code} body=${uResp.text.take(300)}")
-            } catch (e: Exception) { Log.d("NetflixProvider", "userver(t_hash_first) failed: ${e.message}") }
-            try {
-                val rb = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull()!!, """{"id":"$id","ott":"$ott","t_hash":"$decoded"}""")
-                val uResp = app.post("https://userver.net52.cc/", headers = uHeaders, requestBody = rb)
-                Log.d("NetflixProvider", "userver(empty+t_hash) code=${uResp.code} body=${uResp.text.take(300)}")
-            } catch (e: Exception) { Log.d("NetflixProvider", "userver(empty+t_hash) failed: ${e.message}") }
-        }
-        // userver with base64(id) as jjoii
-        try {
-            val b64 = android.util.Base64.encodeToString(id.toByteArray(), android.util.Base64.NO_WRAP)
-            val uResp = app.post("https://userver.net52.cc/?jjoii=$b64", headers = uHeaders)
-            Log.d("NetflixProvider", "userver(b64) code=${uResp.code} body=${uResp.text.take(300)}")
-        } catch (e: Exception) { Log.d("NetflixProvider", "userver(b64) failed: ${e.message}") }
-
         // New flow: mobile/hls/ID.m3u8 with t_hash_t as in param
-        val tHashValue2 = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
-        if (tHashValue2 != null) {
-            val decodedHash = java.net.URLDecoder.decode(tHashValue2, "UTF-8")
+        val tHashCookie = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
+        if (tHashCookie != null) {
+            val decodedHash = java.net.URLDecoder.decode(tHashCookie, "UTF-8")
+                // Use ::ep::m suffix (mobile) instead of ::ep::99 (degraded)
+                .replace("::ep::99", "::ep::m")
             val hlsUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$decodedHash&hd=on&lang=eng"
             Log.d("NetflixProvider", "Trying mobile/hls: $hlsUrl")
             try {
