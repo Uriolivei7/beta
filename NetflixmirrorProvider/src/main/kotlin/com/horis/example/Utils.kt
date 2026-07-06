@@ -626,8 +626,8 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             var fixed = body
             // Fix broken https:///files/ → use known working CDN
             if (fixed.contains("https:///files/")) {
-                fixed = fixed.replace("https:///files/", "https://s21.freecdn4.top/files/")
-                Log.d("CdnFix", "Fixed broken CDN URLs (→s21.freecdn4.top): $url")
+                fixed = fixed.replace("https:///files/", "https://net11.cc/files/")
+                Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc): $url")
             }
             // Fix relative segment URLs missing the in= auth param
             if (inParam != null) {
@@ -638,7 +638,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                     if (line.isBlank() || line.startsWith("http") || line.contains("in=")) line
                     else {
                         segmentFixed++
-                        "$line?in=$inParam"
+                        if (line.contains("?")) "$line&in=$inParam" else "$line?in=$inParam"
                     }
                 }
                 if (segmentFixed > 0) {
@@ -659,7 +659,7 @@ fun fixM3u8Cdn(body: String): String? {
     val cdn = cdnRegex.find(body)?.groupValues?.get(1)
     if (cdn == null) {
         // No CDN found at all — use fallback for https:///files/ URLs
-        val fixed = body.replace("https:///files/", "https://s21.freecdn4.top/files/")
+        val fixed = body.replace("https:///files/", "https://net11.cc/files/")
         if (fixed != body) return fixed
         return null
     }
