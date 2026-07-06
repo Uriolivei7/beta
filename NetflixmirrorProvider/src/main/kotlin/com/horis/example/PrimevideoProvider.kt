@@ -293,7 +293,49 @@ class PrimevideoProvider : MainAPI() {
         Log.d("Primevideo", "loadLinks: id=${load.id}, apiBase=$apiBase, ott=$ott")
         val cookie = bypass(mainUrl)
 
-        // New flow: play.php → playlist.php
+        // New flow: mobile/hls/ID.m3u8 with t_hash_t as in param
+        val tHashCookie = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
+        if (tHashCookie != null) {
+            val decodedHash = java.net.URLDecoder.decode(tHashCookie, "UTF-8")
+                .replace("::ep::99", "::ep::m")
+            val hlsUrl = "$mainUrl/mobile/hls/${load.id}.m3u8?in=$decodedHash&hd=on&lang=eng"
+            Log.d("Primevideo", "Trying mobile/hls: $hlsUrl")
+            try {
+                val resp = app.get(hlsUrl, headers = androidHeaders + mapOf(
+                    "Cookie" to cookie,
+                    "Referer" to "$mainUrl/mobile/home?app=1",
+                    "Origin" to mainUrl
+                ))
+                val body = resp.text
+                Log.d("Primevideo", "mobile/hls FULL response:\n$body")
+                val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
+                    ?: Regex("https://[^\n\r]+480p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
+                if (videoUrl != null) {
+                    Log.d("Primevideo", "Video URL found: $videoUrl")
+                    val videoHeaders = androidHeaders + mapOf(
+                        "Cookie" to cookie,
+                        "Referer" to "$mainUrl/mobile/home?app=1"
+                    )
+                    callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
+                        this.headers = videoHeaders
+                    })
+                    return true
+                }
+                Log.d("Primevideo", "No video URL found, using master: $hlsUrl")
+                val masterHeaders = androidHeaders + mapOf(
+                    "Cookie" to cookie,
+                    "Referer" to "$mainUrl/mobile/home?app=1"
+                )
+                callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
+                    this.headers = masterHeaders
+                })
+                return true
+            } catch (e: Exception) {
+                Log.d("Primevideo", "mobile/hls failed: ${e.message}")
+            }
+        }
+
+        // Fallback: play.php → playlist.php
         val playlistResult = getPlaylistUrl(mainUrl, ott, load.id, load.title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult

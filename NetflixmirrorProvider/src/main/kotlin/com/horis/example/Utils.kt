@@ -136,11 +136,17 @@ object NetflixMirrorStorage {
 suspend fun bypass(mainUrl: String): String {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
     if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
-        Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
-        return savedCookie
+        // Force re-auth if the cookie has ::ep::99 (degraded)
+        if (savedCookie.contains("::ep::99") || savedCookie.contains("%3A%3Aep%3A%3A99")) {
+            Log.d("bypass", "Cached cookie has degraded ::ep::99, forcing re-auth")
+            NetflixMirrorStorage.clearCookie()
+        } else {
+            Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
+            return savedCookie
+        }
+    } else {
+        NetflixMirrorStorage.clearCookie()
     }
-
-    NetflixMirrorStorage.clearCookie()
 
     val allCookies = mutableMapOf<String, String>()
     fun captureCookies(resp: okhttp3.Response) {
@@ -166,6 +172,7 @@ suspend fun bypass(mainUrl: String): String {
         .build()
 
     // Step 1: visit $mainUrl/home → redirects to net22.cc/verify2 (or similar)
+    // Extract addhash from the redirect Location BEFORE following to dead net22.cc
     var addhash = ""
     try {
         var currentUrl = "$mainUrl/home"
@@ -182,6 +189,17 @@ suspend fun bypass(mainUrl: String): String {
                 captureCookies(resp)
                 val location = resp.header("Location")
                 if (location != null) {
+                    // Extract addhash from redirect URL before following redirect
+                    if (addhash.isBlank()) {
+                        addhash = Regex("""[?&]addhash=([^&]+)""").find(location)?.groupValues?.getOrNull(1).orEmpty()
+                        if (addhash.isNotBlank()) Log.d("bypass", "Extracted addhash from redirect URL: ${addhash.take(20)}")
+                    }
+                    // Only follow redirect if target host is resolvable (skip dead net22.cc)
+                    val targetHost = Regex("https://([^/]+)").find(location)?.groupValues?.getOrNull(1).orEmpty()
+                    if (targetHost.contains("net22.cc")) {
+                        Log.d("bypass", "Skipping redirect to dead host $targetHost (addhash already extracted: ${addhash.take(20)})")
+                        break
+                    }
                     currentUrl = if (location.startsWith("http")) location else "$mainUrl$location"
                 } else {
                     val body = resp.body?.string().orEmpty()
