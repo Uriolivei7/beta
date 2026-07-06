@@ -201,8 +201,9 @@ suspend fun bypass(mainUrl: String): String {
         try {
             // Try GET with browser headers first
             val getResp = app.get("$mainUrl$path", headers = browserHeaders)
-            Log.e("BYPASS", "FB GET $path code=${getResp.code} cookies=${getResp.headers.values("Set-Cookie")}")
-            val getBody = getResp.text.take(200)
+            val getBody = getResp.text
+            Log.e("BYPASS", "FB GET $path code=${getResp.code} body=${getBody.take(500)}")
+            Log.e("BYPASS", "FB GET $path cookies=${getResp.headers.values("Set-Cookie")}")
             if (!getBody.contains("Just a moment") && getResp.code < 400) {
                 val parsed = tryParseJson<NewTvTokenResponse>(getBody)
                 if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
