@@ -194,9 +194,17 @@ suspend fun bypass(mainUrl: String): String {
                 val location = resp.header("Location")
                 if (location != null) {
                     // Extract addhash from redirect URL before following redirect
+                    Log.d("bypass", "Redirect #$hop -> $location")
                     if (addhash.isBlank()) {
                         addhash = Regex("""[?&]addhash=([^&]+)""").find(location)?.groupValues?.getOrNull(1).orEmpty()
                         if (addhash.isNotBlank()) Log.d("bypass", "Extracted addhash from redirect URL: ${addhash.take(20)}")
+                    }
+                    // Extract _token from redirect URL
+                    val urlToken = Regex("""[?&]_token=([^&]+)""").find(location)?.groupValues?.getOrNull(1).orEmpty()
+                    if (urlToken.isNotBlank()) {
+                        Log.d("bypass", "Extracted _token from redirect URL: ${urlToken.take(60)}")
+                        // Try sending _token to verify.php as verifysessionid
+                        if (addhash.isBlank()) addhash = urlToken
                     }
                     // Only follow redirect if target host is resolvable (skip dead net22.cc)
                     val targetHost = Regex("https://([^/]+)").find(location)?.groupValues?.getOrNull(1).orEmpty()
@@ -267,6 +275,7 @@ suspend fun bypass(mainUrl: String): String {
             )
             val formBody = FormBody.Builder()
                 .add("g-recaptcha-response", UUID.randomUUID().toString())
+                .add("verifysessionid", addhash)  // _token from redirect URL
                 .apply { if (addhash.isNotBlank()) add("addhash", addhash) }
                 .build()
             val request = Request.Builder()
