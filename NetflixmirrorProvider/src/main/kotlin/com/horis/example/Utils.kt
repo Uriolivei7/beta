@@ -624,10 +624,18 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val inParam = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
+            // Unify ALL known CDNs to s23.nm-cdn9.top (catches segment URLs on other CDNs)
+            val cdnUnified = Regex("https://s\\d+\\.(?:nm-cdn\\d+|freecdn\\d+)\\.top").replace(fixed) {
+                "https://s23.nm-cdn9.top"
+            }
+            if (cdnUnified != fixed) {
+                Log.d("CdnFix", "Unified other CDN domains → s23.nm-cdn9.top")
+            }
+            fixed = cdnUnified
             // Fix broken https:///files/ → use known working CDN
             if (fixed.contains("https:///files/")) {
-                fixed = fixed.replace("https:///files/", "https://net11.cc/files/")
-                Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc): $url")
+                fixed = fixed.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
+                Log.d("CdnFix", "Fixed broken CDN URLs (→s23.nm-cdn9.top): $url")
             }
             // Fix relative segment URLs missing the in= auth param
             if (inParam != null) {
@@ -659,7 +667,7 @@ fun fixM3u8Cdn(body: String): String? {
     val cdn = cdnRegex.find(body)?.groupValues?.get(1)
     if (cdn == null) {
         // No CDN found at all — use fallback for https:///files/ URLs
-        val fixed = body.replace("https:///files/", "https://net11.cc/files/")
+        val fixed = body.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
         if (fixed != body) return fixed
         return null
     }
