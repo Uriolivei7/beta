@@ -21,8 +21,14 @@ class JioHotstarProvider : MainAPI() {
     private val androidHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
         "Accept" to "*/*",
+        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
         "Connection" to "keep-alive",
-        "X-Requested-With" to "app.netmirror.netmirrornew"
+        "X-Requested-With" to "app.netmirror.netmirrornew",
+        "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "Accept-Encoding" to "gzip",
+        "Cache-Control" to "max-age=0"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {

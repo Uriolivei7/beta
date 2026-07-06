@@ -160,10 +160,15 @@ suspend fun bypass(mainUrl: String): String {
     val androidUA = "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0"
     val browserHeaders = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-US,en;q=0.9",
+        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
         "User-Agent" to androidUA,
         "Connection" to "keep-alive",
-        "X-Requested-With" to "app.netmirror.netmirrornew"
+        "X-Requested-With" to "app.netmirror.netmirrornew",
+        "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "Accept-Encoding" to "gzip",
+        "Cache-Control" to "max-age=0"
     )
 
     val client = app.baseClient.newBuilder()
@@ -220,20 +225,41 @@ suspend fun bypass(mainUrl: String): String {
     } catch (e: Exception) {
         Log.d("bypass", "redirect failed: ${e.message}")
     }
+    // If addhash is empty (Cloudflare blocked us), try WebView fallback
+    if (addhash.isBlank()) {
+        val wvUrl = "$mainUrl/home" // start the same redirect chain in WebView
+        Log.d("bypass", "addhash empty, trying WebView fallback on $wvUrl")
+        val wvAddhash = captureAddhashViaWebView(wvUrl)
+        if (!wvAddhash.isNullOrBlank()) {
+            addhash = wvAddhash
+            Log.d("bypass", "WebView extracted addhash: ${addhash.take(20)}")
+        } else {
+            Log.d("bypass", "WebView fallback also failed to get addhash")
+        }
+    }
     Log.d("bypass", "addhash=${addhash.take(20)} cookies so far=$allCookies")
 
     // Step 2: POST to verify.php with fake recaptcha
-    val verifyHeaders = mapOf(
-        "User-Agent" to androidUA,
-        "Accept" to "*/*",
-        "Origin" to "https://net22.cc",
-        "Referer" to "https://net22.cc/verify2",
-        "Content-Type" to "application/x-www-form-urlencoded",
-        "X-Requested-With" to "app.netmirror.netmirrornew"
-    )
+    // Determine correct Referer/Origin from the redirect target (now net11.cc, not net22.cc)
+    val verifyHost = Regex("https://([^/]+)/verify2").find(currentUrl)?.groupValues?.getOrNull(1) ?: "net22.cc"
+    Log.d("bypass", "verify2 host resolved as: $verifyHost")
 
     for (count in 0..3) {
         try {
+            val verifyHeaders = mapOf(
+                "User-Agent" to androidUA,
+                "Accept" to "*/*",
+                "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+                "Origin" to "https://$verifyHost",
+                "Referer" to "https://$verifyHost/verify2",
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "X-Requested-With" to "app.netmirror.netmirrornew",
+                "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+                "sec-ch-ua-mobile" to "?0",
+                "sec-ch-ua-platform" to "\"Android\"",
+                "Accept-Encoding" to "gzip",
+                "Cache-Control" to "max-age=0"
+            )
             val formBody = FormBody.Builder()
                 .add("g-recaptcha-response", UUID.randomUUID().toString())
                 .apply { if (addhash.isNotBlank()) add("addhash", addhash) }
@@ -247,10 +273,16 @@ suspend fun bypass(mainUrl: String): String {
                     if (cookieStr.isNotBlank()) addHeader("Cookie", cookieStr)
                 }
                 .build()
-            client.newCall(request).execute().use { resp ->
+            // Use a separate client — follow redirects may hit dead domains, capture cookies from first response
+            val verifyClient = app.baseClient.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+            verifyClient.newCall(request).execute().use { resp ->
                 captureCookies(resp)
                 val respBody = resp.body?.string().orEmpty()
                 Log.d("bypass", "verify.php status=${resp.code} cookies=$allCookies body=${respBody.take(500)}")
+                // If the cookie has ::ep::99, we still accept it but tag for replacement later
                 if (allCookies.containsKey("t_hash_t")) {
                     val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
                     NetflixMirrorStorage.saveCookie(cookieStr)
@@ -308,7 +340,12 @@ val newTvBaseHeaders = mapOf(
     "Expires"       to "0",
     "X-Requested-With" to "app.netmirror.netmirrornew",
     "User-Agent"    to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-    "Accept"        to "application/json, text/plain, */*"
+    "Accept"        to "application/json, text/plain, */*",
+    "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+    "sec-ch-ua"     to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+    "sec-ch-ua-mobile" to "?0",
+    "sec-ch-ua-platform" to "\"Android\"",
+    "Accept-Encoding" to "gzip"
 )
 
 val newTvDomains = listOf(
@@ -595,6 +632,78 @@ fun fixM3u8Cdn(body: String): String? {
         ?: return null
     val fixed = body.replace("https:///files/", "https://$cdn/files/")
     return if (fixed != body) fixed else null
+}
+
+// ---------------------------------------------------------------------------
+// WebView-based addhash extraction (for Cloudflare-bypassed verify2 page)
+// ---------------------------------------------------------------------------
+
+private var addhashWv: WebView? = null
+
+@SuppressLint("SetJavaScriptEnabled")
+suspend fun captureAddhashViaWebView(loadUrl: String, timeoutMs: Long = 20000): String? {
+    val ctx = pluginContext ?: run {
+        Log.e("bypass", "captureAddhashViaWebView: pluginContext null")
+        return null
+    }
+    return withContext(Dispatchers.Main) {
+        suspendCoroutine { cont ->
+            var resumed = false
+            val handler = Handler(Looper.getMainLooper())
+            handler.postDelayed({
+                if (!resumed) { resumed = true; cont.resume(null) }
+            }, timeoutMs)
+            try {
+                CookieManager.getInstance().setAcceptCookie(true)
+                val view = WebView(ctx.applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                }
+                addhashWv = view
+                view.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(v: WebView, u: String) {
+                        if (resumed) return
+                        // Poll for addhash — page may update after Cloudflare challenge
+                        handler.post(object : Runnable {
+                            var attempts = 0
+                            override fun run() {
+                                if (resumed) return
+                                v.evaluateJavascript("""
+                                    (function() {
+                                        var el = document.querySelector('input[name=addhash]');
+                                        if (el) return el.value;
+                                        var m = document.body ? document.body.innerText.match(/addhash['"]?\s*[:=]\s*['"]([^'"]+)/i) : null;
+                                        if (m) return m[1];
+                                        return '';
+                                    })()
+                                """.trimIndent()) { result ->
+                                    if (resumed) return@evaluateJavascript
+                                    val r = result?.trim('"')?.trim()
+                                    if (r != null && r != "" && r != "null" && r.length > 4) {
+                                        resumed = true
+                                        handler.removeCallbacksAndMessages(null)
+                                        cont.resume(r)
+                                        return@evaluateJavascript
+                                    }
+                                    if (attempts++ > 40) {
+                                        if (!resumed) { resumed = true; cont.resume(null) }
+                                    } else {
+                                        handler.postDelayed(this, 500)
+                                    }
+                                }
+                            }
+                        })
+                    }
+                }
+                view.loadUrl(loadUrl)
+            } catch (e: Exception) {
+                Log.e("bypass", "captureAddhashViaWebView error: ${e.message}")
+                if (!resumed) { resumed = true; cont.resume(null) }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
