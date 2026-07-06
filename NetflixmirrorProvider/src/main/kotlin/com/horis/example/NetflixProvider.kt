@@ -294,20 +294,16 @@ class NetflixProvider : MainAPI() {
                     "Origin" to mainUrl
                 ))
                 val body = resp.text
-                Log.d("NetflixProvider", "mobile/hls response: ${body.take(500)}")
-                // Parse response for CDN M3U8 URL
-                val cdnM3u8 = Regex("https://[^\n\r\"']+m3u8[^\n\r\"']*").find(body)?.value
-                if (cdnM3u8 != null) {
-                    Log.d("NetflixProvider", "CDN M3U8 found: $cdnM3u8")
-                    val videoHeaders = androidHeaders + mapOf(
-                        "Cookie" to cookie,
-                        "Referer" to "$mainUrl/mobile/home?app=1"
-                    )
-                    callback.invoke(newExtractorLink(name, name, cdnM3u8, type = ExtractorLinkType.M3U8) {
-                        this.headers = videoHeaders
-                    })
-                    return true
-                }
+                Log.d("NetflixProvider", "mobile/hls FULL response:\n$body")
+                // Try passing the master M3U8 directly to CS3
+                val videoHeaders = androidHeaders + mapOf(
+                    "Cookie" to cookie,
+                    "Referer" to "$mainUrl/mobile/home?app=1"
+                )
+                callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
+                    this.headers = videoHeaders
+                })
+                return true
             } catch (e: Exception) {
                 Log.d("NetflixProvider", "mobile/hls failed: ${e.message}")
             }
