@@ -136,6 +136,7 @@ object NetflixMirrorStorage {
 suspend fun bypass(mainUrl: String): String {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
     if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+        Log.d("netmirror", "bypass cached cookie ts=${savedTimestamp} degraded=${savedCookie.contains("::ep::99")}")
         Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
         return savedCookie
     } else {
@@ -336,6 +337,7 @@ suspend fun bypass(mainUrl: String): String {
                 if (allCookies.containsKey("t_hash_t")) {
                     val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
                     NetflixMirrorStorage.saveCookie(cookieStr)
+                    Log.d("netmirror", "bypass degraded cookie ts=${System.currentTimeMillis()}")
                     Log.d("bypass", "Got degraded cookie: $cookieStr")
                     return cookieStr
                 }
@@ -663,6 +665,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
             if (fixed.contains("https:///files/")) {
                 fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")
+                Log.d("netmirror", "CDN fix broken →net11.cc/hls/: $url")
                 Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
             }
             // Unify remaining known CDN domains → net11.cc/hls/ (private CDNs, if any)
@@ -670,6 +673,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 "https://net11.cc/hls/"
             }
             if (cdnUnified != fixed) {
+                Log.d("netmirror", "CDN unify →net11.cc/hls/: $url")
                 Log.d("CdnFix", "Unified CDN → net11.cc/hls/ for: $url")
             }
             fixed = cdnUnified
@@ -1099,8 +1103,7 @@ suspend fun getPlaylistUrl(
             if (sourceUrl != null) {
                 val body = app.get(sourceUrl, headers = m3u8Headers).text
             if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                Log.d("PlayPhp", "Source M3U8 OK: $sourceUrl (len=${body.length})")
-                Log.d("PlayPhp", "Source M3U8 body: ${body.take(1500)}")
+                Log.d("netmirror", "playlist source OK len=${body.length} hasBroken=${body.contains("https:///files/")}")
                 Log.e("PLAYURL", sourceUrl)
                 return Pair(sourceUrl, tracks)
             }
@@ -1119,8 +1122,7 @@ suspend fun getPlaylistUrl(
             val body = app.get(m3u8Url, headers = m3u8Headers).text
             Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
             if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                Log.d("PlayPhp", "Direct M3U8 OK: $m3u8Url (len=${body.length})")
-                Log.d("PlayPhp", "Direct M3U8 body: ${body.take(1500)}")
+                Log.d("netmirror", "direct M3U8 OK len=${body.length} host=$hlsDomain")
                 Log.e("PLAYURL", m3u8Url)
                 return Pair(m3u8Url, tracks)
             }

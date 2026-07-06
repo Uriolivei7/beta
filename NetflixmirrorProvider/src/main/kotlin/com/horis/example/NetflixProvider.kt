@@ -238,6 +238,7 @@ class NetflixProvider : MainAPI() {
         // Get cookie (reuse cached if available)
         val cookie = bypass(mainUrl)
 
+        Log.d("netmirror", "loadLinks start id=$id cookie=${cookie.take(60)}...")
         // New flow: mobile/hls/ID.m3u8 with t_hash_t as in param
         val tHashCookie = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
         if (tHashCookie != null) {
@@ -252,7 +253,7 @@ class NetflixProvider : MainAPI() {
                     "Origin" to mainUrl
                 ))
                 val body = resp.text
-                Log.d("NetflixProvider", "mobile/hls FULL response:\n$body")
+                Log.d("netmirror", "mobile/hls response len=${body.length} unknown=${body.contains("unknown::ep")}")
                 if (!body.contains("unknown::ep")) {
                     // Parse video URL from master playlist (prefer 720p)
                     val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
@@ -308,7 +309,7 @@ class NetflixProvider : MainAPI() {
                 "Referer" to m3u8Url,
                 "Origin" to "https://$m3u8Domain"
             )
-            Log.d("NetflixProvider", "loadLinks new flow SUCCESS: $m3u8Url")
+            Log.d("netmirror", "playlist OK m3u8=${m3u8Url.take(100)} domain=$m3u8Domain")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
                 this.referer = m3u8Url
                 this.headers = videoHeaders
@@ -317,6 +318,7 @@ class NetflixProvider : MainAPI() {
         }
 
         // Fallback to old player.php flow
+        Log.d("netmirror", "fallback to player.php id=$id")
         Log.d("NetflixProvider", "loadLinks: fallback to player.php id=$id")
         val rawPlayer = retryOnDbError {
             val text = app.get(
