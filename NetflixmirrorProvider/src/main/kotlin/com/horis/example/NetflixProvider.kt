@@ -232,60 +232,38 @@ class NetflixProvider : MainAPI() {
         val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("NF", "bypass fail: ${e.message}"); "" }
         Log.e("NF", "token=${token.take(60)}")
 
-        // Primary flow: NewTv player.php with auth token as Usertoken
-        val playerHeaders = buildNewTvHeaders(ott, mapOf(
-            "Usertoken" to token,
-            "Referer" to apiBase
-        ))
-        try {
-            val rawPlayer = retryOnDbError {
-                val text = app.get(
-                    "$apiBase/newtv/player.php?id=$id",
-                    headers = playerHeaders
-                ).text
-                checkDbError(text)
-                text
-            }
-            Log.e("NF", "primary player resp: $rawPlayer")
-            val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
-            Log.e("NF", "primary status=${response.status} link=${response.video_link}")
-            if ((response.status == "ok" || response.status == "otp") && !response.video_link.isNullOrBlank()) {
-                val referer = response.referer ?: apiBase
-                Log.e("PLAYURL", response.video_link)
-                callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                    this.referer = referer
-                    this.headers = androidHeaders + mapOf("Referer" to referer)
-                })
-                return true
-            }
-        } catch (e: Exception) {
-            Log.e("NF", "primary player.php fail: ${e.message}")
+        // Try passing token as Cookie (cncverse pattern: nf_cookie=$token)
+        val attempts = buildList {
+            add(Triple("cookie", "$apiBase/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$token", "Referer" to apiBase))))
+            add(Triple("usertoken", "$apiBase/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Usertoken" to token, "Referer" to apiBase))))
+            add(Triple("fallback-cookie", "$mainUrl/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$token", "Referer" to mainUrl))))
+            add(Triple("fallback-plain", "$mainUrl/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))))
         }
 
-        // Fallback: try net52.cc player.php directly (without token)
-        try {
-            val rawPlayer = retryOnDbError {
-                val text = app.get(
-                    "$mainUrl/newtv/player.php?id=$id",
-                    headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to mainUrl))
-                ).text
-                checkDbError(text)
-                text
+        for ((label, url, headers) in attempts) {
+            try {
+                val raw = retryOnDbError {
+                    val t = app.get(url, headers = headers).text
+                    checkDbError(t); t
+                }
+                val resp = tryParseJson<NewTvPlayerResponse>(raw)
+                Log.e("NF", "$label -> status=${resp?.status} link=${resp?.video_link?.take(60)}")
+                if (resp != null && resp.video_link != null) {
+                    val ref = resp.referer ?: apiBase
+                    Log.e("PLAYURL", resp.video_link)
+                    callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
+                        this.referer = ref
+                        this.headers = androidHeaders + mapOf("Referer" to ref)
+                    })
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.e("NF", "$label error: ${e.message}")
             }
-            Log.e("NF", "fallback player resp: $rawPlayer")
-            val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
-            Log.e("NF", "fallback status=${response.status} link=${response.video_link}")
-            if ((response.status == "ok" || response.status == "otp") && !response.video_link.isNullOrBlank()) {
-                val referer = response.referer ?: mainUrl
-                Log.e("PLAYURL", response.video_link)
-                callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                    this.referer = referer
-                    this.headers = androidHeaders + mapOf("Referer" to referer)
-                })
-                return true
-            }
-        } catch (e: Exception) {
-            Log.e("NF", "fallback player.php fail: ${e.message}")
         }
 
         Log.e("NF", "loadLinks FAILED id=$id")

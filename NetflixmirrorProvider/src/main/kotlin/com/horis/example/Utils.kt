@@ -119,8 +119,15 @@ object NetflixMirrorStorage {
 // ---------------------------------------------------------------------------
 
 suspend fun bypass(mainUrl: String): String {
-    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
-    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+    // Sanitize cached cookie: strip old "t_hash_t=X; hd=on" format down to just X
+    val (rawCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+    val savedCookie = rawCookie?.let { c ->
+        when {
+            c.startsWith("t_hash_t=") -> c.removePrefix("t_hash_t=").substringBefore(";").trim()
+            else -> c
+        }
+    }
+    if (!savedCookie.isNullOrBlank() && savedCookie.length > 10 && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
         Log.d("bypass", "Using cached cookie ts=${savedTimestamp}")
         return savedCookie
     }
