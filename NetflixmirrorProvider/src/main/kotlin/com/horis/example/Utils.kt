@@ -603,28 +603,29 @@ fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
         val req = chain.request()
         val url = req.url.toString()
+        Log.d("CdnFix", "Interceptor firing for: $url")
         val resp: Response
         try {
             resp = chain.proceed(req)
         } catch (e: Exception) {
             val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
-            if (cdnHost.contains("nm-cdn") || cdnHost.contains("imgcdn")) {
+            if (cdnHost.contains("nm-cdn") || cdnHost.contains("imgcdn") || cdnHost.contains("freecdn")) {
                 Log.d("CdnFix", "CDN unreachable: $url - ${e.message}")
             }
             throw e
         }
-        if (url.contains(".m3u8")) {
+        val ct = (resp.body?.contentType()?.toString() ?: "")
+        if (url.contains(".m3u8") || ct.contains("mpegurl") || ct.contains("vnd.apple.mpegurl")) {
             val body = resp.body?.string() ?: return@Interceptor resp
             if (!body.startsWith("#EXT")) {
                 Log.d("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length}")
                 return@Interceptor resp
             }
+            Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")}")
             // Fix broken https:///files/ → use known working CDN
             if (body.contains("https:///files/")) {
-                val cdnRegex = Regex("https://([^/\"]+)/files/")
-                val cdn = cdnRegex.find(body)?.groupValues?.get(1) ?: "s23.nm-cdn9.top"
-                val fixed = body.replace("https:///files/", "https://$cdn/files/")
-                Log.d("CdnFix", "Fixed broken CDN URLs using $cdn in M3U8: $url")
+                val fixed = body.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
+                Log.d("CdnFix", "Fixed broken CDN URLs: $url")
                 val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
                 return@Interceptor resp.newBuilder().body(fixedBody).build()
             }
@@ -988,9 +989,11 @@ suspend fun getPlaylistUrl(
         "Referer" to "https://net11.cc/play.php?id=$id",
         "Origin" to "https://net11.cc"
     ) + if (plCookie.isNotBlank()) mapOf("Cookie" to plCookie) else emptyMap()
+    val m3u8Referer = "https://net11.cc/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash"
     val m3u8Headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept" to "*/*"
+        "Accept" to "*/*",
+        "Referer" to m3u8Referer
     ) + if (plCookie.isNotBlank()) mapOf("Cookie" to plCookie) else emptyMap()
     for (hlsDomain in hlsDomains) {
         try {

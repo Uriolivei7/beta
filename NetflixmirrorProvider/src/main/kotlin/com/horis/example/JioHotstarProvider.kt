@@ -251,7 +251,6 @@ class JioHotstarProvider : MainAPI() {
 
         // Fallback: play.php → playlist.php
         val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
-        val videoHeaders = androidHeaders + mapOf("Cookie" to plCookie)
         val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
         if (playlistResult != null) {
             val (m3u8Url, tracks) = playlistResult
@@ -264,15 +263,25 @@ class JioHotstarProvider : MainAPI() {
                     subtitleCallback(subFile)
                 }
             }
+            val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
+            val videoHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "X-Requested-With" to "app.netmirror.netmirrornew",
+                "Cookie" to plCookie,
+                "Referer" to m3u8Url,
+                "Origin" to "https://$m3u8Domain"
+            )
             Log.d("JioHotstar", "loadLinks new flow SUCCESS: $m3u8Url")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
-                this.referer = "$mainUrl/mobile/home?app=1"
+                this.referer = m3u8Url
                 this.headers = videoHeaders
             })
             return true
         }
 
         // Fallback to old player.php flow
+        val videoHeaders = androidHeaders + mapOf("Cookie" to plCookie)
         Log.d("JioHotstar", "loadLinks: fallback to player.php id=$id")
         val rawPlayer = retryOnDbError {
             val text = app.get(

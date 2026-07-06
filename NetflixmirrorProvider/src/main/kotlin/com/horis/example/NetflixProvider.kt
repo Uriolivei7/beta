@@ -303,13 +303,17 @@ class NetflixProvider : MainAPI() {
             }
             val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
             val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
-            val videoHeaders = androidHeaders + mapOf(
+            val videoHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "X-Requested-With" to "app.netmirror.netmirrornew",
                 "Cookie" to plCookie,
                 "Referer" to m3u8Url,
                 "Origin" to "https://$m3u8Domain"
             )
             Log.d("NetflixProvider", "loadLinks new flow SUCCESS: $m3u8Url")
             callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
+                this.referer = m3u8Url
                 this.headers = videoHeaders
             })
             return true
