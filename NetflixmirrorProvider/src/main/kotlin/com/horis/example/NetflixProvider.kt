@@ -5,10 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
-import kotlin.random.Random
-import okhttp3.FormBody
 import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 class NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -16,19 +13,14 @@ class NetflixProvider : MainAPI() {
     override var mainUrl = "https://net52.cc"
     override var name = "Netflix"
     override val hasMainPage = true
-    override val usesWebView = true
+    override val usesWebView = false
 
     private val ott = "nf"
 
     private val androidHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
         "Accept" to "*/*",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "Connection" to "keep-alive",
         "X-Requested-With" to "app.netmirror.netmirrornew",
-        "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
         "Cache-Control" to "max-age=0"
     )
 
@@ -235,121 +227,68 @@ class NetflixProvider : MainAPI() {
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
         val title = loadData.title
-        // Get cookie (reuse cached if available)
-        val cookie = bypass(mainUrl)
+        Log.d("NetflixProvider", "loadLinks id=$id apiBase=$apiBase")
 
-        Log.d("netmirror", "loadLinks start id=$id cookie=${cookie.take(60)}...")
-        // New flow: mobile/hls/ID.m3u8 with t_hash_t as in param
-        val tHashCookie = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
-        if (tHashCookie != null) {
-            val decodedHash = java.net.URLDecoder.decode(tHashCookie, "UTF-8")
-            // Use raw cookie as-is (don't upgrade ::ep::99 → ::ep::m, server detects hash tampering)
-            val hlsUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$decodedHash&hd=on&lang=eng"
-            Log.d("NetflixProvider", "Trying mobile/hls: $hlsUrl")
-            try {
-                val resp = app.get(hlsUrl, headers = androidHeaders + mapOf(
-                    "Cookie" to cookie,
-                    "Referer" to "$mainUrl/mobile/home?app=1",
-                    "Origin" to mainUrl
-                ))
-                val body = resp.text
-                Log.d("netmirror", "mobile/hls response len=${body.length} unknown=${body.contains("unknown::ep")}")
-                if (!body.contains("unknown::ep")) {
-                    // Parse video URL from master playlist (prefer 720p)
-                    val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
-                        ?: Regex("https://[^\n\r]+480p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
-                    if (videoUrl != null) {
-                        Log.d("NetflixProvider", "Video URL found: $videoUrl")
-                        val videoHeaders = androidHeaders + mapOf(
-                            "Cookie" to cookie,
-                            "Referer" to "$mainUrl/mobile/home?app=1"
-                        )
-                        callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                            this.headers = videoHeaders
-                        })
-                        return true
-                    }
-                    // Fallback: pass master URL directly
-                    Log.d("NetflixProvider", "No video URL found, using master: $hlsUrl")
-                    val masterHeaders = androidHeaders + mapOf(
-                        "Cookie" to cookie,
-                        "Referer" to "$mainUrl/mobile/home?app=1"
-                    )
-                    callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
-                        this.headers = masterHeaders
-                    })
-                    return true
-                }
-                Log.d("NetflixProvider", "mobile/hls returned abuse (unknown::ep), falling through to play.php")
-            } catch (e: Exception) {
-                Log.d("NetflixProvider", "mobile/hls failed: ${e.message}")
+        // Get auth token (token_hash from NewTv verify, or fallback t_hash_t)
+        val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
+
+        // Primary flow: NewTv player.php with auth token as Usertoken
+        val playerHeaders = buildNewTvHeaders(ott, mapOf(
+            "Usertoken" to token,
+            "Referer" to apiBase
+        ))
+        try {
+            val rawPlayer = retryOnDbError {
+                val text = app.get(
+                    "$apiBase/newtv/player.php?id=$id",
+                    headers = playerHeaders
+                ).text
+                checkDbError(text)
+                text
             }
-        }
-
-        // Fallback: play.php → playlist.php
-        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
-        if (playlistResult != null) {
-            val (m3u8Url, tracks) = playlistResult
-            for (track in tracks) {
-                if (track.kind == "captions" && !track.file.isNullOrBlank()) {
-                    val subUrl = if (track.file.startsWith("http")) track.file
-                                 else "https:${track.file.removePrefix("/")}"
-                    val subFile = newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl)
-                    subFile.headers = mapOf("Referer" to m3u8Url)
-                    subtitleCallback(subFile)
-                }
+            Log.d("NetflixProvider", "player.php response: $rawPlayer")
+            val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
+            if ((response.status == "ok" || response.status == "otp") && !response.video_link.isNullOrBlank()) {
+                val referer = response.referer ?: apiBase
+                Log.e("PLAYURL", response.video_link)
+                callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+                    this.referer = referer
+                    this.headers = androidHeaders + mapOf("Referer" to referer)
+                })
+                return true
             }
-            val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
-            val plCookie = cookie // raw cookie as-is, no ::ep::99 → ::ep::m upgrade
-            val videoHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                "Accept" to "*/*",
-                "X-Requested-With" to "app.netmirror.netmirrornew",
-                "Cookie" to plCookie,
-                "Referer" to m3u8Url,
-                "Origin" to "https://$m3u8Domain"
-            )
-            Log.d("netmirror", "playlist OK m3u8=${m3u8Url.take(100)} domain=$m3u8Domain")
-            callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
-                this.referer = m3u8Url
-                this.headers = videoHeaders
-            })
-            return true
+            Log.w("NetflixProvider", "player.php bad status=${response.status} link=${response.video_link}")
+        } catch (e: Exception) {
+            Log.w("NetflixProvider", "player.php failed: ${e.message}")
         }
 
-        // Fallback to old player.php flow
-        Log.d("netmirror", "fallback to player.php id=$id")
-        Log.d("NetflixProvider", "loadLinks: fallback to player.php id=$id")
-        val rawPlayer = retryOnDbError {
-            val text = app.get(
-                "$apiBase/newtv/player.php?id=$id",
-                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
-            ).text
-            checkDbError(text)
-            text
+        // Fallback: try net52.cc player.php directly (without token)
+        try {
+            val rawPlayer = retryOnDbError {
+                val text = app.get(
+                    "$mainUrl/newtv/player.php?id=$id",
+                    headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to mainUrl))
+                ).text
+                checkDbError(text)
+                text
+            }
+            val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
+            if ((response.status == "ok" || response.status == "otp") && !response.video_link.isNullOrBlank()) {
+                val referer = response.referer ?: mainUrl
+                Log.e("PLAYURL", response.video_link)
+                callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+                    this.referer = referer
+                    this.headers = androidHeaders + mapOf("Referer" to referer)
+                })
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w("NetflixProvider", "fallback player.php failed: ${e.message}")
         }
-        Log.d("NetflixProvider", "loadLinks RAW player response: $rawPlayer")
-        val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
 
-        Log.d("NetflixProvider", "loadLinks parsed: status=${response.status}, video_link=${response.video_link}, referer=${response.referer}")
-        if (response.status != "ok" && response.status != "otp" || response.video_link.isNullOrBlank()) {
-            Log.e("NetflixProvider", "loadLinks FAILED: status=${response.status} video_link=${response.video_link}")
-            return false
-        }
-
-        val m3u8Referer = response.referer ?: apiBase
-        val videoHeaders = androidHeaders + mapOf("Cookie" to cookie, "Referer" to m3u8Referer)
-        kotlinx.coroutines.delay((1000L..3000L).random())
-        Log.e("PLAYURL", response.video_link)
-        callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = m3u8Referer
-            this.headers = videoHeaders
-        })
-        Log.d("NetflixProvider", "loadLinks SUCCESS (player.php fallback): video_link=${response.video_link}")
-        return true
+        Log.e("NetflixProvider", "loadLinks FAILED for id=$id")
+        return false
     }
 
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return m3u8CdnFixInterceptor()
-    }
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = null
 }

@@ -10,23 +10,13 @@ import com.lagradost.nicehttp.Requests
 import com.lagradost.nicehttp.ResponseParser
 import kotlin.reflect.KClass
 import com.lagradost.api.Log
-import com.lagradost.cloudstream3.APIHolder
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.SharedPreferences
-import android.annotation.SuppressLint
-import android.os.Handler
-import android.os.Looper
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType
@@ -34,8 +24,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
 import java.util.UUID
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 // ---------------------------------------------------------------------------
 // JSON / HTTP
@@ -61,9 +49,6 @@ val JSONParser = object : ResponseParser {
 val app = Requests(responseParser = JSONParser).apply {
     defaultHeaders = mapOf("User-Agent" to USER_AGENT)
 }
-
-/** Plugin context for WebView operations – set by NetflixmirrorPlugin.load() */
-var pluginContext: android.content.Context? = null
 
 inline fun <reified T : Any> parseJson(text: String): T = JSONParser.parse(text, T::class)
 
@@ -130,226 +115,86 @@ object NetflixMirrorStorage {
 }
 
 // ---------------------------------------------------------------------------
-// Cloudflare bypass – gets t_hash_t cookie from net52.cc
+// Auth bypass – gets token_hash from verify.php on resolved API domain
 // ---------------------------------------------------------------------------
 
 suspend fun bypass(mainUrl: String): String {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
     if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
-        Log.d("netmirror", "bypass cached cookie ts=${savedTimestamp} degraded=${savedCookie.contains("::ep::99")}")
-        Log.d("bypass", "Using cached cookie (${savedCookie.take(100)}...) ts=${savedTimestamp}")
+        Log.d("bypass", "Using cached cookie ts=${savedTimestamp}")
         return savedCookie
-    } else {
-        NetflixMirrorStorage.clearCookie()
     }
+    NetflixMirrorStorage.clearCookie()
 
-    val allCookies = mutableMapOf<String, String>()
-    fun captureCookies(resp: okhttp3.Response) {
-        resp.headers("Set-Cookie").forEach { raw ->
-            val name = raw.substringBefore("=")
-            val value = raw.substringAfter("=").substringBefore(";")
-            if (name.isNotBlank()) allCookies[name] = value
-        }
-    }
+    val apiBase = resolveApiUrl()
+    val androidUA = newTvBaseHeaders["User-Agent"].orEmpty()
 
-    val androidUA = "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0"
-    val browserHeaders = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "User-Agent" to androidUA,
-        "Connection" to "keep-alive",
-        "X-Requested-With" to "app.netmirror.netmirrornew",
-        "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "Cache-Control" to "max-age=0"
-    )
-
-    val client = app.baseClient.newBuilder()
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .build()
-
-    // Step 1: visit $mainUrl/home → redirects to net22.cc/verify2 (or similar)
-    // Extract addhash from the redirect Location BEFORE following to dead net22.cc
-    var addhash = ""
-    var currentUrl = "$mainUrl/home"
-    var verifyHost = "net11.cc"
+    // NewTv verify on resolved API (mobiledetects domain or net52.cc fallback)
     try {
-        for (hop in 0..5) {
-            val req = Request.Builder()
-                .url(currentUrl)
-                .apply { browserHeaders.forEach { (k, v) -> addHeader(k, v) } }
-                .apply {
-                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-                    if (cookieStr.isNotBlank()) addHeader("Cookie", cookieStr)
-                }
-                .build()
-            client.newCall(req).execute().use { resp ->
-                captureCookies(resp)
-                val location = resp.header("Location")
-                if (location != null) {
-                    Log.d("bypass", "Redirect #$hop -> $location")
-                    if (addhash.isBlank()) {
-                        addhash = Regex("""[?&]addhash=([^&]+)""").find(location)?.groupValues?.getOrNull(1).orEmpty()
-                        if (addhash.isNotBlank()) Log.d("bypass", "Extracted addhash: ${addhash.take(20)}")
-                    }
-                    val urlToken = Regex("""[?&]_token=([^&]+)""").find(location)?.groupValues?.getOrNull(1).orEmpty()
-                    if (urlToken.isNotBlank()) {
-                        Log.d("bypass", "Extracted _token: ${urlToken.take(60)}")
-                        if (addhash.isBlank()) addhash = urlToken
-                    }
-                    val targetHost = Regex("https://([^/]+)").find(location)?.groupValues?.getOrNull(1).orEmpty()
-                    if (targetHost.contains("net22.cc")) {
-                        Log.d("bypass", "Skipping redirect to dead $targetHost")
-                        break
-                    }
-                    // Track which host verify2 is on
-                    verifyHost = targetHost
-                    currentUrl = if (location.startsWith("http")) location else "$mainUrl$location"
-                } else {
-                    val body = resp.body?.string().orEmpty()
-                    Log.d("bypass", "final url=$currentUrl body.len=${body.length}")
-                    verifyHost = Regex("https://([^/]+)").find(currentUrl)?.groupValues?.getOrNull(1) ?: verifyHost
-                    addhash = Regex("""[?&]addhash=([^&]+)""").find(currentUrl)?.groupValues?.getOrNull(1).orEmpty()
-                    if (addhash.isBlank()) {
-                        val doc = org.jsoup.Jsoup.parse(body)
-                        addhash = doc.selectFirst("input[name=addhash]")?.attr("value").orEmpty()
-                    }
-                    if (addhash.isBlank()) {
-                        addhash = Regex("""["']addhash["']\s*[:=]\s*["']([^"']+)""").find(body)?.groupValues?.getOrNull(1).orEmpty()
-                    }
-                    Log.d("bypass", "body first 500: ${body.take(500)}")
-                    break
-                }
-            }
+        val formBody = FormBody.Builder()
+            .add("g-recaptcha-response", UUID.randomUUID().toString())
+            .build()
+        val resp = app.post(
+            "$apiBase/verify.php",
+            requestBody = formBody,
+            headers = newTvBaseHeaders + mapOf(
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "Origin" to mainUrl,
+                "Referer" to "$mainUrl/verify"
+            )
+        )
+        val text = resp.text
+        Log.d("bypass", "Verify status=${resp.code} body=${text.take(200)}")
+        val parsed = tryParseJson<NewTvTokenResponse>(text)
+        if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
+            NetflixMirrorStorage.saveCookie(parsed.token_hash)
+            Log.d("bypass", "Got token_hash: ${parsed.token_hash.take(60)}")
+            return parsed.token_hash
+        }
+        val tHashCandidates = resp.headers.values("Set-Cookie")
+        val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
+            ?.substringAfter("=")?.substringBefore(";")
+        if (tHash != null) {
+            val cookieStr = "t_hash_t=$tHash; hd=on"
+            NetflixMirrorStorage.saveCookie(cookieStr)
+            Log.d("bypass", "Got t_hash_t: $cookieStr")
+            return cookieStr
         }
     } catch (e: Exception) {
-        Log.d("bypass", "redirect failed: ${e.message}")
+        Log.w("bypass", "Verify on $apiBase failed: ${e.message}")
     }
-    // If addhash is empty (Cloudflare blocked us), try WebView fallback
-    if (addhash.isBlank()) {
-        val wvUrl = "$mainUrl/home" // start the same redirect chain in WebView
-        Log.d("bypass", "addhash empty, trying WebView addhash on $wvUrl")
-        val wvAddhash = captureAddhashViaWebView(wvUrl)
-        if (!wvAddhash.isNullOrBlank()) {
-            addhash = wvAddhash
-            Log.d("bypass", "WebView extracted addhash: ${addhash.take(20)}")
-        } else {
-            Log.d("bypass", "WebView addhash fallback failed, trying direct cookie capture")
-            val wvCookie = captureCookieViaWebView("$mainUrl/mobile/home?app=1")
-            if (wvCookie != null && wvCookie.contains("t_hash_t=") && !wvCookie.contains("::ep::99") && !wvCookie.contains("%3A%3Aep%3A%3A99")) {
-                NetflixMirrorStorage.saveCookie(wvCookie)
-                Log.d("bypass", "WebView direct cookie success: ${wvCookie.take(100)}")
-                return wvCookie
-            }
-            Log.d("bypass", "WebView direct cookie also failed")
-        }
-    }
-    Log.d("bypass", "addhash=${addhash.take(20)} cookies so far=$allCookies")
 
-    // Step 2: POST to verify.php with fake recaptcha
-    Log.d("bypass", "verify2 host resolved as: $verifyHost")
-
-    // Try multiple verify.php endpoints with different cross-origin headers
-    val verifyAttempts = listOf(
-        "$mainUrl/verify.php" to mapOf("Origin" to "https://net22.cc", "Referer" to "https://net22.cc/verify2"),
-        "https://net11.cc/verify.php" to mapOf("Origin" to "https://net11.cc", "Referer" to "https://net11.cc/verify2"),
-        "$mainUrl/verify.php" to mapOf("Origin" to "https://$verifyHost", "Referer" to "https://$verifyHost/verify2")
-    ).distinctBy { it.first + it.second.toString() }
-
-    for ((verifyUrl, verifyRefHeaders) in verifyAttempts) {
-        try {
-            val verifyHeaders = mapOf(
+    // Fallback: direct verify on mainUrl (net52.cc etc)
+    try {
+        val formBody = FormBody.Builder()
+            .add("g-recaptcha-response", UUID.randomUUID().toString())
+            .build()
+        val resp = app.post(
+            "$mainUrl/verify.php",
+            requestBody = formBody,
+            headers = mapOf(
                 "User-Agent" to androidUA,
                 "Accept" to "*/*",
-                "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+                "Origin" to "https://net22.cc",
+                "Referer" to "https://net22.cc/verify2",
                 "Content-Type" to "application/x-www-form-urlencoded",
-                "X-Requested-With" to "app.netmirror.netmirrornew",
-                "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-                "sec-ch-ua-mobile" to "?0",
-                "sec-ch-ua-platform" to "\"Android\"",
-                "Cache-Control" to "max-age=0"
-            ) + verifyRefHeaders
-            val formBody = FormBody.Builder()
-                .add("g-recaptcha-response", UUID.randomUUID().toString())
-                .add("verifysessionid", addhash)
-                .apply { if (addhash.isNotBlank()) add("addhash", addhash) }
-                .build()
-            val request = Request.Builder()
-                .url(verifyUrl)
-                .post(formBody)
-                .apply { verifyHeaders.forEach { (k, v) -> addHeader(k, v) } }
-                .apply {
-                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-                    if (cookieStr.isNotBlank()) addHeader("Cookie", cookieStr)
-                }
-                .build()
-            val verifyClient = app.baseClient.newBuilder()
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .build()
-            verifyClient.newCall(request).execute().use { resp ->
-                captureCookies(resp)
-                val respBody = resp.body?.string().orEmpty()
-                Log.d("bypass", "verify.php $verifyUrl status=${resp.code} cookies=$allCookies body=${respBody.take(200)}")
-                if (allCookies.containsKey("t_hash_t")) {
-                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-                    if (!cookieStr.contains("::ep::99") && !cookieStr.contains("%3A%3Aep%3A%3A99")) {
-                        NetflixMirrorStorage.saveCookie(cookieStr)
-                        Log.d("bypass", "Got non-degraded cookie: $cookieStr")
-                        return cookieStr
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("bypass", "verify.php $verifyUrl failed: ${e.message}")
+                "X-Requested-With" to "app.netmirror.netmirrornew"
+            )
+        )
+        val tHashCandidates = resp.headers.values("Set-Cookie")
+        val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
+            ?.substringAfter("=")?.substringBefore(";")
+        if (tHash != null) {
+            val cookieStr = "t_hash_t=$tHash; hd=on"
+            NetflixMirrorStorage.saveCookie(cookieStr)
+            Log.d("bypass", "Fallback t_hash_t: $cookieStr")
+            return cookieStr
         }
+    } catch (e: Exception) {
+        Log.w("bypass", "Fallback verify failed: ${e.message}")
     }
-    // Last resort: accept degraded cookie from mainUrl
-    for (count in 0..3) {
-        try {
-            val formBody = FormBody.Builder()
-                .add("g-recaptcha-response", UUID.randomUUID().toString())
-                .add("verifysessionid", addhash)
-                .apply { if (addhash.isNotBlank()) add("addhash", addhash) }
-                .build()
-            val request = Request.Builder()
-                .url("$mainUrl/verify.php")
-                .post(formBody)
-                .apply {
-                    addHeader("User-Agent", androidUA)
-                    addHeader("Accept", "*/*")
-                    addHeader("Origin", "https://net22.cc")
-                    addHeader("Referer", "https://net22.cc/verify2")
-                    addHeader("Content-Type", "application/x-www-form-urlencoded")
-                    addHeader("X-Requested-With", "app.netmirror.netmirrornew")
-                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-                    if (cookieStr.isNotBlank()) addHeader("Cookie", cookieStr)
-                }
-                .build()
-            val verifyClient = app.baseClient.newBuilder()
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .build()
-            verifyClient.newCall(request).execute().use { resp ->
-                captureCookies(resp)
-                if (allCookies.containsKey("t_hash_t")) {
-                    val cookieStr = allCookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-                    NetflixMirrorStorage.saveCookie(cookieStr)
-                    Log.d("netmirror", "bypass degraded cookie ts=${System.currentTimeMillis()}")
-                    Log.d("bypass", "Got degraded cookie: $cookieStr")
-                    return cookieStr
-                }
-                Log.d("bypass", "Attempt $count: no t_hash_t")
-            }
-            kotlinx.coroutines.delay(2000)
-        } catch (e: Exception) {
-            Log.w("bypass", "Attempt $count failed: ${e.message}")
-            if (count < 3) kotlinx.coroutines.delay(2000) else throw e
-        }
-    }
-    throw Exception("Failed to get t_hash_t after all attempts")
+
+    throw Exception("Failed to get auth token")
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +290,7 @@ suspend fun resolveApiUrl(): String {
                             decodeBase64(tokenHash).trimEnd('/')
                         } else null
                     } catch (e: Exception) {
-                        Log.d("NewTV", "Failed $base: ${e.message}")
+                        Log.d("NewTV", "checknewtv.php failed $base: ${e.message}")
                         null
                     }
                 }
@@ -458,8 +303,26 @@ suspend fun resolveApiUrl(): String {
                     return@coroutineScope resolvedApiUrl
                 }
             }
+            // Fallback: try pinging domain roots directly
+            val pingDeferreds = newTvDomains.map { encoded ->
+                async {
+                    val base = decodeBase64(encoded).trimEnd('/')
+                    try {
+                        app.get(base, headers = newTvBaseHeaders)
+                        base
+                    } catch (_: Exception) { null }
+                }
+            }
+            for (d in pingDeferreds) {
+                val r = d.await()
+                if (r != null) {
+                    resolvedApiUrl = r
+                    Log.d("NewTV", "Ping-resolved API URL: $resolvedApiUrl")
+                    return@coroutineScope resolvedApiUrl
+                }
+            }
             resolvedApiUrl = "https://net52.cc"
-            Log.d("NewTV", "All checknewtv domains failed, falling back to $resolvedApiUrl")
+            Log.d("NewTV", "All domains failed, falling back to $resolvedApiUrl")
             return@coroutineScope resolvedApiUrl
         }
     }
@@ -695,319 +558,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
     }
 }
 
-fun fixM3u8Cdn(body: String): String? {
-    val cdnRegex = Regex("https://([^/\"]+)/files/")
-    val cdn = cdnRegex.find(body)?.groupValues?.get(1)
-    if (cdn == null) {
-        // No CDN found at all — use fallback for https:///files/ URLs
-        val fixed = body.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
-        if (fixed != body) return fixed
-        return null
-    }
-    val fixed = body.replace("https:///files/", "https://$cdn/files/")
-    return if (fixed != body) fixed else null
-}
 
-// ---------------------------------------------------------------------------
-// WebView-based addhash extraction (for Cloudflare-bypassed verify2 page)
-// ---------------------------------------------------------------------------
-
-private var addhashWv: WebView? = null
-
-@SuppressLint("SetJavaScriptEnabled")
-suspend fun captureAddhashViaWebView(loadUrl: String, timeoutMs: Long = 60000): String? {
-    val ctx = pluginContext ?: run {
-        Log.e("bypass", "captureAddhashViaWebView: pluginContext null")
-        return null
-    }
-    return withContext(Dispatchers.Main) {
-        suspendCoroutine { cont ->
-            var resumed = false
-            val handler = Handler(Looper.getMainLooper())
-            handler.postDelayed({
-                if (!resumed) { resumed = true; cont.resume(null) }
-            }, timeoutMs)
-            try {
-                CookieManager.getInstance().setAcceptCookie(true)
-                CookieManager.getInstance().removeAllCookies(null)
-                val view = WebView(ctx.applicationContext).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
-                    settings.userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0"
-                }
-                addhashWv = view
-                var pageLoadCount = 0
-                view.webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(v: WebView, u: String, favicon: android.graphics.Bitmap?) {
-                        Log.d("bypass", "WebView loading: $u")
-                    }
-                    override fun onPageFinished(v: WebView, u: String) {
-                        if (resumed) return
-                        pageLoadCount++
-                        Log.d("bypass", "WebView onPageFinished #$pageLoadCount: $u")
-                        // Poll for addhash — page may update after Cloudflare challenge
-                        var pollCount = 0
-                        fun poll() {
-                            if (resumed) return
-                            v.evaluateJavascript("""
-                                (function() {
-                                    var el = document.querySelector('input[name=addhash]');
-                                    if (el) return el.value;
-                                    var inputs = document.querySelectorAll('input[type=hidden]');
-                                    for (var i = 0; i < inputs.length; i++) {
-                                        if (inputs[i].name == 'addhash') return inputs[i].value;
-                                    }
-                                    var m = document.body ? document.body.innerText.match(/addhash['"]?\s*[:=]\s*['"]([^'"]+)/i) : null;
-                                    if (m) return m[1];
-                                    return '';
-                                })()
-                            """.trimIndent()) { result ->
-                                if (resumed) return@evaluateJavascript
-                                val r = result?.trim('"')?.trim()
-                                if (r != null && r != "" && r != "null" && r.length > 4) {
-                                    resumed = true
-                                    handler.removeCallbacksAndMessages(null)
-                                    Log.d("bypass", "WebView found addhash: ${r.take(30)}")
-                                    cont.resume(r)
-                                    return@evaluateJavascript
-                                }
-                                pollCount++
-                                val title = v.title ?: ""
-                                Log.d("bypass", "WebView poll #$pollCount title=$title url=$u")
-                                if (pollCount < 120) {
-                                    handler.postDelayed({ poll() }, 500)
-                                } else {
-                                    if (!resumed) { resumed = true; cont.resume(null) }
-                                }
-                            }
-                        }
-                        handler.postDelayed({ poll() }, 500)
-                    }
-                }
-                view.loadUrl(loadUrl)
-            } catch (e: Exception) {
-                Log.e("bypass", "captureAddhashViaWebView error: ${e.message}")
-                if (!resumed) { resumed = true; cont.resume(null) }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// WebView-based direct cookie capture (loads mobile home, reads t_hash_t from CookieManager)
-// ---------------------------------------------------------------------------
-
-@SuppressLint("SetJavaScriptEnabled")
-suspend fun captureCookieViaWebView(loadUrl: String, timeoutMs: Long = 15000): String? {
-    val ctx = pluginContext ?: return null
-    return withContext(Dispatchers.Main) {
-        suspendCoroutine { cont ->
-            var resumed = false
-            val handler = Handler(Looper.getMainLooper())
-            handler.postDelayed({
-                if (!resumed) {
-                    resumed = true
-                    // Try to read t_hash_t from CookieManager even on timeout
-                    val cookies = CookieManager.getInstance().getCookie("https://net52.cc")
-                    if (cookies != null && cookies.contains("t_hash_t=")) {
-                        val tHash = cookies.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.trim()
-                        if (tHash != null && !tHash.contains("::ep::99") && !tHash.contains("%3A%3Aep%3A%3A99")) {
-                            Log.d("bypass", "WebView got t_hash_t on timeout: ${tHash.take(60)}")
-                            cont.resume(cookies)
-                            return@postDelayed
-                        }
-                    }
-                    cont.resume(null)
-                }
-            }, timeoutMs)
-            try {
-                CookieManager.getInstance().setAcceptCookie(true)
-                val view = WebView(ctx.applicationContext).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
-                }
-                view.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(v: WebView, u: String) {
-                        if (resumed) return
-                        // Wait a bit for JS to execute and cookies to be set
-                        handler.postDelayed({
-                            if (resumed) return@postDelayed
-                            val cookies = CookieManager.getInstance().getCookie("https://net52.cc")
-                            if (cookies != null && cookies.contains("t_hash_t=")) {
-                                val tHash = cookies.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.trim()
-                                if (tHash != null && !tHash.contains("::ep::99") && !tHash.contains("%3A%3Aep%3A%3A99")) {
-                                    resumed = true
-                                    handler.removeCallbacksAndMessages(null)
-                                    Log.d("bypass", "WebView captured t_hash_t: ${tHash.take(60)}")
-                                    cont.resume(cookies)
-                                    return@postDelayed
-                                }
-                            }
-                        }, 2000)
-                    }
-                }
-                view.loadUrl(loadUrl)
-            } catch (e: Exception) {
-                if (!resumed) { resumed = true; cont.resume(null) }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// WebView-based postMessage cookie capture (user_token, t_hash_p, ott, hd)
-// ---------------------------------------------------------------------------
-
-private var pmWv: WebView? = null
-
-private fun destroyPmWv() {
-    try { pmWv?.destroy() } catch (_: Exception) {}
-    pmWv = null
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-suspend fun capturePmCookiesViaWebView(
-    loadUrl: String,
-    existingCookie: String = ""
-): Map<String, String> {
-    val ctx = pluginContext ?: run {
-        Log.e("PlayPhp", "capturePmCookiesViaWebView: pluginContext null")
-        return emptyMap()
-    }
-    return withContext(Dispatchers.Main) {
-        suspendCoroutine { cont ->
-            var resumed = false
-            val handler = Handler(Looper.getMainLooper())
-            val timeoutRunnable = Runnable {
-                if (!resumed) {
-                    resumed = true
-                    Log.d("PlayPhp", "PM WebView timeout")
-                    cont.resume(emptyMap())
-                }
-            }
-            handler.postDelayed(timeoutRunnable, 30000)
-            try {
-                destroyPmWv()
-                CookieManager.getInstance().setAcceptCookie(true)
-                if (existingCookie.isNotBlank()) {
-                    existingCookie.split(";").forEach { part ->
-                        val kv = part.trim().split("=", limit = 2)
-                        if (kv.size == 2) CookieManager.getInstance().setCookie("https://net52.cc", "${kv[0]}=${kv[1]}")
-                    }
-                }
-                val view = WebView(ctx.applicationContext).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
-                }
-                pmWv = view
-                val captured = mutableMapOf<String, String>()
-
-                class PmJsBridge {
-                    @android.webkit.JavascriptInterface
-                    fun onPostMessage(json: String) {
-                        if (resumed) return
-                        try {
-                            val obj = org.json.JSONObject(json)
-                            for (key in listOf("user_token", "t_hash_p", "ott", "hd")) {
-                                if (obj.has(key)) captured[key] = obj.getString(key)
-                            }
-                            if (captured.containsKey("user_token") && captured.containsKey("t_hash_p")) {
-                                resumed = true
-                                handler.removeCallbacksAndMessages(null)
-                                destroyPmWv()
-                                cont.resume(captured.toMap())
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-
-                view.addJavascriptInterface(PmJsBridge(), "PmBridge")
-
-                view.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(v: WebView, u: String) {
-                        // Check for err page and bail immediately
-                        v.evaluateJavascript("document.body ? document.body.innerText.substring(0,200) : ''") { text ->
-                            if (!resumed && text != null && (text.contains("err:") || text.contains("Page Not Found"))) {
-                                Log.d("PlayPhp", "PM WebView err page detected, bailing")
-                                resumed = true
-                                handler.removeCallbacksAndMessages(null)
-                                destroyPmWv()
-                                cont.resume(emptyMap())
-                                return@evaluateJavascript
-                            }
-                        }
-                        if (resumed) return
-                        v.evaluateJavascript("""
-                            (function() {
-                                var origPM = window.postMessage;
-                                window.postMessage = function(msg, to, tr) {
-                                    if (typeof msg === 'string' && msg.indexOf('=') > 0) {
-                                        var eq = msg.indexOf('=');
-                                        var key = msg.substring(0, eq);
-                                        var val = msg.substring(eq + 1);
-                                        if (key === 'user_token' || key === 't_hash_p' || key === 'ott' || key === 'hd') {
-                                            var o = {};
-                                            o[key] = val;
-                                            if (window.PmBridge) PmBridge.onPostMessage(JSON.stringify(o));
-                                        }
-                                    }
-                                    return origPM.call(window, msg, to, tr);
-                                };
-                                window.addEventListener('message', function(e) {
-                                    if (typeof e.data === 'string' && e.data.indexOf('=') > 0) {
-                                        var eq = e.data.indexOf('=');
-                                        var key = e.data.substring(0, eq);
-                                        var val = e.data.substring(eq + 1);
-                                        if (key === 'user_token' || key === 't_hash_p' || key === 'ott' || key === 'hd') {
-                                            var o = {};
-                                            o[key] = val;
-                                            if (window.PmBridge) PmBridge.onPostMessage(JSON.stringify(o));
-                                        }
-                                    }
-                                });
-                            })();
-                        """.trimIndent(), null)
-
-                        handler.post(object : Runnable {
-                            var attempts = 0
-                            override fun run() {
-                                if (resumed) return
-                                if (captured.containsKey("user_token") && captured.containsKey("t_hash_p")) {
-                                    resumed = true
-                                    handler.removeCallbacksAndMessages(null)
-                                    destroyPmWv()
-                                    cont.resume(captured.toMap())
-                                    return
-                                }
-                                if (attempts++ > 20) {
-                                    if (!resumed) {
-                                        resumed = true
-                                        handler.removeCallbacksAndMessages(null)
-                                        destroyPmWv()
-                                        Log.d("PlayPhp", "PM WebView poll exhausted. captured=$captured")
-                                        cont.resume(captured.toMap())
-                                    }
-                                    return
-                                }
-                                handler.postDelayed(this, 500)
-                            }
-                        })
-                    }
-                }
-                view.loadUrl(loadUrl)
-            } catch (e: Exception) {
-                Log.e("PlayPhp", "PM WebView error: ${e.message}")
-                if (!resumed) { resumed = true; destroyPmWv(); cont.resume(emptyMap()) }
-            }
-        }
-    }
-}
 
 suspend fun getPlaylistUrl(
     mainUrl: String,
