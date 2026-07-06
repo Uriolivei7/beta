@@ -295,13 +295,28 @@ class NetflixProvider : MainAPI() {
                 ))
                 val body = resp.text
                 Log.d("NetflixProvider", "mobile/hls FULL response:\n$body")
-                // Try passing the master M3U8 directly to CS3
-                val videoHeaders = androidHeaders + mapOf(
+                // Parse video URL from master playlist (prefer 720p)
+                val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
+                    ?: Regex("https://[^\n\r]+480p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
+                if (videoUrl != null) {
+                    Log.d("NetflixProvider", "Video URL found: $videoUrl")
+                    val videoHeaders = androidHeaders + mapOf(
+                        "Cookie" to cookie,
+                        "Referer" to "$mainUrl/mobile/home?app=1"
+                    )
+                    callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
+                        this.headers = videoHeaders
+                    })
+                    return true
+                }
+                // Fallback: pass master URL directly
+                Log.d("NetflixProvider", "No video URL found, using master: $hlsUrl")
+                val masterHeaders = androidHeaders + mapOf(
                     "Cookie" to cookie,
                     "Referer" to "$mainUrl/mobile/home?app=1"
                 )
                 callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
-                    this.headers = videoHeaders
+                    this.headers = masterHeaders
                 })
                 return true
             } catch (e: Exception) {
