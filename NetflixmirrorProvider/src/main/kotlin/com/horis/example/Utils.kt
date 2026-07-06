@@ -155,10 +155,9 @@ suspend fun bypass(mainUrl: String): String {
         val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
             ?.substringAfter("=")?.substringBefore(";")
         if (tHash != null) {
-            val cookieStr = "t_hash_t=$tHash; hd=on"
-            NetflixMirrorStorage.saveCookie(cookieStr)
-            Log.d("bypass", "Got t_hash_t: $cookieStr")
-            return cookieStr
+            NetflixMirrorStorage.saveCookie(tHash)
+            Log.d("bypass", "Got t_hash: ${tHash.take(60)}")
+            return tHash
         }
     } catch (e: Exception) {
         Log.w("bypass", "Verify on $apiBase failed: ${e.message}")
@@ -185,10 +184,9 @@ suspend fun bypass(mainUrl: String): String {
         val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
             ?.substringAfter("=")?.substringBefore(";")
         if (tHash != null) {
-            val cookieStr = "t_hash_t=$tHash; hd=on"
-            NetflixMirrorStorage.saveCookie(cookieStr)
-            Log.d("bypass", "Fallback t_hash_t: $cookieStr")
-            return cookieStr
+            NetflixMirrorStorage.saveCookie(tHash)
+            Log.d("bypass", "Fallback t_hash: ${tHash.take(60)}")
+            return tHash
         }
     } catch (e: Exception) {
         Log.w("bypass", "Fallback verify failed: ${e.message}")

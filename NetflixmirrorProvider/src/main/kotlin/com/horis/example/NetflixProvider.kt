@@ -227,10 +227,10 @@ class NetflixProvider : MainAPI() {
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
         val title = loadData.title
-        Log.d("NetflixProvider", "loadLinks id=$id apiBase=$apiBase")
+        Log.e("NF", "loadLinks id=$id apiBase=$apiBase")
 
-        // Get auth token (token_hash from NewTv verify, or fallback t_hash_t)
-        val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
+        val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("NF", "bypass fail: ${e.message}"); "" }
+        Log.e("NF", "token=${token.take(60)}")
 
         // Primary flow: NewTv player.php with auth token as Usertoken
         val playerHeaders = buildNewTvHeaders(ott, mapOf(
@@ -246,8 +246,9 @@ class NetflixProvider : MainAPI() {
                 checkDbError(text)
                 text
             }
-            Log.d("NetflixProvider", "player.php response: $rawPlayer")
+            Log.e("NF", "primary player resp: $rawPlayer")
             val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
+            Log.e("NF", "primary status=${response.status} link=${response.video_link}")
             if ((response.status == "ok" || response.status == "otp") && !response.video_link.isNullOrBlank()) {
                 val referer = response.referer ?: apiBase
                 Log.e("PLAYURL", response.video_link)
@@ -257,9 +258,8 @@ class NetflixProvider : MainAPI() {
                 })
                 return true
             }
-            Log.w("NetflixProvider", "player.php bad status=${response.status} link=${response.video_link}")
         } catch (e: Exception) {
-            Log.w("NetflixProvider", "player.php failed: ${e.message}")
+            Log.e("NF", "primary player.php fail: ${e.message}")
         }
 
         // Fallback: try net52.cc player.php directly (without token)
@@ -272,7 +272,9 @@ class NetflixProvider : MainAPI() {
                 checkDbError(text)
                 text
             }
+            Log.e("NF", "fallback player resp: $rawPlayer")
             val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
+            Log.e("NF", "fallback status=${response.status} link=${response.video_link}")
             if ((response.status == "ok" || response.status == "otp") && !response.video_link.isNullOrBlank()) {
                 val referer = response.referer ?: mainUrl
                 Log.e("PLAYURL", response.video_link)
@@ -283,10 +285,10 @@ class NetflixProvider : MainAPI() {
                 return true
             }
         } catch (e: Exception) {
-            Log.w("NetflixProvider", "fallback player.php failed: ${e.message}")
+            Log.e("NF", "fallback player.php fail: ${e.message}")
         }
 
-        Log.e("NetflixProvider", "loadLinks FAILED for id=$id")
+        Log.e("NF", "loadLinks FAILED id=$id")
         return false
     }
 

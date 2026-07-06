@@ -290,9 +290,10 @@ class PrimevideoProvider : MainAPI() {
         val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val load = parseJson<NewTvLoadData>(data)
         val id = load.id
-        Log.d("Primevideo", "loadLinks id=$id apiBase=$apiBase")
+        Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
 
-        val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
+        val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("PV", "bypass fail: ${e.message}"); "" }
+        Log.e("PV", "token=${token.take(60)}")
 
         val playerHeaders = buildNewTvHeaders(ott, mapOf(
             "Usertoken" to token,
@@ -307,8 +308,9 @@ class PrimevideoProvider : MainAPI() {
                 checkDbError(text)
                 text
             }
-            Log.d("Primevideo", "player.php response: $rawResult")
+            Log.e("PV", "primary player resp: $rawResult")
             val result = JSONParser.parse(rawResult, NewTvPlayerResponse::class)
+            Log.e("PV", "primary status=${result.status} link=${result.video_link}")
             if ((result.status == "ok" || result.status == "otp") && !result.video_link.isNullOrBlank()) {
                 val referer = result.referer ?: apiBase
                 Log.e("PLAYURL", result.video_link)
@@ -318,9 +320,8 @@ class PrimevideoProvider : MainAPI() {
                 })
                 return true
             }
-            Log.w("Primevideo", "player.php bad status=${result.status} link=${result.video_link}")
         } catch (e: Exception) {
-            Log.w("Primevideo", "player.php failed: ${e.message}")
+            Log.e("PV", "primary player.php fail: ${e.message}")
         }
 
         try {
@@ -332,7 +333,9 @@ class PrimevideoProvider : MainAPI() {
                 checkDbError(text)
                 text
             }
+            Log.e("PV", "fallback player resp: $rawResult")
             val result = JSONParser.parse(rawResult, NewTvPlayerResponse::class)
+            Log.e("PV", "fallback status=${result.status} link=${result.video_link}")
             if ((result.status == "ok" || result.status == "otp") && !result.video_link.isNullOrBlank()) {
                 val referer = result.referer ?: mainUrl
                 Log.e("PLAYURL", result.video_link)
@@ -343,10 +346,10 @@ class PrimevideoProvider : MainAPI() {
                 return true
             }
         } catch (e: Exception) {
-            Log.w("Primevideo", "fallback player.php failed: ${e.message}")
+            Log.e("PV", "fallback player.php fail: ${e.message}")
         }
 
-        Log.e("Primevideo", "loadLinks FAILED for id=$id")
+        Log.e("PV", "loadLinks FAILED id=$id")
         return false
     }
 
