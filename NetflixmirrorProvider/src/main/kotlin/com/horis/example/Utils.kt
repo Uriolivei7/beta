@@ -599,6 +599,9 @@ data class PlaylistResponse(
 
 val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
 
+/** Saved original full `in=...::ep::m` hash from the master M3U8 URL */
+private var savedOriginalHash: String? = null
+
 fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
         val req = chain.request()
@@ -614,6 +617,12 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             }
             throw e
         }
+        // Extract/save original hash from master M3U8 URL (has ::ep::m)
+        val currentHash = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
+        if (currentHash != null && currentHash.contains("::ep::m")) {
+            savedOriginalHash = currentHash
+            Log.d("CdnFix", "Saved original hash: ${currentHash.take(50)}...")
+        }
         val ct = (resp.body?.contentType()?.toString() ?: "")
         if (url.contains(".m3u8") || ct.contains("mpegurl") || ct.contains("vnd.apple.mpegurl")) {
             val body = resp.body?.string() ?: return@Interceptor resp
@@ -622,10 +631,26 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 return@Interceptor resp
             }
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")}")
+            var fixed = body
             // Fix broken https:///files/ → use known working CDN
-            if (body.contains("https:///files/")) {
-                val fixed = body.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
+            if (fixed.contains("https:///files/")) {
+                fixed = fixed.replace("https:///files/", "https://s23.nm-cdn9.top/files/")
                 Log.d("CdnFix", "Fixed broken CDN URLs: $url")
+            }
+            // Fix degraded hash in variant/segment URLs: replace ::ep (no suffix) with original ::ep::m
+            val savedHash = savedOriginalHash
+            if (savedHash != null) {
+                // Find any in=...& or in=...$ that has ::ep but not ::ep::m / ::ep::p / ::ep::i
+                val degradedHashes = Regex("in=[^&\\s\"]+").findAll(fixed).map { it.value }.toSet()
+                for (dh in degradedHashes) {
+                    if (dh.contains("::ep::m") || dh.contains("::ep::p") || dh.contains("::ep::i")) continue
+                    if (dh.contains("::ep")) {
+                        Log.d("CdnFix", "Fixing degraded hash: $dh → in=$savedHash")
+                        fixed = fixed.replace(dh, "in=$savedHash")
+                    }
+                }
+            }
+            if (fixed != body) {
                 val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
                 return@Interceptor resp.newBuilder().body(fixedBody).build()
             }
