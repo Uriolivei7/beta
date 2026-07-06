@@ -136,76 +136,100 @@ suspend fun bypass(mainUrl: String): String {
     val apiBase = resolveApiUrl()
     val androidUA = newTvBaseHeaders["User-Agent"].orEmpty()
 
-    // NewTv verify on resolved API (mobiledetects domain or net52.cc fallback)
-    try {
-        val formBody = FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-        val resp = app.post(
-            "$apiBase/verify.php",
-            requestBody = formBody,
-            headers = newTvBaseHeaders + mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "Origin" to mainUrl,
-                "Referer" to "$mainUrl/verify"
+    // Try all potential auth endpoints on the resolved API domain
+    val formBody = FormBody.Builder()
+        .add("g-recaptcha-response", UUID.randomUUID().toString())
+        .build()
+    val authPaths = listOf(
+        "/verify.php",
+        "/newtv/verify.php",
+        "/newtv/auth.php",
+        "/auth.php"
+    )
+    for (path in authPaths) {
+        try {
+            val resp = app.post(
+                "$apiBase$path",
+                requestBody = formBody,
+                headers = newTvBaseHeaders + mapOf(
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "Origin" to mainUrl,
+                    "Referer" to "$mainUrl/verify"
+                )
             )
-        )
-        val text = resp.text
-        Log.e("BYPASS", "verify $apiBase code=${resp.code} body=${text.take(500)}")
-        val parsed = tryParseJson<NewTvTokenResponse>(text)
-        if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
-            NetflixMirrorStorage.saveCookie(parsed.token_hash)
-            Log.e("BYPASS", "Got token_hash from JSON: ${parsed.token_hash.take(60)}")
-            return parsed.token_hash
+            val text = resp.text
+            Log.e("BYPASS", "POST $path code=${resp.code} body=${text.take(400)}")
+            if (resp.code >= 400) continue
+            val parsed = tryParseJson<NewTvTokenResponse>(text)
+            if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
+                NetflixMirrorStorage.saveCookie(parsed.token_hash)
+                Log.e("BYPASS", "Got token_hash from $path: ${parsed.token_hash.take(60)}")
+                return parsed.token_hash
+            }
+            val parsedAlt = tryParseJson<Map<String, String>>(text)
+            val altHash = parsedAlt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
+            if (altHash != null) {
+                NetflixMirrorStorage.saveCookie(altHash)
+                Log.e("BYPASS", "Got hash from $path alt field: ${altHash.take(60)}")
+                return altHash
+            }
+            val tHashCandidates = resp.headers.values("Set-Cookie")
+            val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
+                ?.substringAfter("=")?.substringBefore(";")
+            if (tHash != null) {
+                NetflixMirrorStorage.saveCookie(tHash)
+                Log.e("BYPASS", "Got t_hash from $path Set-Cookie: ${tHash.take(60)}")
+                return tHash
+            }
+        } catch (e: Exception) {
+            Log.e("BYPASS", "$path failed: ${e.message}")
         }
-        // Also try "hash" field (cncverse might use that name)
-        val parsedAlt = tryParseJson<Map<String, String>>(text)
-        val altHash = parsedAlt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
-        if (altHash != null) {
-            NetflixMirrorStorage.saveCookie(altHash)
-            Log.e("BYPASS", "Got hash from alt field: ${altHash.take(60)}")
-            return altHash
-        }
-        val tHashCandidates = resp.headers.values("Set-Cookie")
-        val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
-            ?.substringAfter("=")?.substringBefore(";")
-        if (tHash != null) {
-            NetflixMirrorStorage.saveCookie(tHash)
-            Log.e("BYPASS", "Got t_hash from Set-Cookie: ${tHash.take(60)}")
-            return tHash
-        }
-        Log.e("BYPASS", "verify.php response had no usable token")
-    } catch (e: Exception) {
-        Log.e("BYPASS", "Verify on $apiBase failed: ${e.message}")
     }
 
-    // Fallback: direct verify on mainUrl (net52.cc etc)
-    try {
-        val formBody = FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-        val resp = app.post(
-            "$mainUrl/verify.php",
-            requestBody = formBody,
-            headers = mapOf(
-                "User-Agent" to androidUA,
-                "Accept" to "*/*",
-                "Origin" to "https://net22.cc",
-                "Referer" to "https://net22.cc/verify2",
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "X-Requested-With" to "app.netmirror.netmirrornew"
+    // Fallback: try auth endpoints on mainUrl (net52.cc etc)
+    val fbHeaders = mapOf(
+        "User-Agent" to androidUA,
+        "Accept" to "*/*",
+        "Origin" to "https://net22.cc",
+        "Referer" to "https://net22.cc/verify2",
+        "Content-Type" to "application/x-www-form-urlencoded",
+        "X-Requested-With" to "app.netmirror.netmirrornew"
+    )
+    for (path in authPaths) {
+        try {
+            val resp = app.post(
+                "$mainUrl$path",
+                requestBody = formBody,
+                headers = fbHeaders
             )
-        )
-        val tHashCandidates = resp.headers.values("Set-Cookie")
-        val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
-            ?.substringAfter("=")?.substringBefore(";")
-        if (tHash != null) {
-            NetflixMirrorStorage.saveCookie(tHash)
-            Log.e("BYPASS", "Fallback t_hash from Set-Cookie: ${tHash.take(60)}")
-            return tHash
+            val text = resp.text
+            Log.e("BYPASS", "FB $path code=${resp.code} body=${text.take(400)}")
+            if (resp.code >= 400) continue
+            val parsed = tryParseJson<NewTvTokenResponse>(text)
+            if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
+                NetflixMirrorStorage.saveCookie(parsed.token_hash)
+                Log.e("BYPASS", "FB $path token_hash: ${parsed.token_hash.take(60)}")
+                return parsed.token_hash
+            }
+            val alt = tryParseJson<Map<String, String>>(text)
+            val altHash = alt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
+            if (altHash != null) {
+                NetflixMirrorStorage.saveCookie(altHash)
+                Log.e("BYPASS", "FB $path alt hash: ${altHash.take(60)}")
+                return altHash
+            }
+            val allCookies = resp.headers.values("Set-Cookie")
+            Log.e("BYPASS", "FB $path Set-Cookie: $allCookies")
+            val tHash = allCookies.firstOrNull { it.startsWith("t_hash_t=") }
+                ?.substringAfter("=")?.substringBefore(";")
+            if (tHash != null) {
+                NetflixMirrorStorage.saveCookie(tHash)
+                Log.e("BYPASS", "FB $path t_hash: ${tHash.take(60)}")
+                return tHash
+            }
+        } catch (e: Exception) {
+            Log.e("BYPASS", "FB $path failed: ${e.message}")
         }
-    } catch (e: Exception) {
-        Log.e("BYPASS", "Fallback verify failed: ${e.message}")
     }
 
     throw Exception("Failed to get auth token")
