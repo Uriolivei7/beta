@@ -407,7 +407,9 @@ suspend fun resolveApiUrl(): String {
                     return@coroutineScope resolvedApiUrl
                 }
             }
-            throw Exception("Failed to resolve NewTV API base URL")
+            resolvedApiUrl = "https://net52.cc"
+            Log.d("NewTV", "All checknewtv domains failed, falling back to $resolvedApiUrl")
+            return@coroutineScope resolvedApiUrl
         }
     }
 }
