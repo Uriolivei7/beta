@@ -668,22 +668,10 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 Log.d("netmirror", "CDN fix broken →net11.cc/hls/: $url")
                 Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
             }
-            // Unify remaining known CDN domains → net11.cc/hls/ (private CDNs, if any)
-            val cdnUnified = Regex("https://s\\d+\\.(?:nm-cdn\\d+|freecdn\\d+)\\.top/files/").replace(fixed) {
-                "https://net11.cc/hls/"
-            }
-            if (cdnUnified != fixed) {
-                Log.d("netmirror", "CDN unify →net11.cc/hls/: $url")
-                Log.d("CdnFix", "Unified CDN → net11.cc/hls/ for: $url")
-            }
-            fixed = cdnUnified
+            // no CDN unify — s21.freecdn*.top works; nm-cdn*.top are private/inaccessible
             // Fix relative segment URLs missing the in= auth param
             if (inParam != null) {
-                // Use clean 3-part hash (strip ::ep::p::TOKEN3 suffix) for segments
-                val cleanIn = inParam.split("::").take(3).joinToString("::")
-                if (cleanIn != inParam) {
-                    Log.d("CdnFix", "Using clean 3-part hash for segments: ${cleanIn.take(50)}")
-                }
+                // Use the original in hash as-is (including ::ep suffix) for segments
                 val relSegmentRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
                 var segmentFixed = 0
                 fixed = relSegmentRegex.replace(fixed) { match ->
@@ -691,11 +679,11 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                     if (line.isBlank() || line.startsWith("http") || line.contains("in=")) line
                     else {
                         segmentFixed++
-                        if (line.contains("?")) "$line&in=$cleanIn" else "$line?in=$cleanIn"
+                        if (line.contains("?")) "$line&in=$inParam" else "$line?in=$inParam"
                     }
                 }
                 if (segmentFixed > 0) {
-                    Log.d("CdnFix", "Fixed $segmentFixed relative segment URLs (added clean in= param)")
+                    Log.d("CdnFix", "Fixed $segmentFixed relative segment URLs (using original in= param)")
                 }
             }
             if (fixed != body) {
