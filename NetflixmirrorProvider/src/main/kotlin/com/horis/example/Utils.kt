@@ -227,13 +227,20 @@ suspend fun bypass(mainUrl: String): String {
     // If addhash is empty (Cloudflare blocked us), try WebView fallback
     if (addhash.isBlank()) {
         val wvUrl = "$mainUrl/home" // start the same redirect chain in WebView
-        Log.d("bypass", "addhash empty, trying WebView fallback on $wvUrl")
+        Log.d("bypass", "addhash empty, trying WebView addhash on $wvUrl")
         val wvAddhash = captureAddhashViaWebView(wvUrl)
         if (!wvAddhash.isNullOrBlank()) {
             addhash = wvAddhash
             Log.d("bypass", "WebView extracted addhash: ${addhash.take(20)}")
         } else {
-            Log.d("bypass", "WebView fallback also failed to get addhash")
+            Log.d("bypass", "WebView addhash fallback failed, trying direct cookie capture")
+            val wvCookie = captureCookieViaWebView("$mainUrl/mobile/home?app=1")
+            if (wvCookie != null && wvCookie.contains("t_hash_t=") && !wvCookie.contains("::ep::99") && !wvCookie.contains("%3A%3Aep%3A%3A99")) {
+                NetflixMirrorStorage.saveCookie(wvCookie)
+                Log.d("bypass", "WebView direct cookie success: ${wvCookie.take(100)}")
+                return wvCookie
+            }
+            Log.d("bypass", "WebView direct cookie also failed")
         }
     }
     Log.d("bypass", "addhash=${addhash.take(20)} cookies so far=$allCookies")
@@ -699,6 +706,69 @@ suspend fun captureAddhashViaWebView(loadUrl: String, timeoutMs: Long = 20000): 
                 view.loadUrl(loadUrl)
             } catch (e: Exception) {
                 Log.e("bypass", "captureAddhashViaWebView error: ${e.message}")
+                if (!resumed) { resumed = true; cont.resume(null) }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebView-based direct cookie capture (loads mobile home, reads t_hash_t from CookieManager)
+// ---------------------------------------------------------------------------
+
+@SuppressLint("SetJavaScriptEnabled")
+suspend fun captureCookieViaWebView(loadUrl: String, timeoutMs: Long = 15000): String? {
+    val ctx = pluginContext ?: return null
+    return withContext(Dispatchers.Main) {
+        suspendCoroutine { cont ->
+            var resumed = false
+            val handler = Handler(Looper.getMainLooper())
+            handler.postDelayed({
+                if (!resumed) {
+                    resumed = true
+                    // Try to read t_hash_t from CookieManager even on timeout
+                    val cookies = CookieManager.getInstance().getCookie("https://net52.cc")
+                    if (cookies != null && cookies.contains("t_hash_t=")) {
+                        val tHash = cookies.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.trim()
+                        if (tHash != null && !tHash.contains("::ep::99") && !tHash.contains("%3A%3Aep%3A%3A99")) {
+                            Log.d("bypass", "WebView got t_hash_t on timeout: ${tHash.take(60)}")
+                            cont.resume(cookies)
+                            return@postDelayed
+                        }
+                    }
+                    cont.resume(null)
+                }
+            }, timeoutMs)
+            try {
+                CookieManager.getInstance().setAcceptCookie(true)
+                val view = WebView(ctx.applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                }
+                view.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(v: WebView, u: String) {
+                        if (resumed) return
+                        // Wait a bit for JS to execute and cookies to be set
+                        handler.postDelayed({
+                            if (resumed) return@postDelayed
+                            val cookies = CookieManager.getInstance().getCookie("https://net52.cc")
+                            if (cookies != null && cookies.contains("t_hash_t=")) {
+                                val tHash = cookies.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.trim()
+                                if (tHash != null && !tHash.contains("::ep::99") && !tHash.contains("%3A%3Aep%3A%3A99")) {
+                                    resumed = true
+                                    handler.removeCallbacksAndMessages(null)
+                                    Log.d("bypass", "WebView captured t_hash_t: ${tHash.take(60)}")
+                                    cont.resume(cookies)
+                                    return@postDelayed
+                                }
+                            }
+                        }, 2000)
+                    }
+                }
+                view.loadUrl(loadUrl)
+            } catch (e: Exception) {
                 if (!resumed) { resumed = true; cont.resume(null) }
             }
         }
