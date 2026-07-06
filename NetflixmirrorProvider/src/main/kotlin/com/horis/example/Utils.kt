@@ -151,11 +151,13 @@ suspend fun bypass(mainUrl: String): String {
         }
     }
 
+    val androidUA = "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0"
     val browserHeaders = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language" to "en-US,en;q=0.9",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-        "Connection" to "keep-alive"
+        "User-Agent" to androidUA,
+        "Connection" to "keep-alive",
+        "X-Requested-With" to "app.netmirror.netmirrornew"
     )
 
     val client = app.baseClient.newBuilder()
@@ -204,11 +206,12 @@ suspend fun bypass(mainUrl: String): String {
 
     // Step 2: POST to verify.php with fake recaptcha
     val verifyHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+        "User-Agent" to androidUA,
         "Accept" to "*/*",
         "Origin" to "https://net22.cc",
         "Referer" to "https://net22.cc/verify2",
-        "Content-Type" to "application/x-www-form-urlencoded"
+        "Content-Type" to "application/x-www-form-urlencoded",
+        "X-Requested-With" to "app.netmirror.netmirrornew"
     )
 
     for (count in 0..3) {
