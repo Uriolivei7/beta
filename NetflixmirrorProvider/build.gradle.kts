@@ -1,5 +1,9 @@
 // use an integer for version numbers
-version = 43
+version = 44
+
+dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+}
 
 cloudstream {
     //language = "en"
