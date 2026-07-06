@@ -314,28 +314,31 @@ class PrimevideoProvider : MainAPI() {
                 ))
                 val body = resp.text
                 Log.d("Primevideo", "mobile/hls FULL response:\n$body")
-                val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
-                    ?: Regex("https://[^\n\r]+480p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
-                if (videoUrl != null) {
-                    Log.d("Primevideo", "Video URL found: $videoUrl")
-                    val videoHeaders = androidHeaders + mapOf(
+                if (!body.contains("unknown::ep")) {
+                    val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
+                        ?: Regex("https://[^\n\r]+480p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
+                    if (videoUrl != null) {
+                        Log.d("Primevideo", "Video URL found: $videoUrl")
+                        val videoHeaders = androidHeaders + mapOf(
+                            "Cookie" to upgradedCookie,
+                            "Referer" to "$mainUrl/mobile/home?app=1"
+                        )
+                        callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
+                            this.headers = videoHeaders
+                        })
+                        return true
+                    }
+                    Log.d("Primevideo", "No video URL found, using master: $hlsUrl")
+                    val masterHeaders = androidHeaders + mapOf(
                         "Cookie" to upgradedCookie,
                         "Referer" to "$mainUrl/mobile/home?app=1"
                     )
-                    callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                        this.headers = videoHeaders
+                    callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
+                        this.headers = masterHeaders
                     })
                     return true
                 }
-                Log.d("Primevideo", "No video URL found, using master: $hlsUrl")
-                val masterHeaders = androidHeaders + mapOf(
-                    "Cookie" to upgradedCookie,
-                    "Referer" to "$mainUrl/mobile/home?app=1"
-                )
-                callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
-                    this.headers = masterHeaders
-                })
-                return true
+                Log.d("Primevideo", "mobile/hls returned abuse (unknown::ep), falling through to play.php")
             } catch (e: Exception) {
                 Log.d("Primevideo", "mobile/hls failed: ${e.message}")
             }

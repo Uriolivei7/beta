@@ -978,21 +978,23 @@ suspend fun getPlaylistUrl(
         return null
     }
     val cleanHash = playHash.split("::").take(3).joinToString("::")
-    val hlsDomains = listOf("https://net52.cc", "https://net11.cc").distinct()
+    val hlsDomains = listOf("https://net11.cc", "https://net52.cc").distinct()
     var tracks: List<PlaylistTrack> = emptyList()
     var sourceUrl: String? = null
+    // Upgrade cookie suffix if degraded
+    val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
     // Try playlist.php with cookie + cross-origin headers for hash exchange
     val plHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         "Accept" to "*/*",
         "X-Requested-With" to "NetmirrorNewTV v1.0",
-        "Referer" to "https://net22.cc/play.php?id=$id",
-        "Origin" to "https://net22.cc"
-    ) + if (cookie.isNotBlank()) mapOf("Cookie" to cookie) else emptyMap()
+        "Referer" to "https://net11.cc/play.php?id=$id",
+        "Origin" to "https://net11.cc"
+    ) + if (plCookie.isNotBlank()) mapOf("Cookie" to plCookie) else emptyMap()
     val m3u8Headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept" to "*/*"
-    ) + if (cookie.isNotBlank()) mapOf("Cookie" to cookie) else emptyMap()
+    ) + if (plCookie.isNotBlank()) mapOf("Cookie" to plCookie) else emptyMap()
     for (hlsDomain in hlsDomains) {
         try {
             val plResp = app.get(
