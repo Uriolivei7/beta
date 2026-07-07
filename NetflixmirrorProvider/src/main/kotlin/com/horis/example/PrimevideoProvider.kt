@@ -203,7 +203,7 @@ class PrimevideoProvider : MainAPI() {
         // Primary flow: playlist.php on mainUrl (works without auth)
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
         val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
-        val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/')).distinct()
+        val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://net11.cc").distinct()
         for (plUrl in playlistUrls) {
             try {
                 val plRaw = app.get(plUrl, headers = playlistHeaders).text
