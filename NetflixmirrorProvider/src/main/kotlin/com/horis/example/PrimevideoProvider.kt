@@ -240,7 +240,7 @@ class PrimevideoProvider : MainAPI() {
                             val referer = "$mainUrl/mobile/home?app=1"
                             // Replace in=unknown::ep with real token in request URL
                             if (urlToken.length > 10 && file.contains("in=unknown::ep")) {
-                                file = file.replace("in=unknown::ep", "in=$urlToken")
+                                file = file.replace("in=unknown::ep", "in=$urlToken::ep")
                                 Log.e("PV", "Replaced in=unknown with token in ExtractorLink URL")
                             }
                             if (file.startsWith("http")) {

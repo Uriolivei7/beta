@@ -621,8 +621,12 @@ val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net
 
 fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
-        val req = chain.request()
+        var req = chain.request()
         val url = req.url.toString()
+        // Match cncverse exactly: overwrite Cookie with hd=on for M3U8 requests
+        if (url.contains(".m3u8")) {
+            req = req.newBuilder().header("Cookie", "hd=on").build()
+        }
         Log.d("CdnFix", "Interceptor firing for: $url")
         val resp: Response
         try {
@@ -663,7 +667,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             if (currentBypassToken.length > 10 && fixed.contains("in=unknown::ep")) {
                 val oldFixed = fixed
                 val urlToken = currentBypassToken.substringBefore("::ep")
-                fixed = fixed.replace("in=unknown::ep", "in=$urlToken")
+                fixed = fixed.replace("in=unknown::ep", "in=$urlToken::ep")
                 if (fixed != oldFixed) {
                     Log.d("CdnFix", "Replaced watermark with bypass token in: $url")
                 }
