@@ -292,26 +292,57 @@ class PrimevideoProvider : MainAPI() {
         val id = load.id
         Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
 
+        // Primary flow: playlist.php → Source[]
+        val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
+        val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
+        for (plUrl in playlistUrls) {
+            try {
+                val plRaw = app.get(plUrl, headers = playlistHeaders).text
+                Log.e("PV", "playlist raw=${plRaw.take(500)}")
+                val items = tryParseJsonList<PlaylistItem>(plRaw)
+                if (!items.isNullOrEmpty()) {
+                    for (item in items) {
+                        for (source in item.sources.orEmpty()) {
+                            val file = source.file ?: continue
+                            val quality = getQualityFromName(
+                                file.substringAfter("q=", "").substringBefore("&")
+                            )
+                            Log.e("PLAYURL", file)
+                            callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
+                                headers = playlistHeaders
+                                referer = "$mainUrl/mobile/home?app=1"
+                                this.quality = quality
+                            })
+                        }
+                        for (track in item.tracks.orEmpty()) {
+                            val trackFile = track.file ?: continue
+                            subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", trackFile) {
+                                headers = mapOf("Referer" to "$mainUrl/")
+                            })
+                        }
+                    }
+                    if (items.any { it.sources?.isNotEmpty() == true }) return true
+                }
+            } catch (e: Exception) {
+                Log.e("PV", "playlist $plUrl error: ${e.message}")
+            }
+        }
+
+        // Fallback: player.php
         val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("PV", "bypass fail: ${e.message}"); "" }
-        Log.e("PV", "token=${token.take(60)}")
+        Log.e("PV", "fallback token=${token.take(60)}")
 
         val rawTokenHash = getRawTokenHash()
-        Log.e("PV", "rawTokenHash=${rawTokenHash.take(60)}")
-
         val rthEncoded = java.net.URLEncoder.encode(rawTokenHash, "UTF-8")
         val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")
         val attempts = buildList {
             add(Triple("cookie", "$apiBase/newtv/player.php?id=$id",
                 buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$token", "Referer" to apiBase))))
-            add(Triple("usertoken", "$apiBase/newtv/player.php?id=$id",
-                buildNewTvHeaders(ott, mapOf("Usertoken" to token, "Referer" to apiBase))))
-            add(Triple("fallback-cookie", "$mainUrl/newtv/player.php?id=$id",
-                buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$token", "Referer" to mainUrl))))
-            add(Triple("fallback-plain", "$mainUrl/newtv/player.php?id=$id",
+            add(Triple("plain", "$apiBase/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
+            add(Triple("fb-plain", "$mainUrl/newtv/player.php?id=$id",
                 buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))))
             add(Triple("q-token", "$apiBase/newtv/player.php?id=$id&token=$encodedToken",
-                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
-            add(Triple("q-usertoken", "$apiBase/newtv/player.php?id=$id&usertoken=$encodedToken",
                 buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
             add(Triple("q-hash", "$apiBase/newtv/player.php?id=$id&hash=$encodedToken",
                 buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
@@ -319,28 +350,20 @@ class PrimevideoProvider : MainAPI() {
                 buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
             add(Triple("rth-cookie", "$apiBase/newtv/player.php?id=$id",
                 buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$rawTokenHash", "Referer" to apiBase))))
-            add(Triple("rth-usertoken", "$apiBase/newtv/player.php?id=$id",
-                buildNewTvHeaders(ott, mapOf("Usertoken" to rawTokenHash, "Referer" to apiBase))))
             add(Triple("rth-h", "$apiBase/newtv/player.php?id=$id&h=$rthEncoded",
                 buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
-            add(Triple("rth-token", "$apiBase/newtv/player.php?id=$id&token=$rthEncoded",
-                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
         }
-
         for ((label, url, headers) in attempts) {
             try {
-                val raw = retryOnDbError {
-                    val t = app.get(url, headers = headers).text
-                    checkDbError(t); t
-                }
+                val raw = app.get(url, headers = headers).text
                 val resp = tryParseJson<NewTvPlayerResponse>(raw)
-                Log.e("PV", "$label -> status=${resp?.status} usertoken=${resp?.usertoken} link=${resp?.video_link?.take(60)}")
+                Log.e("PV", "$label -> status=${resp?.status} link=${resp?.video_link?.take(60)}")
                 if (resp != null && resp.video_link != null) {
                     val ref = resp.referer ?: apiBase
                     Log.e("PLAYURL", resp.video_link)
                     callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
                         this.referer = ref
-                        this.headers = androidHeaders + mapOf("Referer" to ref)
+                        this.headers = buildNewTvHeaders(ott, mapOf("Referer" to ref))
                     })
                     return true
                 }
@@ -348,7 +371,6 @@ class PrimevideoProvider : MainAPI() {
                 Log.e("PV", "$label error: ${e.message}")
             }
         }
-
         Log.e("PV", "loadLinks FAILED id=$id")
         return false
     }

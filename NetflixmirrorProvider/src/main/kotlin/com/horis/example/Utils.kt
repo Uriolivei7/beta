@@ -291,13 +291,9 @@ val newTvBaseHeaders = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma"        to "no-cache",
     "Expires"       to "0",
-    "X-Requested-With" to "app.netmirror.netmirrornew",
-    "User-Agent"    to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-    "Accept"        to "application/json, text/plain, */*",
-    "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-    "sec-ch-ua"     to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-    "sec-ch-ua-mobile" to "?0",
-    "sec-ch-ua-platform" to "\"Android\""
+    "X-Requested-With" to "NetmirrorNewTV v1.0",
+    "User-Agent"    to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
+    "Accept"        to "application/json, text/plain, */*"
 )
 
 val newTvDomains = listOf(
@@ -527,21 +523,18 @@ data class NewTvEpisodesResponse(
 data class NewTvPlayerResponse(
     val status: String? = null,
     val video_link: String? = null,
-    val referer: String? = null,
-    val usertoken: String? = null
+    val referer: String? = null
 )
-
-// New playlist.php flow (play.php → playlist.php)
 
 data class PlayHashResponse(
     val h: String? = null
 )
 
-data class PlaylistSource(
+// Source entity matching decompiled cncverse entities/Source.java
+data class Source(
     val file: String? = null,
     val label: String? = null,
-    val type: String? = null,
-    val default: String? = null
+    val type: String? = null
 )
 
 data class PlaylistTrack(
@@ -551,10 +544,9 @@ data class PlaylistTrack(
     val language: String? = null
 )
 
-data class PlaylistResponse(
-    val title: String? = null,
-    val image2: String? = null,
-    val sources: List<PlaylistSource>? = null,
+// Playlist item returned by playlist.php — array of these
+data class PlaylistItem(
+    val sources: List<Source>? = null,
     val tracks: List<PlaylistTrack>? = null
 )
 
@@ -689,7 +681,7 @@ suspend fun getPlaylistUrl(
                 headers = plHeaders
             )
             Log.d("PlayPhp", "playlist.php $hlsDomain raw=${plResp.text.take(300)}")
-            val parsed = tryParseJsonList<PlaylistResponse>(plResp.text)
+            val parsed = tryParseJsonList<PlaylistItem>(plResp.text)
             val first = parsed?.firstOrNull()
             if (first != null) {
                 tracks = first.tracks.orEmpty()
