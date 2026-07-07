@@ -416,7 +416,8 @@ open class PlutotvProvider : MainAPI() {
         val actors: List<String>?,
         val directors: List<String>?,
         val producers: List<String>?,
-        val originalReleaseDate: String,
+        @JsonProperty("original Release Date")
+        val originalReleaseDate: String?,
         val writers: List<String>?,
     )
 
