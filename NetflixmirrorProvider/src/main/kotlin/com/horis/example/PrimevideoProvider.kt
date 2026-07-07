@@ -200,9 +200,26 @@ class PrimevideoProvider : MainAPI() {
         val id = loadData.id
         Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
 
-        // Primary flow: playlist.php on mainUrl (works without auth)
+        // Primary flow: player.php on apiBase (returns direct working HLS with CDN)
+        for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
+            try {
+                val resp = app.get(u, headers = buildNewTvHeaders(ott, mapOf("Referer" to apiBase))).parsed<NewTvPlayerResponse>()
+                Log.e("PV", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
+                if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
+                    callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
+                        this.referer = resp.referer ?: apiBase
+                        this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase)))
+                    })
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.e("PV", "player $u error: ${e.message}")
+            }
+        }
+
+        // Fallback: playlist.php on mainUrl
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
-        val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
+        val playlistUrls = listOf("$mainUrl/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id")
         val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://net11.cc").distinct()
         for (plUrl in playlistUrls) {
             try {
@@ -245,23 +262,6 @@ class PrimevideoProvider : MainAPI() {
                 }
             } catch (e: Exception) {
                 Log.e("PV", "playlist $plUrl error: ${e.message}")
-            }
-        }
-
-        // Fallback: player.php
-        for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
-            try {
-                val resp = app.get(u, headers = buildNewTvHeaders(ott, mapOf("Referer" to apiBase))).parsed<NewTvPlayerResponse>()
-                Log.e("PV", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
-                if (resp.status == "ok" && resp.video_link != null) {
-                    callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
-                        this.referer = resp.referer ?: apiBase
-                        this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase)))
-                    })
-                    return true
-                }
-            } catch (e: Exception) {
-                Log.e("PV", "player $u error: ${e.message}")
             }
         }
 
