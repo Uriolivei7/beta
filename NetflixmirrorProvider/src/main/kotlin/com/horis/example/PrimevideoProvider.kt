@@ -278,7 +278,7 @@ class PrimevideoProvider : MainAPI() {
                     for (m3u8Url in dataMatches) {
                         val finalUrl = if (m3u8Url.startsWith("http")) m3u8Url else "$mainUrl$m3u8Url"
                         callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
-                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = "auto"
+                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = getQualityFromName(finalUrl)
                         })
                     }
                     return true
