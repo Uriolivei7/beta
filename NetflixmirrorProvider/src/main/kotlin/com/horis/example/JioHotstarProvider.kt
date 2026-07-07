@@ -31,46 +31,55 @@ class JioHotstarProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val response = app.get(
-            "$mainUrl/newtv/main.php",
-            headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
-        ).parsed<NewTvMainResponse>()
-
-        val items = response.post.orEmpty().map { category ->
-            val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            val template = response.imgcdn_v.takeUnless { it.isNullOrBlank() } ?: response.imgcdn_h
-            val results = ids.mapNotNull { id ->
-                newAnimeSearchResponse("", NewTvId(id).toJson()) {
-                    posterUrl = buildPosterUrl(template, id) ?: buildVerticalPosterUrl(id, ott)
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
+        for (base in listOf(apiBase, mainUrl).distinct()) {
+            try {
+                val response = app.get(
+                    "$base/newtv/main.php",
+                    headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
+                ).parsed<NewTvMainResponse>()
+                val items = response.post.orEmpty().map { category ->
+                    val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+                    val template = response.imgcdn_v.takeUnless { it.isNullOrBlank() } ?: response.imgcdn_h
+                    val results = ids.mapNotNull { id ->
+                        newAnimeSearchResponse("", NewTvId(id).toJson()) {
+                            posterUrl = buildPosterUrl(template, id) ?: buildVerticalPosterUrl(id, ott)
+                        }
+                    }
+                    HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
                 }
-            }
-            HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
+                return newHomePageResponse(items, hasNext = items.isNotEmpty())
+            } catch (_: Exception) {}
         }
-
-        return newHomePageResponse(items, hasNext = items.isNotEmpty())
+        return null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val data = app.get(
-            "$mainUrl/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
-            headers = buildNewTvHeaders(ott)
-        ).parsed<NewTvSearchResponse>()
-
-        val template = data.detailsimgcdn ?: data.imgcdn
-
-        return data.searchResult.orEmpty().map { item ->
-            newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
-                posterUrl = buildPosterUrl(template, item.id) ?: buildVerticalPosterUrl(item.id, ott)
-            }
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
+        for (base in listOf(apiBase, mainUrl).distinct()) {
+            try {
+                val data = app.get(
+                    "$base/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
+                    headers = buildNewTvHeaders(ott)
+                ).parsed<NewTvSearchResponse>()
+                val template = data.detailsimgcdn ?: data.imgcdn
+                return data.searchResult.orEmpty().map { item ->
+                    newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
+                        posterUrl = buildPosterUrl(template, item.id) ?: buildVerticalPosterUrl(item.id, ott)
+                    }
+                }
+            } catch (_: Exception) {}
         }
+        return emptyList()
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val id = parseJson<NewTvId>(url).id
 
         val rawResponse = retryOnDbError {
             val text = app.get(
-                "$mainUrl/newtv/post.php?id=$id",
+                "$apiBase/newtv/post.php?id=$id",
                 headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
             ).text
             checkDbError(text)
@@ -150,12 +159,13 @@ class JioHotstarProvider : MainAPI() {
         title: String, sid: String, page: Int,
         epPoster: String? = null, seasonNumber: Int? = null
     ): List<Episode> {
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
             val rawEp = retryOnDbError {
                 val text = app.get(
-                    "$mainUrl/newtv/episodes.php",
+                    "$apiBase/newtv/episodes.php",
                     params = mapOf("id" to sid, "page" to pg.toString()),
                     headers = buildNewTvHeaders(ott)
                 ).text

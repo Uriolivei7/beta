@@ -164,13 +164,27 @@ The **cncverse API is fundamentally limited to 10-minute previews** for the free
 - `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with playlist.php primary, player.php fallback
 - `Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
+### Architectural Change (07 Jul 2026)
+| Change | Description |
+|---|---|
+| `getMainPage`/`search`/`load`/`getEpisodes` | Now use `apiBase` (tv.imgcdn.kim → `resolveApiUrl()`) with `mainUrl` (net52.cc) as fallback for `/newtv/` endpoints |
+| `loadLinks` | Already had this pattern — no change needed |
+| Scraping directo | Implementado como primary method en `loadLinks` — parsea HTML de `net52.cc/{netflix,movie,tv,watch}/{id}` buscando M3U8 |
+| `Descompilado NET/` | Verificado: es la app NetflixMirror standalone original (React Native, bytecode Hermes). No útil para extraer hash |
+
+### Current Status
+- **net52.cc y tv.imgcdn.kim están caídos** (07 Jul 2026) — no se puede probar nada
+- Cuando el sitio regrese, la prioridad es investigar cómo cncverse reproduce los videos completos (sniffear tráfico, comparar con el código decompilado)
+
 ## Next Steps
 1. ✅ **Fix `newTvBaseHeaders`** — done
 2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
 3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
 4. ✅ **Fix tv.imgcdn.kim 404 error** — removed from hlsBases
 5. ✅ **Test `hd=on` cookie + interceptor Cookie overwrite** — done, no change
-6. 🔲 **Alternative approach needed** — cncverse API gives 10-min preview only. Options:
-   (a) Web scrape net52.cc directly for M3U8 URLs (original NetflixMirror approach)
-   (b) Try different provider entirely (scrape or API-based)
-   (c) Accept 10-min preview as-is
+6. ⏸️ **Website down** — net52.cc y tv.imgcdn.kim no responden. Pausado hasta que vuelvan.
+7. 🔲 **Cuando el sitio regrese:**
+   - Sniffear tráfico de cncverse para ver cómo obtiene contenido completo (no preview)
+   - Descifrar cómo el CDN `nm-cdn9.top` (full content) se diferencia de `s21.freecdn4.top` (preview 10 min)
+   - Probar scraping directo de net52.cc (ya implementado)
+   - Si nada funciona, evaluar WebView embebido (capturar M3U8 del tráfico WebView)

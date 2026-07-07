@@ -18,42 +18,52 @@ class  NetflixProvider : MainAPI() {
     private val ott = "nf"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val response = app.get(
-            "$mainUrl/newtv/main.php",
-            headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
-        ).parsed<NewTvMainResponse>()
-
-        val items = response.post.orEmpty().map { category ->
-            val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            val results = ids.mapNotNull { id ->
-                newAnimeSearchResponse("", NewTvId(id).toJson()) {
-                    posterUrl = buildVerticalPosterUrl(id, ott)
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
+        for (base in listOf(apiBase, mainUrl).distinct()) {
+            try {
+                val response = app.get(
+                    "$base/newtv/main.php",
+                    headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
+                ).parsed<NewTvMainResponse>()
+                val items = response.post.orEmpty().map { category ->
+                    val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+                    val results = ids.mapNotNull { id ->
+                        newAnimeSearchResponse("", NewTvId(id).toJson()) {
+                            posterUrl = buildVerticalPosterUrl(id, ott)
+                        }
+                    }
+                    HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
                 }
-            }
-            HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
+                return newHomePageResponse(items, hasNext = items.isNotEmpty())
+            } catch (_: Exception) {}
         }
-
-        return newHomePageResponse(items, hasNext = items.isNotEmpty())
+        return null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val data = app.get(
-            "$mainUrl/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
-            headers = buildNewTvHeaders(ott)
-        ).parsed<NewTvSearchResponse>()
-
-        return data.searchResult.orEmpty().map { item ->
-            newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
-                posterUrl = buildVerticalPosterUrl(item.id, ott)
-            }
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
+        for (base in listOf(apiBase, mainUrl).distinct()) {
+            try {
+                val data = app.get(
+                    "$base/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
+                    headers = buildNewTvHeaders(ott)
+                ).parsed<NewTvSearchResponse>()
+                return data.searchResult.orEmpty().map { item ->
+                    newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
+                        posterUrl = buildVerticalPosterUrl(item.id, ott)
+                    }
+                }
+            } catch (_: Exception) {}
         }
+        return emptyList()
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val id = parseJson<NewTvId>(url).id
 
         val rawResponse = app.get(
-            "$mainUrl/newtv/post.php?id=$id",
+            "$apiBase/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).text
         Log.d("NetflixProvider", "RAW post response: $rawResponse")
@@ -143,11 +153,12 @@ class  NetflixProvider : MainAPI() {
     private suspend fun getEpisodes(
         title: String, sid: String, page: Int, epPoster: String? = null
     ): List<Episode> {
+        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
             val rawEp = app.get(
-                "$mainUrl/newtv/episodes.php",
+                "$apiBase/newtv/episodes.php",
                 params = mapOf("id" to sid, "page" to pg.toString()),
                 headers = buildNewTvHeaders(ott)
             ).text
