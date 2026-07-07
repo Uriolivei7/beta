@@ -26,8 +26,9 @@ class PrimevideoProvider : MainAPI() {
     private fun pvEpPoster(id: String): String = "https://imgcdn.kim/pvepimg/150/$id.jpg"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("PV", "resolveApiUrl failed: ${e.message}"); mainUrl }
-        for (base in listOf(apiBase, mainUrl).distinct()) {
+        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("PV", "resolveApiUrl failed: ${e.message}"); null }
+        val bases = listOfNotNull(mainUrl, apiBase).distinct()
+        for (base in bases) {
             try {
                 Log.e("PV", "getMainPage trying base=$base")
                 val response = app.get(
@@ -53,8 +54,9 @@ class PrimevideoProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.e("PV", "search called query=$query")
-        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("PV", "resolveApiUrl failed: ${e.message}"); mainUrl }
-        for (base in listOf(apiBase, mainUrl).distinct()) {
+        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("PV", "resolveApiUrl failed: ${e.message}"); null }
+        val bases = listOfNotNull(mainUrl, apiBase).distinct()
+        for (base in bases) {
             try {
                 Log.e("PV", "search trying base=$base")
                 val data = app.get(

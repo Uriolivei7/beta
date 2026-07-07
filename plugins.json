@@ -637,7 +637,7 @@
     "name": "PlutoTV",
     "internalName": "PlutotvProvider",
     "authors": ["Ranita"],
-    "description": "Plugin para PlutoTV",
+    "description": "Plugin de PlutoTV",
     "tvTypes": ["TvSeries", "Movie"],
     "iconUrl": "https://pluto.tv/assets/images/favicon/large-9423670b9efa0f1ba821b3729ad1e94e.png",
     "language": "mx",

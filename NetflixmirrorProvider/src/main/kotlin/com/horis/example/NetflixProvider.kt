@@ -33,8 +33,9 @@ class  NetflixProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.e("NF", "getMainPage called page=$page")
-        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("NF", "resolveApiUrl failed: ${e.message}"); mainUrl }
-        for (base in listOf(apiBase, mainUrl).distinct()) {
+        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("NF", "resolveApiUrl failed: ${e.message}"); null }
+        val bases = listOfNotNull(mainUrl, apiBase).distinct()
+        for (base in bases) {
             try {
                 Log.e("NF", "getMainPage trying base=$base")
                 val response = app.get(
@@ -60,8 +61,9 @@ class  NetflixProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.e("NF", "search called query=$query")
-        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("NF", "resolveApiUrl failed: ${e.message}"); mainUrl }
-        for (base in listOf(apiBase, mainUrl).distinct()) {
+        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("NF", "resolveApiUrl failed: ${e.message}"); null }
+        val bases = listOfNotNull(mainUrl, apiBase).distinct()
+        for (base in bases) {
             try {
                 Log.e("NF", "search trying base=$base")
                 val data = app.get(
