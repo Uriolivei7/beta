@@ -22,23 +22,24 @@ class NetflixProvider : MainAPI() {
     override val usesWebView = true
 
     private val ott = "nf"
-    private var token: String = ""
 
-    private suspend fun getCookie(): Map<String, String> {
-        if (token.isEmpty()) token = bypass(mainUrl)
-        return mapOf("t_hash_t" to token, "ott" to ott, "hd" to "on")
+    private fun getCookie(): Map<String, String> {
+        return mapOf("ott" to ott, "hd" to "on")
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val data = app.get(
+        Log.d("NF", "getMainPage page=$page")
+        val raw = app.get(
             "$mainUrl/tv/nf/homepage.php",
             cookies = getCookie(),
             referer = "$mainUrl/home",
-        ).parsed<HomePageData>()
+        )
+        Log.d("NF", "homepage code=${raw.code} body=${raw.text.take(300)}")
+        val data = raw.parsedSafe<HomePageData>() ?: return null
 
         val items = data.post?.mapNotNull { cat ->
-            val name = cat.cate ?: return@mapNotNull null
-            val ids = cat.ids?.split(",")?.filter { it.isNotBlank() }.orEmpty()
+            val name = cat.cate
+            val ids = cat.ids.split(",").filter { it.isNotBlank() }
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
                     posterUrl = buildVerticalPosterUrl(id, ott)
@@ -53,11 +54,14 @@ class NetflixProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val data = app.get(
+        Log.d("NF", "search query=$query")
+        val raw = app.get(
             "$mainUrl/search.php?s=$query&t=$unixTime",
             referer = "$mainUrl/tv/home",
             cookies = getCookie()
-        ).parsed<SearchData>()
+        )
+        Log.d("NF", "search code=${raw.code} body=${raw.text.take(300)}")
+        val data = raw.parsedSafe<SearchData>() ?: return emptyList()
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, NewTvId(it.id).toJson()) {
@@ -69,13 +73,16 @@ class NetflixProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val id = parseJson<NewTvId>(url).id
+        Log.d("NF", "load id=$id")
 
-        val data = app.get(
+        val raw = app.get(
             "$mainUrl/post.php?id=$id&t=$unixTime",
             headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
             referer = "$mainUrl/tv/home",
             cookies = getCookie()
-        ).parsed<PostData>()
+        )
+        Log.d("NF", "post code=${raw.code} body=${raw.text.take(500)}")
+        val data = raw.parsedSafe<PostData>() ?: return null
 
         val title = data.title
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
@@ -131,12 +138,14 @@ class NetflixProvider : MainAPI() {
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
-            val data = app.get(
+            val raw = app.get(
                 "$mainUrl/episodes.php?s=$sid&series=$eid&t=$unixTime&page=$pg",
                 headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
                 referer = "$mainUrl/tv/home",
                 cookies = getCookie()
-            ).parsed<EpisodesData>()
+            )
+            Log.d("NF", "getEpisodes page=$pg code=${raw.code} body=${raw.text.take(300)}")
+            val data = raw.parsedSafe<EpisodesData>() ?: break
             data.episodes?.mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id)) {
                     name = it.t
@@ -264,5 +273,5 @@ class NetflixProvider : MainAPI() {
         return false
     }
 
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = null
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = m3u8CdnFixInterceptor()
 }
