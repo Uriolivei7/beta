@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:name="vector"
+    android:height="60dp"
+    android:width="84dp"
+    android:viewportWidth="84"
+    android:viewportHeight="60">
+    <path
+        android:name="done"
+        android:pathData="M 3.536 27.097 L 30.258 53.819 L 80.541 3.536"
+        android:strokeColor="@color/done"
+        android:strokeWidth="10"
+        android:trimPathEnd="0"/>
+</vector>

@@ -201,7 +201,6 @@ class PrimevideoProvider : MainAPI() {
         val id = loadData.id
         Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
 
-        // Try bypass first (t_hash_t cookie from verify.php POST)
         val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
         if (token.length > 10) {
             Log.e("PV", "Got bypass token: ${token.take(60)}")
@@ -214,16 +213,85 @@ class PrimevideoProvider : MainAPI() {
                 currentBypassToken = playHash
             }
         }
-        // ::ep::99 = preview mode, ::ep::m = full movie — replace per old getPlaylistUrl logic
         val cookieValue = if (currentBypassToken.length > 10) currentBypassToken.replace("::ep::99", "::ep::m") else ""
-        val cookieHeader = if (cookieValue.length > 10) mapOf("Cookie" to "t_hash_t=$cookieValue; ott=nf; hd=on") else emptyMap()
+        val cookieStr = if (cookieValue.length > 10) "t_hash_t=$cookieValue; ott=$ott; hd=on" else ""
+        val cookieHeader = if (cookieStr.isNotBlank()) mapOf("Cookie" to cookieStr) else emptyMap()
         val urlToken = if (currentBypassToken.length > 10) currentBypassToken.substringBefore("::ep") else ""
 
-        // playlist.php returns Source[] (cncverse API) — full content not available, 10-min preview only
+        // Browser headers matching cncverse decompiled provider-level headers
+        val browserHeaders = mapOf(
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+            "Cache-Control" to "max-age=0",
+            "Connection" to "keep-alive",
+            "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "Sec-Fetch-Dest" to "document",
+            "Sec-Fetch-Mode" to "navigate",
+            "Sec-Fetch-Site" to "same-origin",
+            "Sec-Fetch-User" to "?1",
+            "Upgrade-Insecure-Requests" to "1",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+            "X-Requested-With" to "XMLHttpRequest"
+        ) + cookieHeader
+
+        // ---- PRIMARY: scrape net52.cc content page for direct M3U8 URLs ----
+        val pageUrls = listOf(
+            "$mainUrl/netflix/$id", "$mainUrl/movie/$id", "$mainUrl/tv/$id",
+            "$mainUrl/watch/$id", "$mainUrl/home?cat=search&search=$id"
+        )
+        for (pageUrl in pageUrls) {
+            try {
+                val html = app.get(pageUrl, headers = browserHeaders).text
+                Log.e("PVSCRAPE", "page=$pageUrl len=${html.length} first200=${html.take(200)}")
+                val m3u8Regex = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""")
+                val matches = m3u8Regex.findAll(html).map { it.value }.toList().distinct()
+                if (matches.isNotEmpty()) {
+                    Log.e("PVSCRAPE", "Found ${matches.size} M3U8 URLs on $pageUrl")
+                    for (m3u8Url in matches) {
+                        val finalUrl = if (urlToken.length > 10 && m3u8Url.contains("in=unknown::ep"))
+                            m3u8Url.replace("in=unknown::ep", "in=$urlToken::ep") else m3u8Url
+                        callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
+                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = getQualityFromName(finalUrl)
+                        })
+                    }
+                    return true
+                }
+                val relRegex = Regex("""["'](/hls/[^"'\s<>?]+\.m3u8[^"'\s<>]*)["']""")
+                val relMatches = relRegex.findAll(html).map { "$mainUrl${it.groupValues[1]}" }.toList().distinct()
+                if (relMatches.isNotEmpty()) {
+                    Log.e("PVSCRAPE", "Found ${relMatches.size} relative M3U8 paths on $pageUrl")
+                    for (m3u8Url in relMatches) {
+                        val finalUrl = if (urlToken.length > 10 && m3u8Url.contains("in=unknown::ep"))
+                            m3u8Url.replace("in=unknown::ep", "in=$urlToken::ep") else m3u8Url
+                        callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
+                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = getQualityFromName(finalUrl)
+                        })
+                    }
+                    return true
+                }
+                val dataRegex = Regex("""data-(?:src|url|video|stream)="([^"]+\.m3u8[^"]*)"""")
+                val dataMatches = dataRegex.findAll(html).map { it.groupValues[1] }.toList().distinct()
+                if (dataMatches.isNotEmpty()) {
+                    Log.e("PVSCRAPE", "Found ${dataMatches.size} data-attr M3U8 on $pageUrl")
+                    for (m3u8Url in dataMatches) {
+                        val finalUrl = if (m3u8Url.startsWith("http")) m3u8Url else "$mainUrl$m3u8Url"
+                        callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
+                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = "auto"
+                        })
+                    }
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.e("PVSCRAPE", "page $pageUrl error: ${e.message}")
+            }
+        }
+
+        // ---- FALLBACK 1: playlist.php (cncverse API) ----
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
         val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
             "$mainUrl/playlist.php?id=$id")
-        // Only use mainUrl as HLS base — apiBase (tv.imgcdn.kim)/hls/ returns 404 always
         val hlsBases = listOf(mainUrl.trimEnd('/'))
         for (plUrl in playlistUrls) {
             try {
@@ -236,21 +304,18 @@ class PrimevideoProvider : MainAPI() {
                         for (source in item.sources.orEmpty()) {
                             var file = source.file ?: continue
                             val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
-                            val headers = playlistHeaders
                             val referer = "$mainUrl/mobile/home?app=1"
-                            // Replace in=unknown::ep with real token in request URL
                             if (urlToken.length > 10 && file.contains("in=unknown::ep")) {
                                 file = file.replace("in=unknown::ep", "in=$urlToken::ep")
-                                Log.e("PV", "Replaced in=unknown with token in ExtractorLink URL")
                             }
                             if (file.startsWith("http")) {
                                 callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
-                                    this.headers = headers; this.referer = referer; this.quality = quality
+                                    this.headers = playlistHeaders; this.referer = referer; this.quality = quality
                                 }); count++
                             } else {
                                 for (base in hlsBases) {
                                     callback.invoke(newExtractorLink(name, name, "$base$file", type = ExtractorLinkType.M3U8) {
-                                        this.headers = headers; this.referer = referer; this.quality = quality
+                                        this.headers = playlistHeaders; this.referer = referer; this.quality = quality
                                     }); count++
                                 }
                             }
@@ -278,7 +343,7 @@ class PrimevideoProvider : MainAPI() {
             }
         }
 
-        // Fallback: player.php on apiBase (may return 10-min preview)
+        // ---- FALLBACK 2: player.php ----
         for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
             try {
                 val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
