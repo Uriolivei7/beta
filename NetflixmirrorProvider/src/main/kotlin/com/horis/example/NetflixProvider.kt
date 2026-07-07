@@ -13,7 +13,7 @@ class NetflixProvider : MainAPI() {
     override var mainUrl = "https://net52.cc"
     override var name = "Netflix"
     override val hasMainPage = true
-    override val usesWebView = false
+    override val usesWebView = true
 
     private val ott = "nf"
 
@@ -229,8 +229,14 @@ class NetflixProvider : MainAPI() {
         val title = loadData.title
         Log.e("NF", "loadLinks id=$id apiBase=$apiBase")
 
+        // Get bypass token FIRST — pass as cookie to playlist.php so server returns real in= hash
+        val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("NF", "bypass fail: ${e.message}"); "" }
+        Log.e("NF", "token=${token.take(60)}")
+        val extraHeaders = mutableMapOf("Referer" to mainUrl)
+        if (token.isNotBlank()) extraHeaders["Cookie"] = "nf_cookie=$token"
+
         // Primary flow: playlist.php → Source[] (matching cncverse decompiled code)
-        val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
+        val playlistHeaders = buildNewTvHeaders(ott, extraHeaders)
         val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
         val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://net11.cc").distinct()
         for (plUrl in playlistUrls) {
@@ -280,9 +286,6 @@ class NetflixProvider : MainAPI() {
         }
 
         // Fallback: player.php (original 12-attempt flow)
-        val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("NF", "bypass fail: ${e.message}"); "" }
-        Log.e("NF", "fallback token=${token.take(60)}")
-
         val rawTokenHash = getRawTokenHash()
         val rthEncoded = java.net.URLEncoder.encode(rawTokenHash, "UTF-8")
         val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")

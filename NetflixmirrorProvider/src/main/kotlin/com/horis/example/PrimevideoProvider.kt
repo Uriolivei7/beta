@@ -11,9 +11,9 @@ class PrimevideoProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    override var name = "PrimeVideo"
+    override var name = "Primevideo"
     override val hasMainPage = true
-    override val usesWebView = false
+    override val usesWebView = true
 
     private val ott = "pv"
 
@@ -292,8 +292,14 @@ class PrimevideoProvider : MainAPI() {
         val id = load.id
         Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
 
+        // Get bypass token FIRST
+        val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("PV", "bypass fail: ${e.message}"); "" }
+        Log.e("PV", "token=${token.take(60)}")
+        val extraHeaders = mutableMapOf("Referer" to mainUrl)
+        if (token.isNotBlank()) extraHeaders["Cookie"] = "nf_cookie=$token"
+
         // Primary flow: playlist.php → Source[]
-        val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
+        val playlistHeaders = buildNewTvHeaders(ott, extraHeaders)
         val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
         val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://net11.cc").distinct()
         for (plUrl in playlistUrls) {
@@ -341,9 +347,6 @@ class PrimevideoProvider : MainAPI() {
         }
 
         // Fallback: player.php
-        val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("PV", "bypass fail: ${e.message}"); "" }
-        Log.e("PV", "fallback token=${token.take(60)}")
-
         val rawTokenHash = getRawTokenHash()
         val rthEncoded = java.net.URLEncoder.encode(rawTokenHash, "UTF-8")
         val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")
