@@ -295,6 +295,7 @@ class PrimevideoProvider : MainAPI() {
         // Primary flow: playlist.php → Source[]
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
         val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
+        val hlsBaseUrls = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://tv.imgcdn.kim", "https://net52.cc").distinct()
         for (plUrl in playlistUrls) {
             try {
                 val plRaw = app.get(plUrl, headers = playlistHeaders).text
@@ -304,11 +305,12 @@ class PrimevideoProvider : MainAPI() {
                     for (item in items) {
                         for (source in item.sources.orEmpty()) {
                             val file = source.file ?: continue
+                            val fullUrl = if (file.startsWith("http")) file else "${hlsBaseUrls.first()}$file"
                             val quality = getQualityFromName(
                                 file.substringAfter("q=", "").substringBefore("&")
                             )
-                            Log.e("PLAYURL", file)
-                            callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
+                            Log.e("PLAYURL", fullUrl)
+                            callback.invoke(newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
                                 headers = playlistHeaders
                                 referer = "$mainUrl/mobile/home?app=1"
                                 this.quality = quality
@@ -316,7 +318,8 @@ class PrimevideoProvider : MainAPI() {
                         }
                         for (track in item.tracks.orEmpty()) {
                             val trackFile = track.file ?: continue
-                            subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", trackFile) {
+                            val fullTrackUrl = if (trackFile.startsWith("http")) trackFile else "${hlsBaseUrls.first()}$trackFile"
+                            subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", fullTrackUrl) {
                                 headers = mapOf("Referer" to "$mainUrl/")
                             })
                         }
