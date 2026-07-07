@@ -32,7 +32,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
 import okhttp3.Protocol
-import okhttp3.MediaType.Companion.toMediaType
 import java.net.URLDecoder
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -624,12 +623,15 @@ val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net
 
 // Store for custom master playlists (keyed by content id)
 val customMasters = java.util.concurrent.ConcurrentHashMap<String, String>()
+private val customMastersLogged = java.util.concurrent.atomic.AtomicBoolean(false)
 
 fun setCustomMaster(id: String, master: String) {
     customMasters[id] = master
+    Log.d("CdnFix", "setCustomMaster id=$id size=${master.length}")
 }
 
 fun m3u8CdnFixInterceptor(): Interceptor {
+    Log.d("CdnFix", "m3u8CdnFixInterceptor() called - creating new interceptor")
     return Interceptor { chain ->
         var req = chain.request()
         val url = req.url.toString()

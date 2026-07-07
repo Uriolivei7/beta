@@ -17,14 +17,19 @@ class PrimevideoProvider : MainAPI() {
 
     private val ott = "pv"
 
+    init {
+        Log.e("PV", "PrimevideoProvider init called")
+    }
+
     private fun pvPoster(id: String): String = "https://imgcdn.kim/pv/v/$id.jpg"
     private fun pvBg(id: String): String = "https://imgcdn.kim/pv/h/$id.jpg"
     private fun pvEpPoster(id: String): String = "https://imgcdn.kim/pvepimg/150/$id.jpg"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
+        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("PV", "resolveApiUrl failed: ${e.message}"); mainUrl }
         for (base in listOf(apiBase, mainUrl).distinct()) {
             try {
+                Log.e("PV", "getMainPage trying base=$base")
                 val response = app.get(
                     "$base/newtv/main.php",
                     headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
@@ -39,15 +44,19 @@ class PrimevideoProvider : MainAPI() {
                     HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
                 }
                 return newHomePageResponse(items, hasNext = items.isNotEmpty())
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.e("PV", "getMainPage failed for base=$base: ${e.message}")
+            }
         }
         return null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
+        Log.e("PV", "search called query=$query")
+        val apiBase = try { resolveApiUrl() } catch (e: Exception) { Log.e("PV", "resolveApiUrl failed: ${e.message}"); mainUrl }
         for (base in listOf(apiBase, mainUrl).distinct()) {
             try {
+                Log.e("PV", "search trying base=$base")
                 val data = app.get(
                     "$base/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
                     headers = buildNewTvHeaders(ott)
@@ -57,7 +66,9 @@ class PrimevideoProvider : MainAPI() {
                         posterUrl = pvPoster(item.id)
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.e("PV", "search failed for base=$base: ${e.message}")
+            }
         }
         return emptyList()
     }
@@ -380,7 +391,15 @@ class PrimevideoProvider : MainAPI() {
         return false
     }
 
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = m3u8CdnFixInterceptor()
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        Log.e("PV", "getVideoInterceptor called for ${extractorLink.url.take(100)}")
+        return try {
+            m3u8CdnFixInterceptor()
+        } catch (e: Exception) {
+            Log.e("PV", "getVideoInterceptor failed: ${e.message}")
+            null
+        }
+    }
 
     private suspend fun getPlayHash(id: String): String {
         val domains = listOf("https://net11.cc", "https://net52.cc", "https://net22.cc")
