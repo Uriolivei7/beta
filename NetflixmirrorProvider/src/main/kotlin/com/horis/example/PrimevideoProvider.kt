@@ -295,6 +295,10 @@ class PrimevideoProvider : MainAPI() {
         val token = try { bypass(mainUrl) } catch (e: Exception) { Log.e("PV", "bypass fail: ${e.message}"); "" }
         Log.e("PV", "token=${token.take(60)}")
 
+        val rawTokenHash = getRawTokenHash()
+        Log.e("PV", "rawTokenHash=${rawTokenHash.take(60)}")
+
+        val rthEncoded = java.net.URLEncoder.encode(rawTokenHash, "UTF-8")
         val encodedToken = java.net.URLEncoder.encode(token, "UTF-8")
         val attempts = buildList {
             add(Triple("cookie", "$apiBase/newtv/player.php?id=$id",
@@ -312,6 +316,14 @@ class PrimevideoProvider : MainAPI() {
             add(Triple("q-hash", "$apiBase/newtv/player.php?id=$id&hash=$encodedToken",
                 buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
             add(Triple("q-h", "$apiBase/newtv/player.php?id=$id&h=$encodedToken",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
+            add(Triple("rth-cookie", "$apiBase/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Cookie" to "nf_cookie=$rawTokenHash", "Referer" to apiBase))))
+            add(Triple("rth-usertoken", "$apiBase/newtv/player.php?id=$id",
+                buildNewTvHeaders(ott, mapOf("Usertoken" to rawTokenHash, "Referer" to apiBase))))
+            add(Triple("rth-h", "$apiBase/newtv/player.php?id=$id&h=$rthEncoded",
+                buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
+            add(Triple("rth-token", "$apiBase/newtv/player.php?id=$id&token=$rthEncoded",
                 buildNewTvHeaders(ott, mapOf("Referer" to apiBase))))
         }
 

@@ -330,6 +330,7 @@ val newTvDomains = listOf(
 fun decodeBase64(value: String): String = String(Base64.decode(value, Base64.DEFAULT))
 
 private var resolvedApiUrl: String = ""
+private var cachedRawTokenHash: String = ""
 
 suspend fun resolveApiUrl(): String {
     if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
@@ -342,6 +343,7 @@ suspend fun resolveApiUrl(): String {
                         .parsed<NewTvTokenResponse>()
                     val tokenHash = response.token_hash
                     if (!tokenHash.isNullOrBlank()) {
+                        cachedRawTokenHash = tokenHash
                         decodeBase64(tokenHash).trimEnd('/')
                     } else null
                 } catch (e: Exception) {
@@ -355,6 +357,7 @@ suspend fun resolveApiUrl(): String {
             if (result != null) {
                 resolvedApiUrl = result
                 Log.d("NewTV", "Resolved API URL: $resolvedApiUrl")
+                Log.d("NewTV", "Raw token hash: ${cachedRawTokenHash.take(60)}")
                 return@coroutineScope resolvedApiUrl
             }
         }
@@ -381,6 +384,8 @@ suspend fun resolveApiUrl(): String {
         return@coroutineScope resolvedApiUrl
     }
 }
+
+fun getRawTokenHash(): String = cachedRawTokenHash
 
 fun buildVerticalPosterUrl(id: String, ott: String = "nf"): String {
     return when (ott) {
