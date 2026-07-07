@@ -216,6 +216,22 @@ class PrimevideoProvider : MainAPI() {
         }
         val cookieHeader = if (currentBypassToken.length > 10) mapOf("Cookie" to "t_hash_t=$currentBypassToken") else emptyMap()
 
+        // Test: original player.php on mainUrl (no /newtv/ prefix) with bypass cookie
+        try {
+            val origPlayerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
+            val origResp = app.get("$mainUrl/player.php?id=$id", headers = origPlayerHeaders).parsed<NewTvPlayerResponse>()
+            Log.e("PV", "original player.php -> status=${origResp.status} link=${origResp.video_link?.take(60)}")
+            if ((origResp.status == "ok" || origResp.status == "otp") && origResp.video_link != null) {
+                callback.invoke(newExtractorLink(name, name, origResp.video_link, type = ExtractorLinkType.M3U8) {
+                    this.referer = origResp.referer ?: mainUrl
+                    this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (origResp.referer ?: mainUrl))) + cookieHeader
+                })
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e("PV", "original player.php error: ${e.message}")
+        }
+
         // Primary flow (decompiled): playlist.php returns Source[] with full-content M3U8 URLs
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
         val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",

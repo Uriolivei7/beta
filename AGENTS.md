@@ -121,12 +121,15 @@ URL-encoded (`%3A%3A` = `::`) → URL-decode → `hash1::hash2::timestamp::ep::9
 
 ### Relevant Files
 - `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
-- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with player.php primary + playlist.php fallback
+- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with original player.php test first, then playlist.php primary, then /newtv/player.php fallback
 - `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
 ## Next Steps
 1. ✅ **Fix `newTvBaseHeaders`** — done
 2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
 3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
-4. 🔲 **Test on user device** — verify t_hash_t cookie allows watermark-free playback via player.php
-5. 🔲 **Fix playlist.php** — if player.php fails, fix playlist.php flow (relative path resolution, proper headers with t_hash_t)
+4. 🔲 **Test on user device** — verify which endpoint returns full-length content (not 10-min preview):
+   - Primary: `$mainUrl/player.php?id=ID` (original, no `/newtv/` prefix) with t_hash_t cookie
+   - Fallback 1: `playlist.php` (existing flow, returns 10-min preview)
+   - Fallback 2: `tv.imgcdn.kim/newtv/player.php` (existing flow, returns 10-min preview)
+5. 🔲 Once tested: if original player.php works, simplify by removing playlist.php and /newtv/player.php fallback entirely
