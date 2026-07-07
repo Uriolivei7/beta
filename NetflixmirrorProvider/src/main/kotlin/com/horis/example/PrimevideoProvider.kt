@@ -215,17 +215,18 @@ class PrimevideoProvider : MainAPI() {
             }
         }
         val cookieHeader = if (currentBypassToken.length > 10) mapOf("Cookie" to "t_hash_t=$currentBypassToken") else emptyMap()
+        val urlToken = if (currentBypassToken.length > 10) currentBypassToken.substringBefore("::ep") else ""
 
         // Primary: direct net52.cc M3U8 via play.php auth hash (pre-cncverse approach)
+        val playPhHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept" to "*/*", "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8")
         val directHash = try {
-            val dpResp = app.post("$mainUrl/play.php",
-                requestBody = FormBody.Builder().add("id", id).build(),
-                headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    "Accept" to "*/*", "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8")
-            )
-            val dpParsed = tryParseJson<PlayHashResponse>(dpResp.text)
+            val dpResp = app.post("$mainUrl/play.php", requestBody = FormBody.Builder().add("id", id).build(), headers = playPhHeaders)
+            val dpBody = dpResp.text
+            Log.e("PV", "play.php response: ${dpBody.take(200)}")
+            val dpParsed = tryParseJson<PlayHashResponse>(dpBody)
             dpParsed?.h?.removePrefix("in=")?.substringBefore("::ep") ?: ""
-        } catch (_: Exception) { "" }
+        } catch (e: Exception) { Log.e("PV", "play.php error: ${e.message}"); "" }
         if (directHash.length > 10) {
             val m3u8Url = "$mainUrl/hls/$id.m3u8?in=$directHash"
             Log.e("PV", "Trying direct M3U8: $m3u8Url")
@@ -248,7 +249,6 @@ class PrimevideoProvider : MainAPI() {
         }
 
         // Fallback 1: playlist.php returns Source[] (cncverse API)
-        // Note: this may return 10-min preview only
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
         val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
             "$mainUrl/playlist.php?id=$id")
@@ -262,10 +262,15 @@ class PrimevideoProvider : MainAPI() {
                     var count = 0
                     for (item in items) {
                         for (source in item.sources.orEmpty()) {
-                            val file = source.file ?: continue
+                            var file = source.file ?: continue
                             val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
                             val headers = playlistHeaders
                             val referer = "$mainUrl/mobile/home?app=1"
+                            // Replace in=unknown::ep with real token in request URL
+                            if (urlToken.length > 10 && file.contains("in=unknown::ep")) {
+                                file = file.replace("in=unknown::ep", "in=$urlToken::ep")
+                                Log.e("PV", "Replaced in=unknown with token in ExtractorLink URL")
+                            }
                             if (file.startsWith("http")) {
                                 callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
                                     this.headers = headers; this.referer = referer; this.quality = quality
