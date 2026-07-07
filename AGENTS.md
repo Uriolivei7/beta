@@ -1,190 +1,131 @@
 # AGENTS.md - Netmirror Plugin Development
 
 ## Goal
-- Migrate Netflix/PrimeVideo providers from broken netXX.cc API to cncverse NewTv API (mobiledetects domains) to get working, non-watermarked streams
+- Proveer streams completos (no preview 10 min) desde cncverse para Netflix/PrimeVideo/JioHotstar providers en CloudStream.
 
-## Constraints & Preferences
-- Must work as a CloudStream plugin (not standalone APK)
-- Must mirror verified working decompiled cncverse APK code
+## The REAL Flow (discovered 07 Jul 2026 via tPacketCapture + curl validation)
 
-## Progress
-### Done
-- Fully decompiled cncverse APK (`com.horis.cncverse`) from classes.dex via JADX + Decompiler.com — identified 24 base64-decoded mobiledetect domains, NewTv entity models, auth headers, cookie storage, provider structure
-- All decompiled Java sources preserved at `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/`
-
-### Key Discoveries from Decompiled Code
-
-#### `NewTvPlayerResponse` (player.php fallback)
-- **Has NO `usertoken` field** — only `status`, `video_link`, `referer`
-- Our added `usertoken` field is purely diagnostic; cncverse doesn't use it
-- `player.php` is the **fallback** path, not the primary flow
-
-#### Primary flow: `playlist.php` → `Source[]`
-- The primary endpoint returns a **list of `Source` objects**: `file` (M3U8 URL), `label` (quality name), `type` (mime type)
-- cncverse maps each Source to an `ExtractorLink` with:
-  - `headers = buildNewTvHeaders(ott, extra)` (newTvBaseHeaders + Ott header)
-  - `referer = "$mainUrl/mobile/home?app=1"`
-  - `quality = parsed from source file's "q=" parameter`
-- The response structure is a JSON array of items, each containing sources and tracks
-
-#### `loadLinks` flow (from continuation metadata)
-1. Parse `data` JSON → extract `title`/`id`
-2. Load `cookies` from `NetflixMirrorStorage.getCookie()`
-3. Build `cookieStr` = headers map entries joined as `"key=value"`
-4. Build `playlistHeaders` via `buildNewTvHeaders(ott, extra)`
-5. Call playlist endpoint → parse `playlist` response
-6. Map through items → sources → create ExtractorLinks
-7. Process tracks (subtitles) with `Referer: $mainUrl/`
-
-#### Correct headers (from decompiled `UtilsKt.newTvBaseHeaders`)
-```
-Cache-Control: no-cache, no-store, must-revalidate
-Pragma: no-cache
-Expires: 0
-X-Requested-With: NetmirrorNewTV v1.0    ← OUR VALUE WAS WRONG (app.netmirror.netmirrornew)
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0
-           ← OUR VALUE WAS WRONG (Chrome/149.0.7827.91 /OS.Gatu v3.0 with sec-ch-* headers)
-Accept: application/json, text/plain, */*
-```
-Note: Original has NO `sec-ch-*`, NO `Accept-Language`, uses Firefox UA with `/OS.GatuNewTV v1.0`
-
-#### Provider-level `headers` (browser scraping on net52.cc)
-```
-User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0
-X-Requested-With: XMLHttpRequest
-sec-ch-ua: "Not(A:Brand";v="8", "Chromium";v="144", "Android WebView";v="144"
-Sec-Fetch-Dest: document, Sec-Fetch-Mode: navigate, Sec-Fetch-Site: same-origin, Sec-Fetch-User: ?1
-```
-
-#### `getVideoInterceptor`
-- Identical to ours — sets `Cookie: hd=on` on `.m3u8` requests
-
-#### `NetflixMirrorStorage` (SharedPreferences)
-- **`nf_cookie`** + `nf_cookie_timestamp` — the bypass token
-- **`nf_cookie_full`** + `nf_cookie_full_timestamp` — the full cookie string (separate storage)
-- App name: `NetflixMirrorPrefsMobile`
-
-#### `bypass()` signature
-- `suspend fun bypass(mainUrl: String): String`
-- Only called with `mainUrl` (net52.cc) — NOT with newTv API URL
-- Uses `app` object (Chrome UA Requests instance) for HTTP calls
-- Has retry counter (`count` variable)
-- Posts to verify.php with form body containing `g-recaptcha-response`
-- Falls back if verify.php fails
-
-#### `resolveApiUrl()` sequence
-- Tries each mobiledetect domain → `checknewtv.php` → base64-decode → API URL
-- Falls back to pinging domain roots
-- Falls back to `mainUrl`
-
-### Endpoint Behavior
-| Endpoint | Domain | Behavior |
+### Endpoints
+| Endpoint | USAGE | Status |
 |---|---|---|
-| `checknewtv.php` | mobiledetects.* | Returns base64-encoded API URL |
-| `verify.php` | net52.cc | GET → captcha page; POST → Cloudflare 403 |
-| `verify.php` | tv.imgcdn.kim | 404 (not found) |
-| `player.php` | tv.imgcdn.kim | Returns `{status: "otp"/"ok", video_link: "...", referer: "..."}` |
-| `playlist.php` | netXX.cc | Returns `Source[]` with M3U8 URLs (primary flow) |
+| `net52.cc/newtv/main.php` | Main page (categorías) | ✅ Funciona |
+| `net52.cc/newtv/search.php` | Búsqueda | ✅ Funciona |
+| `net52.cc/newtv/post.php` | Detalles de contenido | ✅ Funciona |
+| `net52.cc/newtv/episodes.php` | Episodios (series) | ✅ Funciona |
+| `tv.imgcdn.kim/newtv/*` | Ídem (API base alternativa) | ✅ Funciona (no está caído) |
+| **`net52.cc/mobile/hls/{id}.m3u8`** | **ENDPOINT DE PLAYBACK** | ✅ **CLAVE** — devuelve master playlist |
+| `s21.freecdn4.top/files/{internalId}/{quality}/` | Preview CDN (60 JPG segments = 10 min) | ❌ Solo preview |
+| **`s23.nm-cdn9.top/files/{contentId}/{quality}/`** | **CONTENIDO COMPLETO CDN** | ✅ **Full content (1030+ JPG segments)** |
+| `net52.cc/verify.php` | Bypass (POST → Set-Cookie t_hash_t) | ✅ Funciona |
+| `net52.cc/newtv/playlist.php` | Antiguo endpoint (preview only) | ❌ Solo preview |
+| `net52.cc/newtv/player.php` | Antiguo endpoint (preview only) | ❌ Solo preview |
 
-### Major Breakthrough (07 Jul 2026): Bypass fixed — `POST verify.php` returns t_hash_t
-**`POST https://net52.cc/verify.php` with ANY `g-recaptcha-response` value returns `Set-Cookie: t_hash_t=...` in a 301!**
+### Full Playback Flow (verified with curl)
 
-No captcha needed — server accepts any random token and issues a valid t_hash_t (3-day expiry).
+1. **`POST net52.cc/verify.php`** → `Set-Cookie: t_hash_t=h1::h2::ts::ep::99`  
+   (OkHttp `followRedirects=false` para capturar cookie antes del redirect 301)
 
-**Root cause of previous bypass failure:**
-- CloudStream's `Requests.post()` follows HTTP redirects
-- The 301 from net52.cc/verify.php redirects to `/home` (sandbox) or net11.cc/verify.php (user device)
-- net11.cc has NXDOMAIN on user device → exception thrown, discarding the Set-Cookie
-- **Fix**: OkHttp with `followRedirects(false)` + `followSslRedirects(false)` captures the cookie before any redirect
+2. **`GET net52.cc/mobile/hls/{id}.m3u8?q=720p&in=<cookie_token>::ep::99&hd=on&lang=eng`**  
+   Headers: Chrome/149 WebView UA, `app.netmirror.netmirrornew`, sec-ch-ua, Cookie  
+   → Server **REESCRIBE hash2** en el `in=` parameter de las URLs de video  
+   → Devuelve audio de `s23.nm-cdn9.top` y video de `s21.freecdn4.top` (preview)
 
-**Token format:**
-```
-t_hash_t=a3398a4472afd0d309c3e64f5b011898%3A%3Accd8cadf32a6b2247d930975c2e47431%3A%3A1783429065%3A%3Aep%3A%3A99
-```
-URL-encoded (`%3A%3A` = `::`) → URL-decode → `hash1::hash2::timestamp::ep::99`
+3. **IGNORAR las URLs de s21 del server.** Construir URLs directamente a s23:  
+   `GET https://s23.nm-cdn9.top/files/{id}/{quality}/{quality}.m3u8?in=<rewritten_token>`  
+   Cookie: `hd=on; t_hash_t=<cookie_value>`  
+   → **1030+ JPG segments = contenido completo** (ej: 6809_000.jpg ... 6809_1029.jpg)
 
-### Token Usage
-| Source | Raw value | For Cookie header | For URL `in=` replace |
+4. Cada segmento JPG (~295KB) se sirve desde s23 sin token en la URL (solo Cookie).
+
+### CDN Key Differences
+| CDN | Path Pattern | Content | Segments |
 |---|---|---|---|
-| POST verify.php | `h1::h2::ts::ep::99` | Full value | `substringBefore("::ep")` → `h1::h2::ts` |
-| POST net11.cc/play.php | `h1::h2::ts` | Same | Same (no ::ep suffix) |
+| `s21.freecdn4.top` | `/files/{internalId}/{quality}/` | 10-min preview | 60 JPG segments |
+| `s23.nm-cdn9.top` | `/files/{contentId}/{quality}/` | **Full content** | **1030+ JPG segments** |
 
-### Updated bypass flow
-1. ✅ Cached cookie check (<10 min)
-2. ✅ GET `tv/p.php` → 403 (Cloudflare)
-3. ✅ WebView bypass (5s timeout → fallback)
-4. **✅ HTTP POST `verify.php` via OkHttp no-redirect → extracts t_hash_t**
+### Token Format & Behavior
+```
+verify.php cookie:    h1::h2::ts::ep::99
+URL in= parameter:    h1::h2::ts::ep::99  (same, server rewrites hash2)
+Server rewritten:     h1::h2_new::ts::ep  (hash2 CHANGES)
+s23 URL in=:          h1::h2_new::ts::ep  (uses rewritten hash2)
+```
 
-### Files Changed
-- `Utils.kt` — bypass(): replaced `app.post()` with OkHttp `followRedirects=false`; added URLDecoder; WebView timeout 30→5s; interceptor uses `substringBefore("::ep")`
-- `NetflixProvider.kt` / `PrimevideoProvider.kt` — try bypass() first, getPlayHash() as fallback; original player.php test (confirmed "File not found") replaced with direct play.php→M3U8 flow as primary
+**KEY FINDING**: The raw cookie's hash2 does NOT work on s23. Only the **server-rewritten** hash2 (from the mobile/hls response) works. The rewrite happens per-content-id.
 
-### Relevant Files
-- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
-- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with direct M3U8 primary (play.php hash), then playlist.php fallback, then /newtv/player.php fallback
-- `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
+### Correct Headers (from cncverse tPacketCapture)
+```
+User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0
+X-Requested-With: app.netmirror.netmirrornew
+sec-ch-ua: "Android WebView";v="149", "Chromium";v="149", "Not)A;Brand";v="24"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Android"
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
+Referer: https://net52.cc/mobile/home?app=1
+Cookie: t_hash_t=<URL-encoded>; ott=nf|pv; hd=on
+```
 
-## Status Update (07 Jul 2026)
-### What WAS tried (all failed for full content):
-| Attempt | Result |
-|---|---|
-| `POST net52.cc/play.php` | **Dead** — returns `Page Not Found! err: 1002` |
-| `GET net52.cc/player.php` | **Dead** — returns `File not found.` |
-| `GET/POST net52.cc/newtv/player.php` | Returns `status:ok` + 10-min preview (same CDN, same 1961 bytes) |
-| `tv.imgcdn.kim/hls/` base | **404 error 2004** — removed from hlsBases (fixed) |
-| Cookie suffix `::ep::99` → `::ep::m` | **No change** — CDN still returns 60 segments |
-| URL `in=` token format changes | **No change** — CDN returns 1961 bytes regardless |
-| Both content IDs (81936153, 81403113) | **Both** return 10-min preview |
-| `hd=on` cookie in ExtractorLink headers | **No change** — CDN returns 1961 bytes |
-| Interceptor overwrites Cookie → `hd=on` on M3U8 (matching cncverse) | **No change** — CDN returns 1961 bytes |
+**CRITICAL**: `X-Requested-With` must be `app.netmirror.netmirrornew`, NOT `NetmirrorNewTV v1.0` (decompiled code had a different value than what cncverse actually sends).
 
-### Root cause
-The CDN **`s21.freecdn4.top`** enforces a **10-minute preview** (60 segments, ~1961 bytes per variant playlist) on ALL tokens/parameters we've tried. The cncverse API (`playlist.php` / `player.php`) only returns preview-quality HLS URLs pointing to this CDN.
+### Bypass Flow
+1. ✅ Cache: SharedPreferences `nf_cookie` + timestamp (<10 min)
+2. ✅ GET `tv/p.php` → Cloudflare 403
+3. ✅ WebView (5s timeout → fallback)
+4. ✅ **POST verify.php via OkHttp `followRedirects(false)`** → captures t_hash_t
 
-### Decompiled code replication status (ALL matched):
-| Aspect | cncverse (decompiled) | Our plugin | Match? |
-|---|---|---|---|
-| `newTvBaseHeaders` (6 headers) | Firefox UA + NetmirrorNewTV v1.0 | Same | ✅ |
-| `buildNewTvHeaders(ott, extra)` | Base + Ott + extra | Same | ✅ |
-| Bypass flow | Cache → tv/p.php → WebView → POST verify.php | Same | ✅ |
-| Cookie storage | `nf_cookie` + `nf_cookie_full` via SharedPrefs | Same (bypass saves) | ✅ |
-| `loadLinks` flow | cookies → playlistHeaders → playlist.php → Source[] → ExtractorLinks | Same | ✅ |
-| ExtractorLink setup | `setHeaders(playlistHeaders)`, referer=`mainUrl/mobile/home?app=1` | Same | ✅ |
-| `getVideoInterceptor` | Overwrite Cookie → `hd=on` on M3U8 requests | Same | ✅ |
-| Token in URL | `in=substringBefore("::ep") + "::ep"` | Same | ✅ |
-| Subscription model | Ads mode vs ₹20/mo subscription (ads removal only) | N/A | N/A |
+## Implementation (NetflixProvider.kt / PrimevideoProvider.kt)
 
-### Conclusion
-The **cncverse API is fundamentally limited to 10-minute previews** for the free tier. The subscription (₹20/month) only removes ads — it does NOT unlock full content. The decompiled code shows no premium API path or different CDN for full content. Either:
-1. Full content requires a separate paid API tier not present in the free decompiled APK
-2. The cncverse app uses a different mechanism (server-side proxy, different CDN contract) not visible in the code
+### `loadLinks` — Primary Flow
+```kotlin
+// 1. Get bypass token (verify.php → t_hash_t cookie)
+val cookieRaw = currentBypassToken  // h1::h2::ts::ep::99 (decoded)
 
-### Relevant Files
-- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
-- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with playlist.php primary, player.php fallback
-- `Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
+// 2. Get rewritten token from mobile/hls endpoint
+val inParam = cookieRaw.substringBefore("::ep") + "::ep::99"
+val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng",
+    headers = mobileHeaders)  // Chrome/149 WebView + sec-ch-ua + Cookie
 
-### Architectural Change (07 Jul 2026)
-| Change | Description |
-|---|---|
-| `getMainPage`/`search`/`load`/`getEpisodes` | Now use `apiBase` (tv.imgcdn.kim → `resolveApiUrl()`) with `mainUrl` (net52.cc) as fallback for `/newtv/` endpoints |
-| `loadLinks` | Already had this pattern — no change needed |
-| Scraping directo | Implementado como primary method en `loadLinks` — parsea HTML de `net52.cc/{netflix,movie,tv,watch}/{id}` buscando M3U8 |
-| `Descompilado NET/` | Verificado: es la app NetflixMirror standalone original (React Native, bytecode Hermes). No útil para extraer hash |
+// 3. Extract rewritten token from response
+val rewrittenToken = Regex("""in=([^&\s]+)""").find(mobileResp)?.groupValues?.get(1)
 
-### Current Status
-- **net52.cc y tv.imgcdn.kim están caídos** (07 Jul 2026) — no se puede probar nada
-- Cuando el sitio regrese, la prioridad es investigar cómo cncverse reproduce los videos completos (sniffear tráfico, comparar con el código decompilado)
+// 4. Construct s23 full-content URLs
+for (q in listOf("1080p", "720p")) {
+    val s23Url = "https://s23.nm-cdn9.top/files/$id/$q/$q.m3u8?in=$rewrittenToken"
+    // callback(ExtractorLink) with Cookie: hd=on; t_hash_t=<escaped>
+}
+```
+
+### Fallbacks (in order)
+1. ❌ ~~Scraping HTML~~ — reemplazado por mobile/hls
+2. `playlist.php` — preview only, pero mantiene compatibilidad
+3. `player.php` — preview only
+
+### `getVideoInterceptor`
+- Adds `Cookie: hd=on` to all `.m3u8` requests (preserves existing cookie from ExtractorLink)
+- Replaces `in=unknown::ep` watermark with bypass token
+- Fixes relative JPG segment URLs by appending `in=<token>` param
+- Does NOT strip audio/subtitle groups (s23 has everything on same CDN)
+
+## Current State (07 Jul 2026)
+- ✅ `newTvBaseHeaders` actualizado: Chrome/149 WebView + `app.netmirror.netmirrornew`
+- ✅ `loadLinks` usa mobile/hls → s23 como primario
+- ✅ Fallbacks: playlist.php → player.php
+- ✅ Bypass: OkHttp no-redirect POST verify.php
+- ✅ Interceptor: Cookie hd=on + token replacement
+- ✅ PlutoTVProvider: logs PLUTOTV + Clip.originalReleaseDate nullable fix
+- ✅ `tv.imgcdn.kim` confirmado VIVO para UI endpoints
+- ⚠️ Contenido completo verificado desde PC vía curl con token reescrito → 1030 JPG segments
+- ⏸️ Falta probar en dispositivo Android real (CloudStream) para ver si reproduce JPG-frame HLS
+
+## Files
+- `NetflixProvider.kt` — `loadLinks()` mobile/hls → s23 primary
+- `PrimevideoProvider.kt` — idem (ott="pv")
+- `Utils.kt` — `bypass()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`
+- `PlutotvProvider/PlutotvProvider.kt` — PlutoTV provider (separado)
 
 ## Next Steps
-1. ✅ **Fix `newTvBaseHeaders`** — done
-2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
-3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
-4. ✅ **Fix tv.imgcdn.kim 404 error** — removed from hlsBases
-5. ✅ **Test `hd=on` cookie + interceptor Cookie overwrite** — done, no change
-6. ⏸️ **Website down** — net52.cc y tv.imgcdn.kim no responden. Pausado hasta que vuelvan.
-7. 🔲 **Cuando el sitio regrese:**
-   - Sniffear tráfico de cncverse para ver cómo obtiene contenido completo (no preview)
-   - Descifrar cómo el CDN `nm-cdn9.top` (full content) se diferencia de `s21.freecdn4.top` (preview 10 min)
-   - Probar scraping directo de net52.cc (ya implementado)
-   - Si nada funciona, evaluar WebView embebido (capturar M3U8 del tráfico WebView)
+1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
+2. ✅ Verificar que los JPG segments de s23 se reproducen en CloudStream
+3. ⏸️ Si funciona, replicar en JioHotstarProvider.kt (ott="hs")

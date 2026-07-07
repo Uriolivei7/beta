@@ -203,86 +203,56 @@ class  NetflixProvider : MainAPI() {
                 currentBypassToken = playHash
             }
         }
-        val cookieValue = if (currentBypassToken.length > 10) currentBypassToken.replace("::ep::99", "::ep::m") else ""
-        val cookieStr = if (cookieValue.length > 10) "t_hash_t=$cookieValue; ott=nf; hd=on" else ""
-        val cookieHeader = if (cookieStr.isNotBlank()) mapOf("Cookie" to cookieStr) else emptyMap()
-        val urlToken = if (currentBypassToken.length > 10) currentBypassToken.substringBefore("::ep") else ""
 
-        // Browser headers matching cncverse decompiled provider-level headers
-        val browserHeaders = mapOf(
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-            "Cache-Control" to "max-age=0",
-            "Connection" to "keep-alive",
-            "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-            "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Android\"",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "same-origin",
-            "Sec-Fetch-User" to "?1",
-            "Upgrade-Insecure-Requests" to "1",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-            "X-Requested-With" to "XMLHttpRequest"
-        ) + cookieHeader
+        val cookieRaw = if (currentBypassToken.length > 10) currentBypassToken else ""
+        val cookieEscaped = if (cookieRaw.length > 10) URLEncoder.encode(cookieRaw, "UTF-8") else ""
+        val cookieHeader = if (cookieEscaped.length > 10) mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=nf; hd=on") else emptyMap()
 
-        // ---- PRIMARY: scrape net52.cc content page for direct M3U8 URLs ----
-        val pageUrls = listOf(
-            "$mainUrl/netflix/$id",
-            "$mainUrl/movie/$id",
-            "$mainUrl/tv/$id",
-            "$mainUrl/watch/$id",
-            "$mainUrl/home?cat=search&search=$id"
-        )
-        for (pageUrl in pageUrls) {
+        // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
+        if (cookieRaw.length > 10) {
             try {
-                val html = app.get(pageUrl, headers = browserHeaders).text
-                Log.e("NFSCRAPE", "page=$pageUrl len=${html.length} first200=${html.take(200)}")
-                // Search for M3U8 URLs in HTML, script tags, or JSON blobs
-                val m3u8Regex = Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""")
-                val matches = m3u8Regex.findAll(html).map { it.value }.toList().distinct()
-                if (matches.isNotEmpty()) {
-                    Log.e("NFSCRAPE", "Found ${matches.size} M3U8 URLs on $pageUrl")
-                    for (m3u8Url in matches) {
-                        val finalUrl = if (urlToken.length > 10 && m3u8Url.contains("in=unknown::ep"))
-                            m3u8Url.replace("in=unknown::ep", "in=$urlToken::ep") else m3u8Url
-                        val quality = getQualityFromName(finalUrl)
-                        callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
-                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = quality
-                        })
-                    }
-                    return true
-                }
-                // Search for hls/ paths (relative)
-                val relRegex = Regex("""["'](/hls/[^"'\s<>?]+\.m3u8[^"'\s<>]*)["']""")
-                val relMatches = relRegex.findAll(html).map { "$mainUrl${it.groupValues[1]}" }.toList().distinct()
-                if (relMatches.isNotEmpty()) {
-                    Log.e("NFSCRAPE", "Found ${relMatches.size} relative M3U8 paths on $pageUrl")
-                    for (m3u8Url in relMatches) {
-                        val finalUrl = if (urlToken.length > 10 && m3u8Url.contains("in=unknown::ep"))
-                            m3u8Url.replace("in=unknown::ep", "in=$urlToken::ep") else m3u8Url
-                        val quality = getQualityFromName(finalUrl)
-                        callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
-                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = quality
-                        })
-                    }
-                    return true
-                }
-                // Search for data-src, data-url, or embedded JSON with stream URLs
-                val dataRegex = Regex("""data-(?:src|url|video|stream)="([^"]+\.m3u8[^"]*)"""")
-                val dataMatches = dataRegex.findAll(html).map { it.groupValues[1] }.toList().distinct()
-                if (dataMatches.isNotEmpty()) {
-                    Log.e("NFSCRAPE", "Found ${dataMatches.size} data-attr M3U8 on $pageUrl")
-                    for (m3u8Url in dataMatches) {
-                        val finalUrl = if (m3u8Url.startsWith("http")) m3u8Url else "$mainUrl$m3u8Url"
-                        callback.invoke(newExtractorLink(name, name, finalUrl, type = ExtractorLinkType.M3U8) {
-                            this.headers = browserHeaders; this.referer = "$mainUrl/"; this.quality = getQualityFromName(finalUrl)
+                val inParam = cookieRaw.substringBefore("::ep") + "::ep::99"
+                val mobileHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                    "X-Requested-With" to "app.netmirror.netmirrornew",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+                    "sec-ch-ua-mobile" to "?0",
+                    "sec-ch-ua-platform" to "\"Android\"",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin",
+                    "Referer" to "$mainUrl/mobile/home?app=1"
+                ) + cookieHeader
+
+                val mobileUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
+                val mobileResp = app.get(mobileUrl, headers = mobileHeaders).text
+                Log.e("NF", "mobile/hls raw=${mobileResp.take(500)}")
+
+                val inMatch = Regex("""https://s21\.freecdn4\.top/files/\d+/\w+/[\w.]+\.m3u8\?in=([^&\s]+)""").find(mobileResp)
+                if (inMatch != null) {
+                    val rewrittenToken = inMatch.groupValues[1]
+                    Log.e("NF", "Rewritten token from server: $rewrittenToken")
+
+                    val s23Headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                        "X-Requested-With" to "app.netmirror.netmirrornew",
+                        "Referer" to "$mainUrl/mobile/home?app=1",
+                        "Cookie" to "hd=on; t_hash_t=$cookieEscaped"
+                    )
+
+                    for (q in listOf("1080p", "720p")) {
+                        val s23Url = "https://s23.nm-cdn9.top/files/$id/$q/$q.m3u8?in=$rewrittenToken"
+                        callback.invoke(newExtractorLink(name, name, s23Url, type = ExtractorLinkType.M3U8) {
+                            this.headers = s23Headers
+                            this.referer = "$mainUrl/mobile/home?app=1"
+                            this.quality = getQualityFromName(q)
                         })
                     }
                     return true
                 }
             } catch (e: Exception) {
-                Log.e("NFSCRAPE", "page $pageUrl error: ${e.message}")
+                Log.e("NF", "mobile/hls s23 failed: ${e.message}")
             }
         }
 
@@ -303,8 +273,8 @@ class  NetflixProvider : MainAPI() {
                             var file = source.file ?: continue
                             val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
                             val referer = "$mainUrl/mobile/home?app=1"
-                            if (urlToken.length > 10 && file.contains("in=unknown::ep")) {
-                                file = file.replace("in=unknown::ep", "in=$urlToken::ep")
+                            if (cookieRaw.length > 10 && file.contains("in=unknown::ep")) {
+                                file = file.replace("in=unknown::ep", "in=${cookieRaw.substringBefore("::ep")}::ep")
                             }
                             if (file.startsWith("http")) {
                                 callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
