@@ -214,45 +214,17 @@ class PrimevideoProvider : MainAPI() {
                 currentBypassToken = playHash
             }
         }
-        val cookieHeader = if (currentBypassToken.length > 10) mapOf("Cookie" to "t_hash_t=$currentBypassToken") else emptyMap()
+        // ::ep::99 = preview mode, ::ep::m = full movie — replace per old getPlaylistUrl logic
+        val cookieValue = if (currentBypassToken.length > 10) currentBypassToken.replace("::ep::99", "::ep::m") else ""
+        val cookieHeader = if (cookieValue.length > 10) mapOf("Cookie" to "t_hash_t=$cookieValue") else emptyMap()
         val urlToken = if (currentBypassToken.length > 10) currentBypassToken.substringBefore("::ep") else ""
 
-        // Primary: direct net52.cc M3U8 via play.php auth hash (pre-cncverse approach)
-        val playPhHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept" to "*/*", "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8")
-        val directHash = try {
-            val dpResp = app.post("$mainUrl/play.php", requestBody = FormBody.Builder().add("id", id).build(), headers = playPhHeaders)
-            val dpBody = dpResp.text
-            Log.e("PV", "play.php response: ${dpBody.take(200)}")
-            val dpParsed = tryParseJson<PlayHashResponse>(dpBody)
-            dpParsed?.h?.removePrefix("in=")?.substringBefore("::ep") ?: ""
-        } catch (e: Exception) { Log.e("PV", "play.php error: ${e.message}"); "" }
-        if (directHash.length > 10) {
-            val m3u8Url = "$mainUrl/hls/$id.m3u8?in=$directHash"
-            Log.e("PV", "Trying direct M3U8: $m3u8Url")
-            try {
-                val m3u8Body = app.get(m3u8Url, headers = cookieHeader + mapOf("Referer" to "$mainUrl/")).text
-                if (m3u8Body.startsWith("#EXTM3U")) {
-                    Log.e("PV", "Direct M3U8 OK, len=${m3u8Body.length}")
-                    callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
-                        this.headers = cookieHeader + mapOf("Referer" to "$mainUrl/")
-                        this.referer = "$mainUrl/"
-                        this.quality = getQualityFromName("")
-                    })
-                    return true
-                } else {
-                    Log.e("PV", "Direct M3U8 invalid body: ${m3u8Body.take(200)}")
-                }
-            } catch (e: Exception) {
-                Log.e("PV", "Direct M3U8 error: ${e.message}")
-            }
-        }
-
-        // Fallback 1: playlist.php returns Source[] (cncverse API)
+        // playlist.php returns Source[] (cncverse API) — full content not available, 10-min preview only
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
         val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
             "$mainUrl/playlist.php?id=$id")
-        val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/')).distinct()
+        // Only use mainUrl as HLS base — apiBase (tv.imgcdn.kim)/hls/ returns 404 always
+        val hlsBases = listOf(mainUrl.trimEnd('/'))
         for (plUrl in playlistUrls) {
             try {
                 val plRaw = app.get(plUrl, headers = playlistHeaders).text
