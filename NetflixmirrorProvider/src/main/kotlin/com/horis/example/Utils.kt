@@ -362,7 +362,8 @@ val newTvBaseHeaders = mapOf(
     "Expires"       to "0",
     "X-Requested-With" to "app.netmirror.netmirrornew",
     "User-Agent"    to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-    "Accept"        to "application/json, text/plain, */*"
+    "Accept"        to "application/json, text/plain, */*",
+    "Referer"       to "https://net52.cc/mobile/home?app=1"
 )
 
 val newTvDomains = listOf(
@@ -593,6 +594,94 @@ data class NewTvPlayerResponse(
     val status: String? = null,
     val video_link: String? = null,
     val referer: String? = null
+)
+
+// ---------------------------------------------------------------------------
+// Mobile API data classes (match original com.horis.cncverse.entities.*)
+// ---------------------------------------------------------------------------
+
+data class MobileSearchResult(
+    val id: String = "",
+    val t: String = ""
+)
+
+data class MobileSearchData(
+    val head: String? = null,
+    val searchResult: List<MobileSearchResult>? = null,
+    val type: Int? = null
+)
+
+data class MobileEpisode(
+    val complate: String = "",
+    val ep: String = "",
+    val id: String = "",
+    val s: String = "",
+    val t: String = "",
+    val time: String = ""
+)
+
+data class MobileSeason(
+    val ep: String = "",
+    val id: String = "",
+    val s: String = "",
+    val sele: String = ""
+)
+
+data class MobileSuggest(
+    val id: String = ""
+)
+
+data class MobilePostData(
+    val desc: String? = null,
+    val director: String? = null,
+    val ua: String? = null,
+    val episodes: List<MobileEpisode?>? = null,
+    val genre: String? = null,
+    val nextPage: Int? = null,
+    val nextPageSeason: String? = null,
+    val nextPageShow: Int? = null,
+    val season: List<MobileSeason>? = null,
+    val title: String? = null,
+    val year: String? = null,
+    val cast: String? = null,
+    val match: String? = null,
+    val runtime: String? = null,
+    val suggest: List<MobileSuggest>? = null
+)
+
+data class MobileEpisodesData(
+    val episodes: List<MobileEpisode>? = null,
+    val nextPage: Int = 0,
+    val nextPageSeason: String = "",
+    val nextPageShow: Int = 0
+)
+
+// Mobile browser-style headers (matches original cncverse)
+fun mobileHeaders(ott: String, cookie: String, extra: Map<String, String> = emptyMap()): Map<String, String> {
+    val headers = mutableMapOf(
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+        "Cache-Control" to "max-age=0",
+        "Connection" to "keep-alive",
+        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "same-origin",
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+        "X-Requested-With" to "XMLHttpRequest"
+    )
+    extra.forEach { (k, v) -> headers[k] = v }
+    return headers
+}
+
+fun mobileCookies(cookie: String, ott: String): Map<String, String> = mapOf(
+    "t_hash_t" to cookie,
+    "hd" to "on",
+    "ott" to ott
 )
 
 data class PlayHashResponse(
