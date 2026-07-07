@@ -201,15 +201,18 @@ class PrimevideoProvider : MainAPI() {
         val id = loadData.id
         Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
 
-        // Get play hash to replace in=unknown::ep watermark (no auth needed)
-        val playHash = getPlayHash(id)
-        if (playHash.isNotBlank()) {
-            Log.e("PV", "Got play hash: ${playHash.take(60)}")
-            currentBypassToken = playHash
+        // Try bypass first (t_hash_t cookie from verify.php POST)
+        val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
+        if (token.length > 10) {
+            Log.e("PV", "Got bypass token: ${token.take(60)}")
+            currentBypassToken = token
         } else {
-            Log.e("PV", "play hash empty, falling back to bypass")
-            val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
-            if (token.length > 10) currentBypassToken = token
+            Log.e("PV", "bypass failed, trying play hash")
+            val playHash = getPlayHash(id)
+            if (playHash.isNotBlank()) {
+                Log.e("PV", "Got play hash: ${playHash.take(60)}")
+                currentBypassToken = playHash
+            }
         }
         val cookieHeader = if (currentBypassToken.length > 10) mapOf("Cookie" to "t_hash_t=$currentBypassToken") else emptyMap()
 

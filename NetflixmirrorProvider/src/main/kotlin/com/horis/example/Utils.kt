@@ -26,9 +26,11 @@ import com.lagradost.nicehttp.NiceResponse
 import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
+import java.net.URLDecoder
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -193,6 +195,10 @@ suspend fun bypass(mainUrl: String): String {
         "Pragma" to "no-cache"
     )
     val formBody = FormBody.Builder().add("g-recaptcha-response", UUID.randomUUID().toString()).build()
+    val okClientNoRedirect = OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
     for (path in listOf("/verify.php", "/newtv/verify.php", "/newtv/auth.php", "/auth.php")) {
         try {
             val getResp = app.get("$mainUrl$path", headers = browserHeaders)
@@ -207,18 +213,30 @@ suspend fun bypass(mainUrl: String): String {
             }
         } catch (_: Exception) {}
         try {
-            val resp = app.post("$mainUrl$path", requestBody = formBody,
-                headers = browserHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"))
-            val text = resp.text
-            Log.e("BYPASS", "FB POST $path code=${resp.code} body=${text.take(300)}")
-            if (resp.code >= 400 || text.contains("Just a moment")) continue
-            val parsed = tryParseJson<NewTvTokenResponse>(text)
-            if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
-                NetflixMirrorStorage.saveCookie(parsed.token_hash); return parsed.token_hash
+            val okReq = okhttp3.Request.Builder()
+                .url("$mainUrl$path")
+                .post(formBody)
+                .apply {
+                    browserHeaders.forEach { (k, v) -> addHeader(k, v) }
+                    addHeader("Content-Type", "application/x-www-form-urlencoded")
+                }
+                .build()
+            val okResp = okClientNoRedirect.newCall(okReq).execute()
+            val setCookie = okResp.header("Set-Cookie", null)
+            Log.e("BYPASS", "FB POST $path code=${okResp.code} Set-Cookie=${setCookie?.take(100)}")
+            if (okResp.code < 400 || (okResp.code in 300..399 && setCookie != null)) {
+                val tHash = setCookie
+                    ?.split(";")
+                    ?.firstOrNull { it.trim().startsWith("t_hash_t=") }
+                    ?.substringAfter("=")
+                    ?.trim()
+                if (!tHash.isNullOrBlank() && tHash.length > 10) {
+                    val decoded = try { URLDecoder.decode(tHash, "UTF-8") } catch (_: Exception) { tHash }
+                    NetflixMirrorStorage.saveCookie(decoded)
+                    Log.e("BYPASS", "Got token via POST $path: ${decoded.take(60)}")
+                    return decoded
+                }
             }
-            val tHash = resp.headers.values("Set-Cookie").firstOrNull { it.startsWith("t_hash_t=") }
-                ?.substringAfter("=")?.substringBefore(";")
-            if (tHash != null) { NetflixMirrorStorage.saveCookie(tHash); return tHash }
         } catch (e: Exception) { Log.e("BYPASS", "FB POST $path failed: ${e.message}") }
     }
     Log.e("BYPASS", "All bypass attempts failed, returning empty token")
@@ -239,7 +257,7 @@ private suspend fun webViewBypass(mainUrl: String): String? {
                         cont.resume(null)
                     }
                 }
-                handler.postDelayed(timeout, 30000)
+                handler.postDelayed(timeout, 5000)
 
                 val view = WebView(ctx).apply {
                     settings.javaScriptEnabled = true
@@ -644,7 +662,8 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             // Replace in=unknown::ep watermark with bypass token if available
             if (currentBypassToken.length > 10 && fixed.contains("in=unknown::ep")) {
                 val oldFixed = fixed
-                fixed = fixed.replace("in=unknown::ep", "in=$currentBypassToken::ep")
+                val urlToken = currentBypassToken.substringBefore("::ep")
+                fixed = fixed.replace("in=unknown::ep", "in=$urlToken::ep")
                 if (fixed != oldFixed) {
                     Log.d("CdnFix", "Replaced watermark with bypass token in: $url")
                 }

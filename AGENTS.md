@@ -86,27 +86,47 @@ Sec-Fetch-Dest: document, Sec-Fetch-Mode: navigate, Sec-Fetch-Site: same-origin,
 | `player.php` | tv.imgcdn.kim | Returns `{status: "otp"/"ok", video_link: "...", referer: "..."}` |
 | `playlist.php` | netXX.cc | Returns `Source[]` with M3U8 URLs (primary flow) |
 
-### Current Blockers
-1. **`bypass()`** fails — all mobiledetect.* domains unreachable (connection timeout after 10s, ALL 24 domains); no token_hash retrieved anywhere
-2. **`playlist.php` returns relative paths (`/hls/ID.m3u8?in=unknown::ep`)** — 404 on `tv.imgcdn.kim`; correct path from player.php is `/newtv/hls/nf/ID.m3u8`
-3. **`$apiBase/newtv/playlist.php` = "File not found."** — playlist endpoint only works on `mainUrl` (net52.cc), not on tv.imgcdn.kim
+### Major Breakthrough (07 Jul 2026): Bypass fixed — `POST verify.php` returns t_hash_t
+**`POST https://net52.cc/verify.php` with ANY `g-recaptcha-response` value returns `Set-Cookie: t_hash_t=...` in a 301!**
 
-### Key Open Questions
-- What is the correct HLS base URL for the playlist.php relative paths? (net52.cc? net11.cc?)
-- Why do all 24 mobiledetect.* domains timeout from this network (172.23.x.x private IP)?
-- Could `in=unknown::ep` (invalid hash) change the M3U8 path? Would a valid hash produce different paths?
-- How does cncverse bypass work if mobiledetect domains are unreachable? Does it use a hardcoded API URL?
+No captcha needed — server accepts any random token and issues a valid t_hash_t (3-day expiry).
+
+**Root cause of previous bypass failure:**
+- CloudStream's `Requests.post()` follows HTTP redirects
+- The 301 from net52.cc/verify.php redirects to `/home` (sandbox) or net11.cc/verify.php (user device)
+- net11.cc has NXDOMAIN on user device → exception thrown, discarding the Set-Cookie
+- **Fix**: OkHttp with `followRedirects(false)` + `followSslRedirects(false)` captures the cookie before any redirect
+
+**Token format:**
+```
+t_hash_t=a3398a4472afd0d309c3e64f5b011898%3A%3Accd8cadf32a6b2247d930975c2e47431%3A%3A1783429065%3A%3Aep%3A%3A99
+```
+URL-encoded (`%3A%3A` = `::`) → URL-decode → `hash1::hash2::timestamp::ep::99`
+
+### Token Usage
+| Source | Raw value | For Cookie header | For URL `in=` replace |
+|---|---|---|---|
+| POST verify.php | `h1::h2::ts::ep::99` | Full value | `substringBefore("::ep")` → `h1::h2::ts` |
+| POST net11.cc/play.php | `h1::h2::ts` | Same | Same (no ::ep suffix) |
+
+### Updated bypass flow
+1. ✅ Cached cookie check (<10 min)
+2. ✅ GET `tv/p.php` → 403 (Cloudflare)
+3. ✅ WebView bypass (5s timeout → fallback)
+4. **✅ HTTP POST `verify.php` via OkHttp no-redirect → extracts t_hash_t**
+
+### Files Changed
+- `Utils.kt` — bypass(): replaced `app.post()` with OkHttp `followRedirects=false`; added URLDecoder; WebView timeout 30→5s; interceptor uses `substringBefore("::ep")`
+- `NetflixProvider.kt` / `PrimevideoProvider.kt` — try bypass() first, getPlayHash() as fallback
 
 ### Relevant Files
-- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders` (fixed), `NewTvPlayerResponse` (no usertoken), data classes (`Source`, `PlaylistItem`, `PlaylistTrack`), `getPlaylistUrl` (kept for JioHotstar)
-- `NetflixProvider.kt` — `loadLinks()` with playlist.php→Source[] primary flow + player.php fallback
-- `PrimevideoProvider.kt` — same structure
+- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
+- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with player.php primary + playlist.php fallback
 - `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
 ## Next Steps
-1. ✅ **Fix `newTvBaseHeaders`** — done, matches decompiled values
+1. ✅ **Fix `newTvBaseHeaders`** — done
 2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
-3. ✅ **Implement `playlist.php` → `Source[]` primary flow** — done in both providers
-4. 🔲 **Find correct HLS base URL** — determine whether `/hls/ID.m3u8` resolves to net52.cc, net11.cc, or requires a valid auth hash to even exist
-5. 🔲 **Fix bypass** — mobiledetect.* unreachable; consider hardcoding `apiBase = https://tv.imgcdn.kim` as fallback or investigating why network blocks these domains
-6. 🔲 **if bypass stays broken** — investigate whether cncverse uses hardcoded API URL or different auth mechanism that doesn't depend on mobiledetect domains
+3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
+4. 🔲 **Test on user device** — verify t_hash_t cookie allows watermark-free playback via player.php
+5. 🔲 **Fix playlist.php** — if player.php fails, fix playlist.php flow (relative path resolution, proper headers with t_hash_t)
