@@ -349,9 +349,18 @@ class  NetflixProvider : MainAPI() {
                     }
                     Log.e("NF", "Video CDN: $cdnHost Rewritten token: $rewrittenToken")
 
-                    // Extract audio group lines from master response
+                    // Extract audio group lines from master response, add rewritten token to each URI
                     val audioLines = Regex("""^#EXT-X-MEDIA:TYPE=AUDIO,.*""", RegexOption.MULTILINE)
-                        .findAll(masterResp).map { it.value }.joinToString("\n")
+                        .findAll(masterResp).map { it.value }
+                        .map { line ->
+                            if (line.contains("URI=\"")) {
+                                line.replace(Regex("""URI="([^"]+)"""")) { match ->
+                                    val uri = match.groupValues[1]
+                                    val sep = if (uri.contains("?")) "&" else "?"
+                                    """URI="$uri${sep}in=$rewrittenToken""""
+                                }
+                            } else line
+                        }.joinToString("\n")
 
                     // Extract all video variant lines and rewrite s21→CDN
                     val variantRegex = Regex("""(#EXT-X-STREAM-INF:.*)\n(https://s\d+\.freecdn\d*\.top/files/\d+/\w+/.+)""")

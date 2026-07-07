@@ -33,6 +33,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody
 import okhttp3.Protocol
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -749,9 +750,25 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 }
             }
         }
-        // Add hd=on to Cookie for M3U8 requests (preserving existing t_hash_t, ott=nf)
-        if (url.contains(".m3u8")) {
-            req = req.newBuilder().addHeader("Cookie", "hd=on").build()
+        // Add hd=on + t_hash_t to Cookie for CDN requests (nm-cdn, freecdn, imgcdn)
+        val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+        if (cdnHost.contains("nm-cdn") || cdnHost.contains("freecdn") || cdnHost.contains("imgcdn")) {
+            val existing = req.header("Cookie") ?: ""
+            val parts = mutableListOf<String>()
+            if (existing.isNotBlank()) {
+                // Remove any existing hd and t_hash_t to avoid duplicates
+                existing.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach {
+                    if (!it.startsWith("hd=") && !it.startsWith("t_hash_t=")) {
+                        parts.add(it)
+                    }
+                }
+            }
+            parts.add("hd=on")
+            if (currentBypassToken.length > 10) {
+                val tokenEncoded = try { URLEncoder.encode(currentBypassToken, "UTF-8") } catch (_: Exception) { currentBypassToken }
+                parts.add("t_hash_t=$tokenEncoded")
+            }
+            req = req.newBuilder().header("Cookie", parts.joinToString("; ")).build()
         }
         Log.d("CdnFix", "Interceptor firing for: $url")
         val resp: Response
@@ -788,7 +805,8 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 var segmentFixed = 0
                 fixed = relSegmentRegex.replace(fixed) { match ->
                     val line = match.value.trim()
-                    if (line.isBlank() || line.startsWith("http") || line.contains("in=")) line
+                    if (line.isBlank() || line.contains("in=")) line
+                    else if (line.startsWith("http") && (line.contains(".m3u8") || line.contains(".ts") || line.contains(".aac") || line.contains(".mp4"))) line
                     else {
                         segmentFixed++
                         if (line.contains("?")) "$line&in=$inParam" else "$line?in=$inParam"
