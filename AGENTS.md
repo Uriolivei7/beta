@@ -117,19 +117,16 @@ URL-encoded (`%3A%3A` = `::`) → URL-decode → `hash1::hash2::timestamp::ep::9
 
 ### Files Changed
 - `Utils.kt` — bypass(): replaced `app.post()` with OkHttp `followRedirects=false`; added URLDecoder; WebView timeout 30→5s; interceptor uses `substringBefore("::ep")`
-- `NetflixProvider.kt` / `PrimevideoProvider.kt` — try bypass() first, getPlayHash() as fallback
+- `NetflixProvider.kt` / `PrimevideoProvider.kt` — try bypass() first, getPlayHash() as fallback; original player.php test (confirmed "File not found") replaced with direct play.php→M3U8 flow as primary
 
 ### Relevant Files
 - `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
-- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with original player.php test first, then playlist.php primary, then /newtv/player.php fallback
+- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with direct M3U8 primary (play.php hash), then playlist.php fallback, then /newtv/player.php fallback
 - `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
 ## Next Steps
 1. ✅ **Fix `newTvBaseHeaders`** — done
 2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
 3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
-4. 🔲 **Test on user device** — verify which endpoint returns full-length content (not 10-min preview):
-   - Primary: `$mainUrl/player.php?id=ID` (original, no `/newtv/` prefix) with t_hash_t cookie
-   - Fallback 1: `playlist.php` (existing flow, returns 10-min preview)
-   - Fallback 2: `tv.imgcdn.kim/newtv/player.php` (existing flow, returns 10-min preview)
-5. 🔲 Once tested: if original player.php works, simplify by removing playlist.php and /newtv/player.php fallback entirely
+4. 🔲 **Test direct net52.cc M3U8 (play.php hash)** — primary flow now tries `POST net52.cc/play.php` then `GET net52.cc/hls/ID.m3u8?in=hash` with bypass cookie; verify logcat for body length — full episode should be >1961 bytes (10-min preview = ~1961 bytes, full episode = ~10000+ bytes)
+5. 🔲 If direct M3U8 also returns 10-min preview, the limitation is on net52.cc server-side; consider alternative provider or scraping approach
