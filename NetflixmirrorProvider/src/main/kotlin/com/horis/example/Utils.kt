@@ -358,9 +358,16 @@ val newTvBaseHeaders = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma"        to "no-cache",
     "Expires"       to "0",
-    "X-Requested-With" to "NetmirrorNewTV v1.0",
-    "User-Agent"    to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
-    "Accept"        to "application/json, text/plain, */*"
+    "X-Requested-With" to "app.netmirror.netmirrornew",
+    "User-Agent"    to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+    "Accept"        to "application/json, text/plain, */*",
+    "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+    "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+    "sec-ch-ua-mobile" to "?0",
+    "sec-ch-ua-platform" to "\"Android\"",
+    "sec-fetch-dest" to "empty",
+    "sec-fetch-mode" to "cors",
+    "sec-fetch-site" to "same-origin"
 )
 
 val newTvDomains = listOf(
@@ -623,9 +630,9 @@ fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
         var req = chain.request()
         val url = req.url.toString()
-        // Match cncverse exactly: overwrite Cookie with hd=on for M3U8 requests
+        // Add hd=on to Cookie for M3U8 requests (preserving existing t_hash_t, ott=nf)
         if (url.contains(".m3u8")) {
-            req = req.newBuilder().header("Cookie", "hd=on").build()
+            req = req.newBuilder().addHeader("Cookie", "hd=on").build()
         }
         Log.d("CdnFix", "Interceptor firing for: $url")
         val resp: Response

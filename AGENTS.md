@@ -135,30 +135,42 @@ URL-encoded (`%3A%3A` = `::`) → URL-decode → `hash1::hash2::timestamp::ep::9
 | Cookie suffix `::ep::99` → `::ep::m` | **No change** — CDN still returns 60 segments |
 | URL `in=` token format changes | **No change** — CDN returns 1961 bytes regardless |
 | Both content IDs (81936153, 81403113) | **Both** return 10-min preview |
+| `hd=on` cookie in ExtractorLink headers | **No change** — CDN returns 1961 bytes |
+| Interceptor overwrites Cookie → `hd=on` on M3U8 (matching cncverse) | **No change** — CDN returns 1961 bytes |
 
 ### Root cause
-The CDN **`s21.freecdn4.top`** enforces a **10-minute preview** (60 segments, ~1961 bytes per variant playlist) on ALL tokens/parameters. This is NOT a bypass or token issue — it's a server-side limitation. The cncverse API (`playlist.php` / `player.php`) only returns preview-quality HLS URLs pointing to this CDN.
+The CDN **`s21.freecdn4.top`** enforces a **10-minute preview** (60 segments, ~1961 bytes per variant playlist) on ALL tokens/parameters we've tried. The cncverse API (`playlist.php` / `player.php`) only returns preview-quality HLS URLs pointing to this CDN.
 
-The **cncverse mobile app** likely has a **premium/paid tier** that unlocks full content on a different CDN, or uses a different API path not present in the free decompiled code.
+### Decompiled code replication status (ALL matched):
+| Aspect | cncverse (decompiled) | Our plugin | Match? |
+|---|---|---|---|
+| `newTvBaseHeaders` (6 headers) | Firefox UA + NetmirrorNewTV v1.0 | Same | ✅ |
+| `buildNewTvHeaders(ott, extra)` | Base + Ott + extra | Same | ✅ |
+| Bypass flow | Cache → tv/p.php → WebView → POST verify.php | Same | ✅ |
+| Cookie storage | `nf_cookie` + `nf_cookie_full` via SharedPrefs | Same (bypass saves) | ✅ |
+| `loadLinks` flow | cookies → playlistHeaders → playlist.php → Source[] → ExtractorLinks | Same | ✅ |
+| ExtractorLink setup | `setHeaders(playlistHeaders)`, referer=`mainUrl/mobile/home?app=1` | Same | ✅ |
+| `getVideoInterceptor` | Overwrite Cookie → `hd=on` on M3U8 requests | Same | ✅ |
+| Token in URL | `in=substringBefore("::ep") + "::ep"` | Same | ✅ |
+| Subscription model | Ads mode vs ₹20/mo subscription (ads removal only) | N/A | N/A |
 
-### New Attempt (07 Jul 2026)
-Based on re-reading decompiled code:
-1. **`hd=on` cookie** — cncverse interceptor sets `Cookie: hd=on` on ALL M3U8 requests; we now add this
-2. **Remove `::ep` from URL `in=` parameter** — play.php returns 3-part hash (no `::ep`); `::ep` in URL may signal preview mode
-
-Changes made to both `NetflixProvider.kt` and `PrimevideoProvider.kt`:
-- `cookieHeader` now sends `t_hash_t=...; hd=on` (was just `t_hash_t=...`)
-- URL `in=` replacement changed from `in=$urlToken::ep` → `in=$urlToken` (no `::ep` suffix)
+### Conclusion
+The **cncverse API is fundamentally limited to 10-minute previews** for the free tier. The subscription (₹20/month) only removes ads — it does NOT unlock full content. The decompiled code shows no premium API path or different CDN for full content. Either:
+1. Full content requires a separate paid API tier not present in the free decompiled APK
+2. The cncverse app uses a different mechanism (server-side proxy, different CDN contract) not visible in the code
 
 ### Relevant Files
 - `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
 - `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with playlist.php primary, player.php fallback
-- `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
+- `Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
 ## Next Steps
 1. ✅ **Fix `newTvBaseHeaders`** — done
 2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
 3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
 4. ✅ **Fix tv.imgcdn.kim 404 error** — removed from hlsBases
-5. 🔲 **Test `hd=on` cookie + remove `::ep` from URL `in=`** — just applied; test if CDN returns full content
-6. 🔲 If still 10-min preview, cncverse API is fundamentally limited to preview; consider: (a) alternative NetMirror API domains, (b) web scraping net52.cc, (c) different provider entirely
+5. ✅ **Test `hd=on` cookie + interceptor Cookie overwrite** — done, no change
+6. 🔲 **Alternative approach needed** — cncverse API gives 10-min preview only. Options:
+   (a) Web scrape net52.cc directly for M3U8 URLs (original NetflixMirror approach)
+   (b) Try different provider entirely (scrape or API-based)
+   (c) Accept 10-min preview as-is
