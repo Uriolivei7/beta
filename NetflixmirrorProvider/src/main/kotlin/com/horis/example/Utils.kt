@@ -630,9 +630,9 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 fixed = fixed
                     .replace(Regex("^#EXT-X-MEDIA:TYPE=AUDIO,[^\n]*\n?", RegexOption.MULTILINE), "")
                     .replace(Regex("^#EXT-X-MEDIA:TYPE=SUBTITLES,[^\n]*\n?", RegexOption.MULTILINE), "")
-                    .replace(Regex("""AUDIO="[^"]*""""), "")
-                    .replace(Regex("""SUBTITLES="[^"]*""""), "")
-                    .replace(Regex("""CLOSED-CAPTIONS=[^ ]*"""), "")
+                    .replace(Regex("""AUDIO="[^"]*","""), "")
+                    .replace(Regex("""SUBTITLES="[^"]*","""), "")
+                    .replace(Regex(""",CLOSED-CAPTIONS=[^\n]*"""), "")
                     .trim()
                 if (fixed != oldFixed) {
                     Log.d("CdnFix", "Stripped audio/subtitle groups from master playlist: $url")
