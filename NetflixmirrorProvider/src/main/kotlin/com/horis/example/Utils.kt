@@ -663,7 +663,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             if (currentBypassToken.length > 10 && fixed.contains("in=unknown::ep")) {
                 val oldFixed = fixed
                 val urlToken = currentBypassToken.substringBefore("::ep")
-                fixed = fixed.replace("in=unknown::ep", "in=$urlToken::ep")
+                fixed = fixed.replace("in=unknown::ep", "in=$urlToken")
                 if (fixed != oldFixed) {
                     Log.d("CdnFix", "Replaced watermark with bypass token in: $url")
                 }

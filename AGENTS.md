@@ -124,9 +124,41 @@ URL-encoded (`%3A%3A` = `::`) → URL-decode → `hash1::hash2::timestamp::ep::9
 - `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with direct M3U8 primary (play.php hash), then playlist.php fallback, then /newtv/player.php fallback
 - `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
+## Status Update (07 Jul 2026)
+### What WAS tried (all failed for full content):
+| Attempt | Result |
+|---|---|
+| `POST net52.cc/play.php` | **Dead** — returns `Page Not Found! err: 1002` |
+| `GET net52.cc/player.php` | **Dead** — returns `File not found.` |
+| `GET/POST net52.cc/newtv/player.php` | Returns `status:ok` + 10-min preview (same CDN, same 1961 bytes) |
+| `tv.imgcdn.kim/hls/` base | **404 error 2004** — removed from hlsBases (fixed) |
+| Cookie suffix `::ep::99` → `::ep::m` | **No change** — CDN still returns 60 segments |
+| URL `in=` token format changes | **No change** — CDN returns 1961 bytes regardless |
+| Both content IDs (81936153, 81403113) | **Both** return 10-min preview |
+
+### Root cause
+The CDN **`s21.freecdn4.top`** enforces a **10-minute preview** (60 segments, ~1961 bytes per variant playlist) on ALL tokens/parameters. This is NOT a bypass or token issue — it's a server-side limitation. The cncverse API (`playlist.php` / `player.php`) only returns preview-quality HLS URLs pointing to this CDN.
+
+The **cncverse mobile app** likely has a **premium/paid tier** that unlocks full content on a different CDN, or uses a different API path not present in the free decompiled code.
+
+### New Attempt (07 Jul 2026)
+Based on re-reading decompiled code:
+1. **`hd=on` cookie** — cncverse interceptor sets `Cookie: hd=on` on ALL M3U8 requests; we now add this
+2. **Remove `::ep` from URL `in=` parameter** — play.php returns 3-part hash (no `::ep`); `::ep` in URL may signal preview mode
+
+Changes made to both `NetflixProvider.kt` and `PrimevideoProvider.kt`:
+- `cookieHeader` now sends `t_hash_t=...; hd=on` (was just `t_hash_t=...`)
+- URL `in=` replacement changed from `in=$urlToken::ep` → `in=$urlToken` (no `::ep` suffix)
+
+### Relevant Files
+- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders`, data classes, interceptor
+- `NetflixProvider.kt` / `PrimevideoProvider.kt` — `loadLinks()` with playlist.php primary, player.php fallback
+- `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
+
 ## Next Steps
 1. ✅ **Fix `newTvBaseHeaders`** — done
 2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
 3. ✅ **Fix bypass (POST verify.php with no-redirect)** — done
-4. 🔲 **Test direct net52.cc M3U8 (play.php hash)** — primary flow now tries `POST net52.cc/play.php` then `GET net52.cc/hls/ID.m3u8?in=hash` with bypass cookie; verify logcat for body length — full episode should be >1961 bytes (10-min preview = ~1961 bytes, full episode = ~10000+ bytes)
-5. 🔲 If direct M3U8 also returns 10-min preview, the limitation is on net52.cc server-side; consider alternative provider or scraping approach
+4. ✅ **Fix tv.imgcdn.kim 404 error** — removed from hlsBases
+5. 🔲 **Test `hd=on` cookie + remove `::ep` from URL `in=`** — just applied; test if CDN returns full content
+6. 🔲 If still 10-min preview, cncverse API is fundamentally limited to preview; consider: (a) alternative NetMirror API domains, (b) web scraping net52.cc, (c) different provider entirely

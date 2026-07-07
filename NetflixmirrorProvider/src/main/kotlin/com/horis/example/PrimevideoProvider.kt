@@ -216,7 +216,7 @@ class PrimevideoProvider : MainAPI() {
         }
         // ::ep::99 = preview mode, ::ep::m = full movie — replace per old getPlaylistUrl logic
         val cookieValue = if (currentBypassToken.length > 10) currentBypassToken.replace("::ep::99", "::ep::m") else ""
-        val cookieHeader = if (cookieValue.length > 10) mapOf("Cookie" to "t_hash_t=$cookieValue") else emptyMap()
+        val cookieHeader = if (cookieValue.length > 10) mapOf("Cookie" to "t_hash_t=$cookieValue; hd=on") else emptyMap()
         val urlToken = if (currentBypassToken.length > 10) currentBypassToken.substringBefore("::ep") else ""
 
         // playlist.php returns Source[] (cncverse API) — full content not available, 10-min preview only
@@ -240,7 +240,7 @@ class PrimevideoProvider : MainAPI() {
                             val referer = "$mainUrl/mobile/home?app=1"
                             // Replace in=unknown::ep with real token in request URL
                             if (urlToken.length > 10 && file.contains("in=unknown::ep")) {
-                                file = file.replace("in=unknown::ep", "in=$urlToken::ep")
+                                file = file.replace("in=unknown::ep", "in=$urlToken")
                                 Log.e("PV", "Replaced in=unknown with token in ExtractorLink URL")
                             }
                             if (file.startsWith("http")) {
