@@ -648,19 +648,19 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val inParam = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
-            // Strip audio/subtitle groups from master playlist to avoid fetching
-            // separate audio CDN (nm-cdn*.top) which may be unreachable
+            // Rewrite s21/s25 freecdn video URLs in master playlist to use full-content CDN
             if (fixed.contains("#EXT-X-STREAM-INF:")) {
-                val oldFixed = fixed
-                fixed = fixed
-                    .replace(Regex("^#EXT-X-MEDIA:TYPE=AUDIO,[^\n]*\n?", RegexOption.MULTILINE), "")
-                    .replace(Regex("^#EXT-X-MEDIA:TYPE=SUBTITLES,[^\n]*\n?", RegexOption.MULTILINE), "")
-                    .replace(Regex("""AUDIO="[^"]*","""), "")
-                    .replace(Regex("""SUBTITLES="[^"]*","""), "")
-                    .replace(Regex(""",CLOSED-CAPTIONS=[^\n]*"""), "")
-                    .trim()
-                if (fixed != oldFixed) {
-                    Log.d("CdnFix", "Stripped audio/subtitle groups from master playlist: $url")
+                val cdnHost = Regex("""URI="https://([^/]+)/files/""").find(fixed)?.groupValues?.get(1)
+                val contentId = Regex("""/files/(\d+)/""").find(fixed)?.groupValues?.get(1)
+                if (cdnHost != null && contentId != null) {
+                    val oldFixed = fixed
+                    // Replace freecdn video URLs: s21.freecdn4.top/files/{internalId}/ → {cdnHost}/files/{contentId}/
+                    fixed = fixed.replace(Regex("""https://s\d+\.freecdn\d*\.top/files/\d+/"""), "https://$cdnHost/files/$contentId/")
+                    if (fixed != oldFixed) {
+                        Log.d("CdnFix", "Rewrote freecdn→$cdnHost in master playlist: $url")
+                    }
+                } else {
+                    Log.w("CdnFix", "FAILED to extract CDN from master playlist. cdnHost=$cdnHost contentId=$contentId url=$url")
                 }
             }
             // Replace in=unknown::ep watermark with bypass token if available

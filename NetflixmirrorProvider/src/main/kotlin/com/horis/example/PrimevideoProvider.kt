@@ -223,7 +223,7 @@ class PrimevideoProvider : MainAPI() {
         // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
         if (cookieRaw.length > 10) {
             try {
-                val inParam = cookieRaw.substringBefore("::ep") + "::ep::99"
+                val inParam = cookieRaw.substringBefore("::ep") + "::ep::m"
                 val mobileHeaders = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
                     "X-Requested-With" to "app.netmirror.netmirrornew",
@@ -237,32 +237,34 @@ class PrimevideoProvider : MainAPI() {
                     "Referer" to "$mainUrl/mobile/home?app=1"
                 ) + cookieHeader
 
-                val mobileUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
+                val mobileUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng"
                 val mobileResp = app.get(mobileUrl, headers = mobileHeaders).text
                 Log.e("PV", "mobile/hls raw=${mobileResp.take(500)}")
 
-                val inMatch = Regex("""https://s21\.freecdn4\.top/files/\d+/\w+/[\w.]+\.m3u8\?in=([^&\s]+)""").find(mobileResp)
-                if (inMatch != null) {
-                    val rewrittenToken = inMatch.groupValues[1]
-                    Log.e("PV", "Rewritten token from server: $rewrittenToken")
+                // Pass the master playlist URL to CloudStream with the original cookie token
+                // Server rewrites hash2 fresh on each request; interceptor rewrites s21→CDN
+                val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on"
+                Log.e("PV", "Master URL: $masterUrl")
 
-                    val s23Headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-                        "X-Requested-With" to "app.netmirror.netmirrornew",
-                        "Referer" to "$mainUrl/mobile/home?app=1",
-                        "Cookie" to "hd=on; t_hash_t=$cookieEscaped"
-                    )
+                val masterHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                    "X-Requested-With" to "app.netmirror.netmirrornew",
+                    "Referer" to "$mainUrl/mobile/home?app=1",
+                    "Cookie" to "hd=on; t_hash_t=$cookieEscaped",
+                    "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+                    "sec-ch-ua-mobile" to "?0",
+                    "sec-ch-ua-platform" to "\"Android\"",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin"
+                )
 
-                    for (q in listOf("1080p", "720p")) {
-                        val s23Url = "https://s23.nm-cdn9.top/files/$id/$q/$q.m3u8?in=$rewrittenToken"
-                        callback.invoke(newExtractorLink(name, name, s23Url, type = ExtractorLinkType.M3U8) {
-                            this.headers = s23Headers
-                            this.referer = "$mainUrl/mobile/home?app=1"
-                            this.quality = getQualityFromName(q)
-                        })
-                    }
-                    return true
-                }
+                callback.invoke(newExtractorLink(name, name, masterUrl, type = ExtractorLinkType.M3U8) {
+                    this.headers = masterHeaders
+                    this.referer = "$mainUrl/mobile/home?app=1"
+                    this.quality = getQualityFromName("720p")
+                })
+                return true
             } catch (e: Exception) {
                 Log.e("PV", "mobile/hls s23 failed: ${e.message}")
             }
