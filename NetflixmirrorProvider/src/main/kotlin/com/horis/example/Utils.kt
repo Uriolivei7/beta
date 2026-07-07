@@ -182,16 +182,17 @@ suspend fun bypass(mainUrl: String): String {
 
     // Try 3: HTTP-based on mainUrl
     val browserHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "XMLHttpRequest",
-        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+        "X-Requested-With" to "app.netmirror.netmirrornew",
+        "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "Android",
+        "Sec-Fetch-Dest" to "empty",
+        "Sec-Fetch-Mode" to "cors",
         "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.5",
-        "Referer" to "$mainUrl/",
+        "Referer" to "$mainUrl/mobile/home?app=1",
         "Origin" to mainUrl,
         "Cache-Control" to "no-cache",
         "Pragma" to "no-cache"
@@ -214,18 +215,20 @@ suspend fun bypass(mainUrl: String): String {
                 }
             }
         } catch (_: Exception) {}
-        try {
-            val okReq = okhttp3.Request.Builder()
-                .url("$mainUrl$path")
-                .post(formBody)
-                .apply {
-                    browserHeaders.forEach { (k, v) -> addHeader(k, v) }
-                    addHeader("Content-Type", "application/x-www-form-urlencoded")
-                }
-                .build()
-            val okResp = okClientNoRedirect.newCall(okReq).execute()
-            val setCookie = okResp.header("Set-Cookie", null)
-            Log.e("BYPASS", "FB POST $path code=${okResp.code} Set-Cookie=${setCookie?.take(100)}")
+            try {
+                val okReq = okhttp3.Request.Builder()
+                    .url("$mainUrl$path")
+                    .post(formBody)
+                    .apply {
+                        browserHeaders.forEach { (k, v) -> addHeader(k, v) }
+                        addHeader("Content-Type", "application/x-www-form-urlencoded")
+                    }
+                    .build()
+                val okResp = okClientNoRedirect.newCall(okReq).execute()
+                val allSetCookies = okResp.headers("Set-Cookie")
+                val setCookie = okResp.header("Set-Cookie", null)
+                Log.e("BYPASS", "FB POST $path code=${okResp.code} All Set-Cookie=$allSetCookies")
+                Log.e("BYPASS", "FB POST $path body=${okResp.body?.string()?.take(2000)}")
             if (okResp.code < 400 || (okResp.code in 300..399 && setCookie != null)) {
                 val tHash = setCookie
                     ?.split(";")

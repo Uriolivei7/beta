@@ -237,25 +237,26 @@ class  NetflixProvider : MainAPI() {
         }
 
         val cookieRaw = if (currentBypassToken.length > 10) currentBypassToken else ""
-        // Ensure 5-part format: h1::h2::ts::ep::m
-        val cookie5 = if (cookieRaw.contains("::ep::")) cookieRaw
-            else cookieRaw + "::${System.currentTimeMillis() / 1000}::ep::m"
+        // Token del bypass puede ser h1::h2 (2 partes) o h1::h2::ts::ep::m (antiguo)
+        val inParam = if (cookieRaw.contains("::ep::")) cookieRaw
+            else cookieRaw + "::ep::m"
+        val cookie5 = cookieRaw
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=nf; hd=on")
 
         // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
         if (cookie5.length > 10) {
             try {
-                val inParam = cookie5.substringBefore("::ep") + "::ep::m"
                 val mobileHeaders = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
                     "X-Requested-With" to "app.netmirror.netmirrornew",
                     "Referer" to "$mainUrl/mobile/home?app=1"
-                ) + cookieHeader
+                )
+                val mobileCookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")
 
                 // Fetch master with q=720p to get rewritten token in video URLs
                 val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
-                val masterResp = app.get(masterUrl, headers = mobileHeaders).text
+                val masterResp = app.get(masterUrl, headers = mobileHeaders, cookies = mobileCookies).text
                 Log.e("NF", "mobile/hls raw=${masterResp.take(500)}")
 
                 // Extract CDN hostname from audio URI + rewritten token from video variant URL
@@ -282,42 +283,36 @@ class  NetflixProvider : MainAPI() {
                         streamInf to url
                     }.toList()
 
+                    val cmHeaders = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                        "X-Requested-With" to "app.netmirror.netmirrornew",
+                        "Referer" to "$mainUrl/mobile/home?app=1"
+                    )
+                    val cmCookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")
+
+                    val sb = StringBuilder()
+                    sb.appendLine("#EXTM3U")
+                    sb.appendLine("#EXT-X-VERSION:3")
+                    if (audioLines.isNotBlank()) sb.appendLine(audioLines)
+
                     if (variants.isEmpty()) {
                         Log.w("NF", "No video variants found in master response, using fallback 720p")
-                        // Build minimal master with just 720p
-                        val sb = StringBuilder()
-                        sb.appendLine("#EXTM3U")
-                        sb.appendLine("#EXT-X-VERSION:3")
-                        if (audioLines.isNotBlank()) sb.appendLine(audioLines)
                         sb.appendLine("#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,CODECS=\"avc1.64001f,mp4a.40.2\",AUDIO=\"aac\"")
                         sb.append("https://$cdnHost/files/$id/720p/720p.m3u8?in=$rewrittenToken")
-                        setCustomMaster(id, sb.toString())
                     } else {
-                        // Build custom master with all rewritten variants + audio groups
-                        val sb = StringBuilder()
-                        sb.appendLine("#EXTM3U")
-                        sb.appendLine("#EXT-X-VERSION:3")
-                        if (audioLines.isNotBlank()) sb.appendLine(audioLines)
                         for ((streamInf, url) in variants) {
                             sb.appendLine(streamInf)
                             sb.append(url)
                         }
-                        val customMaster = sb.toString()
-                        Log.e("NF", "Custom master with ${variants.size} variants:\\n${customMaster.take(500)}")
-                        setCustomMaster(id, customMaster)
                     }
-
-                    val cmHeaders = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-                        "X-Requested-With" to "app.netmirror.netmirrornew",
-                        "Referer" to "$mainUrl/mobile/home?app=1",
-                        "Cookie" to "hd=on; t_hash_t=$cookieEscaped"
-                    )
+                    val customMaster = sb.toString()
+                    Log.e("NF", "Custom master: ${customMaster.take(500)}")
+                    setCustomMaster(id, customMaster)
 
                     // Pass mobile/hls URL with __cm=1 — interceptor returns custom master
                     val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
                     callback.invoke(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
-                        this.headers = cmHeaders
+                        this.headers = cmHeaders + cookieHeader
                         this.referer = "$mainUrl/mobile/home?app=1"
                         this.quality = getQualityFromName("720p")
                     })

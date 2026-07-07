@@ -229,9 +229,10 @@ class PrimevideoProvider : MainAPI() {
             }
         }
         val cookieRaw = if (currentBypassToken.length > 10) currentBypassToken else ""
-        // Ensure 5-part format: h1::h2::ts::ep::m
-        val cookie5 = if (cookieRaw.contains("::ep::")) cookieRaw
-            else cookieRaw + "::${System.currentTimeMillis() / 1000}::ep::m"
+        // Token del bypass puede ser h1::h2 (2 partes) o h1::h2::ts::ep::m (antiguo)
+        val inParam = if (cookieRaw.contains("::ep::")) cookieRaw
+            else cookieRaw + "::ep::m"
+        val cookie5 = cookieRaw
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=$ott; hd=on")
 
@@ -243,11 +244,12 @@ class PrimevideoProvider : MainAPI() {
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
                     "X-Requested-With" to "app.netmirror.netmirrornew",
                     "Referer" to "$mainUrl/mobile/home?app=1"
-                ) + cookieHeader
+                )
+                val mobileCookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to ott)
 
                 // Fetch master with q=720p to get rewritten token in video URLs
                 val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
-                val masterResp = app.get(masterUrl, headers = mobileHeaders).text
+                val masterResp = app.get(masterUrl, headers = mobileHeaders, cookies = mobileCookies).text
                 Log.e("PV", "mobile/hls raw=${masterResp.take(500)}")
 
                 // Extract CDN hostname from audio URI + rewritten token from video variant URL
@@ -300,14 +302,13 @@ class PrimevideoProvider : MainAPI() {
                     val cmHeaders = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
                         "X-Requested-With" to "app.netmirror.netmirrornew",
-                        "Referer" to "$mainUrl/mobile/home?app=1",
-                        "Cookie" to "hd=on; t_hash_t=$cookieEscaped"
+                        "Referer" to "$mainUrl/mobile/home?app=1"
                     )
 
                     // Pass mobile/hls URL with __cm=1 — interceptor returns custom master
                     val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
                     callback.invoke(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
-                        this.headers = cmHeaders
+                        this.headers = cmHeaders + cookieHeader
                         this.referer = "$mainUrl/mobile/home?app=1"
                         this.quality = getQualityFromName("720p")
                     })
