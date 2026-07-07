@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
+import okhttp3.FormBody
 import okhttp3.Interceptor
 
 class NetflixProvider : MainAPI() {
@@ -190,10 +191,23 @@ class NetflixProvider : MainAPI() {
         val id = loadData.id
         Log.e("NF", "loadLinks id=$id apiBase=$apiBase")
 
+        // Get play hash to replace in=unknown::ep watermark (no auth needed)
+        val playHash = getPlayHash(id)
+        if (playHash.isNotBlank()) {
+            Log.e("NF", "Got play hash: ${playHash.take(60)}")
+            currentBypassToken = playHash
+        } else {
+            Log.e("NF", "play hash empty, falling back to bypass")
+            val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
+            if (token.length > 10) currentBypassToken = token
+        }
+        val cookieHeader = if (currentBypassToken.length > 10) mapOf("Cookie" to "t_hash_t=$currentBypassToken") else emptyMap()
+
         // Primary flow: player.php on apiBase (returns direct working HLS with CDN)
         for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
             try {
-                val resp = app.get(u, headers = buildNewTvHeaders(ott, mapOf("Referer" to apiBase))).parsed<NewTvPlayerResponse>()
+                val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
+                val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
                 Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
                 if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
                     callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
@@ -260,4 +274,28 @@ class NetflixProvider : MainAPI() {
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = m3u8CdnFixInterceptor()
+
+    private suspend fun getPlayHash(id: String): String {
+        val domains = listOf("https://net11.cc", "https://net52.cc", "https://net22.cc")
+        for (domain in domains) {
+            try {
+                val resp = app.post(
+                    "$domain/play.php",
+                    requestBody = FormBody.Builder().add("id", id).build(),
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
+                        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
+                    )
+                )
+                val parsed = tryParseJson<PlayHashResponse>(resp.text)
+                val h = parsed?.h ?: continue
+                if (h.length > 10) {
+                    // Extract hash up to ::ep to match in=unknown::ep format
+                    return h.removePrefix("in=").substringBefore("::ep")
+                }
+            } catch (_: Exception) {}
+        }
+        return ""
+    }
 }

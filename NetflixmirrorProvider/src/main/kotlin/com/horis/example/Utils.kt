@@ -127,6 +127,9 @@ object NetflixMirrorStorage {
 
 var appContext: Context? = null
 
+// Latest bypass token, used by interceptor to replace in=unknown::ep watermark
+var currentBypassToken: String = ""
+
 // ---------------------------------------------------------------------------
 // Auth bypass – gets token_hash from verify.php via WebView (bypasses Cloudflare)
 // ---------------------------------------------------------------------------
@@ -636,6 +639,14 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                     .trim()
                 if (fixed != oldFixed) {
                     Log.d("CdnFix", "Stripped audio/subtitle groups from master playlist: $url")
+                }
+            }
+            // Replace in=unknown::ep watermark with bypass token if available
+            if (currentBypassToken.length > 10 && fixed.contains("in=unknown::ep")) {
+                val oldFixed = fixed
+                fixed = fixed.replace("in=unknown::ep", "in=$currentBypassToken::ep")
+                if (fixed != oldFixed) {
+                    Log.d("CdnFix", "Replaced watermark with bypass token in: $url")
                 }
             }
             // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
