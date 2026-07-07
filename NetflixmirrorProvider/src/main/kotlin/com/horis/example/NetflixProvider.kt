@@ -237,13 +237,16 @@ class  NetflixProvider : MainAPI() {
         }
 
         val cookieRaw = if (currentBypassToken.length > 10) currentBypassToken else ""
-        val cookieEscaped = if (cookieRaw.length > 10) URLEncoder.encode(cookieRaw, "UTF-8") else ""
-        val cookieHeader = if (cookieEscaped.length > 10) mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=nf; hd=on") else emptyMap()
+        // Ensure 5-part format: h1::h2::ts::ep::m
+        val cookie5 = if (cookieRaw.contains("::ep::")) cookieRaw
+            else cookieRaw + "::${System.currentTimeMillis() / 1000}::ep::m"
+        val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
+        val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=nf; hd=on")
 
         // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
-        if (cookieRaw.length > 10) {
+        if (cookie5.length > 10) {
             try {
-                val inParam = cookieRaw.substringBefore("::ep") + "::ep::m"
+                val inParam = cookie5.substringBefore("::ep") + "::ep::m"
                 val mobileHeaders = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
                     "X-Requested-With" to "app.netmirror.netmirrornew",
@@ -342,8 +345,8 @@ class  NetflixProvider : MainAPI() {
                             var file = source.file ?: continue
                             val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
                             val referer = "$mainUrl/mobile/home?app=1"
-                            if (cookieRaw.length > 10 && file.contains("in=unknown::ep")) {
-                                file = file.replace("in=unknown::ep", "in=${cookieRaw.substringBefore("::ep")}::ep")
+                            if (cookie5.length > 10 && file.contains("in=unknown::ep")) {
+                                file = file.replace("in=unknown::ep", "in=${cookie5.substringBefore("::ep")}::ep")
                             }
                             if (file.startsWith("http")) {
                                 callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
