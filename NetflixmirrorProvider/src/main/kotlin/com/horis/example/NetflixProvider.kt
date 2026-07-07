@@ -1,7 +1,13 @@
 package com.horis.example
 
 import android.util.Log
+import com.horis.example.entities.HomePageData
+import com.horis.example.entities.PostCategory
+import com.horis.example.entities.SearchData
+import com.horis.example.entities.PostData
+import com.horis.example.entities.EpisodesData
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.APIHolder.unixTime
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
@@ -16,203 +22,130 @@ class NetflixProvider : MainAPI() {
     override val usesWebView = true
 
     private val ott = "nf"
+    private var token: String = ""
 
-    private val androidHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-        "Accept" to "*/*",
-        "X-Requested-With" to "app.netmirror.netmirrornew",
-        "Cache-Control" to "max-age=0"
-    )
+    private suspend fun getCookie(): Map<String, String> {
+        if (token.isEmpty()) token = bypass(mainUrl)
+        return mapOf("t_hash_t" to token, "ott" to ott, "hd" to "on")
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val apiBase = resolveApiUrl()
+        val data = app.get(
+            "$mainUrl/tv/nf/homepage.php",
+            cookies = getCookie(),
+            referer = "$mainUrl/home",
+        ).parsed<HomePageData>()
 
-        val response = app.get(
-            "$apiBase/newtv/main.php",
-            headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
-        ).parsed<NewTvMainResponse>()
-
-        val imgReferer = response.img_referer ?: apiBase
-        val items = response.post.orEmpty().map { category ->
-            val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-            val template = response.imgcdn_v.takeUnless { it.isNullOrBlank() } ?: response.imgcdn_h
+        val items = data.post?.mapNotNull { cat ->
+            val name = cat.cate ?: return@mapNotNull null
+            val ids = cat.ids?.split(",")?.filter { it.isNotBlank() }.orEmpty()
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
                     posterUrl = buildVerticalPosterUrl(id, ott)
-                    posterHeaders = mapOf("Referer" to imgReferer)
+                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
                 }
             }
-            HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
-        }
+            if (results.isEmpty()) return@mapNotNull null
+            HomePageList(name, results, isHorizontalImages = false)
+        }.orEmpty()
 
-        return newHomePageResponse(items, hasNext = items.isNotEmpty())
+        return newHomePageResponse(items, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val apiBase = resolveApiUrl()
         val data = app.get(
-            "$apiBase/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
-            headers = buildNewTvHeaders(ott)
-        ).parsed<NewTvSearchResponse>()
+            "$mainUrl/search.php?s=$query&t=$unixTime",
+            referer = "$mainUrl/tv/home",
+            cookies = getCookie()
+        ).parsed<SearchData>()
 
-        val imgReferer = data.img_referer ?: apiBase
-        val template = data.detailsimgcdn ?: data.imgcdn
-
-        return data.searchResult.orEmpty().map { item ->
-            newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
-                posterUrl = buildVerticalPosterUrl(item.id, ott)
-                posterHeaders = mapOf("Referer" to imgReferer)
+        return data.searchResult.map {
+            newAnimeSearchResponse(it.t, NewTvId(it.id).toJson()) {
+                posterUrl = buildVerticalPosterUrl(it.id, ott)
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
-        val rawResponse = retryOnDbError {
-            val text = app.get(
-                "$apiBase/newtv/post.php?id=$id",
-                headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
-            ).text
-            checkDbError(text)
-            text
-        }
-        Log.d("NetflixProvider", "RAW post response: $rawResponse")
-        val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
+        val data = app.get(
+            "$mainUrl/post.php?id=$id&t=$unixTime",
+            headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
+            referer = "$mainUrl/tv/home",
+            cookies = getCookie()
+        ).parsed<PostData>()
 
-        val title = data.title ?: id
-        val playbackId = data.main_id ?: id
+        val title = data.title
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-        val languages = data.lang?.map { it.l.orEmpty() }?.filter { it.isNotBlank() }?.distinct()
-        val director = data.moredetails?.find { it.k == "Director" }?.v
-        val studio = data.moredetails?.find { it.k == "Studio" }?.v
-        val writer = data.moredetails?.find { it.k == "Writer" }?.v
-        val thisMovieIs = data.moredetails?.find { it.k == "This Movie Is" }?.v
-        Log.d("NetflixProvider", "lang=${languages} director=${director} studio=${studio} writer=${writer} thisMovieIs=${thisMovieIs}")
-        val imdbFromDetails = data.moredetails?.find { it.k == "IMDB Rating" }?.v
-        val rating = when {
-            data.match?.startsWith("IMDb ") == true -> data.match?.replace("IMDb ", "")
-            data.match?.contains("%") == true -> {
-                val pct = data.match?.replace(Regex("[^0-9]"), "")?.toFloatOrNull()
-                if (pct != null) String.format("%.1f", pct / 10f) else null
-            }
-            else -> data.match ?: imdbFromDetails
-        }
+        val rating = data.match?.replace("IMDb ", "")
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
-        val isSeries = data.type == "t" || data.episodes?.any { it != null } == true
-        val extraPlot = buildList {
-            //if (!director.isNullOrBlank()) add("Director: $director")
-            //if (!writer.isNullOrBlank()) add("Writer: $writer")
-            if (!studio.isNullOrBlank()) add(" - Studio: $studio")
-        }.takeIf { it.isNotEmpty() }?.joinToString("\n")
-        val languagesText = if (!languages.isNullOrEmpty()) " -- Audio: ${languages.joinToString(", ")}" else null
-        val tags = buildList {
-            if (!genre.isNullOrEmpty()) addAll(genre)
-            if (!thisMovieIs.isNullOrBlank()) addAll(thisMovieIs.split(",").map { it.trim() }.filter { it.isNotEmpty() })
-        }.takeIf { it.isNotEmpty() }
-        val fullPlot = buildList {
-            data.desc?.let { add(it) }
-            languagesText?.let { add(it) }
-            extraPlot?.let { add(it) }
-        }.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
-
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
                 posterUrl = buildVerticalPosterUrl(it.id, ott)
-                posterHeaders = mapOf("Referer" to apiBase)
-            }
-        }
-
-        if (!isSeries) {
-            return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, playbackId).toJson()) {
-                posterUrl = buildVerticalPosterUrl(id, ott)
-                backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
-                posterHeaders = mapOf("Referer" to apiBase)
-                plot = fullPlot; year = data.year?.toIntOrNull(); this.tags = tags
-                actors = cast; this.score = Score.from10(rating); duration = runTime
-                recommendations = suggest
-                contentRating = data.ua ?: data.certification ?: data.age
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
 
         val episodes = arrayListOf<Episode>()
 
-        if (data.episodes.isNullOrEmpty()) {
-            if (data.type != "t") episodes.add(newEpisode(NewTvLoadData(title, playbackId)) { name = title })
+        if (data.episodes.firstOrNull() == null) {
+            episodes.add(newEpisode(NewTvLoadData(title, id)) { name = title })
         } else {
-            val selectedSeasonIdx = data.season?.indexOfFirst { it.selected == true }?.takeIf { it >= 0 }
-            val selectedSeasonId = selectedSeasonIdx?.let { data.season?.getOrNull(it)?.id } ?: data.nextPageSeason
-            val selectedSeasonNumber = selectedSeasonIdx?.plus(1)
-
             data.episodes.filterNotNull().mapTo(episodes) {
-                Log.d("NetflixProvider", "episode id=${it.id} t=${it.t} info=${it.info}")
-                newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
-                    this.name = it.t
-                    episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = selectedSeasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
-                    posterUrl = buildPosterUrl(data.ep_poster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
-                    this.runTime = it.info?.getOrNull(2)?.replace("m", "")?.toIntOrNull()
-                    description = it.ep_desc
+                newEpisode(NewTvLoadData(title, it.id)) {
+                    name = it.t
+                    episode = it.ep.replace("E", "").toIntOrNull()
+                    season = it.s.replace("S", "").toIntOrNull()
+                    posterUrl = buildVerticalPosterUrl(it.id, ott)
+                    this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
 
-            if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank())
-                episodes.addAll(getEpisodes(title, selectedSeasonId, 2, data.ep_poster, selectedSeasonNumber))
+            if (data.nextPageShow == 1) {
+                episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
+            }
 
-            data.season?.forEachIndexed { index, season ->
-                if (season.id != selectedSeasonId && !season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, index + 1))
+            data.season?.dropLast(1)?.forEach {
+                episodes.addAll(getEpisodes(title, url, it.id, 1))
             }
         }
 
-        if (data.type == "t" && episodes.isEmpty() && !data.season.isNullOrEmpty()) {
-            data.season.forEachIndexed { index, season ->
-                if (!season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1, data.ep_poster, index + 1))
-            }
-        }
+        val type = if (data.episodes.firstOrNull() == null) TvType.Movie else TvType.TvSeries
 
-        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+        return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = buildVerticalPosterUrl(id, ott)
             backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
-            posterHeaders = mapOf("Referer" to apiBase)
-            plot = fullPlot; year = data.year?.toIntOrNull(); this.tags = tags
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+            plot = data.desc; year = data.year.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
-            recommendations = suggest
-            contentRating = data.ua ?: data.certification ?: data.age
+            this.contentRating = data.ua; recommendations = suggest
         }
     }
 
     private suspend fun getEpisodes(
-        title: String, sid: String, page: Int,
-        epPoster: String? = null, seasonNumber: Int? = null
+        title: String, eid: String, sid: String, page: Int
     ): List<Episode> {
-        val apiBase = resolveApiUrl()
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
-            val rawEp = app.get(
-                "$apiBase/newtv/episodes.php",
-                params = mapOf("id" to sid, "page" to pg.toString()),
-                headers = buildNewTvHeaders(ott)
-            ).text
-            Log.d("NetflixProvider", "RAW episodes page=$pg: $rawEp")
-            val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
-
-            data.episodes.orEmpty().mapTo(episodes) {
-                Log.d("NetflixProvider", "getEpisodes id=${it.id} t=${it.t} info=${it.info}")
-                newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
+            val data = app.get(
+                "$mainUrl/episodes.php?s=$sid&series=$eid&t=$unixTime&page=$pg",
+                headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
+                referer = "$mainUrl/tv/home",
+                cookies = getCookie()
+            ).parsed<EpisodesData>()
+            data.episodes?.mapTo(episodes) {
+                newEpisode(NewTvLoadData(title, it.id)) {
                     name = it.t
-                    episode = it.ep?.toIntOrNull() ?: it.epNum?.replace("E", "").orEmpty().toIntOrNull()
-                    season = seasonNumber ?: it.sNum?.replace("S", "").orEmpty().toIntOrNull()
-                    posterUrl = buildPosterUrl(epPoster, it.id.orEmpty()) ?: buildVerticalPosterUrl(it.id.orEmpty(), ott)
-                    this.runTime = it.info?.getOrNull(2)?.replace("m", "")?.toIntOrNull()
-                    description = it.ep_desc
+                    episode = it.ep.replace("E", "").toIntOrNull()
+                    season = it.s.replace("S", "").toIntOrNull()
+                    posterUrl = buildVerticalPosterUrl(it.id, ott)
+                    this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
-
             if (data.nextPageShow != 1) break
             pg++
         }

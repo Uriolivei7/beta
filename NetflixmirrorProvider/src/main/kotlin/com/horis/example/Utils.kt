@@ -22,6 +22,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.lagradost.nicehttp.NiceResponse
 import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType
@@ -142,10 +143,30 @@ suspend fun bypass(mainUrl: String): String {
         Log.d("BYPASS", "Using cached cookie ts=${savedTimestamp}")
         return savedCookie
     }
-    Log.e("BYPASS", "Cache expired or empty, fetching new token via WebView")
+    Log.e("BYPASS", "Cache expired or empty")
+
+    // Try 1: Old-style bypass — POST $mainUrl/tv/p.php (no Cloudflare, direct)
+    try {
+        var count = 0
+        var resp: NiceResponse
+        do {
+            resp = app.post("$mainUrl/tv/p.php")
+            count++
+            if (count > 5) break
+        } while (!resp.text.contains("\"r\":\"n\""))
+        val tHash = resp.cookies["t_hash_t"].orEmpty()
+        if (tHash.isNotEmpty()) {
+            NetflixMirrorStorage.saveCookie(tHash)
+            Log.e("BYPASS", "Got token via old bypass: ${tHash.take(60)}")
+            return tHash
+        }
+    } catch (e: Exception) {
+        Log.e("BYPASS", "Old bypass failed: ${e.message}")
+    }
+
     NetflixMirrorStorage.clearCookie()
 
-    // Primary: WebView-based bypass (handles Cloudflare JS challenge)
+    // Try 2: WebView-based bypass (handles Cloudflare JS challenge)
     val wvResult = webViewBypass(mainUrl)
     if (wvResult != null) {
         NetflixMirrorStorage.saveCookie(wvResult)
@@ -153,7 +174,7 @@ suspend fun bypass(mainUrl: String): String {
         return wvResult
     }
 
-    // Fallback: HTTP-based on mainUrl
+    // Try 3: HTTP-based on mainUrl
     val browserHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
