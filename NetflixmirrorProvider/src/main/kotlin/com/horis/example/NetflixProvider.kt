@@ -232,7 +232,7 @@ class NetflixProvider : MainAPI() {
         // Primary flow: playlist.php → Source[] (matching cncverse decompiled code)
         val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
         val playlistUrls = listOf("$apiBase/newtv/playlist.php?id=$id", "$mainUrl/playlist.php?id=$id")
-        val hlsBaseUrls = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://tv.imgcdn.kim", "https://net52.cc").distinct()
+        val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://net11.cc").distinct()
         for (plUrl in playlistUrls) {
             try {
                 val plRaw = app.get(plUrl, headers = playlistHeaders).text
@@ -240,27 +240,36 @@ class NetflixProvider : MainAPI() {
                 val items = tryParseJsonList<PlaylistItem>(plRaw)
                 if (!items.isNullOrEmpty()) {
                     for (item in items) {
-                        // Process sources → ExtractorLinks
+                        // Process sources → try each base URL for relative paths
                         for (source in item.sources.orEmpty()) {
                             val file = source.file ?: continue
-                            val fullUrl = if (file.startsWith("http")) file else "${hlsBaseUrls.first()}$file"
-                            val quality = getQualityFromName(
-                                file.substringAfter("q=", "").substringBefore("&")
-                            )
-                            Log.e("PLAYURL", fullUrl)
-                            callback.invoke(newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
-                                headers = playlistHeaders
-                                referer = "$mainUrl/mobile/home?app=1"
-                                this.quality = quality
-                            })
+                            val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
+                            if (file.startsWith("http")) {
+                                callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
+                                    headers = playlistHeaders; referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
+                                })
+                            } else {
+                                for (base in hlsBases) {
+                                    callback.invoke(newExtractorLink(name, name, "$base$file", type = ExtractorLinkType.M3U8) {
+                                        headers = playlistHeaders; referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
+                                    })
+                                }
+                            }
                         }
                         // Process tracks → subtitle files
                         for (track in item.tracks.orEmpty()) {
                             val trackFile = track.file ?: continue
-                            val fullTrackUrl = if (trackFile.startsWith("http")) trackFile else "${hlsBaseUrls.first()}$trackFile"
-                            subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", fullTrackUrl) {
-                                headers = mapOf("Referer" to "$mainUrl/")
-                            })
+                            if (trackFile.startsWith("http")) {
+                                subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", trackFile) {
+                                    headers = mapOf("Referer" to "$mainUrl/")
+                                })
+                            } else {
+                                for (base in hlsBases) {
+                                    subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", "$base$trackFile") {
+                                        headers = mapOf("Referer" to "$mainUrl/")
+                                    })
+                                }
+                            }
                         }
                     }
                     if (items.any { it.sources?.isNotEmpty() == true }) return true

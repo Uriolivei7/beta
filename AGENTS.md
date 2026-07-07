@@ -87,36 +87,26 @@ Sec-Fetch-Dest: document, Sec-Fetch-Mode: navigate, Sec-Fetch-Site: same-origin,
 | `playlist.php` | netXX.cc | Returns `Source[]` with M3U8 URLs (primary flow) |
 
 ### Current Blockers
-1. **`bypass()`** fails (Cloudflare blocks POST to verify.php; captcha page on GET; no auth endpoint returns token_hash)
-2. **All player.php attempts** return `usertoken=none` → `status=otp` (watermarked) — but cncverse `NewTvPlayerResponse` doesn't even have `usertoken` field
-3. **`loadLinks`** and **`bypass`** functions failed to fully decompile (JADX limitation — complex bytecode)
-4. **Primary `playlist.php` → `Source[]` flow** not yet implemented in our plugin
-5. **Headers mismatch** — our `newTvBaseHeaders` uses wrong `X-Requested-With` and `User-Agent` values
+1. **`bypass()`** fails — all mobiledetect.* domains unreachable (connection timeout after 10s, ALL 24 domains); no token_hash retrieved anywhere
+2. **`playlist.php` returns relative paths (`/hls/ID.m3u8?in=unknown::ep`)** — 404 on `tv.imgcdn.kim`; correct path from player.php is `/newtv/hls/nf/ID.m3u8`
+3. **`$apiBase/newtv/playlist.php` = "File not found."** — playlist endpoint only works on `mainUrl` (net52.cc), not on tv.imgcdn.kim
 
 ### Key Open Questions
-- How does cncverse get `status=ok` (not `status=otp`) from player.php?
-- What specific parameters does `playlist.php` expect (id, title, cookies)?
-- What is the exact playlist endpoint URL format?
-- Why does cncverse net52.cc bypass work (verify.php POST with Referer/Origin) while our HTTP-only approach fails?
+- What is the correct HLS base URL for the playlist.php relative paths? (net52.cc? net11.cc?)
+- Why do all 24 mobiledetect.* domains timeout from this network (172.23.x.x private IP)?
+- Could `in=unknown::ep` (invalid hash) change the M3U8 path? Would a valid hash produce different paths?
+- How does cncverse bypass work if mobiledetect domains are unreachable? Does it use a hardcoded API URL?
 
 ### Relevant Files
-- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders` (needs x-requested-with/UA fix), `NewTvPlayerResponse` (no usertoken needed), data classes, `getPlaylistUrl` (kept for JioHotstar)
-- `NetflixProvider.kt` — `loadLinks()` with 12+ attempt player.php loop (should use playlist.php→Source[] flow)
+- `Utils.kt` — `bypass()`, `resolveApiUrl()`, `newTvBaseHeaders` (fixed), `NewTvPlayerResponse` (no usertoken), data classes (`Source`, `PlaylistItem`, `PlaylistTrack`), `getPlaylistUrl` (kept for JioHotstar)
+- `NetflixProvider.kt` — `loadLinks()` with playlist.php→Source[] primary flow + player.php fallback
 - `PrimevideoProvider.kt` — same structure
-- `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference:
-  - `UtilsKt.java` — exact `newTvBaseHeaders`, domain list, `buildNewTvHeaders()`, `decodeBase64()`
-  - `NetflixMirrorStorage.java` — cookie persistence (nf_cookie, nf_cookie_full)
-  - `NetflixMirrorProvider.java` — provider structure, headers, getVideoInterceptor, loadLinks lambdas
-  - `NewTvPlayerResponse.java` — **NO usertoken field** (status, video_link, referer only)
-  - `NewTvTokenResponse.java` — token_hash field
-  - `entities/Source.java` — file, label, type (M3U8 URL source)
-  - `entities/PostData.java` — load response structure
-  - `NetflixMirrorProvider$loadLinks$3.java` — sets headers, referer, quality on ExtractorLink
-  - `NetflixMirrorProvider$loadLinks$5$1.java` — subtitle handler with Referer
+- `CNC Verse Mobile/classes.dex_Decompiler.com/sources/com/horis/cncverse/` — decompiled reference
 
 ## Next Steps
-1. **Fix `newTvBaseHeaders`** — match decompiled values exactly
-2. **Remove `usertoken` from `NewTvPlayerResponse`** — not used by cncverse
-3. **Implement `playlist.php` → `Source[]` primary flow** — replace the 12+ attempt player.php loop
-4. **Investigate why bypass fails** — compare with cncverse app network traffic
-5. **Test with corrected headers** — see if playlist.php returns Source[] with valid M3U8 URLs
+1. ✅ **Fix `newTvBaseHeaders`** — done, matches decompiled values
+2. ✅ **Remove `usertoken` from `NewTvPlayerResponse`** — done
+3. ✅ **Implement `playlist.php` → `Source[]` primary flow** — done in both providers
+4. 🔲 **Find correct HLS base URL** — determine whether `/hls/ID.m3u8` resolves to net52.cc, net11.cc, or requires a valid auth hash to even exist
+5. 🔲 **Fix bypass** — mobiledetect.* unreachable; consider hardcoding `apiBase = https://tv.imgcdn.kim` as fallback or investigating why network blocks these domains
+6. 🔲 **if bypass stays broken** — investigate whether cncverse uses hardcoded API URL or different auth mechanism that doesn't depend on mobiledetect domains
