@@ -623,6 +623,21 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val inParam = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
+            // Strip audio/subtitle groups from master playlist to avoid fetching
+            // separate audio CDN (nm-cdn*.top) which may be unreachable
+            if (fixed.contains("#EXT-X-STREAM-INF:")) {
+                val oldFixed = fixed
+                fixed = fixed
+                    .replace(Regex("^#EXT-X-MEDIA:TYPE=AUDIO,[^\n]*\n?", RegexOption.MULTILINE), "")
+                    .replace(Regex("^#EXT-X-MEDIA:TYPE=SUBTITLES,[^\n]*\n?", RegexOption.MULTILINE), "")
+                    .replace(Regex("""AUDIO="[^"]*""""), "")
+                    .replace(Regex("""SUBTITLES="[^"]*""""), "")
+                    .replace(Regex("""CLOSED-CAPTIONS=[^ ]*"""), "")
+                    .trim()
+                if (fixed != oldFixed) {
+                    Log.d("CdnFix", "Stripped audio/subtitle groups from master playlist: $url")
+                }
+            }
             // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
             if (fixed.contains("https:///files/")) {
                 fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")
