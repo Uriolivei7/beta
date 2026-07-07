@@ -259,7 +259,7 @@ private suspend fun webViewBypass(mainUrl: String): String? {
                         }
                     }
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        Log.e("BYPASS", "WebView nav to ${request.url.take(80)}")
+                        Log.e("BYPASS", "WebView nav to ${request.url.toString().take(80)}")
                         return false
                     }
                 }
