@@ -1,3 +1,6 @@
+### Repositorio BETA
+Este repositorio es meramente para crear y testear plugins para CloudStream 3, antes de ser agreagdos al Repositorio principal [Ranita Repositorio](https://github.com/Uriolivei7/Ranita), puede usar Ranita para disfrutar los Plugins disponibles y funcionales.
+
 #### REQUISITOS
 **CloudStream** (Para instalar: [View Docs](https://recloudstream.github.io/csdocs/)))
 
