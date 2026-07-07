@@ -218,7 +218,8 @@ suspend fun bypass(mainUrl: String): String {
             if (tHash != null) { NetflixMirrorStorage.saveCookie(tHash); return tHash }
         } catch (e: Exception) { Log.e("BYPASS", "FB POST $path failed: ${e.message}") }
     }
-    throw Exception("Failed to get auth token")
+    Log.e("BYPASS", "All bypass attempts failed, returning empty token")
+    return ""
 }
 
 private suspend fun webViewBypass(mainUrl: String): String? {
@@ -279,8 +280,8 @@ private suspend fun webViewBypass(mainUrl: String): String? {
                                         return@evaluateJavascript
                                     }
                                 }
-                                Log.e("BYPASS", "No token found in cookies/body")
-                                cont.resume(null)
+                                Log.e("BYPASS", "No token yet — waiting for reCAPTCHA completion or timeout")
+                                // DON'T resume null — keep waiting for next page load or 30s timeout
                             }
                         }
                     }
