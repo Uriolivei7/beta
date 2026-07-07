@@ -26,10 +26,13 @@ import com.lagradost.nicehttp.NiceResponse
 import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
+import okhttp3.Protocol
+import okhttp3.MediaType.Companion.toMediaType
 import java.net.URLDecoder
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -619,10 +622,39 @@ data class PlaylistItem(
 
 val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
 
+// Store for custom master playlists (keyed by content id)
+val customMasters = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+fun setCustomMaster(id: String, master: String) {
+    customMasters[id] = master
+}
+
 fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
         var req = chain.request()
         val url = req.url.toString()
+        // Serve custom master playlist if __cm=1 is present
+        if (url.contains("__cm=1")) {
+            val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
+            if (id != null) {
+                val master = customMasters[id]
+                if (master != null) {
+                    Log.d("CdnFix", "Serving custom master for id=$id")
+                    val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
+                    val body = ResponseBody.create(mediaType, master)
+                    val response = Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body)
+                        .build()
+                    return@Interceptor response
+                } else {
+                    Log.w("CdnFix", "No custom master found for id=$id, falling through to server")
+                }
+            }
+        }
         // Add hd=on to Cookie for M3U8 requests (preserving existing t_hash_t, ott=nf)
         if (url.contains(".m3u8")) {
             req = req.newBuilder().addHeader("Cookie", "hd=on").build()
@@ -648,30 +680,6 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val inParam = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
-            // Rewrite s21/s25 freecdn video URLs in master playlist to use full-content CDN
-            if (fixed.contains("#EXT-X-STREAM-INF:")) {
-                val cdnHost = Regex("""URI="https://([^/]+)/files/""").find(fixed)?.groupValues?.get(1)
-                val contentId = Regex("""/files/(\d+)/""").find(fixed)?.groupValues?.get(1)
-                if (cdnHost != null && contentId != null) {
-                    val oldFixed = fixed
-                    // Replace freecdn video URLs: s21.freecdn4.top/files/{internalId}/ → {cdnHost}/files/{contentId}/
-                    fixed = fixed.replace(Regex("""https://s\d+\.freecdn\d*\.top/files/\d+/"""), "https://$cdnHost/files/$contentId/")
-                    if (fixed != oldFixed) {
-                        Log.d("CdnFix", "Rewrote freecdn→$cdnHost in master playlist: $url")
-                    }
-                } else {
-                    Log.w("CdnFix", "FAILED to extract CDN from master playlist. cdnHost=$cdnHost contentId=$contentId url=$url")
-                }
-            }
-            // Replace in=unknown::ep watermark with bypass token if available
-            if (currentBypassToken.length > 10 && fixed.contains("in=unknown::ep")) {
-                val oldFixed = fixed
-                val urlToken = currentBypassToken.substringBefore("::ep")
-                fixed = fixed.replace("in=unknown::ep", "in=$urlToken::ep")
-                if (fixed != oldFixed) {
-                    Log.d("CdnFix", "Replaced watermark with bypass token in: $url")
-                }
-            }
             // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
             if (fixed.contains("https:///files/")) {
                 fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")

@@ -215,44 +215,79 @@ class  NetflixProvider : MainAPI() {
                 val mobileHeaders = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
                     "X-Requested-With" to "app.netmirror.netmirrornew",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-                    "sec-ch-ua-mobile" to "?0",
-                    "sec-ch-ua-platform" to "\"Android\"",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "same-origin",
                     "Referer" to "$mainUrl/mobile/home?app=1"
                 ) + cookieHeader
 
-                val mobileUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng"
-                val mobileResp = app.get(mobileUrl, headers = mobileHeaders).text
-                Log.e("NF", "mobile/hls raw=${mobileResp.take(500)}")
+                // Fetch master with q=720p to get rewritten token in video URLs
+                val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
+                val masterResp = app.get(masterUrl, headers = mobileHeaders).text
+                Log.e("NF", "mobile/hls raw=${masterResp.take(500)}")
 
-                // Pass the master playlist URL to CloudStream with the original cookie token
-                // Server rewrites hash2 fresh on each request; interceptor rewrites s21→CDN
-                val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on"
-                Log.e("NF", "Master URL: $masterUrl")
+                // Extract CDN hostname from audio URI + rewritten token from video variant URL
+                val cdnMatch = Regex("""URI="https://([^/]+)/files/""").find(masterResp)
+                val inMatch = Regex("""\?in=([^&\s]+)""").find(masterResp)
+                if (cdnMatch != null && inMatch != null) {
+                    val cdnHost = cdnMatch.groupValues[1]
+                    val rewrittenToken = inMatch.groupValues[1]
+                    Log.e("NF", "CDN: $cdnHost Rewritten token: $rewrittenToken")
 
-                val masterHeaders = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-                    "X-Requested-With" to "app.netmirror.netmirrornew",
-                    "Referer" to "$mainUrl/mobile/home?app=1",
-                    "Cookie" to "hd=on; t_hash_t=$cookieEscaped",
-                    "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
-                    "sec-ch-ua-mobile" to "?0",
-                    "sec-ch-ua-platform" to "\"Android\"",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "same-origin"
-                )
+                    // Extract audio group lines from master response
+                    val audioLines = Regex("""^#EXT-X-MEDIA:TYPE=AUDIO,.*""", RegexOption.MULTILINE)
+                        .findAll(masterResp).map { it.value }.joinToString("\n")
 
-                callback.invoke(newExtractorLink(name, name, masterUrl, type = ExtractorLinkType.M3U8) {
-                    this.headers = masterHeaders
-                    this.referer = "$mainUrl/mobile/home?app=1"
-                    this.quality = getQualityFromName("720p")
-                })
-                return true
+                    // Extract all video variant lines and rewrite s21→CDN
+                    val variantRegex = Regex("""(#EXT-X-STREAM-INF:.*)\n(https://s\d+\.freecdn\d*\.top/files/\d+/\w+/.+)""")
+                    val variants = variantRegex.findAll(masterResp).map { match ->
+                        val streamInf = match.groupValues[1]
+                        var url = match.groupValues[2]
+                        // Rewrite freecdn hostname + internal ID to CDN hostname + content ID
+                        url = url.replace(Regex("""https://s\d+\.freecdn\d*\.top/files/\d+/"""), "https://$cdnHost/files/$id/")
+                        // Add rewritten token if not present
+                        if (!url.contains("in=")) url += "?in=$rewrittenToken"
+                        streamInf to url
+                    }.toList()
+
+                    if (variants.isEmpty()) {
+                        Log.w("NF", "No video variants found in master response, using fallback 720p")
+                        // Build minimal master with just 720p
+                        val sb = StringBuilder()
+                        sb.appendLine("#EXTM3U")
+                        sb.appendLine("#EXT-X-VERSION:3")
+                        if (audioLines.isNotBlank()) sb.appendLine(audioLines)
+                        sb.appendLine("#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,CODECS=\"avc1.64001f,mp4a.40.2\",AUDIO=\"aac\"")
+                        sb.append("https://$cdnHost/files/$id/720p/720p.m3u8?in=$rewrittenToken")
+                        setCustomMaster(id, sb.toString())
+                    } else {
+                        // Build custom master with all rewritten variants + audio groups
+                        val sb = StringBuilder()
+                        sb.appendLine("#EXTM3U")
+                        sb.appendLine("#EXT-X-VERSION:3")
+                        if (audioLines.isNotBlank()) sb.appendLine(audioLines)
+                        for ((streamInf, url) in variants) {
+                            sb.appendLine(streamInf)
+                            sb.append(url)
+                        }
+                        val customMaster = sb.toString()
+                        Log.e("NF", "Custom master with ${variants.size} variants:\\n${customMaster.take(500)}")
+                        setCustomMaster(id, customMaster)
+                    }
+
+                    val cmHeaders = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                        "X-Requested-With" to "app.netmirror.netmirrornew",
+                        "Referer" to "$mainUrl/mobile/home?app=1",
+                        "Cookie" to "hd=on; t_hash_t=$cookieEscaped"
+                    )
+
+                    // Pass mobile/hls URL with __cm=1 — interceptor returns custom master
+                    val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
+                    callback.invoke(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
+                        this.headers = cmHeaders
+                        this.referer = "$mainUrl/mobile/home?app=1"
+                        this.quality = getQualityFromName("720p")
+                    })
+                    return true
+                }
             } catch (e: Exception) {
                 Log.e("NF", "mobile/hls s23 failed: ${e.message}")
             }
