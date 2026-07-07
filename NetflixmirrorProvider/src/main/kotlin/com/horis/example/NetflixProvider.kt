@@ -244,6 +244,8 @@ class  NetflixProvider : MainAPI() {
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=nf; hd=on")
 
+        var foundAnyLink = false
+
         // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
         if (cookie5.length > 10) {
             try {
@@ -263,9 +265,16 @@ class  NetflixProvider : MainAPI() {
                 val cdnMatch = Regex("""URI="https://([^/]+)/files/""").find(masterResp)
                 val inMatch = Regex("""\?in=([^&\s]+)""").find(masterResp)
                 if (cdnMatch != null && inMatch != null) {
-                    val cdnHost = cdnMatch.groupValues[1]
+                    var cdnHost = cdnMatch.groupValues[1]
                     val rewrittenToken = inMatch.groupValues[1]
-                    Log.e("NF", "CDN: $cdnHost Rewritten token: $rewrittenToken")
+
+                    // Video CDN must be nm-cdn, not freecdn (freecdn = preview only)
+                    if (cdnHost.contains("freecdn")) {
+                        val oldCdn = cdnHost
+                        cdnHost = cdnHost.replace(Regex("""freecdn\d+"""), "nm-cdn9")
+                        Log.e("NF", "CDN: $oldCdn → $cdnHost (freecdn→nm-cdn9)")
+                    }
+                    Log.e("NF", "Video CDN: $cdnHost Rewritten token: $rewrittenToken")
 
                     // Extract audio group lines from master response
                     val audioLines = Regex("""^#EXT-X-MEDIA:TYPE=AUDIO,.*""", RegexOption.MULTILINE)
@@ -316,7 +325,7 @@ class  NetflixProvider : MainAPI() {
                         this.referer = "$mainUrl/mobile/home?app=1"
                         this.quality = getQualityFromName("720p")
                     })
-                    return true
+                    foundAnyLink = true
                 }
             } catch (e: Exception) {
                 Log.e("NF", "mobile/hls s23 failed: ${e.message}")
@@ -371,7 +380,7 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
                     Log.e("NF", "playlist $plUrl returned $count sources")
-                    if (count > 0) return true
+                    if (count > 0) foundAnyLink = true
                 }
             } catch (e: Exception) {
                 Log.e("NF", "playlist $plUrl error: ${e.message}")
@@ -389,15 +398,15 @@ class  NetflixProvider : MainAPI() {
                         this.referer = resp.referer ?: apiBase
                         this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
                     })
-                    return true
+                    foundAnyLink = true
                 }
             } catch (e: Exception) {
                 Log.e("NF", "player $u error: ${e.message}")
             }
         }
 
-        Log.e("NF", "loadLinks FAILED id=$id")
-        return false
+        Log.e("NF", "loadLinks result=$foundAnyLink id=$id")
+        return foundAnyLink
     }
 
     private suspend fun getPlayHash(id: String): String {

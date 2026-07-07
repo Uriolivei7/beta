@@ -236,6 +236,8 @@ class PrimevideoProvider : MainAPI() {
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=$ott; hd=on")
 
+        var foundAnyLink = false
+
         // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
         if (cookie5.length > 10) {
             try {
@@ -256,9 +258,16 @@ class PrimevideoProvider : MainAPI() {
                 val cdnMatch = Regex("""URI="https://([^/]+)/files/""").find(masterResp)
                 val inMatch = Regex("""\?in=([^&\s]+)""").find(masterResp)
                 if (cdnMatch != null && inMatch != null) {
-                    val cdnHost = cdnMatch.groupValues[1]
+                    var cdnHost = cdnMatch.groupValues[1]
                     val rewrittenToken = inMatch.groupValues[1]
-                    Log.e("PV", "CDN: $cdnHost Rewritten token: $rewrittenToken")
+
+                    // Video CDN must be nm-cdn, not freecdn (freecdn = preview only)
+                    if (cdnHost.contains("freecdn")) {
+                        val oldCdn = cdnHost
+                        cdnHost = cdnHost.replace(Regex("""freecdn\d+"""), "nm-cdn9")
+                        Log.e("PV", "CDN: $oldCdn → $cdnHost (freecdn→nm-cdn9)")
+                    }
+                    Log.e("PV", "Video CDN: $cdnHost Rewritten token: $rewrittenToken")
 
                     // Extract audio group lines from master response
                     val audioLines = Regex("""^#EXT-X-MEDIA:TYPE=AUDIO,.*""", RegexOption.MULTILINE)
@@ -312,7 +321,7 @@ class PrimevideoProvider : MainAPI() {
                         this.referer = "$mainUrl/mobile/home?app=1"
                         this.quality = getQualityFromName("720p")
                     })
-                    return true
+                    foundAnyLink = true
                 }
             } catch (e: Exception) {
                 Log.e("PV", "mobile/hls s23 failed: ${e.message}")
@@ -367,7 +376,7 @@ class PrimevideoProvider : MainAPI() {
                         }
                     }
                     Log.e("PV", "playlist $plUrl returned $count sources")
-                    if (count > 0) return true
+                    if (count > 0) foundAnyLink = true
                 }
             } catch (e: Exception) {
                 Log.e("PV", "playlist $plUrl error: ${e.message}")
@@ -385,15 +394,15 @@ class PrimevideoProvider : MainAPI() {
                         this.referer = resp.referer ?: apiBase
                         this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
                     })
-                    return true
+                    foundAnyLink = true
                 }
             } catch (e: Exception) {
                 Log.e("PV", "player $u error: ${e.message}")
             }
         }
 
-        Log.e("PV", "loadLinks FAILED id=$id")
-        return false
+        Log.e("PV", "loadLinks result=$foundAnyLink id=$id")
+        return foundAnyLink
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
