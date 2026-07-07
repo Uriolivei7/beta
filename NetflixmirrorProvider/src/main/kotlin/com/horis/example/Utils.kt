@@ -15,6 +15,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType
@@ -22,6 +29,11 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 
 // ---------------------------------------------------------------------------
 // JSON / HTTP
@@ -112,12 +124,13 @@ object NetflixMirrorStorage {
     }
 }
 
+var appContext: Context? = null
+
 // ---------------------------------------------------------------------------
-// Auth bypass – gets token_hash from verify.php on resolved API domain
+// Auth bypass – gets token_hash from verify.php via WebView (bypasses Cloudflare)
 // ---------------------------------------------------------------------------
 
 suspend fun bypass(mainUrl: String): String {
-    // Sanitize cached cookie: strip old "t_hash_t=X; hd=on" format down to just X
     val (rawCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
     val savedCookie = rawCookie?.let { c ->
         when {
@@ -126,68 +139,21 @@ suspend fun bypass(mainUrl: String): String {
         }
     }
     if (!savedCookie.isNullOrBlank() && savedCookie.length > 10 && System.currentTimeMillis() - savedTimestamp < 600_000) {
-        // TEMP: 10 min cache for testing
-        Log.d("bypass", "Using cached cookie ts=${savedTimestamp}")
+        Log.d("BYPASS", "Using cached cookie ts=${savedTimestamp}")
         return savedCookie
     }
-    Log.e("BYPASS", "Cache expired or empty, fetching new token")
+    Log.e("BYPASS", "Cache expired or empty, fetching new token via WebView")
     NetflixMirrorStorage.clearCookie()
 
-    val apiBase = resolveApiUrl()
-    val androidUA = newTvBaseHeaders["User-Agent"].orEmpty()
-
-    // Try all potential auth endpoints on the resolved API domain
-    val formBody = FormBody.Builder()
-        .add("g-recaptcha-response", UUID.randomUUID().toString())
-        .build()
-    val authPaths = listOf(
-        "/verify.php",
-        "/newtv/verify.php",
-        "/newtv/auth.php",
-        "/auth.php"
-    )
-    for (path in authPaths) {
-        try {
-            val resp = app.post(
-                "$apiBase$path",
-                requestBody = formBody,
-                headers = newTvBaseHeaders + mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "Origin" to mainUrl,
-                    "Referer" to "$mainUrl/verify"
-                )
-            )
-            val text = resp.text
-            Log.e("BYPASS", "POST $path code=${resp.code} body=${text.take(400)}")
-            if (resp.code >= 400) continue
-            val parsed = tryParseJson<NewTvTokenResponse>(text)
-            if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
-                NetflixMirrorStorage.saveCookie(parsed.token_hash)
-                Log.e("BYPASS", "Got token_hash from $path: ${parsed.token_hash.take(60)}")
-                return parsed.token_hash
-            }
-            val parsedAlt = tryParseJson<Map<String, String>>(text)
-            val altHash = parsedAlt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
-            if (altHash != null) {
-                NetflixMirrorStorage.saveCookie(altHash)
-                Log.e("BYPASS", "Got hash from $path alt field: ${altHash.take(60)}")
-                return altHash
-            }
-            val tHashCandidates = resp.headers.values("Set-Cookie")
-            val tHash = tHashCandidates.firstOrNull { it.startsWith("t_hash_t=") }
-                ?.substringAfter("=")?.substringBefore(";")
-            if (tHash != null) {
-                NetflixMirrorStorage.saveCookie(tHash)
-                Log.e("BYPASS", "Got t_hash from $path Set-Cookie: ${tHash.take(60)}")
-                return tHash
-            }
-        } catch (e: Exception) {
-            Log.e("BYPASS", "$path failed: ${e.message}")
-        }
+    // Primary: WebView-based bypass (handles Cloudflare JS challenge)
+    val wvResult = webViewBypass(mainUrl)
+    if (wvResult != null) {
+        NetflixMirrorStorage.saveCookie(wvResult)
+        Log.e("BYPASS", "Got token via WebView: ${wvResult.take(60)}")
+        return wvResult
     }
 
-    // Fallback: try auth endpoints on mainUrl (net52.cc etc)
-    // Cloudflare blocks POST with X-Requested-With; try browser-like GET first
+    // Fallback: HTTP-based on mainUrl
     val browserHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -197,9 +163,9 @@ suspend fun bypass(mainUrl: String): String {
         "Cache-Control" to "no-cache",
         "Pragma" to "no-cache"
     )
-    for (path in authPaths) {
+    val formBody = FormBody.Builder().add("g-recaptcha-response", UUID.randomUUID().toString()).build()
+    for (path in listOf("/verify.php", "/newtv/verify.php", "/newtv/auth.php", "/auth.php")) {
         try {
-            // Try GET with browser headers first
             val getResp = app.get("$mainUrl$path", headers = browserHeaders)
             val getBody = getResp.text
             Log.e("BYPASS", "FB GET $path code=${getResp.code} body=${getBody.take(2000)}")
@@ -207,50 +173,103 @@ suspend fun bypass(mainUrl: String): String {
             if (!getBody.contains("Just a moment") && getResp.code < 400) {
                 val parsed = tryParseJson<NewTvTokenResponse>(getBody)
                 if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
-                    NetflixMirrorStorage.saveCookie(parsed.token_hash)
-                    Log.e("BYPASS", "FB GET $path token_hash: ${parsed.token_hash.take(60)}")
-                    return parsed.token_hash
+                    NetflixMirrorStorage.saveCookie(parsed.token_hash); return parsed.token_hash
                 }
             }
-        } catch (_: Exception) { }
-
+        } catch (_: Exception) {}
         try {
-            val resp = app.post(
-                "$mainUrl$path",
-                requestBody = formBody,
-                headers = browserHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded")
-            )
+            val resp = app.post("$mainUrl$path", requestBody = formBody,
+                headers = browserHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"))
             val text = resp.text
             Log.e("BYPASS", "FB POST $path code=${resp.code} body=${text.take(300)}")
             if (resp.code >= 400 || text.contains("Just a moment")) continue
             val parsed = tryParseJson<NewTvTokenResponse>(text)
             if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
-                NetflixMirrorStorage.saveCookie(parsed.token_hash)
-                Log.e("BYPASS", "FB POST $path token_hash: ${parsed.token_hash.take(60)}")
-                return parsed.token_hash
+                NetflixMirrorStorage.saveCookie(parsed.token_hash); return parsed.token_hash
             }
-            val alt = tryParseJson<Map<String, String>>(text)
-            val altHash = alt?.entries?.firstOrNull { (k, v) -> k.contains("hash", ignoreCase=true) && v.length > 10 }?.value
-            if (altHash != null) {
-                NetflixMirrorStorage.saveCookie(altHash)
-                Log.e("BYPASS", "FB POST $path alt hash: ${altHash.take(60)}")
-                return altHash
-            }
-            val allCookies = resp.headers.values("Set-Cookie")
-            Log.e("BYPASS", "FB POST $path Set-Cookie: $allCookies")
-            val tHash = allCookies.firstOrNull { it.startsWith("t_hash_t=") }
+            val tHash = resp.headers.values("Set-Cookie").firstOrNull { it.startsWith("t_hash_t=") }
                 ?.substringAfter("=")?.substringBefore(";")
-            if (tHash != null) {
-                NetflixMirrorStorage.saveCookie(tHash)
-                Log.e("BYPASS", "FB POST $path t_hash: ${tHash.take(60)}")
-                return tHash
-            }
-        } catch (e: Exception) {
-            Log.e("BYPASS", "FB POST $path failed: ${e.message}")
-        }
+            if (tHash != null) { NetflixMirrorStorage.saveCookie(tHash); return tHash }
+        } catch (e: Exception) { Log.e("BYPASS", "FB POST $path failed: ${e.message}") }
     }
-
     throw Exception("Failed to get auth token")
+}
+
+private suspend fun webViewBypass(mainUrl: String): String? {
+    val ctx = appContext ?: return null
+    return try {
+        withContext(Dispatchers.Main) {
+            suspendCoroutine<String?> { cont ->
+                var finished = false
+                val handler = Handler(Looper.getMainLooper())
+                val timeout = Runnable {
+                    if (!finished) {
+                        finished = true
+                        Log.e("BYPASS", "WebView timeout")
+                        cont.resume(null)
+                    }
+                }
+                handler.postDelayed(timeout, 30000)
+
+                val view = WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                }
+                view.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String) {
+                        if (finished) return
+                        Log.e("BYPASS", "WebView onPageFinished url=${url.take(80)}")
+                        view.evaluateJavascript(
+                            "document.body.innerText.substring(0, 500)",
+                        ) { text ->
+                            if (finished) return@evaluateJavascript
+                            val bodyText = text?.trim('"')?.replace("\\\"", "\"")
+                                ?.replace("\\n", "\n")?.replace("\\t", "\t") ?: ""
+                            Log.e("BYPASS", "WebView body=${bodyText.take(200)}")
+                            if (bodyText.contains("Just a moment") || bodyText.contains("Checking")) {
+                                // Still on Cloudflare — wait for more page loads
+                                Log.e("BYPASS", "Still on Cloudflare challenge, waiting...")
+                                return@evaluateJavascript
+                            }
+                            // Page loaded successfully — extract cookies
+                            val cookies = CookieManager.getInstance().getCookie(url) ?: ""
+                            Log.e("BYPASS", "WebView cookies=${cookies.take(200)}")
+                            val tHash = cookies.split(";").firstOrNull {
+                                it.trim().startsWith("t_hash_t=")
+                            }?.substringAfter("=")?.trim()
+                            if (tHash != null && tHash.length > 10) {
+                                finished = true; handler.removeCallbacks(timeout)
+                                cont.resume(tHash)
+                            } else {
+                                // Try response JSON for token_hash
+                                if (bodyText.startsWith("{")) {
+                                    val parsed = tryParseJson<NewTvTokenResponse>(bodyText)
+                                    val hash = parsed?.token_hash
+                                    if (hash != null && hash.length > 10) {
+                                        finished = true; handler.removeCallbacks(timeout)
+                                        cont.resume(hash)
+                                        return@evaluateJavascript
+                                    }
+                                }
+                                Log.e("BYPASS", "No token found in cookies/body")
+                                cont.resume(null)
+                            }
+                        }
+                    }
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        Log.e("BYPASS", "WebView nav to ${request.url.take(80)}")
+                        return false
+                    }
+                }
+                view.loadUrl("$mainUrl/verify.php")
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("BYPASS", "WebView bypass error: ${e.message}")
+        null
+    }
 }
 
 // ---------------------------------------------------------------------------
