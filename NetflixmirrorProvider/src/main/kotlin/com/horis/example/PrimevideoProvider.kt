@@ -256,7 +256,7 @@ class PrimevideoProvider : MainAPI() {
                             val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
                             val referer = "$mainUrl/mobile/home?app=1"
                             if (cookie5.length > 10 && file.contains("in=unknown::ep")) {
-                                file = file.replace("in=unknown::ep", "in=${cookie5.substringBefore("::ep")}::ep")
+                                file = file.replace("in=unknown::ep", "in=$inParam")
                             }
                             if (file.startsWith("http")) {
                                 callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
@@ -337,7 +337,7 @@ class PrimevideoProvider : MainAPI() {
                     // Video CDN must be nm-cdn, not freecdn (freecdn = preview only)
                     if (cdnHost.contains("freecdn")) {
                         val oldCdn = cdnHost
-                        cdnHost = cdnHost.replace(Regex("""freecdn\d+"""), "nm-cdn9")
+                        cdnHost = "s23.nm-cdn9.top"
                         Log.e("PV", "CDN: $oldCdn → $cdnHost (freecdn→nm-cdn9)")
                     }
                     Log.e("PV", "Video CDN: $cdnHost Rewritten token: $rewrittenToken")
