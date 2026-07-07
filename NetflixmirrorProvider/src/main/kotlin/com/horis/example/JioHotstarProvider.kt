@@ -31,21 +31,17 @@ class JioHotstarProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val apiBase = resolveApiUrl()
-
         val response = app.get(
-            "$apiBase/newtv/main.php",
+            "$mainUrl/newtv/main.php",
             headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
         ).parsed<NewTvMainResponse>()
 
-        val imgReferer = response.img_referer ?: apiBase
         val items = response.post.orEmpty().map { category ->
             val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
             val template = response.imgcdn_v.takeUnless { it.isNullOrBlank() } ?: response.imgcdn_h
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
                     posterUrl = buildPosterUrl(template, id) ?: buildVerticalPosterUrl(id, ott)
-                    posterHeaders = mapOf("Referer" to imgReferer)
                 }
             }
             HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
@@ -55,30 +51,26 @@ class JioHotstarProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val apiBase = resolveApiUrl()
         val data = app.get(
-            "$apiBase/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
+            "$mainUrl/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
             headers = buildNewTvHeaders(ott)
         ).parsed<NewTvSearchResponse>()
 
-        val imgReferer = data.img_referer ?: apiBase
         val template = data.detailsimgcdn ?: data.imgcdn
 
         return data.searchResult.orEmpty().map { item ->
             newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
                 posterUrl = buildPosterUrl(template, item.id) ?: buildVerticalPosterUrl(item.id, ott)
-                posterHeaders = mapOf("Referer" to imgReferer)
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val apiBase = resolveApiUrl()
         val id = parseJson<NewTvId>(url).id
 
         val rawResponse = retryOnDbError {
             val text = app.get(
-                "$apiBase/newtv/post.php?id=$id",
+                "$mainUrl/newtv/post.php?id=$id",
                 headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
             ).text
             checkDbError(text)
@@ -96,7 +88,6 @@ class JioHotstarProvider : MainAPI() {
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
                 posterUrl = buildVerticalPosterUrl(it.id, ott)
-                posterHeaders = mapOf("Referer" to apiBase)
             }
         }
 
@@ -104,7 +95,6 @@ class JioHotstarProvider : MainAPI() {
             return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, playbackId).toJson()) {
                 posterUrl = buildPosterUrl(data.main_poster, id) ?: buildVerticalPosterUrl(id, ott)
                 backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
-                posterHeaders = mapOf("Referer" to apiBase)
                 plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
@@ -150,7 +140,6 @@ class JioHotstarProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             posterUrl = buildPosterUrl(data.main_poster, id) ?: buildVerticalPosterUrl(id, ott)
             backgroundPosterUrl = buildBackgroundPosterUrl(id, ott)
-            posterHeaders = mapOf("Referer" to apiBase)
             plot = data.desc; year = data.year?.toIntOrNull(); tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
@@ -161,13 +150,12 @@ class JioHotstarProvider : MainAPI() {
         title: String, sid: String, page: Int,
         epPoster: String? = null, seasonNumber: Int? = null
     ): List<Episode> {
-        val apiBase = resolveApiUrl()
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
             val rawEp = retryOnDbError {
                 val text = app.get(
-                    "$apiBase/newtv/episodes.php",
+                    "$mainUrl/newtv/episodes.php",
                     params = mapOf("id" to sid, "page" to pg.toString()),
                     headers = buildNewTvHeaders(ott)
                 ).text
@@ -284,7 +272,7 @@ class JioHotstarProvider : MainAPI() {
         Log.d("JioHotstar", "loadLinks: fallback to player.php id=$id")
         val rawPlayer = retryOnDbError {
             val text = app.get(
-                "$apiBase/newtv/player.php?id=$id",
+                "$mainUrl/newtv/player.php?id=$id",
                 headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
             ).text
             checkDbError(text)
@@ -294,7 +282,7 @@ class JioHotstarProvider : MainAPI() {
 
         if (response.status != "ok" && response.status != "otp" || response.video_link.isNullOrBlank()) return false
 
-        val m3u8Referer = response.referer ?: apiBase
+        val m3u8Referer = response.referer ?: mainUrl
         kotlinx.coroutines.delay(Random.nextLong(1000L, 3000L))
         callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
             this.referer = m3u8Referer

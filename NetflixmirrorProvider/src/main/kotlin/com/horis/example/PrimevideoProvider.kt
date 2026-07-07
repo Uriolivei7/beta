@@ -22,18 +22,15 @@ class PrimevideoProvider : MainAPI() {
     private fun pvEpPoster(id: String): String = "https://imgcdn.kim/pvepimg/150/$id.jpg"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val response = app.get(
-            "$apiBase/newtv/main.php",
+            "$mainUrl/newtv/main.php",
             headers = buildNewTvHeaders(ott, mapOf("Page" to "all", "Recentplay" to "", "Watchlist" to "", "Usertoken" to ""))
         ).parsed<NewTvMainResponse>()
-        val imgReferer = response.img_referer ?: apiBase
         val items = response.post.orEmpty().map { category ->
             val ids = category.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
             val results = ids.mapNotNull { id ->
                 newAnimeSearchResponse("", NewTvId(id).toJson()) {
                     posterUrl = pvPoster(id)
-                    posterHeaders = mapOf("Referer" to imgReferer)
                 }
             }
             HomePageList(category.cate.orEmpty(), results, isHorizontalImages = false)
@@ -42,16 +39,13 @@ class PrimevideoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val data = app.get(
-            "$apiBase/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
+            "$mainUrl/newtv/search.php?s=${URLEncoder.encode(query, "UTF-8")}",
             headers = buildNewTvHeaders(ott)
         ).parsed<NewTvSearchResponse>()
-        val imgReferer = data.img_referer ?: apiBase
         return data.searchResult.orEmpty().map { item ->
             newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
                 posterUrl = pvPoster(item.id)
-                posterHeaders = mapOf("Referer" to imgReferer)
             }
         }
     }
@@ -62,11 +56,10 @@ class PrimevideoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val id = parseJson<NewTvId>(url).id
 
         val rawResponse = app.get(
-            "$apiBase/newtv/post.php?id=$id",
+            "$mainUrl/newtv/post.php?id=$id",
             headers = buildNewTvHeaders(ott, mapOf("Lastep" to "", "Usertoken" to ""))
         ).text
         Log.d("Primevideo", "RAW post response: $rawResponse")
@@ -94,7 +87,6 @@ class PrimevideoProvider : MainAPI() {
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
                 posterUrl = pvPoster(it.id)
-                posterHeaders = mapOf("Referer" to apiBase)
             }
         }
 
@@ -102,7 +94,6 @@ class PrimevideoProvider : MainAPI() {
             return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, playbackId).toJson()) {
                 posterUrl = pvPoster(id)
                 backgroundPosterUrl = pvBg(id)
-                posterHeaders = mapOf("Referer" to apiBase)
                 plot = data.desc; year = data.year?.toIntOrNull(); this.tags = tags
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
@@ -149,7 +140,6 @@ class PrimevideoProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             posterUrl = pvPoster(id)
             backgroundPosterUrl = pvBg(id)
-            posterHeaders = mapOf("Referer" to apiBase)
             plot = data.desc; year = data.year?.toIntOrNull(); this.tags = tags
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
@@ -160,13 +150,12 @@ class PrimevideoProvider : MainAPI() {
     private suspend fun getEpisodes(
         title: String, sid: String, page: Int, seasonNumber: Int? = null
     ): List<Episode> {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val episodes = arrayListOf<Episode>()
         val seenIds = mutableSetOf<String>()
         var pg = page
         while (true) {
             val rawEp = app.get(
-                "$apiBase/newtv/episodes.php",
+                "$mainUrl/newtv/episodes.php",
                 params = mapOf("id" to sid, "page" to pg.toString()),
                 headers = buildNewTvHeaders(ott)
             ).text
