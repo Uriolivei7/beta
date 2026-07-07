@@ -14,7 +14,7 @@ buildscript {
 
     dependencies {
         classpath("com.android.tools.build:gradle:8.13.2")
-        classpath("com.github.recloudstream:gradle:81b1d424d236a447d9f2e95a229faef79002f761") {
+        classpath("com.github.recloudstream:gradle:master-SNAPSHOT") {
             exclude(group = "com.github.vidstige", module = "jadb")
         }
         classpath("org.jetbrains.kotlin:kotlin-serialization:2.3.0")
