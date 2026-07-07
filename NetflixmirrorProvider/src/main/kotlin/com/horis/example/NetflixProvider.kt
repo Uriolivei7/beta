@@ -206,47 +206,33 @@ class  NetflixProvider : MainAPI() {
         }
         val cookieHeader = if (currentBypassToken.length > 10) mapOf("Cookie" to "t_hash_t=$currentBypassToken") else emptyMap()
 
-        // Primary flow: player.php on apiBase (returns direct working HLS with CDN)
-        for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
-            try {
-                val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
-                val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
-                Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
-                if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
-                    callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
-                        this.referer = resp.referer ?: apiBase
-                        this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase)))
-                    })
-                    return true
-                }
-            } catch (e: Exception) {
-                Log.e("NF", "player $u error: ${e.message}")
-            }
-        }
-
-        // Fallback: playlist.php on mainUrl
-        val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl))
-        val playlistUrls = listOf("$mainUrl/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id")
-        val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/'), "https://net11.cc").distinct()
+        // Primary flow (decompiled): playlist.php returns Source[] with full-content M3U8 URLs
+        val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
+        val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
+            "$mainUrl/playlist.php?id=$id")
+        val hlsBases = listOf(apiBase.trimEnd('/'), mainUrl.trimEnd('/')).distinct()
         for (plUrl in playlistUrls) {
             try {
                 val plRaw = app.get(plUrl, headers = playlistHeaders).text
                 Log.e("NF", "playlist raw=${plRaw.take(500)}")
                 val items = tryParseJsonList<PlaylistItem>(plRaw)
                 if (!items.isNullOrEmpty()) {
+                    var count = 0
                     for (item in items) {
                         for (source in item.sources.orEmpty()) {
                             val file = source.file ?: continue
                             val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
+                            val headers = playlistHeaders
+                            val referer = "$mainUrl/mobile/home?app=1"
                             if (file.startsWith("http")) {
                                 callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
-                                    headers = playlistHeaders; referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
-                                })
+                                    this.headers = headers; this.referer = referer; this.quality = quality
+                                }); count++
                             } else {
                                 for (base in hlsBases) {
                                     callback.invoke(newExtractorLink(name, name, "$base$file", type = ExtractorLinkType.M3U8) {
-                                        headers = playlistHeaders; referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
-                                    })
+                                        this.headers = headers; this.referer = referer; this.quality = quality
+                                    }); count++
                                 }
                             }
                         }
@@ -265,10 +251,29 @@ class  NetflixProvider : MainAPI() {
                             }
                         }
                     }
-                    if (items.any { it.sources?.isNotEmpty() == true }) return true
+                    Log.e("NF", "playlist $plUrl returned $count sources")
+                    if (count > 0) return true
                 }
             } catch (e: Exception) {
                 Log.e("NF", "playlist $plUrl error: ${e.message}")
+            }
+        }
+
+        // Fallback: player.php on apiBase (may return 10-min preview)
+        for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
+            try {
+                val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
+                val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
+                Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
+                if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
+                    callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
+                        this.referer = resp.referer ?: apiBase
+                        this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
+                    })
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.e("NF", "player $u error: ${e.message}")
             }
         }
 
