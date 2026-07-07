@@ -145,23 +145,22 @@ suspend fun bypass(mainUrl: String): String {
     }
     Log.e("BYPASS", "Cache expired or empty")
 
-    // Try 1: Old-style bypass — POST $mainUrl/tv/p.php (no Cloudflare, direct)
+    // Try 1: GET $mainUrl/tv/p.php — no Cloudflare, no form body
     try {
-        var count = 0
-        var resp: NiceResponse
-        do {
-            resp = app.post("$mainUrl/tv/p.php")
-            count++
-            if (count > 5) break
-        } while (!resp.text.contains("\"r\":\"n\""))
-        val tHash = resp.cookies["t_hash_t"].orEmpty()
-        if (tHash.isNotEmpty()) {
+        val resp = app.get("$mainUrl/tv/p.php")
+        val body = resp.text
+        Log.e("BYPASS", "tv/p.php GET code=${resp.code} body=${body.take(300)}")
+        val setCookies = resp.headers.values("Set-Cookie")
+        Log.e("BYPASS", "tv/p.php Set-Cookie=$setCookies")
+        val tHash = setCookies.firstOrNull { it.startsWith("t_hash_t=") }
+            ?.substringAfter("=")?.substringBefore(";")?.trim()
+        if (!tHash.isNullOrBlank() && tHash.length > 10) {
             NetflixMirrorStorage.saveCookie(tHash)
-            Log.e("BYPASS", "Got token via old bypass: ${tHash.take(60)}")
+            Log.e("BYPASS", "Got token via tv/p.php: ${tHash.take(60)}")
             return tHash
         }
     } catch (e: Exception) {
-        Log.e("BYPASS", "Old bypass failed: ${e.message}")
+        Log.e("BYPASS", "tv/p.php failed: ${e.message}")
     }
 
     NetflixMirrorStorage.clearCookie()
@@ -176,7 +175,13 @@ suspend fun bypass(mainUrl: String): String {
 
     // Try 3: HTTP-based on mainUrl
     val browserHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+        "X-Requested-With" to "XMLHttpRequest",
+        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "same-origin",
+        "Sec-Fetch-User" to "?1",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.5",
         "Referer" to "$mainUrl/",
