@@ -49,15 +49,16 @@ class  NetflixProvider : MainAPI() {
                     if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
                         Log.e("Netmirror", "¡Bypass de Manifiesto! Creando M3U8 virtual para el ID: $realEpisodeId")
 
-                        // Creamos en memoria un archivo de texto .m3u8 válido que apunta directito a tu link de 720p
-                        val fakeMasterM3u8 = """
-                        #EXTM3U
-                        #EXT-X-VERSION:3
-                        #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
-                        https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$lastBypassCookie
-                    """.trimIndent()
+                        // Decodificamos la cookie por si viene con %3A%3A en lugar de ::
+                        val cleanCookie = lastBypassCookie.replace("%3A%3A", "::")
 
-                        // Le entregamos este texto a ExoPlayer simulando que vino del servidor original
+                        // Usamos trimMargin con '|' para asegurarnos de que NO haya espacios al inicio de cada línea
+                        val fakeMasterM3u8 = """#EXTM3U
+                            |#EXT-X-VERSION:3
+                            |#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
+                            |https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie""".trimMargin("|")
+
+                        // Forzamos el Content-Type correcto para HLS de Apple
                         val contentType = "application/vnd.apple.mpegurl".toMediaTypeOrNull()
                         val responseBody = fakeMasterM3u8.toResponseBody(contentType)
 
@@ -68,7 +69,6 @@ class  NetflixProvider : MainAPI() {
                             .build()
                     }
                 }
-
                 return response
             }
         }
