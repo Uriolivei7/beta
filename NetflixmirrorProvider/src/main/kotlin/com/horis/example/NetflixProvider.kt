@@ -31,36 +31,48 @@ class  NetflixProvider : MainAPI() {
                 var urlString = request.url.toString()
                 val tokenClean = lastBypassCookie.substringBefore("::")
 
-                Log.d("Netmirror", "Petición detectada en reproductor: $urlString")
+                // 1. CAPTURA Y CORRECCIÓN DE LA TRAMPA (Desvío al video falso de 10 min)
+                if (urlString.contains("220884/1080p")) {
+                    Log.e("Netmirror", "¡Detectado intento de desvío al video de 10 min! Forzando pista real.")
+                    // Si el servidor intenta enviarnos al ID falso, lo redirigimos a la fuerza
+                    // usando la estructura de video real que descubriste en resolución 720p
+                    val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
 
-                // 1. Corrección dinámica si el archivo maestro responde con sub-playlists 'unknown'
+                    // Reemplazamos dinámicamente el host y la ruta usando un CDN activo
+                    if (realEpisodeId.isNotEmpty() && realEpisodeId.isDigitsOnly()) {
+                        urlString = "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$lastBypassCookie"
+                        Log.d("Netmirror", "Nueva URL de video forzada: $urlString")
+                    }
+                }
+
+                // 2. PARCHADO DE SUB-PLAYLISTS MUDAS O "UNKNOWN"
                 if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
                     urlString = urlString.replace("in=unknown::ep", "in=$tokenClean")
                         .replace("in=unknown%3A%3Aep", "in=$tokenClean")
-                    Log.e("Netmirror", "Redirección unknown interceptada -> Forzando token: $urlString")
                 }
 
+                // 3. ARMADO DE PETICIÓN CON HEADERS DE CONFIANZA
                 val isMainDomain = urlString.contains("net52.cc") || urlString.contains("net22.cc")
-                val newRequestBuilder = request.newBuilder()
+                val builder = request.newBuilder()
                     .url(urlString)
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0")
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile)")
                     .header("Referer", "https://net52.cc/")
                     .header("Origin", "https://net52.cc")
                     .header("Accept", "*/*")
 
-                // 2. Control estricto del cortafuegos de cookies
                 if (isMainDomain) {
-                    // El balanceador principal exige la cookie completa o te mandará al ID falso
-                    newRequestBuilder.header("Cookie", "hd=on; $lastBypassCookie")
+                    builder.header("Cookie", "hd=on; $lastBypassCookie")
                 } else {
-                    // Los CDNs externos rechazan peticiones si detectan cookies cruzadas de Netmirror
-                    newRequestBuilder.removeHeader("Cookie")
+                    builder.removeHeader("Cookie") // Los CDNs fallan si llevan cookies cruzadas
                 }
 
-                return chain.proceed(newRequestBuilder.build())
+                return chain.proceed(builder.build())
             }
         }
     }
+
+    // Función de extensión utilitaria si no la tienes
+    fun String.isDigitsOnly(): Boolean = this.all { it.isDigit() }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.e("Netmirror", "getMainPage called page=$page")
