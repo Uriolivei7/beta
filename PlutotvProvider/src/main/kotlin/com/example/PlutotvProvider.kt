@@ -173,53 +173,74 @@ open class PlutotvProvider : MainAPI() {
         val details = AppUtils.tryParseJson<MediaItem>(url)
         details?.let { details ->
             Log.d("PLUTOTV", "load: it's a VOD item: ${details.name} (id=${details.id}, type=${details.type})")
-            if (details.type == "series") {
-                Log.d("PLUTOTV", "load: fetching seasons for series ${details.id}")
-                val seasonInfo = app.get(
-                    "${servers.vod}/v4/vod/series/${details.id}/seasons",
-                    headers = authHeaders(),
-                ).parsed<SeasonInfo>()
-                Log.d("PLUTOTV", "load: got ${seasonInfo.seasons.size} seasons, name=${seasonInfo.name}")
+            return loadVodDetails(details, servers)
+        }
 
-                val episodes = seasonInfo.seasons.flatMap { season ->
-                    season.episodes.map { episode ->
-                        newEpisode(episode.stitched) {
-                            this.name = episode.name
-                            this.posterUrl = episode.covers.firstOrNull()?.url
-                            this.runTime = (episode.originalContentDuration / 1000 / 60).toInt()
-                            this.description = episode.description
-                            this.season = season.number.toInt()
-                        }
-                    }
-                }
-                Log.d("PLUTOTV", "load: total episodes=${episodes.size}")
-
-                return newTvSeriesLoadResponse(
-                    name = seasonInfo.name,
-                    url = "$mainUrl/gsa/search/details/series/${seasonInfo.id}",
-                    type = TvType.TvSeries,
-                    episodes = episodes
-                ) {
-                    this.posterUrl = seasonInfo.featuredImage.path
-                    this.plot = seasonInfo.summary
-                }
-            } else {
-                Log.d("PLUTOTV", "load: it's a MOVIE, stitched path=${details.stitched.path}")
-                return newMovieLoadResponse(
-                    name = details.name,
-                    url = "$mainUrl/gsa/search/details/movies/${details.id}",
-                    dataUrl = details.stitched.toJson(),
-                    type = TvType.Movie,
-                ) {
-                    this.posterUrl = details.featuredImage.path
-                    this.plot = details.summary
-                    this.duration = (details.originalContentDuration / 1000 / 60).toInt()
-                }
+        // Fallback: url es una URL de Pluto (ej: desde favoritos)
+        val seriesMatch = Regex("""/series/([^/?]+)""").find(url)
+        val movieMatch = Regex("""/movies/([^/?]+)""").find(url)
+        val idFromUrl = seriesMatch?.groupValues?.get(1) ?: movieMatch?.groupValues?.get(1)
+        if (idFromUrl != null) {
+            Log.d("PLUTOTV", "load: fetching VOD item by id=$idFromUrl from URL")
+            val item = app.get(
+                "${servers.vod}/v4/vod/items",
+                headers = authHeaders(),
+                params = mapOf("ids" to idFromUrl)
+            ).parsed<SearchDetailsResponse>().firstOrNull()
+            if (item != null) {
+                Log.d("PLUTOTV", "load: resolved id=$idFromUrl to item=${item.name}")
+                return loadVodDetails(item, servers)
             }
         }
 
         Log.d("PLUTOTV", "load: could not parse URL as Channel or MediaItem, returning null")
         return null
+    }
+
+    private suspend fun loadVodDetails(details: MediaItem, servers: Servers): LoadResponse {
+        if (details.type == "series") {
+            Log.d("PLUTOTV", "load: fetching seasons for series ${details.id}")
+            val seasonInfo = app.get(
+                "${servers.vod}/v4/vod/series/${details.id}/seasons",
+                headers = authHeaders(),
+            ).parsed<SeasonInfo>()
+            Log.d("PLUTOTV", "load: got ${seasonInfo.seasons.size} seasons, name=${seasonInfo.name}")
+
+            val episodes = seasonInfo.seasons.flatMap { season ->
+                season.episodes.map { episode ->
+                    newEpisode(episode.stitched) {
+                        this.name = episode.name
+                        this.posterUrl = episode.covers.firstOrNull()?.url
+                        this.runTime = (episode.originalContentDuration / 1000 / 60).toInt()
+                        this.description = episode.description
+                        this.season = season.number.toInt()
+                    }
+                }
+            }
+            Log.d("PLUTOTV", "load: total episodes=${episodes.size}")
+
+            return newTvSeriesLoadResponse(
+                name = seasonInfo.name,
+                url = "$mainUrl/gsa/search/details/series/${seasonInfo.id}",
+                type = TvType.TvSeries,
+                episodes = episodes
+            ) {
+                this.posterUrl = seasonInfo.featuredImage.path
+                this.plot = seasonInfo.summary
+            }
+        } else {
+            Log.d("PLUTOTV", "load: it's a MOVIE, stitched path=${details.stitched.path}")
+            return newMovieLoadResponse(
+                name = details.name,
+                url = "$mainUrl/gsa/search/details/movies/${details.id}",
+                dataUrl = details.stitched.toJson(),
+                type = TvType.Movie,
+            ) {
+                this.posterUrl = details.featuredImage.path
+                this.plot = details.summary
+                this.duration = (details.originalContentDuration / 1000 / 60).toInt()
+            }
+        }
     }
 
     override suspend fun loadLinks(
