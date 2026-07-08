@@ -263,10 +263,15 @@ class  NetflixProvider : MainAPI() {
 
                 // Extract CDN hostname from audio URI + rewritten token from video variant URL
                 val cdnMatch = Regex("""URI="https://([^/]+)/files/""").find(masterResp)
-                val inMatch = Regex("""\?in=([^&\s]+)""").find(masterResp)
-                if (cdnMatch != null && inMatch != null) {
+                val inMatches = Regex("""\?in=([^&\s]+)""").findAll(masterResp).map { it.groupValues[1] }.toList()
+                val inMatch = inMatches.firstOrNull { !it.contains("unknown") } ?: inMatches.firstOrNull()
+                if (cdnMatch != null && (inMatch != null || cookie5.contains("::ep::"))) {
                     var cdnHost = cdnMatch.groupValues[1]
-                    val rewrittenToken = inMatch.groupValues[1]
+                    val rewrittenToken = when {
+                        inMatch != null && !inMatch.contains("unknown") -> inMatch
+                        cookie5.contains("::ep::") -> cookie5.substringBefore("::ep") + "::ep"
+                        else -> inMatch ?: "unknown::ep"
+                    }
 
                     // Video CDN must be nm-cdn, not freecdn (freecdn = preview only)
                     if (cdnHost.contains("freecdn")) {
