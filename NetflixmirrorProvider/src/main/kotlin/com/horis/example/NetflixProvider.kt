@@ -49,23 +49,26 @@ class  NetflixProvider : MainAPI() {
                     if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
                         Log.e("Netmirror", "¡Bypass de Manifiesto! Creando M3U8 virtual para el ID: $realEpisodeId")
 
-                        // Decodificamos la cookie por si viene con %3A%3A en lugar de ::
+                        // 1. Decodificamos de forma segura los delimitadores de la cookie
                         val cleanCookie = lastBypassCookie.replace("%3A%3A", "::")
 
-                        // Usamos trimMargin con '|' para asegurarnos de que NO haya espacios al inicio de cada línea
-                        val fakeMasterM3u8 = """#EXTM3U
-                            |#EXT-X-VERSION:3
-                            |#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
-                            |https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie""".trimMargin("|")
+                        // 2. Construimos el archivo de manera estrictamente lineal para evitar saltos de línea huérfanos
+                        val fakeMasterM3u8 = "#EXTM3U\n" +
+                                "#EXT-X-VERSION:3\n" +
+                                "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\n" +
+                                "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie"
 
-                        // Forzamos el Content-Type correcto para HLS de Apple
+                        // 3. Forzamos el Content-Type nativo para HLS sin codificaciones extrañas
                         val contentType = "application/vnd.apple.mpegurl".toMediaTypeOrNull()
-                        val responseBody = fakeMasterM3u8.toResponseBody(contentType)
+                        val responseBody = fakeMasterM3u8.toByteArray(Charsets.UTF_8).toResponseBody(contentType)
 
+                        // 4. Devolvemos la respuesta inyectada directamente al reproductor
                         return response.newBuilder()
                             .code(200)
                             .message("OK")
                             .body(responseBody)
+                            .header("Content-Type", "application/vnd.apple.mpegurl")
+                            .header("Cache-Control", "no-cache")
                             .build()
                     }
                 }

@@ -4,6 +4,7 @@ import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
+import com.lagradost.cloudstream3.LiveStreamLoadResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
@@ -184,29 +185,43 @@ open class PlutotvProvider : MainAPI() {
         Log.d("PLUTOTV", "load: url=$url")
         val (_, servers) = obtainSessionData()
 
+        // 1. Intentar parsear si viene como JSON estructurado (Búsqueda/Navegación directa)
         val channel = AppUtils.tryParseJson<Channel>(url)
         channel?.let { channel ->
-            Log.d("PLUTOTV", "load: it's a LIVE channel: ${channel.name} (id=${channel.id})")
-            Log.d("PLUTOTV", "load: stitched path=${channel.stitched.path}")
-            return newLiveStreamLoadResponse(
-                name = channel.name,
-                url = "$mainUrl/gsa/live-tv/${channel.id}",
-                dataUrl = channel.stitched.toJson()
-            ) {
-                this.posterUrl = channel.images.firstOrNull()?.url
-                this.plot = channel.summary
-            }
+            Log.d("PLUTOTV", "load: it's a LIVE channel (JSON): ${channel.name} (id=${channel.id})")
+            return createLiveStreamResponse(channel)
         }
 
         val details = AppUtils.tryParseJson<MediaItem>(url)
         details?.let { details ->
-            Log.d("PLUTOTV", "load: it's a VOD item: ${details.name} (id=${details.id}, type=${details.type})")
+            Log.d("PLUTOTV", "load: it's a VOD item (JSON): ${details.name} (id=${details.id}, type=${details.type})")
             return loadVodDetails(details, servers)
         }
 
+        // 2. Si es una URL limpia de Favoritos, extraer ID usando Regex
         val seriesMatch = Regex("""/series/([^/?]+)""").find(url)
         val movieMatch = Regex("""/movies/([^/?]+)""").find(url)
+        val liveMatch = Regex("""/live-tv/([^/?]+)""").find(url)
+
         val idFromUrl = seriesMatch?.groupValues?.get(1) ?: movieMatch?.groupValues?.get(1)
+        val liveIdFromUrl = liveMatch?.groupValues?.get(1)
+
+        // Caso A: Es un canal En Vivo desde favoritos
+        if (liveIdFromUrl != null) {
+            Log.d("PLUTOTV", "load: fetching LIVE channel by id=$liveIdFromUrl from URL")
+
+            val channelResponse = app.get(
+                "${servers.api}/v2/channels",
+                headers = authHeaders()
+            ).parsedSafe<List<Channel>>()
+
+            val liveChannel = channelResponse?.find { it.id == liveIdFromUrl }
+            if (liveChannel != null) {
+                Log.d("PLUTOTV", "load: resolved liveId=$liveIdFromUrl to channel=${liveChannel.name}")
+                return createLiveStreamResponse(liveChannel)
+            }
+        }
+
         if (idFromUrl != null) {
             Log.d("PLUTOTV", "load: fetching VOD item by id=$idFromUrl from URL")
             val item = app.get(
@@ -222,6 +237,18 @@ open class PlutotvProvider : MainAPI() {
 
         Log.d("PLUTOTV", "load: could not parse URL as Channel or MediaItem, returning null")
         return null
+    }
+
+    private suspend fun createLiveStreamResponse(channel: Channel): LiveStreamLoadResponse {
+        Log.d("PLUTOTV", "load: stitched path=${channel.stitched?.path}")
+        return newLiveStreamLoadResponse(
+            name = channel.name,
+            url = "$mainUrl/gsa/live-tv/${channel.id}",
+            dataUrl = channel.stitched?.toJson() ?: ""
+        ) {
+            this.posterUrl = channel.images?.firstOrNull()?.url
+            this.plot = channel.summary
+        }
     }
 
     private suspend fun loadVodDetails(details: MediaItem, servers: Servers): LoadResponse {
