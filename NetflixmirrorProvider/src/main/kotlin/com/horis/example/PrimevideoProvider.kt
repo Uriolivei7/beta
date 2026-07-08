@@ -18,7 +18,7 @@ class PrimevideoProvider : MainAPI() {
     private val ott = "pv"
 
     init {
-        Log.e("PV", "PrimevideoProvider init called")
+        Log.e("Netmirror", "PrimevideoProvider init called")
     }
 
     private fun pvPoster(id: String): String = "https://imgcdn.kim/pv/v/$id.jpg"
@@ -27,8 +27,8 @@ class PrimevideoProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        if (cookie.length <= 10) { Log.e("PV", "getMainPage: bypass failed"); return null }
-        Log.e("PV", "getMainPage cookie=${cookie.take(40)}...")
+        if (cookie.length <= 10) { Log.e("Netmirror", "getMainPage: bypass failed"); return null }
+        Log.e("Netmirror", "getMainPage cookie=${cookie.take(40)}...")
 
         val cookies = mobileCookies(cookie, ott)
         val mHeaders = mobileHeaders(ott, cookie, mapOf("Referer" to "$mainUrl/mobile/home?app=1"))
@@ -53,18 +53,18 @@ class PrimevideoProvider : MainAPI() {
                 if (results.isEmpty()) return@mapNotNull null
                 HomePageList(name, results, isHorizontalImages = false)
             }
-            Log.e("PV", "getMainPage: ${items.size} categories")
+            Log.e("Netmirror", "getMainPage: ${items.size} categories")
             return newHomePageResponse(items, hasNext = false)
         } catch (e: Exception) {
-            Log.e("PV", "getMainPage failed: ${e.message}")
+            Log.e("Netmirror", "getMainPage failed: ${e.message}")
             return null
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.e("PV", "search called query=$query")
+        Log.e("Netmirror", "search called query=$query")
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        if (cookie.length <= 10) { Log.e("PV", "search: bypass failed"); return emptyList() }
+        if (cookie.length <= 10) { Log.e("Netmirror", "search: bypass failed"); return emptyList() }
 
         val cookies = mobileCookies(cookie, ott)
         val mHeaders = mobileHeaders(ott, cookie, mapOf("Referer" to "$mainUrl/home"))
@@ -80,7 +80,7 @@ class PrimevideoProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("PV", "search failed: ${e.message}")
+            Log.e("Netmirror", "search failed: ${e.message}")
             return emptyList()
         }
     }
@@ -88,7 +88,7 @@ class PrimevideoProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val id = parseJson<NewTvId>(url).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        if (cookie.length <= 10) { Log.e("PV", "load: bypass failed"); return null }
+        if (cookie.length <= 10) { Log.e("Netmirror", "load: bypass failed"); return null }
 
         val cookies = mobileCookies(cookie, ott)
         val mHeaders = mobileHeaders(ott, cookie, mapOf("Referer" to "$mainUrl/home"))
@@ -99,7 +99,7 @@ class PrimevideoProvider : MainAPI() {
             cookies = cookies,
             referer = "$mainUrl/home"
         ).text
-        Log.d("PV", "RAW mobile post response: $rawResponse")
+        Log.d("Netmirror", "RAW mobile post response: $rawResponse")
         val data = JSONParser.parse(rawResponse, MobilePostData::class)
 
         val title = data.title ?: id
@@ -187,7 +187,7 @@ class PrimevideoProvider : MainAPI() {
                 cookies = cookies,
                 referer = "$mainUrl/home"
             ).text
-            Log.d("PV", "RAW episodes page=$pg: $rawEp")
+            Log.d("Netmirror", "RAW episodes page=$pg: $rawEp")
             val data = JSONParser.parse(rawEp, MobileEpisodesData::class)
 
             data.episodes.orEmpty().mapTo(episodes) {
@@ -214,17 +214,17 @@ class PrimevideoProvider : MainAPI() {
         val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
-        Log.e("PV", "loadLinks id=$id apiBase=$apiBase")
+        Log.e("Netmirror", "loadLinks id=$id apiBase=$apiBase")
 
         val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
         if (token.length > 10) {
-            Log.e("PV", "Got bypass token: ${token.take(60)}")
+            Log.e("Netmirror", "Got bypass token: ${token.take(60)}")
             currentBypassToken = token
         } else {
-            Log.e("PV", "bypass failed, trying play hash")
+            Log.e("Netmirror", "bypass failed, trying play hash")
             val playHash = getPlayHash(id, apiBase)
             if (playHash.isNotBlank()) {
-                Log.e("PV", "Got play hash: ${playHash.take(60)}")
+                Log.e("Netmirror", "Got play hash: ${playHash.take(60)}")
                 currentBypassToken = playHash
             }
         }
@@ -234,7 +234,7 @@ class PrimevideoProvider : MainAPI() {
         val h1 = cookie5.substringBefore("::")
         val playHash = if (token.length > 10) getPlayHash(id, apiBase) else ""
         if (playHash.length > 10) {
-            Log.e("PV", "Got playHash for id=$id: ${playHash.take(40)}")
+            Log.e("Netmirror", "Got playHash for id=$id: ${playHash.take(40)}")
         }
         val ts = System.currentTimeMillis() / 1000
         val hash2 = if (playHash.length > 10) playHash
@@ -250,7 +250,7 @@ class PrimevideoProvider : MainAPI() {
             try {
                 val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng"
                 val masterResp = app.get(masterUrl, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "pv")).text
-                Log.e("PV", "mobile/hls raw=${masterResp.take(2000)}")
+                Log.e("Netmirror", "mobile/hls raw=${masterResp.take(2000)}")
 
                 if (masterResp.startsWith("#EXT")) {
                     // Parse master: audio stays on s23, video freecdn→s23
@@ -269,7 +269,7 @@ class PrimevideoProvider : MainAPI() {
                                         .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
                                         .replace(Regex("/files/\\d+/"), "/files/$id/")
                                         .replace("in=unknown::ep", "in=$inParam")
-                                    Log.e("PV", "rewrote video: ${urlLine.take(80)} → ${rewritten.take(80)}")
+                                    Log.e("Netmirror", "rewrote video: ${urlLine.take(80)} → ${rewritten.take(80)}")
                                     appendLine(rewritten)
                                 } else {
                                     appendLine(urlLine)
@@ -289,8 +289,8 @@ class PrimevideoProvider : MainAPI() {
                     }
                     val hasVideo = fixedMaster.contains("#EXT-X-STREAM-INF:")
                     if (hasVideo) {
-                        Log.e("PV", "Server master OK, fixed CDN")
-                        Log.e("PV", "fixedMaster=${fixedMaster.take(2000)}")
+                        Log.e("Netmirror", "Server master OK, fixed CDN")
+                        Log.e("Netmirror", "fixedMaster=${fixedMaster.take(2000)}")
                         setCustomMaster(id, fixedMaster)
 
                         val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
@@ -305,16 +305,16 @@ class PrimevideoProvider : MainAPI() {
                             this.quality = getQualityFromName("720p")
                         })
                         foundAnyLink = true
-                        Log.e("PV", "mobile/hls master returned for id=$id")
+                        Log.e("Netmirror", "mobile/hls master returned for id=$id")
                         return true
                     } else {
-                        Log.e("PV", "mobile/hls response has no video variants")
+                        Log.e("Netmirror", "mobile/hls response has no video variants")
                     }
                 } else {
-                    Log.e("PV", "mobile/hls response invalid: ${masterResp.take(200)}")
+                    Log.e("Netmirror", "mobile/hls response invalid: ${masterResp.take(200)}")
                 }
             } catch (e: Exception) {
-                Log.e("PV", "mobile/hls failed: ${e.message}")
+                Log.e("Netmirror", "mobile/hls failed: ${e.message}")
             }
         }
 
@@ -324,7 +324,7 @@ class PrimevideoProvider : MainAPI() {
                 try {
                     val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
                     val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
-                    Log.e("PV", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
+                    Log.e("Netmirror", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
                     if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
                         callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
                             this.referer = resp.referer ?: apiBase
@@ -333,7 +333,7 @@ class PrimevideoProvider : MainAPI() {
                         foundAnyLink = true
                     }
                 } catch (e: Exception) {
-                    Log.e("PV", "player $u error: ${e.message}")
+                    Log.e("Netmirror", "player $u error: ${e.message}")
                 }
             }
         }
@@ -347,7 +347,7 @@ class PrimevideoProvider : MainAPI() {
             for (plUrl in playlistUrls) {
                 try {
                     val plRaw = app.get(plUrl, headers = playlistHeaders).text
-                    Log.e("PV", "playlist raw=${plRaw.take(500)}")
+                    Log.e("Netmirror", "playlist raw=${plRaw.take(500)}")
                     val items = tryParseJsonList<PlaylistItem>(plRaw)
                     if (!items.isNullOrEmpty()) {
                         var count = 0
@@ -386,27 +386,27 @@ class PrimevideoProvider : MainAPI() {
                                 }
                             }
                         }
-                        Log.e("PV", "playlist $plUrl returned $count sources")
+                        Log.e("Netmirror", "playlist $plUrl returned $count sources")
                         if (count > 0) foundAnyLink = true
                     }
                 } catch (e: Exception) {
-                    Log.e("PV", "playlist $plUrl error: ${e.message}")
+                    Log.e("Netmirror", "playlist $plUrl error: ${e.message}")
                 }
             }
         }
 
-        Log.e("PV", "loadLinks result=$foundAnyLink id=$id")
+        Log.e("Netmirror", "loadLinks result=$foundAnyLink id=$id")
         return foundAnyLink
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val linkUrl = extractorLink.url
-        Log.e("PV", "getVideoInterceptor called for ${linkUrl.take(120)}")
-        Log.e("PV", "getVideoInterceptor referer=${extractorLink.referer?.take(80)} headers=${extractorLink.headers?.map { "${it.key}=${it.value.take(60)}" }}")
+        Log.e("Netmirror", "getVideoInterceptor called for ${linkUrl.take(120)}")
+        Log.e("Netmirror", "getVideoInterceptor referer=${extractorLink.referer?.take(80)} headers=${extractorLink.headers?.map { "${it.key}=${it.value.take(60)}" }}")
         return try {
             m3u8CdnFixInterceptor()
         } catch (e: Exception) {
-            Log.e("PV", "getVideoInterceptor failed: ${e.message}")
+            Log.e("Netmirror", "getVideoInterceptor failed: ${e.message}")
             null
         }
     }
@@ -428,10 +428,10 @@ class PrimevideoProvider : MainAPI() {
                         cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "pv")
                     )
                     val text = resp.text.trim()
-                    Log.e("PV", "play.php GET $domain$path raw=${text.take(200)}")
+                    Log.e("Netmirror", "play.php GET $domain$path raw=${text.take(200)}")
                     if (text.startsWith("<") || text.length < 10) continue
                     val parts = text.split("::")
-                    return if (parts.size >= 2) parts[1] else text
+                    if (parts.size >= 2) return parts[1]
                 } catch (_: Exception) {}
             }
             try {
@@ -448,17 +448,17 @@ class PrimevideoProvider : MainAPI() {
                     cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "pv")
                 )
                 val text = resp.text.trim()
-                Log.e("PV", "play.php POST $domain raw=${text.take(200)}")
+                Log.e("Netmirror", "play.php POST $domain raw=${text.take(200)}")
                 if (text.startsWith("<") || text.length < 10) continue
                 val parsed = tryParseJson<PlayHashResponse>(text)
                 val h = parsed?.h?.removePrefix("in=")?.substringBefore("::ep")
                 if (h != null && h.length > 10) {
                     val parts = h.split("::")
-                    return if (parts.size >= 2) parts[1] else h
+                    if (parts.size >= 2) return parts[1]
                 }
                 if (text.length < 100) {
                     val parts = text.split("::")
-                    return if (parts.size >= 2) parts[1] else text
+                    if (parts.size >= 2) return parts[1]
                 }
             } catch (_: Exception) {}
         }

@@ -18,26 +18,26 @@ class  NetflixProvider : MainAPI() {
     private val ott = "nf"
 
     init {
-        Log.e("NF", "NetflixProvider init called")
+        Log.e("Netmirror", "NetflixProvider init called")
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val linkUrl = extractorLink.url
-        Log.e("NF", "getVideoInterceptor called for ${linkUrl.take(120)}")
-        Log.e("NF", "getVideoInterceptor referer=${extractorLink.referer?.take(80)} headers=${extractorLink.headers?.map { "${it.key}=${it.value.take(60)}" }}")
+        Log.e("Netmirror", "getVideoInterceptor called for ${linkUrl.take(120)}")
+        Log.e("Netmirror", "getVideoInterceptor referer=${extractorLink.referer?.take(80)} headers=${extractorLink.headers?.map { "${it.key}=${it.value.take(60)}" }}")
         return try {
             m3u8CdnFixInterceptor()
         } catch (e: Exception) {
-            Log.e("NF", "getVideoInterceptor failed: ${e.message}")
+            Log.e("Netmirror", "getVideoInterceptor failed: ${e.message}")
             null
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.e("NF", "getMainPage called page=$page")
+        Log.e("Netmirror", "getMainPage called page=$page")
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        if (cookie.length <= 10) { Log.e("NF", "getMainPage: bypass failed"); return null }
-        Log.e("NF", "getMainPage cookie=${cookie.take(40)}...")
+        if (cookie.length <= 10) { Log.e("Netmirror", "getMainPage: bypass failed"); return null }
+        Log.e("Netmirror", "getMainPage cookie=${cookie.take(40)}...")
 
         val cookies = mobileCookies(cookie, ott)
         val mHeaders = mobileHeaders(ott, cookie, mapOf("Referer" to "$mainUrl/mobile/home?app=1"))
@@ -62,18 +62,18 @@ class  NetflixProvider : MainAPI() {
                 if (results.isEmpty()) return@mapNotNull null
                 HomePageList(name, results, isHorizontalImages = false)
             }
-            Log.e("NF", "getMainPage: ${items.size} categories")
+            Log.e("Netmirror", "getMainPage: ${items.size} categories")
             return newHomePageResponse(items, hasNext = false)
         } catch (e: Exception) {
-            Log.e("NF", "getMainPage failed: ${e.message}")
+            Log.e("Netmirror", "getMainPage failed: ${e.message}")
             return null
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.e("NF", "search called query=$query")
+        Log.e("Netmirror", "search called query=$query")
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        if (cookie.length <= 10) { Log.e("NF", "search: bypass failed"); return emptyList() }
+        if (cookie.length <= 10) { Log.e("Netmirror", "search: bypass failed"); return emptyList() }
 
         val cookies = mobileCookies(cookie, ott)
         val mHeaders = mobileHeaders(ott, cookie, mapOf("Referer" to "$mainUrl/home"))
@@ -89,7 +89,7 @@ class  NetflixProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("NF", "search failed: ${e.message}")
+            Log.e("Netmirror", "search failed: ${e.message}")
             return emptyList()
         }
     }
@@ -97,7 +97,7 @@ class  NetflixProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val id = parseJson<NewTvId>(url).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        if (cookie.length <= 10) { Log.e("NF", "load: bypass failed"); return null }
+        if (cookie.length <= 10) { Log.e("Netmirror", "load: bypass failed"); return null }
 
         val cookies = mobileCookies(cookie, ott)
         val mHeaders = mobileHeaders(ott, cookie, mapOf("Referer" to "$mainUrl/home"))
@@ -108,7 +108,7 @@ class  NetflixProvider : MainAPI() {
             cookies = cookies,
             referer = "$mainUrl/home"
         ).text
-        Log.d("NF", "RAW mobile post response: $rawResponse")
+        Log.d("Netmirror", "RAW mobile post response: $rawResponse")
         val data = JSONParser.parse(rawResponse, MobilePostData::class)
 
         val title = data.title ?: id
@@ -196,7 +196,7 @@ class  NetflixProvider : MainAPI() {
                 cookies = cookies,
                 referer = "$mainUrl/home"
             ).text
-            Log.d("NF", "RAW episodes page=$pg: $rawEp")
+            Log.d("Netmirror", "RAW episodes page=$pg: $rawEp")
             val data = JSONParser.parse(rawEp, MobileEpisodesData::class)
 
             data.episodes.orEmpty().mapTo(episodes) {
@@ -223,17 +223,17 @@ class  NetflixProvider : MainAPI() {
         val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
-        Log.e("NF", "loadLinks id=$id apiBase=$apiBase")
+        Log.e("Netmirror", "loadLinks id=$id apiBase=$apiBase")
 
         val token = try { bypass(mainUrl) } catch (_: Exception) { "" }
         if (token.length > 10) {
-            Log.e("NF", "Got bypass token: ${token.take(60)}")
+            Log.e("Netmirror", "Got bypass token: ${token.take(60)}")
             currentBypassToken = token
         } else {
-            Log.e("NF", "bypass failed, trying play hash")
+            Log.e("Netmirror", "bypass failed, trying play hash")
             val playHash = getPlayHash(id, apiBase)
             if (playHash.isNotBlank()) {
-                Log.e("NF", "Got play hash: ${playHash.take(60)}")
+                Log.e("Netmirror", "Got play hash: ${playHash.take(60)}")
                 currentBypassToken = playHash
             }
         }
@@ -243,7 +243,7 @@ class  NetflixProvider : MainAPI() {
         val h1 = cookie5.substringBefore("::")
         val playHash = if (token.length > 10) getPlayHash(id, apiBase) else ""
         if (playHash.length > 10) {
-            Log.e("NF", "Got playHash for id=$id: ${playHash.take(40)}")
+            Log.e("Netmirror", "Got playHash for id=$id: ${playHash.take(40)}")
         }
         val ts = System.currentTimeMillis() / 1000
         val hash2 = if (playHash.length > 10) playHash
@@ -259,7 +259,7 @@ class  NetflixProvider : MainAPI() {
             try {
                 val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng"
                 val masterResp = app.get(masterUrl, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")).text
-                Log.e("NF", "mobile/hls raw=${masterResp.take(2000)}")
+                Log.e("Netmirror", "mobile/hls raw=${masterResp.take(2000)}")
 
                 if (masterResp.startsWith("#EXT")) {
                     // Parse master: audio stays on s23, video freecdn→s23
@@ -278,7 +278,7 @@ class  NetflixProvider : MainAPI() {
                                         .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
                                         .replace(Regex("/files/\\d+/"), "/files/$id/")
                                         .replace("in=unknown::ep", "in=$inParam")
-                                    Log.e("NF", "rewrote video: ${urlLine.take(80)} → ${rewritten.take(80)}")
+                                    Log.e("Netmirror", "rewrote video: ${urlLine.take(80)} → ${rewritten.take(80)}")
                                     appendLine(rewritten)
                                 } else {
                                     appendLine(urlLine)
@@ -299,8 +299,8 @@ class  NetflixProvider : MainAPI() {
                     }
                     val hasVideo = fixedMaster.contains("#EXT-X-STREAM-INF:")
                     if (hasVideo) {
-                        Log.e("NF", "Server master OK, fixed CDN")
-                        Log.e("NF", "fixedMaster=${fixedMaster.take(2000)}")
+                        Log.e("Netmirror", "Server master OK, fixed CDN")
+                        Log.e("Netmirror", "fixedMaster=${fixedMaster.take(2000)}")
                         setCustomMaster(id, fixedMaster)
 
                         val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
@@ -315,16 +315,16 @@ class  NetflixProvider : MainAPI() {
                             this.quality = getQualityFromName("720p")
                         })
                         foundAnyLink = true
-                        Log.e("NF", "mobile/hls master returned for id=$id")
+                        Log.e("Netmirror", "mobile/hls master returned for id=$id")
                         return true
                     } else {
-                        Log.e("NF", "mobile/hls response has no video variants")
+                        Log.e("Netmirror", "mobile/hls response has no video variants")
                     }
                 } else {
-                    Log.e("NF", "mobile/hls response invalid: ${masterResp.take(200)}")
+                    Log.e("Netmirror", "mobile/hls response invalid: ${masterResp.take(200)}")
                 }
             } catch (e: Exception) {
-                Log.e("NF", "mobile/hls failed: ${e.message}")
+                Log.e("Netmirror", "mobile/hls failed: ${e.message}")
             }
         }
 
@@ -333,17 +333,17 @@ class  NetflixProvider : MainAPI() {
             for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
                 try {
                     val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
-                    Log.e("NF", "player.php trying: $u")
-                    Log.e("NF", "player.php headers: ${playerHeaders.map { "${it.key}=${it.value.take(80)}" }}")
+                    Log.e("Netmirror", "player.php trying: $u")
+                    Log.e("Netmirror", "player.php headers: ${playerHeaders.map { "${it.key}=${it.value.take(80)}" }}")
                     val respRaw = app.get(u, headers = playerHeaders).text
-                    Log.e("NF", "player.php raw body: ${respRaw.take(500)}")
+                    Log.e("Netmirror", "player.php raw body: ${respRaw.take(500)}")
                     val resp = tryParseJson<NewTvPlayerResponse>(respRaw)
                     if (resp != null) {
-                        Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link} referer=${resp.referer}")
+                        Log.e("Netmirror", "player $u -> status=${resp.status} link=${resp.video_link} referer=${resp.referer}")
                         if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
                             val linkHeaders = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
-                            Log.e("NF", "player.php returning link: ${resp.video_link}")
-                            Log.e("NF", "player.php link headers: ${linkHeaders.map { "${it.key}=${it.value.take(80)}" }}")
+                            Log.e("Netmirror", "player.php returning link: ${resp.video_link}")
+                            Log.e("Netmirror", "player.php link headers: ${linkHeaders.map { "${it.key}=${it.value.take(80)}" }}")
                             callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
                                 this.referer = resp.referer ?: apiBase
                                 this.headers = linkHeaders
@@ -351,10 +351,10 @@ class  NetflixProvider : MainAPI() {
                             foundAnyLink = true
                         }
                     } else {
-                        Log.e("NF", "player.php JSON parse failed for: $u")
+                        Log.e("Netmirror", "player.php JSON parse failed for: $u")
                     }
                 } catch (e: Exception) {
-                    Log.e("NF", "player $u error: ${e.message}")
+                    Log.e("Netmirror", "player $u error: ${e.message}")
                 }
             }
         }
@@ -368,7 +368,7 @@ class  NetflixProvider : MainAPI() {
             for (plUrl in playlistUrls) {
                 try {
                     val plRaw = app.get(plUrl, headers = playlistHeaders).text
-                    Log.e("NF", "playlist raw=${plRaw.take(500)}")
+                    Log.e("Netmirror", "playlist raw=${plRaw.take(500)}")
                     val items = tryParseJsonList<PlaylistItem>(plRaw)
                     if (!items.isNullOrEmpty()) {
                         var count = 0
@@ -407,16 +407,16 @@ class  NetflixProvider : MainAPI() {
                                 }
                             }
                         }
-                        Log.e("NF", "playlist $plUrl returned $count sources")
+                        Log.e("Netmirror", "playlist $plUrl returned $count sources")
                         if (count > 0) foundAnyLink = true
                     }
                 } catch (e: Exception) {
-                    Log.e("NF", "playlist $plUrl error: ${e.message}")
+                    Log.e("Netmirror", "playlist $plUrl error: ${e.message}")
                 }
             }
         }
 
-        Log.e("NF", "loadLinks result=$foundAnyLink id=$id")
+        Log.e("Netmirror", "loadLinks result=$foundAnyLink id=$id")
         return foundAnyLink
     }
 
@@ -438,10 +438,10 @@ class  NetflixProvider : MainAPI() {
                         cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "nf")
                     )
                     val text = resp.text.trim()
-                    Log.e("NF", "play.php GET $domain$path raw=${text.take(200)}")
+                    Log.e("Netmirror", "play.php GET $domain$path raw=${text.take(200)}")
                     if (text.startsWith("<") || text.length < 10) continue
                     val parts = text.split("::")
-                    return if (parts.size >= 2) parts[1] else text
+                    if (parts.size >= 2) return parts[1]
                 } catch (_: Exception) {}
             }
             // Try POST
@@ -459,17 +459,17 @@ class  NetflixProvider : MainAPI() {
                     cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "nf")
                 )
                 val text = resp.text.trim()
-                Log.e("NF", "play.php POST $domain raw=${text.take(200)}")
+                Log.e("Netmirror", "play.php POST $domain raw=${text.take(200)}")
                 if (text.startsWith("<") || text.length < 10) continue
                 val parsed = tryParseJson<PlayHashResponse>(text)
                 val h = parsed?.h?.removePrefix("in=")?.substringBefore("::ep")
                 if (h != null && h.length > 10) {
                     val parts = h.split("::")
-                    return if (parts.size >= 2) parts[1] else h
+                    if (parts.size >= 2) return parts[1]
                 }
                 if (text.length < 100) {
                     val parts = text.split("::")
-                    return if (parts.size >= 2) parts[1] else text
+                    if (parts.size >= 2) return parts[1]
                 }
             } catch (_: Exception) {}
         }

@@ -722,11 +722,11 @@ private val customMastersLogged = java.util.concurrent.atomic.AtomicBoolean(fals
 
 fun setCustomMaster(id: String, master: String) {
     customMasters[id] = master
-    Log.d("CdnFix", "setCustomMaster id=$id size=${master.length}")
+    Log.d("Netmirror", "setCustomMaster id=$id size=${master.length}")
 }
 
 fun m3u8CdnFixInterceptor(): Interceptor {
-    Log.d("CdnFix", "m3u8CdnFixInterceptor() called - creating new interceptor")
+    Log.d("Netmirror", "m3u8CdnFixInterceptor() called - creating new interceptor")
     return Interceptor { chain ->
         var req = chain.request()
         val url = req.url.toString()
@@ -736,7 +736,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             if (id != null) {
                 val master = customMasters[id]
                 if (master != null) {
-                    Log.d("CdnFix", "Serving custom master for id=$id")
+                    Log.d("Netmirror", "Serving custom master for id=$id")
                     val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
                     val body = ResponseBody.create(mediaType, master)
                     val response = Response.Builder()
@@ -748,7 +748,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                         .build()
                     return@Interceptor response
                 } else {
-                    Log.w("CdnFix", "No custom master found for id=$id, falling through to server")
+                    Log.w("Netmirror", "No custom master found for id=$id, falling through to server")
                 }
             }
         }
@@ -767,37 +767,37 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             parts.add("hd=on")
             req = req.newBuilder().header("Cookie", parts.joinToString("; ")).build()
         }
-        Log.d("CdnFix", "Interceptor firing for: $url")
+        Log.d("Netmirror", "Interceptor firing for: $url")
         val resp: Response
         try {
             resp = chain.proceed(req)
         } catch (e: Exception) {
             val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
             if (cdnHost.contains("nm-cdn") || cdnHost.contains("imgcdn") || cdnHost.contains("freecdn")) {
-                Log.d("CdnFix", "CDN unreachable: $url - ${e.message}")
+                Log.d("Netmirror", "CDN unreachable: $url - ${e.message}")
             }
-            Log.e("CdnFix", "NETWORK ERROR: $url - ${e.message}")
+            Log.e("Netmirror", "NETWORK ERROR: $url - ${e.message}")
             throw e
         }
         val ct = (resp.body?.contentType()?.toString() ?: "")
         val isM3u8 = url.contains(".m3u8") || ct.contains("mpegurl") || ct.contains("vnd.apple.mpegurl")
         if (cdnHost.contains("imgcdn") || cdnHost.contains("tv.imgcdn")) {
-            Log.e("CdnFix", "IMGCDN REQUEST: $url code=${resp.code} ct=$ct len=${resp.body?.contentLength()}")
+            Log.e("Netmirror", "IMGCDN REQUEST: $url code=${resp.code} ct=$ct len=${resp.body?.contentLength()}")
         }
         if (isM3u8) {
             val body = resp.body?.string() ?: return@Interceptor resp
             if (!body.startsWith("#EXT")) {
-                Log.e("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length} first100=${body.take(100)}")
+                Log.e("Netmirror", "M3U8 NOT valid: $url status=${resp.code} len=${body.length} first100=${body.take(100)}")
                 return@Interceptor resp
             }
             val inParam = Regex("[?&]in=([^&#]+)").find(url)?.groupValues?.get(1)
-            Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
+            Log.d("Netmirror", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
             // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
             if (fixed.contains("https:///files/")) {
                 fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")
-                Log.d("netmirror", "CDN fix broken →net11.cc/hls/: $url")
-                Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
+                Log.d("Netmirror", "CDN fix broken →net11.cc/hls/: $url")
+                Log.d("Netmirror", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
             }
             // Fix relative segment URLs by prepending base URL (add in= if present in request)
             val relSegmentRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
@@ -816,7 +816,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 }
             }
             if (segmentFixed > 0) {
-                Log.d("CdnFix", "Fixed $segmentFixed relative segment URLs (base=$url)")
+                Log.d("Netmirror", "Fixed $segmentFixed relative segment URLs (base=$url)")
             }
             // Siempre crear un nuevo body (el original fue consumido por .string())
             val newBody = ResponseBody.create(resp.body?.contentType(), fixed)
@@ -910,7 +910,7 @@ suspend fun getPlaylistUrl(
             if (sourceUrl != null) {
                 val body = app.get(sourceUrl, headers = m3u8Headers).text
             if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                Log.d("netmirror", "playlist source OK len=${body.length} hasBroken=${body.contains("https:///files/")}")
+                Log.d("Netmirror", "playlist source OK len=${body.length} hasBroken=${body.contains("https:///files/")}")
                 Log.e("PLAYURL", sourceUrl)
                 return Pair(sourceUrl, tracks)
             }
@@ -929,7 +929,7 @@ suspend fun getPlaylistUrl(
             val body = app.get(m3u8Url, headers = m3u8Headers).text
             Log.d("PlayPhp", "Direct M3U8 len=${body.length} start=${body.take(200)}")
             if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                Log.d("netmirror", "direct M3U8 OK len=${body.length} host=$hlsDomain")
+                Log.d("Netmirror", "direct M3U8 OK len=${body.length} host=$hlsDomain")
                 Log.e("PLAYURL", m3u8Url)
                 return Pair(m3u8Url, tracks)
             }
