@@ -301,8 +301,9 @@ class  NetflixProvider : MainAPI() {
                         var url = match.groupValues[2]
                         // Rewrite freecdn hostname + internal ID to CDN hostname + content ID
                         url = url.replace(Regex("""https://s\d+\.freecdn\d*\.top/files/\d+/"""), "https://$cdnHost/files/$id/")
-                        // Add rewritten token if not present
-                        if (!url.contains("in=")) url += "?in=$rewrittenToken"
+                        // Replace placeholder token or add rewritten token
+                        if (url.contains("in=unknown::ep")) url = url.replace("in=unknown::ep", "in=$rewrittenToken")
+                        else if (!url.contains("in=")) url += "?in=$rewrittenToken"
                         streamInf to url
                     }.toList()
 
