@@ -45,31 +45,41 @@ import kotlin.coroutines.suspendCoroutine
 // JSON / HTTP
 // ---------------------------------------------------------------------------
 
-val JSONParser = object : ResponseParser {
-    val mapper: ObjectMapper = jacksonObjectMapper().configure(
-        DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
-    ).configure(
-        JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
-    )
+// Shared Jackson mapper — avoids Kotlin KClass.java reflection at runtime
+val jsonMapper: ObjectMapper = jacksonObjectMapper().configure(
+    DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
+).configure(
+    JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
+)
 
+val JSONParser = object : ResponseParser {
     override fun <T : Any> parse(text: String, kClass: KClass<T>): T =
-        mapper.readValue(text, kClass.java)
+        jsonMapper.readValue(text, kClass.java)
 
     override fun <T : Any> parseSafe(text: String, kClass: KClass<T>): T? =
-        try { mapper.readValue(text, kClass.java) } catch (_: Exception) { null }
+        try { jsonMapper.readValue(text, kClass.java) } catch (_: Exception) { null }
 
     override fun writeValueAsString(obj: Any): String =
-        mapper.writeValueAsString(obj)
+        jsonMapper.writeValueAsString(obj)
 }
 
 val app = Requests(responseParser = JSONParser).apply {
     defaultHeaders = mapOf("User-Agent" to USER_AGENT)
 }
 
-inline fun <reified T : Any> parseJson(text: String): T = JSONParser.parse(text, T::class)
+// Use these instead of JSONParser.parse() — T::class.java compiles to a Java class literal (ldc),
+// avoiding the KClass.java extension that crashes at runtime on incompatible Kotlin stdlib
+inline fun <reified T : Any> fromJson(text: String): T =
+    jsonMapper.readValue(text, T::class.java)
+
+inline fun <reified T : Any> fromJsonSafe(text: String): T? =
+    try { jsonMapper.readValue(text, T::class.java) } catch (_: Exception) { null }
+
+inline fun <reified T : Any> parseJson(text: String): T =
+    jsonMapper.readValue(text, T::class.java)
 
 inline fun <reified T : Any> tryParseJson(text: String): T? =
-    try { JSONParser.parseSafe(text, T::class) } catch (_: Exception) { null }
+    try { jsonMapper.readValue(text, T::class.java) } catch (_: Exception) { null }
 
 inline fun <reified T : Any> tryParseJsonList(text: String): List<T>? {
     val mapper = jacksonObjectMapper().configure(

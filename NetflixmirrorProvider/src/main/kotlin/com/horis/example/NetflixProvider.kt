@@ -108,7 +108,7 @@ class  NetflixProvider : MainAPI() {
             referer = "$mainUrl/home"
         ).text
         Log.d("Netmirror", "RAW mobile post response: $rawResponse")
-        val data = JSONParser.parse(rawResponse, MobilePostData::class)
+        val data = fromJson<MobilePostData>(rawResponse)
 
         val title = data.title ?: id
         val cast = data.cast?.split(",")?.map { it.trim() }?.map { ActorData(Actor(it)) } ?: emptyList()
@@ -196,7 +196,7 @@ class  NetflixProvider : MainAPI() {
                 referer = "$mainUrl/home"
             ).text
             Log.d("Netmirror", "RAW episodes page=$pg: $rawEp")
-            val data = JSONParser.parse(rawEp, MobileEpisodesData::class)
+            val data = fromJson<MobileEpisodesData>(rawEp)
 
             data.episodes.orEmpty().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id)) {

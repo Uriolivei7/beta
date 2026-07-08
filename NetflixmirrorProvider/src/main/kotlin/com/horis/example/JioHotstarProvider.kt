@@ -83,7 +83,7 @@ class JioHotstarProvider : MainAPI() {
             checkDbError(text)
             text
         }
-        val data = JSONParser.parse(rawResponse, NewTvPostResponse::class)
+        val data = fromJson<NewTvPostResponse>(rawResponse)
 
         val title = data.title ?: id
         val playbackId = data.main_id ?: id
@@ -170,7 +170,7 @@ class JioHotstarProvider : MainAPI() {
                 checkDbError(text)
                 text
             }
-            val data = JSONParser.parse(rawEp, NewTvEpisodesResponse::class)
+            val data = fromJson<NewTvEpisodesResponse>(rawEp)
 
             data.episodes.orEmpty().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id.orEmpty())) {
