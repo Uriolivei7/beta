@@ -258,8 +258,10 @@ class  NetflixProvider : MainAPI() {
         if (cookie5.length > 10) {
             try {
                 val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng"
-                val masterResp = app.get(masterUrl, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")).text
+                val masterResponse = app.get(masterUrl, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf"))
+                val masterResp = masterResponse.text
                 Log.e("Netmirror", "mobile/hls raw=${masterResp.take(2000)}")
+                Log.e("Netmirror", "mobile/hls status=${masterResponse.code} headers=${masterResponse.headers?.toString()?.take(500)}")
 
                 if (masterResp.startsWith("#EXT")) {
                     // Parse master: audio stays on s23, video freecdn→s23
