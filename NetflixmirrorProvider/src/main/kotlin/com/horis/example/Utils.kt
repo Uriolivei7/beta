@@ -797,24 +797,24 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 Log.d("netmirror", "CDN fix broken →net11.cc/hls/: $url")
                 Log.d("CdnFix", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
             }
-            // no CDN unify — s21.freecdn*.top works; nm-cdn*.top are private/inaccessible
-            // Fix relative segment URLs missing the in= auth param
-            if (inParam != null) {
-                // Use the original in hash as-is (including ::ep suffix) for segments
-                val relSegmentRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
-                var segmentFixed = 0
-                fixed = relSegmentRegex.replace(fixed) { match ->
-                    val line = match.value.trim()
-                    if (line.isBlank() || line.contains("in=")) line
-                    else if (line.startsWith("http") && (line.contains(".m3u8") || line.contains(".ts") || line.contains(".aac") || line.contains(".mp4"))) line
-                    else {
-                        segmentFixed++
-                        if (line.contains("?")) "$line&in=$inParam" else "$line?in=$inParam"
-                    }
+            // Fix relative segment URLs by prepending base URL (add in= if present in request)
+            val relSegmentRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
+            var segmentFixed = 0
+            fixed = relSegmentRegex.replace(fixed) { match ->
+                val line = match.value.trim()
+                if (line.isBlank() || line.contains("in=")) line
+                else if (line.startsWith("http")) line
+                else {
+                    segmentFixed++
+                    val base = url.substringBeforeLast("/")
+                    val suffix = if (inParam != null) {
+                        if (line.contains("?")) "&in=$inParam" else "?in=$inParam"
+                    } else ""
+                    "$base/$line$suffix"
                 }
-                if (segmentFixed > 0) {
-                    Log.d("CdnFix", "Fixed $segmentFixed relative segment URLs (using original in= param)")
-                }
+            }
+            if (segmentFixed > 0) {
+                Log.d("CdnFix", "Fixed $segmentFixed relative segment URLs (base=$url)")
             }
             // Siempre crear un nuevo body (el original fue consumido por .string())
             val newBody = ResponseBody.create(resp.body?.contentType(), fixed)

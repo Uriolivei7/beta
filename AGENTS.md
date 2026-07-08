@@ -77,25 +77,27 @@ Cookie: t_hash_t=<URL-encoded>; ott=nf|pv; hd=on
 
 ## Implementation (NetflixProvider.kt / PrimevideoProvider.kt)
 
-### `loadLinks` — Primary Flow
+### `loadLinks` — Primary Flow (s23 Cookie auth, no `in=` param)
 ```kotlin
 // 1. Get bypass token (verify.php → t_hash_t cookie)
 val cookieRaw = currentBypassToken  // h1::h2::ts::ep::99 (decoded)
 
-// 2. Get rewritten token from mobile/hls endpoint
-val inParam = cookieRaw.substringBefore("::ep") + "::ep::99"
+// 2. Fetch mobile/hls master to get CDN structure
+val inParam = cookieRaw  // used in mobile/hls request, but ignored by s23
 val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng",
-    headers = mobileHeaders)  // Chrome/149 WebView + sec-ch-ua + Cookie
+    headers = mobileHeaders)  // Chrome/149 WebView
 
-// 3. Extract rewritten token from response
-val rewrittenToken = Regex("""in=([^&\s]+)""").find(mobileResp)?.groupValues?.get(1)
-
-// 4. Construct s23 full-content URLs
-for (q in listOf("1080p", "720p")) {
-    val s23Url = "https://s23.nm-cdn9.top/files/$id/$q/$q.m3u8?in=$rewrittenToken"
-    // callback(ExtractorLink) with Cookie: hd=on; t_hash_t=<escaped>
-}
+// 3. Build custom master:
+//    - Audio lines (from mobile/hls response) → keep as-is (already on s23, no in=)
+//    - Video variants: rewrite CDN freecdn → s23, STRIP in= param
+//    - s23 accepts Cookie (t_hash_t + hd=on) without in= parameter
 ```
+
+### Key Change (07 Jul 2026)
+- **REMOVED** dependency on server-rewritten `in=` token (server no longer rewrites)
+- **s23.nm-cdn9.top** accepts requests with ONLY Cookie auth (t_hash_t + hd=on)
+- Audio already worked without `in=`; video now uses the same approach
+- Player.php demoted to fallback (returns preview content, wrong episode)
 
 ### Fallbacks (in order)
 1. ❌ ~~Scraping HTML~~ — reemplazado por mobile/hls
@@ -110,13 +112,14 @@ for (q in listOf("1080p", "720p")) {
 
 ## Current State (07 Jul 2026)
 - ✅ `newTvBaseHeaders` actualizado: Chrome/149 WebView + `app.netmirror.netmirrornew`
-- ✅ `loadLinks` usa mobile/hls → s23 como primario
-- ✅ Fallbacks: playlist.php → player.php
+- ✅ `loadLinks` primario: mobile/hls → s23 sin `in=` param (Cookie auth)
+- ✅ Fallback 1: player.php (preview content, wrong episode)
+- ✅ Fallback 2: playlist.php
 - ✅ Bypass: OkHttp no-redirect POST verify.php
-- ✅ Interceptor: Cookie hd=on + token replacement
+- ✅ Interceptor: Cookie hd=on + segment URL fixing (base prepend, in= opcional)
 - ✅ PlutoTVProvider: logs PLUTOTV + Clip.originalReleaseDate nullable fix
 - ✅ `tv.imgcdn.kim` confirmado VIVO para UI endpoints
-- ⚠️ Contenido completo verificado desde PC vía curl con token reescrito → 1030 JPG segments
+- ⚠️ s23 acepta Cookie sin `in=` — confirmado con audio, falta probar video
 - ⏸️ Falta probar en dispositivo Android real (CloudStream) para ver si reproduce JPG-frame HLS
 
 ## Files
@@ -128,4 +131,6 @@ for (q in listOf("1080p", "720p")) {
 ## Next Steps
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
 2. ✅ Verificar que los JPG segments de s23 se reproducen en CloudStream
-3. ⏸️ Si funciona, replicar en JioHotstarProvider.kt (ott="hs")
+3. ✅ Eliminar dependencia de `in=` param — s23 acepta Cookie sola
+4. ⏸️ Probar en dispositivo Android real si reproduce s23 sin `in=`
+5. ⏸️ Si funciona, replicar en JioHotstarProvider.kt (ott="hs")

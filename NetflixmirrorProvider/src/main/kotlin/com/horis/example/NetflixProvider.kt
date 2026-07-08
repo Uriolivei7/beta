@@ -248,38 +248,7 @@ class  NetflixProvider : MainAPI() {
 
         var foundAnyLink = false
 
-        // ---- PRIMARY: player.php ----
-        for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
-            try {
-                val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
-                Log.e("NF", "player.php trying: $u")
-                Log.e("NF", "player.php headers: ${playerHeaders.map { "${it.key}=${it.value.take(80)}" }}")
-                val respRaw = app.get(u, headers = playerHeaders).text
-                Log.e("NF", "player.php raw body: ${respRaw.take(500)}")
-                val resp = tryParseJson<NewTvPlayerResponse>(respRaw)
-                if (resp != null) {
-                    Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link} referer=${resp.referer}")
-                    if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
-                        val linkHeaders = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
-                        Log.e("NF", "player.php returning link: ${resp.video_link}")
-                        Log.e("NF", "player.php link headers: ${linkHeaders.map { "${it.key}=${it.value.take(80)}" }}")
-                        callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
-                            this.referer = resp.referer ?: apiBase
-                            this.headers = linkHeaders
-                        })
-                        foundAnyLink = true
-                    }
-                } else {
-                    Log.e("NF", "player.php JSON parse failed for: $u")
-                }
-            } catch (e: Exception) {
-                Log.e("NF", "player $u error: ${e.message}")
-            }
-        }
-        if (foundAnyLink) return true
-
-        // ---- FALLBACK 1: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
-        // Solo si el servidor reescribe el token (de lo contrario s23 lo rechaza)
+        // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames, Cookie auth) ----
         if (cookie5.length > 10) {
             try {
                 val mobileHeaders = mapOf(
@@ -294,40 +263,26 @@ class  NetflixProvider : MainAPI() {
                 Log.e("NF", "mobile/hls raw=${masterResp.take(500)}")
 
                 val cdnMatch = Regex("""URI="https://([^/]+)/files/""").find(masterResp)
-                val inMatches = Regex("""\?in=([^&\s]+)""").findAll(masterResp).map { it.groupValues[1] }.toList()
-                val serverRewrote = inMatches.any { !it.contains("unknown") }
-                val inMatch = inMatches.firstOrNull { !it.contains("unknown") } ?: inMatches.firstOrNull()
 
-                if (cdnMatch != null && serverRewrote && inMatch != null) {
+                if (cdnMatch != null) {
                     var cdnHost = cdnMatch.groupValues[1]
-                    val rewrittenToken = inMatch
 
                     if (cdnHost.contains("freecdn")) {
                         val oldCdn = cdnHost
                         cdnHost = "s23.nm-cdn9.top"
                         Log.e("NF", "CDN: $oldCdn → $cdnHost (freecdn→nm-cdn9)")
                     }
-                    Log.e("NF", "Video CDN: $cdnHost Server rewrote token: $rewrittenToken")
+                    Log.e("NF", "Video CDN: $cdnHost (no in= param, Cookie auth)")
 
                     val audioLines = Regex("""^#EXT-X-MEDIA:TYPE=AUDIO,.*""", RegexOption.MULTILINE)
-                        .findAll(masterResp).map { it.value }
-                        .map { line ->
-                            if (line.contains("URI=\"")) {
-                                line.replace(Regex("""URI="([^"]+)"""")) { match ->
-                                    val uri = match.groupValues[1]
-                                    val sep = if (uri.contains("?")) "&" else "?"
-                                    """URI="$uri${sep}in=$rewrittenToken""""
-                                }
-                            } else line
-                        }.joinToString("\n")
+                        .findAll(masterResp).map { it.value }.joinToString("\n")
 
                     val variantRegex = Regex("""(#EXT-X-STREAM-INF:.*)\n(https://s\d+\.freecdn\d*\.top/files/\d+/\w+/.+)""")
                     val variants = variantRegex.findAll(masterResp).map { match ->
                         val streamInf = match.groupValues[1]
                         var url = match.groupValues[2]
                         url = url.replace(Regex("""https://s\d+\.freecdn\d*\.top/files/\d+/"""), "https://$cdnHost/files/$id/")
-                        if (url.contains("in=unknown::ep")) url = url.replace("in=unknown::ep", "in=$rewrittenToken")
-                        else if (!url.contains("in=")) url += "?in=$rewrittenToken"
+                        url = url.replace(Regex("""[?&]in=[^&\s]*"""), "")
                         streamInf to url
                     }.toList()
 
@@ -345,7 +300,7 @@ class  NetflixProvider : MainAPI() {
                     if (variants.isEmpty()) {
                         Log.w("NF", "No video variants found, using fallback 720p")
                         sb.appendLine("#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,CODECS=\"avc1.64001f,mp4a.40.2\",AUDIO=\"aac\"")
-                        sb.appendLine("https://$cdnHost/files/$id/720p/720p.m3u8?in=$rewrittenToken")
+                        sb.appendLine("https://$cdnHost/files/$id/720p/720p.m3u8")
                     } else {
                         for ((streamInf, url) in variants) {
                             sb.appendLine(streamInf)
@@ -363,15 +318,48 @@ class  NetflixProvider : MainAPI() {
                         this.quality = getQualityFromName("720p")
                     })
                     foundAnyLink = true
+                    Log.e("NF", "s23 CDN link returned, returning early")
+                    return true
                 } else {
-                    Log.e("NF", "Server did not rewrite token (has unknown::ep) — skipping s23 CDN")
+                    Log.e("NF", "No CDN match in mobile/hls response — skipping s23 CDN")
                 }
             } catch (e: Exception) {
                 Log.e("NF", "mobile/hls s23 failed: ${e.message}")
             }
         }
 
-        // ---- FALLBACKS: playlist.php / player.php (solo si mobile/hls falló) ----
+        // ---- FALLBACK: player.php (preview, solo si s23 falló) ----
+        if (!foundAnyLink) {
+            for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
+                try {
+                    val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
+                    Log.e("NF", "player.php trying: $u")
+                    Log.e("NF", "player.php headers: ${playerHeaders.map { "${it.key}=${it.value.take(80)}" }}")
+                    val respRaw = app.get(u, headers = playerHeaders).text
+                    Log.e("NF", "player.php raw body: ${respRaw.take(500)}")
+                    val resp = tryParseJson<NewTvPlayerResponse>(respRaw)
+                    if (resp != null) {
+                        Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link} referer=${resp.referer}")
+                        if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
+                            val linkHeaders = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
+                            Log.e("NF", "player.php returning link: ${resp.video_link}")
+                            Log.e("NF", "player.php link headers: ${linkHeaders.map { "${it.key}=${it.value.take(80)}" }}")
+                            callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
+                                this.referer = resp.referer ?: apiBase
+                                this.headers = linkHeaders
+                            })
+                            foundAnyLink = true
+                        }
+                    } else {
+                        Log.e("NF", "player.php JSON parse failed for: $u")
+                    }
+                } catch (e: Exception) {
+                    Log.e("NF", "player $u error: ${e.message}")
+                }
+            }
+        }
+
+        // ---- FALLBACK: playlist.php (solo si todo lo demás falló) ----
         if (!foundAnyLink) {
             val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
             val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
@@ -424,23 +412,6 @@ class  NetflixProvider : MainAPI() {
                     }
                 } catch (e: Exception) {
                     Log.e("NF", "playlist $plUrl error: ${e.message}")
-                }
-            }
-
-            for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
-                try {
-                    val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
-                    val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
-                    Log.e("NF", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
-                    if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
-                        callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
-                            this.referer = resp.referer ?: apiBase
-                            this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
-                        })
-                        foundAnyLink = true
-                    }
-                } catch (e: Exception) {
-                    Log.e("NF", "player $u error: ${e.message}")
                 }
             }
         }
