@@ -238,8 +238,10 @@ class  NetflixProvider : MainAPI() {
                 val items = tryParseJsonList<PlaylistItem>(text)
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
                 if (!src.isNullOrBlank()) {
-                    // Replace unknown::ep with bypass token in M3U8 URL
-                    val fixedSrc = src.replace("in=unknown::ep", "in=$cookie").replace("in=unknown%3A%3Aep", "in=$cookie")
+                    // Construct full-quality hash: h1::h2::ts::ep::m
+                    val ts = System.currentTimeMillis() / 1000
+                    val fullHash = "$cookie::$ts::ep::m"
+                    val fixedSrc = src.replace("in=unknown::ep", "in=$fullHash").replace("in=unknown%3A%3Aep", "in=$fullHash")
                     val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
                     Log.e("PLAYURL", m3u8)
                     items.first().tracks.orEmpty().forEach { t ->
