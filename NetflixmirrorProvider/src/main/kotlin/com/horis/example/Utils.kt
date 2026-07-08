@@ -360,6 +360,8 @@ fun checkDbError(text: String) {
 // NewTV shared infrastructure
 // ---------------------------------------------------------------------------
 
+// Headers basados en tPacketCapture (tráfico REAL que funciona)
+// NOTA: el decompilado muestra Firefox/NetmirrorNewTV v1.0, pero el tráfico capturado usaba Chrome/app.netmirror.netmirrornew
 val newTvBaseHeaders = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma"        to "no-cache",
