@@ -228,14 +228,18 @@ class PrimevideoProvider : MainAPI() {
                 currentBypassToken = playHash
             }
         }
-        val cookieRaw = if (currentBypassToken.length > 10) currentBypassToken else ""
-        // Reconstruir formato completo h1::h2::ts::ep para móvil/hls
-        val inParam = if (cookieRaw.contains("::ep::")) cookieRaw
-            else {
-                val ts = System.currentTimeMillis() / 1000
-                "$cookieRaw::$ts::ep::m"
-            }
-        val cookie5 = cookieRaw
+        val cookie5 = if (currentBypassToken.length > 10) currentBypassToken else ""
+        // Construir inParam con formato h1::playHash::ts::ep::m:
+        // - h1 del bypass cookie, hash2 de play.php para que server reescriba
+        val h1 = cookie5.substringBefore("::")
+        val playHash = if (token.length > 10) getPlayHash(id) else ""
+        if (playHash.length > 10) {
+            Log.e("PV", "Got playHash for id=$id: ${playHash.take(40)}")
+        }
+        val ts = System.currentTimeMillis() / 1000
+        val hash2 = if (playHash.length > 10) playHash
+            else cookie5.substringAfter("::").substringBefore("::")
+        val inParam = "$h1::$hash2::$ts::ep::m"
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=$ott; hd=on")
 
@@ -380,22 +384,50 @@ class PrimevideoProvider : MainAPI() {
     }
 
     private suspend fun getPlayHash(id: String): String {
-        val domains = listOf("https://net11.cc", "https://net52.cc", "https://net22.cc")
+        val domains = listOf("https://net52.cc", "https://net11.cc", "https://net22.cc")
+        if (currentBypassToken.length <= 10) return ""
         for (domain in domains) {
+            try {
+                val resp = app.get(
+                    "$domain/newtv/play.php?id=$id",
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                        "X-Requested-With" to "app.netmirror.netmirrornew",
+                        "Referer" to "$domain/mobile/home?app=1"
+                    ),
+                    cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "pv")
+                )
+                val text = resp.text.trim()
+                Log.e("PV", "play.php GET $domain raw=${text.take(200)}")
+                if (text.length > 10) {
+                    val parts = text.split("::")
+                    return if (parts.size >= 2) parts[1] else text
+                }
+            } catch (_: Exception) {}
             try {
                 val resp = app.post(
                     "$domain/play.php",
                     requestBody = FormBody.Builder().add("id", id).build(),
                     headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                        "X-Requested-With" to "app.netmirror.netmirrornew",
+                        "Referer" to "$domain/mobile/home?app=1",
                         "Accept" to "*/*",
                         "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
-                    )
+                    ),
+                    cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "pv")
                 )
-                val parsed = tryParseJson<PlayHashResponse>(resp.text)
-                val h = parsed?.h ?: continue
-                if (h.length > 10) {
-                    return h.removePrefix("in=").substringBefore("::ep")
+                val text = resp.text.trim()
+                Log.e("PV", "play.php POST $domain raw=${text.take(200)}")
+                val parsed = tryParseJson<PlayHashResponse>(text)
+                val h = parsed?.h?.removePrefix("in=")?.substringBefore("::ep")
+                if (h != null && h.length > 10) {
+                    val parts = h.split("::")
+                    return if (parts.size >= 2) parts[1] else h
+                }
+                if (text.length > 10 && text.length < 100) {
+                    val parts = text.split("::")
+                    return if (parts.size >= 2) parts[1] else text
                 }
             } catch (_: Exception) {}
         }
