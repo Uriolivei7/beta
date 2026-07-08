@@ -27,34 +27,37 @@ class  NetflixProvider : MainAPI() {
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
-                var request = chain.request()
+                val request = chain.request()
                 var urlString = request.url.toString()
                 val tokenClean = lastBypassCookie.substringBefore("::")
 
-                // 1. CORRECCIÓN DE PARÁMETRO AL VUELO: Parcha cualquier token huérfano en la URL
+                Log.d("Netmirror", "Petición detectada en reproductor: $urlString")
+
+                // 1. Corrección dinámica si el archivo maestro responde con sub-playlists 'unknown'
                 if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
                     urlString = urlString.replace("in=unknown::ep", "in=$tokenClean")
                         .replace("in=unknown%3A%3Aep", "in=$tokenClean")
-                    request = request.newBuilder().url(urlString).build()
+                    Log.e("Netmirror", "Redirección unknown interceptada -> Forzando token: $urlString")
                 }
 
                 val isMainDomain = urlString.contains("net52.cc") || urlString.contains("net22.cc")
-                val builder = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile)")
-                    .header("Referer", "$mainUrl/")
-                    .header("Origin", mainUrl)
+                val newRequestBuilder = request.newBuilder()
+                    .url(urlString)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0")
+                    .header("Referer", "https://net52.cc/")
+                    .header("Origin", "https://net52.cc")
                     .header("Accept", "*/*")
 
-                // 2. CONTROL ESTRICTO DE COOKIES SEGÚN EL DESTINO
+                // 2. Control estricto del cortafuegos de cookies
                 if (isMainDomain) {
-                    // El dominio principal requiere la cookie bypass entera
-                    builder.header("Cookie", "hd=on; $lastBypassCookie")
+                    // El balanceador principal exige la cookie completa o te mandará al ID falso
+                    newRequestBuilder.header("Cookie", "hd=on; $lastBypassCookie")
                 } else {
-                    // Los CDN externos (freecdn, nm-cdn, etc.) se rompen si les envías la cookie de Netmirror
-                    builder.removeHeader("Cookie")
+                    // Los CDNs externos rechazan peticiones si detectan cookies cruzadas de Netmirror
+                    newRequestBuilder.removeHeader("Cookie")
                 }
 
-                return chain.proceed(builder.build())
+                return chain.proceed(newRequestBuilder.build())
             }
         }
     }
@@ -281,10 +284,6 @@ class  NetflixProvider : MainAPI() {
 
                     callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; Mobile)",
-                            "Accept" to "*/*"
-                        )
                     })
                     return true
                 }
