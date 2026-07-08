@@ -273,23 +273,18 @@ class  NetflixProvider : MainAPI() {
                                 i++
                                 val urlLine = lines[i]
                                 if (urlLine.contains("freecdn")) {
-                                    val quality = Regex("/(\\d+p)/").find(urlLine)?.groupValues?.get(1) ?: "720p"
                                     val rewritten = urlLine
                                         .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
-                                        .replace(Regex("/files/\\d+/"), "/files/$id/")
-                                        .replace("in=unknown::ep", "in=$inParam")
+                                        .replace(Regex("[?&]in=[^&\n\r]*"), "")  // sin in=, solo Cookie
                                     Log.e("Netmirror", "rewrote video: ${urlLine.take(80)} → ${rewritten.take(80)}")
                                     appendLine(rewritten)
                                 } else {
                                     appendLine(urlLine)
                                 }
                             } else if (line.contains("freecdn")) {
-                                // Solo URL sin #EXT-X-STREAM-INF (reward)
-                                val quality = Regex("/(\\d+p)/").find(line)?.groupValues?.get(1) ?: "720p"
                                 val rewritten = line
                                     .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
-                                    .replace(Regex("/files/\\d+/"), "/files/$id/")
-                                    .replace("in=unknown::ep", "in=$inParam")
+                                    .replace(Regex("[?&]in=[^&\n\r]*"), "")
                                 appendLine(rewritten)
                             } else {
                                 appendLine(line)
