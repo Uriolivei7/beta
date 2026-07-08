@@ -263,6 +263,22 @@ class  NetflixProvider : MainAPI() {
                 Log.e("Netmirror", "mobile/hls raw=${masterResp.take(2000)}")
                 Log.e("Netmirror", "mobile/hls status=${masterResponse.code} headers=${masterResponse.headers?.toString()?.take(500)}")
 
+                // Probar varios formatos de URL en s23 para encontrar video
+                try {
+                    for ((suffix, desc) in listOf(
+                        "1080p/1080p.m3u8" to "std",
+                        "1080p.m3u8" to "flat",
+                        "v/1080p/1080p.m3u8" to "v-prefix",
+                        "1080p/1080p.m3u8?in=unknown::ep" to "std+in",
+                    )) {
+                        val url = "https://s23.nm-cdn9.top/files/$id/$suffix"
+                        val r = app.get(url, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")).text.take(100)
+                        Log.e("Netmirror", "s23-probe $desc: $url → ${r.take(80)}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("Netmirror", "s23-probe error: ${e.message}")
+                }
+
                 if (masterResp.startsWith("#EXT")) {
                     // Parse master: audio stays on s23, video freecdn→s23
                     val lines = masterResp.lines().map { it.trimEnd() }.toMutableList()
