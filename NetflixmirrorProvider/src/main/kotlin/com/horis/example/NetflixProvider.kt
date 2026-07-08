@@ -17,6 +17,7 @@ class  NetflixProvider : MainAPI() {
     override val hasMainPage = true
 
     private val ott = "nf"
+    private var lastBypassCookie = ""
 
     init {
         Log.e("Netmirror", "NetflixProvider init called")
@@ -27,10 +28,31 @@ class  NetflixProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
+                val urlString = request.url.toString()
+
+                // Registramos todas las peticiones que pasen por aquí para asegurar el rastreo
+                Log.d("Netmirror", "getVideoInterceptor interceptando: $urlString")
+
+                if (urlString.contains(".m3u8") || urlString.contains(".ts") || urlString.contains("googleusercontent")) {
+                    val cookieHeader = buildString {
+                        append("hd=on")
+                        if (lastBypassCookie.isNotEmpty()) {
+                            // Enviamos el string completo de la cookie bypass, ya que el servidor
+                            // asocia este hash exacto con la autorización de reproducción móvil.
+                            append("; $lastBypassCookie")
+                        }
+                    }
+
+                    Log.e("Netmirror", "Inyectando cabeceras de validación. Cookie resultante: $cookieHeader")
+
                     val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
+                        .removeHeader("Cookie") // Eliminamos basura previa si existiese
+                        .header("Cookie", cookieHeader)
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0")
+                        .header("Accept", "*/*")
+                        .header("Connection", "keep-alive")
                         .build()
+
                     return chain.proceed(newRequest)
                 }
                 return chain.proceed(request)
@@ -229,6 +251,9 @@ class  NetflixProvider : MainAPI() {
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
+
+        // Guardamos la cookie COMPLETA para el interceptor (cabeceras HTTP)
+        lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
         for (domain in listOf("https://net52.cc", "https://net22.cc")) {
@@ -238,16 +263,23 @@ class  NetflixProvider : MainAPI() {
                 Log.d("Netmirror", "playlist $domain raw=${text.take(200)}")
                 val items = tryParseJsonList<PlaylistItem>(text)
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
+
                 if (!src.isNullOrBlank()) {
-                    val fixedSrc = src.replace("in=unknown::ep", "in=$cookie").replace("in=unknown%3A%3Aep", "in=$cookie")
+                    // Extraemos el hash limpio (ej: "5c196914154a3303de8c7e3447f7a145") para la URL
+                    val tokenForUrl = if (cookie.contains("::")) cookie.substringBefore("::") else cookie
+
+                    // Reemplazamos usando el token limpio para no romper la estructura de la URL
+                    val fixedSrc = src.replace("in=unknown::ep", "in=$tokenForUrl")
+                        .replace("in=unknown%3A%3Aep", "in=$tokenForUrl")
+
                     val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
 
-                    // Log añadido para certificar el enlace final generado
                     Log.e("Netmirror", "URL M3U8 Final generada con éxito: $m3u8")
 
                     items.first().tracks.orEmpty().forEach { t ->
                         if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                     }
+
                     callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) { referer = domain })
                     return true
                 }

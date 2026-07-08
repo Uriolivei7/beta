@@ -67,8 +67,6 @@ val app = Requests(responseParser = JSONParser).apply {
     defaultHeaders = mapOf("User-Agent" to USER_AGENT)
 }
 
-// Use these instead of JSONParser.parse() — T::class.java compiles to a Java class literal (ldc),
-// avoiding the KClass.java extension that crashes at runtime on incompatible Kotlin stdlib
 inline fun <reified T : Any> fromJson(text: String): T =
     jsonMapper.readValue(text, T::class.java)
 
