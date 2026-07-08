@@ -112,15 +112,17 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 
 ## Current State (07 Jul 2026)
 - ✅ `newTvBaseHeaders` actualizado: Chrome/149 WebView + `app.netmirror.netmirrornew`
-- ✅ `loadLinks` primario: mobile/hls → s23 sin `in=` param (Cookie auth)
+- ✅ `loadLinks` primario: mobile/hls → s23 (con `in=` si server reescribe, sin `in=` si no)
+- ✅ inParam reconstruido con timestamp: `$cookieRaw::$ts::ep::99` (NF) / `$cookieRaw::$ts::ep::m` (PV)
 - ✅ Fallback 1: player.php (preview content, wrong episode)
 - ✅ Fallback 2: playlist.php
 - ✅ Bypass: OkHttp no-redirect POST verify.php
 - ✅ Interceptor: Cookie hd=on + segment URL fixing (base prepend, in= opcional)
 - ✅ PlutoTVProvider: logs PLUTOTV + Clip.originalReleaseDate nullable fix
 - ✅ `tv.imgcdn.kim` confirmado VIVO para UI endpoints
-- ⚠️ s23 acepta Cookie sin `in=` — confirmado con audio, falta probar video
-- ⏸️ Falta probar en dispositivo Android real (CloudStream) para ver si reproduce JPG-frame HLS
+- ⚠️ s23 video rechaza sin `in=` → "Only Valid Users Allowed"
+- ⚠️ s23 audio funciona sin `in=` (21658 bytes valid M3U8)
+- ⏸️ Probar en Android si timestamp + `::ep::99` en inParam restaura el rewrite
 
 ## Files
 - `NetflixProvider.kt` — `loadLinks()` mobile/hls → s23 primary

@@ -229,16 +229,19 @@ class PrimevideoProvider : MainAPI() {
             }
         }
         val cookieRaw = if (currentBypassToken.length > 10) currentBypassToken else ""
-        // Token del bypass puede ser h1::h2 (2 partes) o h1::h2::ts::ep::m (antiguo)
+        // Reconstruir formato completo h1::h2::ts::ep para móvil/hls
         val inParam = if (cookieRaw.contains("::ep::")) cookieRaw
-            else cookieRaw + "::ep::m"
+            else {
+                val ts = System.currentTimeMillis() / 1000
+                "$cookieRaw::$ts::ep::m"
+            }
         val cookie5 = cookieRaw
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=$ott; hd=on")
 
         var foundAnyLink = false
 
-        // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames, Cookie auth) ----
+        // ---- PRIMARY: mobile/hls (server-provided master, hp=yes) ----
         if (cookie5.length > 10) {
             try {
                 val mobileHeaders = mapOf(
@@ -248,77 +251,38 @@ class PrimevideoProvider : MainAPI() {
                 )
                 val mobileCookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to ott)
 
-                val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
+                val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng&hp=yes"
                 val masterResp = app.get(masterUrl, headers = mobileHeaders, cookies = mobileCookies).text
-                Log.e("PV", "mobile/hls raw=${masterResp.take(500)}")
+                Log.e("PV", "mobile/hls raw=${masterResp.take(1000)}")
 
-                val cdnMatch = Regex("""URI="https://([^/]+)/files/""").find(masterResp)
+                if (masterResp.startsWith("#EXT")) {
+                    val hasVideo = masterResp.contains("#EXT-X-STREAM-INF:")
+                    if (hasVideo) {
+                        Log.e("PV", "Server master OK, using directly (hp=yes)")
+                        setCustomMaster(id, masterResp)
 
-                if (cdnMatch != null) {
-                    var cdnHost = cdnMatch.groupValues[1]
-
-                    if (cdnHost.contains("freecdn")) {
-                        val oldCdn = cdnHost
-                        cdnHost = "s23.nm-cdn9.top"
-                        Log.e("PV", "CDN: $oldCdn → $cdnHost (freecdn→nm-cdn9)")
-                    }
-                    Log.e("PV", "Video CDN: $cdnHost (no in= param, Cookie auth)")
-
-                    val audioLines = Regex("""^#EXT-X-MEDIA:TYPE=AUDIO,.*""", RegexOption.MULTILINE)
-                        .findAll(masterResp).map { it.value }.joinToString("\n")
-
-                    val variantRegex = Regex("""(#EXT-X-STREAM-INF:.*)\n(https://s\d+\.freecdn\d*\.top/files/\d+/\w+/.+)""")
-                    val variants = variantRegex.findAll(masterResp).map { match ->
-                        val streamInf = match.groupValues[1]
-                        var url = match.groupValues[2]
-                        url = url.replace(Regex("""https://s\d+\.freecdn\d*\.top/files/\d+/"""), "https://$cdnHost/files/$id/")
-                        url = url.replace(Regex("""[?&]in=[^&\s]*"""), "")
-                        streamInf to url
-                    }.toList()
-
-                    if (variants.isEmpty()) {
-                        Log.w("PV", "No video variants found, using fallback 720p")
-                        val sb = StringBuilder()
-                        sb.appendLine("#EXTM3U")
-                        sb.appendLine("#EXT-X-VERSION:3")
-                        if (audioLines.isNotBlank()) sb.appendLine(audioLines)
-                        sb.appendLine("#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,CODECS=\"avc1.64001f,mp4a.40.2\",AUDIO=\"aac\"")
-                        sb.appendLine("https://$cdnHost/files/$id/720p/720p.m3u8")
-                        setCustomMaster(id, sb.toString())
+                        val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
+                        val cmHeaders = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+                            "X-Requested-With" to "app.netmirror.netmirrornew",
+                            "Referer" to "$mainUrl/mobile/home?app=1"
+                        )
+                        callback.invoke(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
+                            this.headers = cmHeaders + cookieHeader
+                            this.referer = "$mainUrl/mobile/home?app=1"
+                            this.quality = getQualityFromName("720p")
+                        })
+                        foundAnyLink = true
+                        Log.e("PV", "mobile/hls master returned for id=$id")
+                        return true
                     } else {
-                        val sb = StringBuilder()
-                        sb.appendLine("#EXTM3U")
-                        sb.appendLine("#EXT-X-VERSION:3")
-                        if (audioLines.isNotBlank()) sb.appendLine(audioLines)
-                        for ((streamInf, url) in variants) {
-                            sb.appendLine(streamInf)
-                            sb.appendLine(url)
-                        }
-                        val customMaster = sb.toString()
-                        Log.e("PV", "Custom master with ${variants.size} variants:\\n${customMaster.take(500)}")
-                        setCustomMaster(id, customMaster)
+                        Log.e("PV", "mobile/hls response has no video variants")
                     }
-
-                    val cmHeaders = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-                        "X-Requested-With" to "app.netmirror.netmirrornew",
-                        "Referer" to "$mainUrl/mobile/home?app=1"
-                    )
-
-                    val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
-                    callback.invoke(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
-                        this.headers = cmHeaders + cookieHeader
-                        this.referer = "$mainUrl/mobile/home?app=1"
-                        this.quality = getQualityFromName("720p")
-                    })
-                    foundAnyLink = true
-                    Log.e("PV", "s23 CDN link returned, returning early")
-                    return true
                 } else {
-                    Log.e("PV", "No CDN match in mobile/hls response — skipping s23 CDN")
+                    Log.e("PV", "mobile/hls response invalid: ${masterResp.take(200)}")
                 }
             } catch (e: Exception) {
-                Log.e("PV", "mobile/hls s23 failed: ${e.message}")
+                Log.e("PV", "mobile/hls failed: ${e.message}")
             }
         }
 
