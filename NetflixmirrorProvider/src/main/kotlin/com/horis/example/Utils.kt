@@ -750,24 +750,19 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 }
             }
         }
-        // Add hd=on + t_hash_t to Cookie for CDN requests (nm-cdn, freecdn, imgcdn)
+        // Add hd=on to Cookie for CDN requests (nm-cdn, freecdn, imgcdn)
         val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
         if (cdnHost.contains("nm-cdn") || cdnHost.contains("freecdn") || cdnHost.contains("imgcdn")) {
             val existing = req.header("Cookie") ?: ""
             val parts = mutableListOf<String>()
             if (existing.isNotBlank()) {
-                // Remove any existing hd and t_hash_t to avoid duplicates
                 existing.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach {
-                    if (!it.startsWith("hd=") && !it.startsWith("t_hash_t=")) {
+                    if (!it.startsWith("hd=")) {
                         parts.add(it)
                     }
                 }
             }
             parts.add("hd=on")
-            if (currentBypassToken.length > 10) {
-                val tokenEncoded = try { URLEncoder.encode(currentBypassToken, "UTF-8") } catch (_: Exception) { currentBypassToken }
-                parts.add("t_hash_t=$tokenEncoded")
-            }
             req = req.newBuilder().header("Cookie", parts.joinToString("; ")).build()
         }
         Log.d("CdnFix", "Interceptor firing for: $url")
@@ -788,7 +783,7 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 Log.d("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length}")
                 return@Interceptor resp
             }
-            val inParam = Regex("[?&]in=([^&]+)").find(url)?.groupValues?.get(1)
+            val inParam = Regex("[?&]in=([^&#]+)").find(url)?.groupValues?.get(1)
             Log.d("CdnFix", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
             // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)

@@ -238,80 +238,7 @@ class PrimevideoProvider : MainAPI() {
 
         var foundAnyLink = false
 
-        // ---- PRIMARY: playlist.php (cncverse API — like cncverse does) ----
-        val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
-        val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
-            "$mainUrl/playlist.php?id=$id")
-        val hlsBases = listOf(mainUrl.trimEnd('/'))
-        for (plUrl in playlistUrls) {
-            try {
-                val plRaw = app.get(plUrl, headers = playlistHeaders).text
-                Log.e("PV", "playlist raw=${plRaw.take(500)}")
-                val items = tryParseJsonList<PlaylistItem>(plRaw)
-                if (!items.isNullOrEmpty()) {
-                    var count = 0
-                    for (item in items) {
-                        for (source in item.sources.orEmpty()) {
-                            var file = source.file ?: continue
-                            val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
-                            val referer = "$mainUrl/mobile/home?app=1"
-                            if (cookie5.length > 10 && file.contains("in=unknown::ep")) {
-                                file = file.replace("in=unknown::ep", "in=$inParam")
-                            }
-                            if (file.startsWith("http")) {
-                                callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
-                                    this.headers = playlistHeaders; this.referer = referer; this.quality = quality
-                                }); count++
-                            } else {
-                                for (base in hlsBases) {
-                                    callback.invoke(newExtractorLink(name, name, "$base$file", type = ExtractorLinkType.M3U8) {
-                                        this.headers = playlistHeaders; this.referer = referer; this.quality = quality
-                                    }); count++
-                                }
-                            }
-                        }
-                        for (track in item.tracks.orEmpty()) {
-                            val trackFile = track.file ?: continue
-                            if (trackFile.startsWith("http")) {
-                                subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", trackFile) {
-                                    headers = mapOf("Referer" to "$mainUrl/")
-                                })
-                            } else {
-                                for (base in hlsBases) {
-                                    subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", "$base$trackFile") {
-                                        headers = mapOf("Referer" to "$mainUrl/")
-                                    })
-                                }
-                            }
-                        }
-                    }
-                    Log.e("PV", "playlist $plUrl returned $count sources")
-                    if (count > 0) foundAnyLink = true
-                }
-            } catch (e: Exception) {
-                Log.e("PV", "playlist $plUrl error: ${e.message}")
-            }
-        }
-
-        // ---- FALLBACK 1: player.php ----
-        for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
-            try {
-                val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
-                val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
-                Log.e("PV", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
-                if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
-                    callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
-                        this.referer = resp.referer ?: apiBase
-                        this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
-                    })
-                    foundAnyLink = true
-                }
-            } catch (e: Exception) {
-                Log.e("PV", "player $u error: ${e.message}")
-            }
-        }
-
-        // ---- EXPERIMENTAL: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
+        // ---- PRIMARY: mobile/hls -> s23.nm-cdn9.top (full content JPG frames) ----
         if (cookie5.length > 10) {
             try {
                 val inParam = cookie5.substringBefore("::ep") + "::ep::m"
@@ -374,7 +301,7 @@ class PrimevideoProvider : MainAPI() {
                         sb.appendLine("#EXT-X-VERSION:3")
                         if (audioLines.isNotBlank()) sb.appendLine(audioLines)
                         sb.appendLine("#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,CODECS=\"avc1.64001f,mp4a.40.2\",AUDIO=\"aac\"")
-                        sb.append("https://$cdnHost/files/$id/720p/720p.m3u8?in=$rewrittenToken")
+                        sb.appendLine("https://$cdnHost/files/$id/720p/720p.m3u8?in=$rewrittenToken")
                         setCustomMaster(id, sb.toString())
                     } else {
                         val sb = StringBuilder()
@@ -383,7 +310,7 @@ class PrimevideoProvider : MainAPI() {
                         if (audioLines.isNotBlank()) sb.appendLine(audioLines)
                         for ((streamInf, url) in variants) {
                             sb.appendLine(streamInf)
-                            sb.append(url)
+                            sb.appendLine(url)
                         }
                         val customMaster = sb.toString()
                         Log.e("PV", "Custom master with ${variants.size} variants:\\n${customMaster.take(500)}")
@@ -407,6 +334,80 @@ class PrimevideoProvider : MainAPI() {
                 }
             } catch (e: Exception) {
                 Log.e("PV", "mobile/hls s23 failed: ${e.message}")
+            }
+        }
+
+        // ---- FALLBACKS: playlist.php / player.php (solo si mobile/hls falló) ----
+        if (!foundAnyLink) {
+            val playlistHeaders = buildNewTvHeaders(ott, mapOf("Referer" to mainUrl)) + cookieHeader
+            val playlistUrls = listOf("$mainUrl/newtv/playlist.php?id=$id", "$apiBase/newtv/playlist.php?id=$id",
+                "$mainUrl/playlist.php?id=$id")
+            val hlsBases = listOf(mainUrl.trimEnd('/'))
+            for (plUrl in playlistUrls) {
+                try {
+                    val plRaw = app.get(plUrl, headers = playlistHeaders).text
+                    Log.e("PV", "playlist raw=${plRaw.take(500)}")
+                    val items = tryParseJsonList<PlaylistItem>(plRaw)
+                    if (!items.isNullOrEmpty()) {
+                        var count = 0
+                        for (item in items) {
+                            for (source in item.sources.orEmpty()) {
+                                var file = source.file ?: continue
+                                val quality = getQualityFromName(file.substringAfter("q=", "").substringBefore("&"))
+                                val referer = "$mainUrl/mobile/home?app=1"
+                                if (cookie5.length > 10 && file.contains("in=unknown::ep")) {
+                                    file = file.replace("in=unknown::ep", "in=$inParam")
+                                }
+                                if (file.startsWith("http")) {
+                                    callback.invoke(newExtractorLink(name, name, file, type = ExtractorLinkType.M3U8) {
+                                        this.headers = playlistHeaders; this.referer = referer; this.quality = quality
+                                    }); count++
+                                } else {
+                                    for (base in hlsBases) {
+                                        callback.invoke(newExtractorLink(name, name, "$base$file", type = ExtractorLinkType.M3U8) {
+                                            this.headers = playlistHeaders; this.referer = referer; this.quality = quality
+                                        }); count++
+                                    }
+                                }
+                            }
+                            for (track in item.tracks.orEmpty()) {
+                                val trackFile = track.file ?: continue
+                                if (trackFile.startsWith("http")) {
+                                    subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", trackFile) {
+                                        headers = mapOf("Referer" to "$mainUrl/")
+                                    })
+                                } else {
+                                    for (base in hlsBases) {
+                                        subtitleCallback.invoke(newSubtitleFile(track.label ?: "Unknown", "$base$trackFile") {
+                                            headers = mapOf("Referer" to "$mainUrl/")
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                        Log.e("PV", "playlist $plUrl returned $count sources")
+                        if (count > 0) foundAnyLink = true
+                    }
+                } catch (e: Exception) {
+                    Log.e("PV", "playlist $plUrl error: ${e.message}")
+                }
+            }
+
+            for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
+                try {
+                    val playerHeaders = buildNewTvHeaders(ott, mapOf("Referer" to apiBase)) + cookieHeader
+                    val resp = app.get(u, headers = playerHeaders).parsed<NewTvPlayerResponse>()
+                    Log.e("PV", "player $u -> status=${resp.status} link=${resp.video_link?.take(60)}")
+                    if ((resp.status == "ok" || resp.status == "otp") && resp.video_link != null) {
+                        callback.invoke(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
+                            this.referer = resp.referer ?: apiBase
+                            this.headers = buildNewTvHeaders(ott, mapOf("Referer" to (resp.referer ?: apiBase))) + cookieHeader
+                        })
+                        foundAnyLink = true
+                    }
+                } catch (e: Exception) {
+                    Log.e("PV", "player $u error: ${e.message}")
+                }
             }
         }
 
