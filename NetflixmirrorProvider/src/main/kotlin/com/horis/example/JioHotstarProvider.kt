@@ -215,7 +215,7 @@ class JioHotstarProvider : MainAPI() {
         Log.d("JioHotstar", "loadLinks id=$id apiBase=$apiBase")
 
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        val userToken = try { getNewTvUserToken(apiBase, ott) } catch (_: Exception) { "" }
+        val userToken = try { getNewTvUserToken(apiBase, ott) } catch (e: Exception) { Log.d("JioHotstar", "getNewTvUserToken failed: ${e.message}"); "" }
 
         val headers = buildNewTvHeaders(ott, mapOf(
             "Usertoken" to userToken,
@@ -227,7 +227,7 @@ class JioHotstarProvider : MainAPI() {
             headers = headers
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) {
+        if (response.status !in listOf("ok", "otp") || response.video_link.isNullOrBlank()) {
             Log.d("JioHotstar", "player.php failed: status=${response.status} video_link=${response.video_link}")
             return false
         }

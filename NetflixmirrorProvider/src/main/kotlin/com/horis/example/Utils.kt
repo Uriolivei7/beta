@@ -219,7 +219,7 @@ suspend fun bypass(mainUrl: String): String {
             ?.substringBefore(";")
             ?.trim()
         response.close()
-        if (!newCookie.isNullOrBlank() && newCookie.length > 10) {
+        if (!newCookie.isNullOrBlank()) {
             NetflixMirrorStorage.saveCookie(newCookie)
             Log.d("BYPASS", "Got new token: ${newCookie.take(60)}")
             return newCookie
@@ -234,28 +234,48 @@ suspend fun bypass(mainUrl: String): String {
 
 suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
     val (savedToken, savedTimestamp) = NetflixMirrorStorage.getFullCookie()
-    if (!savedToken.isNullOrBlank() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+    if (!savedToken.isNullOrBlank() && System.currentTimeMillis() - savedTimestamp < 54000000) {
         Log.d("USERTOKEN", "Using cached user token")
         return savedToken
     }
     Log.d("USERTOKEN", "Fetching new user token for ott=$ott")
 
-    val tHash = bypass("")  // ensure we have a valid bypass cookie
-    val otpHeaders = buildNewTvHeaders(ott, emptyMap()) + mapOf("Cookie" to "t_hash_t=$tHash")
+    val tHash = try { bypass("") } catch (_: Exception) { "" }
+    val baseHeaders = buildNewTvHeaders(ott, emptyMap()) + mapOf("Cookie" to "t_hash_t=$tHash")
+
+    // Step 1: request OTP — server sends SMS, or returns pub_msg with test OTP code
+    val step1 = try { app.get("$apiBase/newtv/otp.php?ott=$ott", headers = baseHeaders).text } catch (_: Exception) { "{}" }
+    Log.d("USERTOKEN", "step1=${step1.take(300)}")
+    val step1Parsed = tryParseJson<NewTvOtpResponse>(step1)
+    if (step1Parsed?.usertoken != null && step1Parsed.usertoken.length > 10) {
+        NetflixMirrorStorage.saveFullCookie(step1Parsed.usertoken)
+        return step1Parsed.usertoken
+    }
+
+    // Step 2: submit OTP code (extract from pub_msg or use default test code 111111)
+    val otpCode = Regex("""(\d{4,8})""").find(step1Parsed?.pub_msg ?: "")?.groupValues?.get(1) ?: "111111"
+    Log.d("USERTOKEN", "step2 submitting otp=$otpCode")
     try {
-        val resp = app.get("$apiBase/newtv/otp.php?ott=$ott", headers = otpHeaders)
-        val text = resp.text
-        Log.d("USERTOKEN", "otp raw=${text.take(300)}")
-        val parsed = tryParseJson<NewTvOtpResponse>(text)
-        val token = parsed?.usertoken
-        if (!token.isNullOrBlank() && token.length > 10) {
-            NetflixMirrorStorage.saveFullCookie(token)
-            Log.d("USERTOKEN", "Got user token: ${token.take(60)}")
-            return token
+        val formBody = FormBody.Builder().add("otp", otpCode).build()
+        val req = Request.Builder()
+            .url("$apiBase/newtv/otp.php?ott=$ott")
+            .post(formBody)
+            .apply { baseHeaders.forEach { (k, v) -> addHeader(k, v) } }
+            .build()
+        val client = OkHttpClient.Builder().build()
+        val resp = client.newCall(req).execute()
+        val step2 = resp.body?.string() ?: "{}"
+        resp.close()
+        Log.d("USERTOKEN", "step2=${step2.take(300)}")
+        val step2Parsed = tryParseJson<NewTvOtpResponse>(step2)
+        if (step2Parsed?.usertoken != null && step2Parsed.usertoken.length > 10) {
+            NetflixMirrorStorage.saveFullCookie(step2Parsed.usertoken)
+            Log.d("USERTOKEN", "Got user token: ${step2Parsed.usertoken.take(60)}")
+            return step2Parsed.usertoken
         }
-        Log.d("USERTOKEN", "otp response invalid: status=${parsed?.status} pub_msg=${parsed?.pub_msg}")
+        Log.d("USERTOKEN", "step2 no usertoken: status=${step2Parsed?.status} msg=${step2Parsed?.pub_msg}")
     } catch (e: Exception) {
-        Log.d("USERTOKEN", "otp failed: ${e.message}")
+        Log.d("USERTOKEN", "step2 failed: ${e.message}")
     }
     return ""
 }

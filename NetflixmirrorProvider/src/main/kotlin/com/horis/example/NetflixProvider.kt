@@ -229,7 +229,7 @@ class  NetflixProvider : MainAPI() {
         Log.d("Netmirror", "loadLinks id=$id apiBase=$apiBase")
 
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        val userToken = try { getNewTvUserToken(apiBase, ott) } catch (_: Exception) { "" }
+        val userToken = try { getNewTvUserToken(apiBase, ott) } catch (e: Exception) { Log.d("Netmirror", "getNewTvUserToken failed: ${e.message}"); "" }
 
         val headers = buildNewTvHeaders(ott, mapOf(
             "Usertoken" to userToken,
@@ -241,9 +241,15 @@ class  NetflixProvider : MainAPI() {
             headers = headers
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) {
+        if (response.status !in listOf("ok", "otp") || response.video_link.isNullOrBlank()) {
             Log.d("Netmirror", "player.php failed: status=${response.status} video_link=${response.video_link}")
             return false
+        }
+
+        if (response.status == "otp") {
+            Log.d("Netmirror", "player.php returned otp status, trying video_link directly: ${response.video_link}")
+            val m3u8Body = try { app.get(response.video_link, headers = headers).text.take(200) } catch (_: Exception) { "N/A" }
+            Log.d("Netmirror", "M3U8 body=${m3u8Body.take(200)}")
         }
 
         callback(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
