@@ -138,18 +138,46 @@ open class PlutotvProvider : MainAPI() {
             return emptyList()
         }
 
-        val ids = response.data.joinToString(",") { it.id }
-        Log.d("PLUTOTV", "search: fetching details for ids=$ids")
-        val resultsDatas = app.get(
-            "${servers.vod}/v4/vod/items",
-            headers = authHeaders(),
-            params = mapOf(
-                "ids" to response.data.joinToString(",") { it.id }
-            )
-        ).parsed<SearchDetailsResponse>()
-        Log.d("PLUTOTV", "search: got ${resultsDatas.size} detailed results")
+        val results = mutableListOf<SearchResponse>()
 
-        return resultsDatas.map { it.toMovieSearchResponse() }
+        // Buscar canales en vivo por nombre (client-side)
+        try {
+            val allChannels = app.get(
+                "${servers.channels}/v2/guide/channels",
+                headers = authHeaders(),
+                params = mapOf("sort" to "number:asc")
+            ).parsed<ChannelsResponse>().data
+            for (ch in allChannels) {
+                if (ch.name.contains(query, ignoreCase = true)) {
+                    Log.d("PLUTOTV", "search: live channel match: ${ch.name}")
+                    results.add(newLiveSearchResponse(
+                        name = ch.name,
+                        url = ch.toJson(),
+                        fix = false
+                    ) {
+                        this.posterUrl = ch.images.firstOrNull()?.url
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            Log.d("PLUTOTV", "search: channel search failed: ${e.message}")
+        }
+
+        // VOD (series/películas) desde search API
+        val vodResults = response.data.filter { it.channel == null }
+        if (vodResults.isNotEmpty()) {
+            val ids = vodResults.joinToString(",") { it.id }
+            Log.d("PLUTOTV", "search: fetching VOD details for ids=$ids")
+            val vodDatas = app.get(
+                "${servers.vod}/v4/vod/items",
+                headers = authHeaders(),
+                params = mapOf("ids" to ids)
+            ).parsed<SearchDetailsResponse>()
+            Log.d("PLUTOTV", "search: got ${vodDatas.size} VOD results")
+            results.addAll(vodDatas.map { it.toMovieSearchResponse() })
+        }
+
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
