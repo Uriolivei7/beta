@@ -226,60 +226,23 @@ class  NetflixProvider : MainAPI() {
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        val cookieStr = "t_hash_t=$cookie; hd=on"
-        val mHeaders = mobileHeaders(ott, cookie)
-        Log.d("Netmirror", "loadLinks id=$id")
+        Log.d("Netmirror", "loadLinks id=$id cookie=${cookie.take(40)}")
 
-        // Try player.php across multiple API domains (net52.cc, tv.imgcdn.kim)
-        val playerDomains = listOf("https://tv.imgcdn.kim", "https://net52.cc", "https://net11.cc", "https://net77.cc")
-        for (domain in playerDomains) {
-            try {
-                val userToken = try { getNewTvUserToken(domain, ott) } catch (_: Exception) { "" }
-                val headers = buildNewTvHeaders(ott, mapOf("Usertoken" to userToken)) + mapOf("Cookie" to cookieStr)
-                val resp = app.get("$domain/newtv/player.php?id=$id", headers = headers)
-                val text = resp.text
-                Log.d("Netmirror", "player.php $domain raw=${text.take(200)}")
-                val parsed = tryParseJson<NewTvPlayerResponse>(text)
-                if (parsed?.status == "ok" && !parsed.video_link.isNullOrBlank()) {
-                    callback(newExtractorLink(name, name, parsed.video_link, type = ExtractorLinkType.M3U8) {
-                        referer = parsed.referer ?: domain
-                    })
-                    return true
+        // Use play.php → playlist.php flow (gets proper undegraded hash)
+        Log.d("Netmirror", "Trying getPlaylistUrl")
+        val result = getPlaylistUrl(mainUrl, ott, id, "", cookie)
+        if (result != null) {
+            val (m3u8Url, tracks) = result
+            Log.e("PLAYURL", m3u8Url)
+            tracks.forEach { t ->
+                if (!t.file.isNullOrBlank()) {
+                    subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                 }
-                if (parsed?.status == "otp" && !parsed.video_link.isNullOrBlank()) {
-                    Log.d("Netmirror", "player.php $domain status=otp, trying m3u8 directly: ${parsed.video_link}")
-                    val vidHeaders = mapOf("Cookie" to cookieStr, "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    val m3u8Body = try { app.get(parsed.video_link, headers = vidHeaders).text } catch (_: Exception) { "err" }
-                    if (m3u8Body.startsWith("#EXTM3U")) {
-                        Log.d("Netmirror", "m3u8 valid from $domain, using video_link")
-                        callback(newExtractorLink(name, name, parsed.video_link, type = ExtractorLinkType.M3U8) {
-                            referer = parsed.referer ?: domain
-                        })
-                        return true
-                    }
-                    Log.d("Netmirror", "m3u8 invalid from $domain: ${m3u8Body.take(100)}")
-                }
-            } catch (e: Exception) {
-                Log.d("Netmirror", "player.php $domain exception: ${e.message}")
             }
-        }
-
-        // Fallback: playlist.php on each domain
-        for (domain in playerDomains) {
-            try {
-                val resp = app.get("$domain/mobile/playlist.php?id=$id", headers = mHeaders, cookies = mapOf("t_hash_t" to cookie, "hd" to "on", "ott" to ott))
-                val text = resp.text
-                Log.d("Netmirror", "playlist.php $domain raw=${text.take(200)}")
-                val items = tryParseJsonList<PlaylistItem>(text)
-                val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
-                if (!src.isNullOrBlank()) {
-                    val m3u8 = if (src.startsWith("http")) src else "$domain$src"
-                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
-                        referer = domain
-                    })
-                    return true
-                }
-            } catch (_: Exception) {}
+            callback(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
+                referer = mainUrl
+            })
+            return true
         }
 
         Log.d("Netmirror", "all playback methods failed id=$id")

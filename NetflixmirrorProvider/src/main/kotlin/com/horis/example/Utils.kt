@@ -691,7 +691,7 @@ data class PlaylistItem(
     val tracks: List<PlaylistTrack>? = null
 )
 
-val playPhpDomains = listOf("https://net11.cc", "https://net22.cc", "https://net52.cc")
+val playPhpDomains = listOf("https://net52.cc", "https://net22.cc")
 
 // Store for custom master playlists (keyed by content id)
 val customMasters = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -848,20 +848,19 @@ suspend fun getPlaylistUrl(
         return null
     }
     val cleanHash = playHash.split("::").take(3).joinToString("::")
-    val hlsDomains = listOf("https://net11.cc", "https://net52.cc").distinct()
+    val hlsDomains = listOf("https://net52.cc", "https://net22.cc").distinct()
     var tracks: List<PlaylistTrack> = emptyList()
     var sourceUrl: String? = null
-    // Upgrade cookie suffix if degraded
-    val plCookie = cookie.replace("::ep::99", "::ep::m").replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
-    // Try playlist.php with cookie + cross-origin headers for hash exchange
+    val plCookie = cookie
+    val baseRef = hlsDomains.first()
     val plHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         "Accept" to "*/*",
         "X-Requested-With" to "NetmirrorNewTV v1.0",
-        "Referer" to "https://net11.cc/play.php?id=$id",
-        "Origin" to "https://net11.cc"
+        "Referer" to "$baseRef/play.php?id=$id",
+        "Origin" to baseRef
     ) + if (plCookie.isNotBlank()) mapOf("Cookie" to plCookie) else emptyMap()
-    val m3u8Referer = "https://net11.cc/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash"
+    val m3u8Referer = "$baseRef/playlist.php?id=$id&t=$title&tm=$timestamp&h=$cleanHash"
     val m3u8Headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept" to "*/*",
