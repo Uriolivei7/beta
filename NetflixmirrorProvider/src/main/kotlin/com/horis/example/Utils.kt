@@ -816,10 +816,9 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                     Log.d("CdnFix", "Fixed $segmentFixed relative segment URLs (using original in= param)")
                 }
             }
-            if (fixed != body) {
-                val fixedBody = ResponseBody.create(resp.body?.contentType(), fixed)
-                return@Interceptor resp.newBuilder().body(fixedBody).build()
-            }
+            // Siempre crear un nuevo body (el original fue consumido por .string())
+            val newBody = ResponseBody.create(resp.body?.contentType(), fixed)
+            return@Interceptor resp.newBuilder().body(newBody).build()
         }
         resp
     }
