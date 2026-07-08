@@ -243,7 +243,7 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
     val tHash = try { bypass("") } catch (_: Exception) { "" }
     val baseHeaders = buildNewTvHeaders(ott, emptyMap()) + mapOf("Cookie" to "t_hash_t=$tHash")
 
-    // Step 1: request OTP — server sends SMS, or returns pub_msg with test OTP code
+    // Step 1: GET — server may return usertoken directly, or pub_msg with OTP hint
     val step1 = try { app.get("$apiBase/newtv/otp.php?ott=$ott", headers = baseHeaders).text } catch (_: Exception) { "{}" }
     Log.d("USERTOKEN", "step1=${step1.take(300)}")
     val step1Parsed = tryParseJson<NewTvOtpResponse>(step1)
@@ -252,20 +252,11 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
         return step1Parsed.usertoken
     }
 
-    // Step 2: submit OTP code (extract from pub_msg or use default test code 111111)
+    // Step 2: try GET with OTP code as query param
     val otpCode = Regex("""(\d{4,8})""").find(step1Parsed?.pub_msg ?: "")?.groupValues?.get(1) ?: "111111"
-    Log.d("USERTOKEN", "step2 submitting otp=$otpCode")
+    Log.d("USERTOKEN", "step2 trying GET with otp=$otpCode")
     try {
-        val formBody = FormBody.Builder().add("otp", otpCode).build()
-        val req = Request.Builder()
-            .url("$apiBase/newtv/otp.php?ott=$ott")
-            .post(formBody)
-            .apply { baseHeaders.forEach { (k, v) -> addHeader(k, v) } }
-            .build()
-        val client = OkHttpClient.Builder().build()
-        val resp = client.newCall(req).execute()
-        val step2 = resp.body?.string() ?: "{}"
-        resp.close()
+        val step2 = app.get("$apiBase/newtv/otp.php?ott=$ott&otp=$otpCode", headers = baseHeaders).text
         Log.d("USERTOKEN", "step2=${step2.take(300)}")
         val step2Parsed = tryParseJson<NewTvOtpResponse>(step2)
         if (step2Parsed?.usertoken != null && step2Parsed.usertoken.length > 10) {
@@ -273,9 +264,9 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
             Log.d("USERTOKEN", "Got user token: ${step2Parsed.usertoken.take(60)}")
             return step2Parsed.usertoken
         }
-        Log.d("USERTOKEN", "step2 no usertoken: status=${step2Parsed?.status} msg=${step2Parsed?.pub_msg}")
+        Log.d("USERTOKEN", "step2 no usertoken: ${step2Parsed?.pub_msg}")
     } catch (e: Exception) {
-        Log.d("USERTOKEN", "step2 failed: ${e.message}")
+        Log.d("USERTOKEN", "step2 GET failed: ${e.message}")
     }
     return ""
 }

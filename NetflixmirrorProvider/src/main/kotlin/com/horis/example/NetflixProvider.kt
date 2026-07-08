@@ -229,35 +229,38 @@ class  NetflixProvider : MainAPI() {
         Log.d("Netmirror", "loadLinks id=$id apiBase=$apiBase")
 
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
+        val cookies = mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
+        val mHeaders = mobileHeaders(ott, cookie)
+
+        // Primary: player.php
         val userToken = try { getNewTvUserToken(apiBase, ott) } catch (e: Exception) { Log.d("Netmirror", "getNewTvUserToken failed: ${e.message}"); "" }
-
-        val headers = buildNewTvHeaders(ott, mapOf(
-            "Usertoken" to userToken,
-            "Cookie" to "t_hash_t=$cookie"
-        ))
-
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = headers
-        ).parsed<NewTvPlayerResponse>()
-
-        if (response.status !in listOf("ok", "otp") || response.video_link.isNullOrBlank()) {
-            Log.d("Netmirror", "player.php failed: status=${response.status} video_link=${response.video_link}")
-            return false
+        val playerHeaders = buildNewTvHeaders(ott, mapOf("Usertoken" to userToken)) + cookies
+        val playerResp = app.get("$apiBase/newtv/player.php?id=$id", headers = playerHeaders)
+            .parsed<NewTvPlayerResponse>()
+        if (playerResp.status == "ok" && !playerResp.video_link.isNullOrBlank()) {
+            callback(newExtractorLink(name, name, playerResp.video_link, type = ExtractorLinkType.M3U8) {
+                referer = playerResp.referer ?: apiBase
+            })
+            return true
         }
 
-        if (response.status == "otp") {
-            Log.d("Netmirror", "player.php returned otp status, trying video_link directly: ${response.video_link}")
-            val m3u8Body = try { app.get(response.video_link, headers = headers).text.take(200) } catch (_: Exception) { "N/A" }
-            Log.d("Netmirror", "M3U8 body=${m3u8Body.take(200)}")
+        Log.d("Netmirror", "player.php status=${playerResp.status}, trying playlist.php fallback")
+        // Fallback: mobile/playlist.php (Mobile v2 style, no OTP)
+        val playResp = app.get("$apiBase/mobile/playlist.php?id=$id", headers = mHeaders, cookies = mapOf("t_hash_t" to cookie, "hd" to "on", "ott" to ott))
+        val playText = playResp.text
+        Log.d("Netmirror", "playlist.php raw=${playText.take(300)}")
+        val items = tryParseJsonList<PlaylistItem>(playText)
+        val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
+        if (!src.isNullOrBlank()) {
+            val m3u8 = if (src.startsWith("http")) src else "${apiBase}${src}"
+            callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                referer = apiBase
+            })
+            return true
         }
 
-        callback(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            referer = response.referer ?: apiBase
-        })
-
-        Log.d("Netmirror", "loadLinks result=true id=$id")
-        return true
+        Log.d("Netmirror", "all playback methods failed id=$id")
+        return false
     }
 
 
