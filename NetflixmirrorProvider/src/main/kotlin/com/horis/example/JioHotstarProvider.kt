@@ -264,10 +264,9 @@ class JioHotstarProvider : MainAPI() {
                         bw != null && bw >= 2_000_000 -> getQualityFromName("720p")
                         bw != null && bw >= 800_000 -> getQualityFromName("480p")
                         else -> getQualityFromName("360p") }
-                    val videoUrl = urlLine.replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
-                        .replace(Regex("[?&]in=[^&\n\r]*"), "")
+                    val videoUrl = urlLine.trim()
                     callback(newExtractorLink(name, "$quality", videoUrl, type = ExtractorLinkType.M3U8) {
-                        headers = masterHeaders + mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
+                        headers = masterHeaders + cookieHeader
                         referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
                     })
                     foundAny = true; i++; continue

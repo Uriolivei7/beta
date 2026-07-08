@@ -290,11 +290,10 @@ class  NetflixProvider : MainAPI() {
                         subtitleCallback(newSubtitleFile(lang, fullUri))
                     }
                 }
-                // Video variant: rewrite CDN from freecdn → s23.nm-cdn9
+                // Video variant: keep original URL (freecdn4 with in= param) — matches cncverse behavior
                 line.startsWith("#EXT-X-STREAM-INF:") && i + 1 < lines.size -> {
                     i++
                     val urlLine = lines[i]
-                    // Extract quality from BANDWIDTH
                     val bwMatch = Regex("""BANDWIDTH=(\d+)""").find(line)
                     val quality = when (bwMatch?.groupValues?.get(1)?.toIntOrNull()) {
                         in 5_000_000..Int.MAX_VALUE -> getQualityFromName("1080p")
@@ -302,13 +301,10 @@ class  NetflixProvider : MainAPI() {
                         in 800_000..1_999_999 -> getQualityFromName("480p")
                         else -> getQualityFromName("360p")
                     }
-                    // Rewrite CDN: freecdn → s23, remove in= param (Cookie auth)
-                    val videoUrl = urlLine
-                        .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
-                        .replace(Regex("[?&]in=[^&\n\r]*"), "")
+                    val videoUrl = urlLine.trim()
                     Log.d("Netmirror", "Video variant: $videoUrl quality=$quality")
                     callback(newExtractorLink(name, "$quality", videoUrl, type = ExtractorLinkType.M3U8) {
-                        headers = masterHeaders + mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
+                        headers = masterHeaders + cookieHeader
                         referer = "$mainUrl/mobile/home?app=1"
                         this.quality = quality
                     })
