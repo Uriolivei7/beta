@@ -425,60 +425,7 @@ fun decodeBase64(value: String): String = String(Base64.decode(value, Base64.DEF
 private var resolvedApiUrl: String = ""
 private var cachedRawTokenHash: String = ""
 
-suspend fun resolveApiUrl(): String {
-    if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
-    return coroutineScope {
-        val deferreds = newTvDomains.map { encoded ->
-            async {
-                val base = decodeBase64(encoded).trimEnd('/')
-                try {
-                    val response = app.get("$base/checknewtv.php", headers = newTvBaseHeaders)
-                        .parsed<NewTvTokenResponse>()
-                    val tokenHash = response.token_hash
-                    if (!tokenHash.isNullOrBlank()) {
-                        cachedRawTokenHash = tokenHash
-                        decodeBase64(tokenHash).trimEnd('/')
-                    } else null
-                } catch (e: Exception) {
-                    Log.d("NewTV", "checknewtv.php failed $base: ${e.message}")
-                    null
-                }
-            }
-        }
-        for (deferred in deferreds) {
-            val result = deferred.await()
-            if (result != null) {
-                resolvedApiUrl = result
-                Log.d("NewTV", "Resolved API URL: $resolvedApiUrl")
-                Log.d("NewTV", "Raw token hash: ${cachedRawTokenHash.take(60)}")
-                return@coroutineScope resolvedApiUrl
-            }
-        }
-        // Fallback: try pinging domain roots directly
-        val pingDeferreds = newTvDomains.map { encoded ->
-            async {
-                val base = decodeBase64(encoded).trimEnd('/')
-                try {
-                    app.get(base, headers = newTvBaseHeaders)
-                    base
-                } catch (_: Exception) { null }
-            }
-        }
-        for (d in pingDeferreds) {
-            val r = d.await()
-            if (r != null) {
-                resolvedApiUrl = r
-                Log.d("NewTV", "Ping-resolved API URL: $resolvedApiUrl")
-                return@coroutineScope resolvedApiUrl
-            }
-        }
-        resolvedApiUrl = "https://net52.cc"
-        Log.d("NewTV", "All domains failed, falling back to $resolvedApiUrl")
-        return@coroutineScope resolvedApiUrl
-    }
-}
-
-fun getRawTokenHash(): String = cachedRawTokenHash
+suspend fun resolveApiUrl(): String = "https://net52.cc"
 
 fun buildVerticalPosterUrl(id: String, ott: String = "nf"): String {
     return when (ott) {
