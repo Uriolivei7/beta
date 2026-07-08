@@ -1,79 +1,76 @@
 # AGENTS.md - Netmirror Plugin Development
 
 ## Goal
-- Proveer streams completos (no preview 10 min) desde cncverse para Netflix/PrimeVideo/JioHotstar providers en CloudStream.
+- Proveer streams completos desde cncverse para Netflix/PrimeVideo/JioHotstar providers en CloudStream.
 
-## The REAL Flow (discovered 07 Jul 2026 via tPacketCapture + curl validation)
+## ADCIONAL DECOMPILATION (08 Jul 2026) — NEWEST VERSION
+El folder `adicional/` contiene una versión MÁS NUEVA de cncverseMobile que el folder `aplicación/`.
+Diferencias clave:
 
-### Endpoints
+### bypass() — COMPLETAMENTE DECOMPILADO
+```kotlin
+// Cache: 15 horas (54000000ms)
+// Headers: Chrome 147 Windows, Origin/Referer: net22.cc
+// POST https://net52.cc/verify.php
+// Body: g-recaptcha-response=${UUID.randomUUID()}
+// OkHttp followRedirects(false) + followSslRedirects(false)
+// Parse Set-Cookie → t_hash_t=
+```
+
+### NUEVO: getNewTvUserToken(apiBase, ott) — OTP-based auth
+Variables: savedToken, otpHeaders, savedTimestamp
+Data class: NewTvOtpResponse { otp, status, usertoken, pub_msg, ... }
+Cache: nf_cookie_full + nf_cookie_full_timestamp (15h)
+
+### loadLinks — FLUJO CAMBIADO (vs version vieja playlist.php)
+| Versión | Auth | Endpoint | Variables clave |
+|---------|------|----------|-----------------|
+| VIEJA (`aplicación`) | Solo t_hash_t cookie | playlist.php | playlist, item, source, track |
+| NUEVA (`adicional`) | t_hash_t + userToken (OTP) | **mobile/hls** | apiBase, userToken, response |
+
+### Per-Provider Headers (cada provider tiene su propio `headers` field)
+| Provider | X-Requested-With | User-Agent |
+|----------|-----------------|------------|
+| Netflix | `XMLHttpRequest` | Chrome 144 WebView |
+| PrimeVideo | `XMLHttpRequest` | Chrome 144 WebView |
+| HotStar | `XMLHttpRequest` | Chrome 144 WebView |
+| DisneyPlus | `app.netmirror.netmirrornew` | Chrome 144 WebView |
+
+### getVideoInterceptor — SIMPLE (solo Cookie: hd=on)
+```java
+// Solo agrega Cookie: hd=on a .m3u8 requests
+// NO rewrite de CDN, NO in= parameter manipulation
+```
+
+## NEW FLOW (implemented 08 Jul 2026)
+```kotlin
+// loadLinks:
+// 1. resolveApiUrl() → apiBase
+// 2. bypass(mainUrl) → t_hash_t cookie (15h cache)
+// 3. getNewTvUserToken(apiBase, ott) → userToken (OTP, 15h cache)
+// 4. GET {apiBase}/mobile/hls/{id}.m3u8?q=720p&in={userToken}&hd=on&lang=eng
+//    Headers: per-provider headers + Cookie: t_hash_t=...;hd=on;ott=nf
+// 5. Parse master M3U8:
+//    - Audio: keep as-is (s23 CDN)
+//    - Video: rewrite freecdn → s23.nm-cdn9.top, remove in= param
+//    - Subtitles: parse URI from EXT-X-MEDIA
+// 6. Fallback: player.php
+// 7. Fallback: playlist.php
+```
+
+## Endpoints
 | Endpoint | USAGE | Status |
 |---|---|---|
-| `net52.cc/newtv/main.php` | Main page (categorías) | ✅ Funciona |
-| `net52.cc/newtv/search.php` | Búsqueda | ✅ Funciona |
-| `net52.cc/newtv/post.php` | Detalles de contenido | ✅ Funciona |
-| `net52.cc/newtv/episodes.php` | Episodios (series) | ✅ Funciona |
-| `tv.imgcdn.kim/newtv/*` | Ídem (API base alternativa) | ✅ Funciona (no está caído) |
-| **`net52.cc/mobile/hls/{id}.m3u8`** | **ENDPOINT DE PLAYBACK** | ✅ **CLAVE** — devuelve master playlist |
-| `s21.freecdn4.top/files/{internalId}/{quality}/` | Preview CDN (60 JPG segments = 10 min) | ❌ Solo preview |
-| **`s23.nm-cdn9.top/files/{contentId}/{quality}/`** | **CONTENIDO COMPLETO CDN** | ✅ **Full content (1030+ JPG segments)** |
-| `net52.cc/verify.php` | Bypass (POST → Set-Cookie t_hash_t) | ✅ Funciona |
-| `net52.cc/newtv/playlist.php` | Antiguo endpoint (preview only) | ❌ Solo preview |
-| `net52.cc/newtv/player.php` | Antiguo endpoint (preview only) | ❌ Solo preview |
-
-### Full Playback Flow (verified with curl)
-
-1. **`POST net52.cc/verify.php`** → `Set-Cookie: t_hash_t=h1::h2::ts::ep::99`  
-   (OkHttp `followRedirects=false` para capturar cookie antes del redirect 301)
-
-2. **`GET net52.cc/mobile/hls/{id}.m3u8?q=720p&in=<cookie_token>::ep::99&hd=on&lang=eng`**  
-   Headers: Chrome/149 WebView UA, `app.netmirror.netmirrornew`, sec-ch-ua, Cookie  
-   → Server **REESCRIBE hash2** en el `in=` parameter de las URLs de video  
-   → Devuelve audio de `s23.nm-cdn9.top` y video de `s21.freecdn4.top` (preview)
-
-3. **IGNORAR las URLs de s21 del server.** Construir URLs directamente a s23:  
-   `GET https://s23.nm-cdn9.top/files/{id}/{quality}/{quality}.m3u8?in=<rewritten_token>`  
-   Cookie: `hd=on; t_hash_t=<cookie_value>`  
-   → **1030+ JPG segments = contenido completo** (ej: 6809_000.jpg ... 6809_1029.jpg)
-
-4. Cada segmento JPG (~295KB) se sirve desde s23 sin token en la URL (solo Cookie).
-
-### CDN Key Differences
-| CDN | Path Pattern | Content | Segments |
-|---|---|---|---|
-| `s21.freecdn4.top` | `/files/{internalId}/{quality}/` | 10-min preview | 60 JPG segments |
-| `s23.nm-cdn9.top` | `/files/{contentId}/{quality}/` | **Full content** | **1030+ JPG segments** |
-
-### Token Format & Behavior
-```
-verify.php cookie:    h1::h2::ts::ep::99
-URL in= parameter:    h1::h2::ts::ep::99  (same, server rewrites hash2)
-Server rewritten:     h1::h2_new::ts::ep  (hash2 CHANGES)
-s23 URL in=:          h1::h2_new::ts::ep  (uses rewritten hash2)
-```
-
-**KEY FINDING**: The raw cookie's hash2 does NOT work on s23. Only the **server-rewritten** hash2 (from the mobile/hls response) works. The rewrite happens per-content-id.
-
-### Correct Headers (from cncverse tPacketCapture)
-```
-User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0
-X-Requested-With: app.netmirror.netmirrornew
-sec-ch-ua: "Android WebView";v="149", "Chromium";v="149", "Not)A;Brand";v="24"
-sec-ch-ua-mobile: ?0
-sec-ch-ua-platform: "Android"
-Sec-Fetch-Dest: empty
-Sec-Fetch-Mode: cors
-Sec-Fetch-Site: same-origin
-Referer: https://net52.cc/mobile/home?app=1
-Cookie: t_hash_t=<URL-encoded>; ott=nf|pv; hd=on
-```
-
-**CRITICAL**: `X-Requested-With` must be `app.netmirror.netmirrornew`, NOT `NetmirrorNewTV v1.0` (decompiled code had a different value than what cncverse actually sends).
-
-### Bypass Flow
-1. ✅ Cache: SharedPreferences `nf_cookie` + timestamp (<10 min)
-2. ✅ GET `tv/p.php` → Cloudflare 403
-3. ✅ WebView (5s timeout → fallback)
-4. ✅ **POST verify.php via OkHttp `followRedirects(false)`** → captures t_hash_t
+| `net52.cc/newtv/main.php` | Main page | ✅ |
+| `net52.cc/newtv/search.php` | Búsqueda | ✅ |
+| `net52.cc/newtv/post.php` | Detalles | ✅ |
+| `net52.cc/newtv/episodes.php` | Episodios | ✅ |
+| `net52.cc/mobile/hls/{id}.m3u8` | **Playback master** | ✅ |
+| `s23.nm-cdn9.top/files/{id}/{quality}/` | **Full CDN** | ✅ |
+| `net52.cc/verify.php` | Bypass (POST g-recaptcha) | ✅ |
+| `net52.cc/newtv/otp.php?ott=nf` | **OTP user token** | ⏸️ Sin probar |
+| `net52.cc/newtv/player.php` | Fallback | ✅ |
+| `s21.freecdn4.top/files/...` | Preview (60 JPG) | ❌ Solo preview |
 
 ## Implementation (NetflixProvider.kt / PrimevideoProvider.kt)
 
@@ -110,29 +107,31 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - Fixes relative JPG segment URLs by appending `in=<token>` param
 - Does NOT strip audio/subtitle groups (s23 has everything on same CDN)
 
-## Current State (07 Jul 2026)
+## Current State (08 Jul 2026)
 - ✅ `newTvBaseHeaders` actualizado: Chrome/149 WebView + `app.netmirror.netmirrornew`
-- ✅ `loadLinks` primario: mobile/hls → s23 (con `in=` si server reescribe, sin `in=` si no)
-- ✅ inParam reconstruido con timestamp: `$cookieRaw::$ts::ep::99` (NF) / `$cookieRaw::$ts::ep::m` (PV)
-- ✅ Fallback 1: player.php (preview content, wrong episode)
-- ✅ Fallback 2: playlist.php
-- ✅ Bypass: OkHttp no-redirect POST verify.php
-- ✅ Interceptor: Cookie hd=on + segment URL fixing (base prepend, in= opcional)
-- ✅ PlutoTVProvider: logs PLUTOTV + Clip.originalReleaseDate nullable fix
-- ✅ `tv.imgcdn.kim` confirmado VIVO para UI endpoints
-- ⚠️ s23 video rechaza sin `in=` → "Only Valid Users Allowed"
-- ⚠️ s23 audio funciona sin `in=` (21658 bytes valid M3U8)
-- ⏸️ Probar en Android si timestamp + `::ep::99` en inParam restaura el rewrite
+- ✅ `loadLinks` primario: mobile/hls → s23 (cookie auth, no `in=` param)
+- ✅ `bypass()` actualizado: Chrome 147 Windows + `g-recaptcha-response=${UUID}` + 15h cache
+- ✅ `getNewTvUserToken()` NUEVO: OTP-based auth (NewTvOtpResponse.usertoken)
+- ✅ `loadLinks` simplificado: apiBase → bypass → userToken → mobile/hls → parse M3U8
+- ✅ `loadLinks` actualizado en NetflixProvider, PrimevideoProvider, JioHotstarProvider
+- ✅ `NetflixMirrorStorage` extendido con saveFullCookie/getFullCookie/clearFullCookie
+- ✅ Fallbacks: player.php → playlist.php
+- ✅ Bypass: OkHttp no-redirect POST verify.php con Chrome 147 headers
+- ✅ Interceptor: m3u8CdnFixInterceptor() (parches)
+- ⏸️ `getNewTvUserToken` endpoint sin probar → probar en dispositivo
+- ⏸️ `otp.php` endpoint depende del server — puede cambiar
 
 ## Files
-- `NetflixProvider.kt` — `loadLinks()` mobile/hls → s23 primary
+- `NetflixProvider.kt` — `loadLinks()` mobile/hls → s23 primary + OTP auth
 - `PrimevideoProvider.kt` — idem (ott="pv")
-- `Utils.kt` — `bypass()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`
+- `JioHotstarProvider.kt` — idem (ott="hs")
+- `Utils.kt` — `bypass()`, `getNewTvUserToken()`, `resolveApiUrl()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`
 - `PlutotvProvider/PlutotvProvider.kt` — PlutoTV provider (separado)
 
 ## Next Steps
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
 2. ✅ Verificar que los JPG segments de s23 se reproducen en CloudStream
 3. ✅ Eliminar dependencia de `in=` param — s23 acepta Cookie sola
-4. ⏸️ Probar en dispositivo Android real si reproduce s23 sin `in=`
-5. ⏸️ Si funciona, replicar en JioHotstarProvider.kt (ott="hs")
+4. ⏸️ **PROBAR el nuevo bypass() + getNewTvUserToken() en dispositivo real**
+5. ⏸️ Si falla getNewTvUserToken, ajustar endpoint de otp.php
+6. ⏸️ Si funciona, replicar en DisneyStudioProvider.kt

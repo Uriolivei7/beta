@@ -5,9 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
-import kotlin.random.Random
 import okhttp3.Interceptor
-import okhttp3.Response
 
 class JioHotstarProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -198,108 +196,103 @@ class JioHotstarProvider : MainAPI() {
         val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val loadData = parseJson<NewTvLoadData>(data)
         val id = loadData.id
-        val title = loadData.title
-        val cookie = bypass(mainUrl)
+        Log.d("JioHotstar", "loadLinks id=$id apiBase=$apiBase")
 
-        // New flow: mobile/hls/ID.m3u8 with t_hash_t as in param
-        val tHashCookie = cookie.split(";").firstOrNull { it.trim().startsWith("t_hash_t=") }?.substringAfter("=")?.trim()
-        if (tHashCookie != null) {
-            val decodedHash = java.net.URLDecoder.decode(tHashCookie, "UTF-8")
-            // Use raw cookie as-is (no ::ep::99 upgrade — server detects tampering)
-            val hlsUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$decodedHash&hd=on&lang=eng"
-            Log.d("JioHotstar", "Trying mobile/hls: $hlsUrl")
-            try {
-                val resp = app.get(hlsUrl, headers = androidHeaders + mapOf(
-                    "Cookie" to cookie,
-                    "Referer" to "$mainUrl/mobile/home?app=1",
-                    "Origin" to mainUrl
-                ))
-                val body = resp.text
-                Log.d("JioHotstar", "mobile/hls FULL response:\n$body")
-                if (!body.contains("unknown::ep")) {
-                    val videoUrl = Regex("https://[^\n\r]+720p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
-                        ?: Regex("https://[^\n\r]+480p[^\n\r]*\\.m3u8[^\n\r]*").find(body)?.value
-                    if (videoUrl != null) {
-                        Log.d("JioHotstar", "Video URL found: $videoUrl")
-                        val videoHeaders = androidHeaders + mapOf(
-                            "Cookie" to cookie,
-                            "Referer" to "$mainUrl/mobile/home?app=1"
-                        )
-                        callback.invoke(newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                            this.headers = videoHeaders
+        // 1. Get bypass cookie (t_hash_t)
+        val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
+        if (cookie.length <= 10) {
+            Log.d("JioHotstar", "bypass failed")
+            return false
+        }
+        currentBypassToken = cookie
+        Log.d("JioHotstar", "Bypass cookie: ${cookie.take(60)}")
+
+        // 2. Get user token (OTP-based auth)
+        val userToken = try { getNewTvUserToken(apiBase, ott) } catch (_: Exception) { "" }
+        Log.d("JioHotstar", "User token: ${userToken.take(60)}")
+
+        val inParam = when {
+            userToken.length > 10 -> userToken
+            else -> cookie
+        }
+
+        val masterHeaders = buildNewTvHeaders(ott, mapOf(
+            "Referer" to "$mainUrl/mobile/home?app=1"
+        ))
+        val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookie; hd=on; ott=$ott")
+
+        // 3. Fetch mobile/hls master playlist
+        val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&lang=eng"
+        Log.d("JioHotstar", "Fetching master: $masterUrl")
+        val masterResp = app.get(masterUrl, headers = masterHeaders + cookieHeader)
+        val masterText = masterResp.text
+        Log.d("JioHotstar", "mobile/hls status=${masterResp.code} body=${masterText.take(500)}")
+
+        if (!masterText.startsWith("#EXT")) {
+            Log.d("JioHotstar", "Invalid master response")
+            return false
+        }
+
+        // 4. Parse master → ExtractorLinks
+        val lines = masterText.lines().map { it.trimEnd() }
+        var foundAny = false
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            when {
+                line.contains("#EXT-X-MEDIA:TYPE=AUDIO") -> {
+                    val next = lines.getOrNull(i + 1) ?: ""
+                    if (next.startsWith("http")) {
+                        callback(newExtractorLink(name, name, next, type = ExtractorLinkType.M3U8) {
+                            headers = masterHeaders + cookieHeader
+                            referer = "$mainUrl/mobile/home?app=1"
                         })
-                        return true
+                        foundAny = true; i += 2; continue
                     }
-                    Log.d("JioHotstar", "No video URL found, using master: $hlsUrl")
-                    val masterHeaders = androidHeaders + mapOf(
-                        "Cookie" to cookie,
-                        "Referer" to "$mainUrl/mobile/home?app=1"
-                    )
-                    callback.invoke(newExtractorLink(name, name, hlsUrl, type = ExtractorLinkType.M3U8) {
-                        this.headers = masterHeaders
+                }
+                line.contains("#EXT-X-MEDIA:TYPE=SUBTITLES") -> {
+                    val uri = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
+                    if (uri != null) {
+                        val lang = Regex("""LANGUAGE="([^"]+)"""").find(line)?.groupValues?.get(1) ?: "Unknown"
+                        subtitleCallback(newSubtitleFile(lang, if (uri.startsWith("http")) uri else "$mainUrl$uri"))
+                    }
+                }
+                line.startsWith("#EXT-X-STREAM-INF:") && i + 1 < lines.size -> {
+                    i++; val urlLine = lines[i]
+                    val bw = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull()
+                    val quality = when { bw != null && bw >= 5_000_000 -> getQualityFromName("1080p")
+                        bw != null && bw >= 2_000_000 -> getQualityFromName("720p")
+                        bw != null && bw >= 800_000 -> getQualityFromName("480p")
+                        else -> getQualityFromName("360p") }
+                    val videoUrl = urlLine.replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
+                        .replace(Regex("[?&]in=[^&\n\r]*"), "")
+                    callback(newExtractorLink(name, "$quality", videoUrl, type = ExtractorLinkType.M3U8) {
+                        headers = masterHeaders + mapOf("Cookie" to "hd=on")
+                        referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
                     })
-                    return true
+                    foundAny = true; i++; continue
                 }
-                Log.d("JioHotstar", "mobile/hls returned abuse (unknown::ep), falling through to play.php")
-            } catch (e: Exception) {
-                Log.d("JioHotstar", "mobile/hls failed: ${e.message}")
+            }
+            i++
+        }
+
+        // 5. Fallback: player.php
+        if (!foundAny) {
+            for (u in listOf("$apiBase/newtv/player.php?id=$id", "$mainUrl/newtv/player.php?id=$id")) {
+                try {
+                    val resp = tryParseJson<NewTvPlayerResponse>(app.get(u, headers = masterHeaders + cookieHeader).text)
+                    if (resp?.video_link != null && (resp.status == "ok" || resp.status == "otp")) {
+                        callback(newExtractorLink(name, name, resp.video_link, type = ExtractorLinkType.M3U8) {
+                            headers = masterHeaders + cookieHeader; referer = resp.referer ?: apiBase
+                        })
+                        foundAny = true
+                    }
+                } catch (_: Exception) {}
             }
         }
 
-        // Fallback: play.php → playlist.php
-        val plCookie = cookie // raw cookie as-is, no ::ep::99 → ::ep::m upgrade
-        val playlistResult = getPlaylistUrl(mainUrl, ott, id, title, cookie, apiBase)
-        if (playlistResult != null) {
-            val (m3u8Url, tracks) = playlistResult
-            for (track in tracks) {
-                if (track.kind == "captions" && !track.file.isNullOrBlank()) {
-                    val subUrl = if (track.file.startsWith("http")) track.file
-                                 else "https:${track.file.removePrefix("/")}"
-                    val subFile = newSubtitleFile(track.label ?: track.language ?: "unknown", subUrl)
-                    subFile.headers = mapOf("Referer" to "$mainUrl/")
-                    subtitleCallback(subFile)
-                }
-            }
-            val m3u8Domain = Regex("https://([^/]+)/").find(m3u8Url)?.groupValues?.get(1) ?: mainUrl
-            val videoHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                "Accept" to "*/*",
-                "X-Requested-With" to "app.netmirror.netmirrornew",
-                "Cookie" to plCookie,
-                "Referer" to m3u8Url,
-                "Origin" to "https://$m3u8Domain"
-            )
-            Log.d("JioHotstar", "loadLinks new flow SUCCESS: $m3u8Url")
-            callback.invoke(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
-                this.referer = m3u8Url
-                this.headers = videoHeaders
-            })
-            return true
-        }
-
-        // Fallback to old player.php flow
-        val videoHeaders = androidHeaders + mapOf("Cookie" to plCookie)
-        Log.d("JioHotstar", "loadLinks: fallback to player.php id=$id")
-        val rawPlayer = retryOnDbError {
-            val text = app.get(
-                "$mainUrl/newtv/player.php?id=$id",
-                headers = buildNewTvHeaders(ott, mapOf("Usertoken" to "", "Referer" to "https://net52.cc"))
-            ).text
-            checkDbError(text)
-            text
-        }
-        val response = JSONParser.parse(rawPlayer, NewTvPlayerResponse::class)
-
-        if (response.status != "ok" && response.status != "otp" || response.video_link.isNullOrBlank()) return false
-
-        val m3u8Referer = response.referer ?: mainUrl
-        kotlinx.coroutines.delay(Random.nextLong(1000L, 3000L))
-        callback.invoke(newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-            this.referer = m3u8Referer
-            this.headers = videoHeaders
-        })
-        Log.d("JioHotstar", "loadLinks SUCCESS (player.php fallback): video_link=${response.video_link}")
-        return true
+        Log.d("JioHotstar", "loadLinks result=$foundAny id=$id")
+        return foundAny
     }
 
     @Suppress("ObjectLiteralToLambda")

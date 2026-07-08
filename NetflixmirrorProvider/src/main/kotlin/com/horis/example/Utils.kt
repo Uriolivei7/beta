@@ -128,6 +128,29 @@ object NetflixMirrorStorage {
             apply()
         }
     }
+
+    fun saveFullCookie(cookie: String) {
+        prefs?.edit()?.apply {
+            putString("nf_cookie_full", cookie)
+            putLong("nf_cookie_full_timestamp", System.currentTimeMillis())
+            apply()
+        }
+    }
+
+    fun getFullCookie(): Pair<String?, Long> {
+        return Pair(
+            prefs?.getString("nf_cookie_full", null),
+            prefs?.getLong("nf_cookie_full_timestamp", 0L) ?: 0L
+        )
+    }
+
+    fun clearFullCookie() {
+        prefs?.edit()?.apply {
+            remove("nf_cookie_full")
+            remove("nf_cookie_full_timestamp")
+            apply()
+        }
+    }
 }
 
 var appContext: Context? = null
@@ -140,112 +163,88 @@ var currentBypassToken: String = ""
 // ---------------------------------------------------------------------------
 
 suspend fun bypass(mainUrl: String): String {
-    val (rawCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
-    val savedCookie = rawCookie?.let { c ->
-        when {
-            c.startsWith("t_hash_t=") -> c.removePrefix("t_hash_t=").substringBefore(";").trim()
-            else -> c
-        }
-    }
-    if (!savedCookie.isNullOrBlank() && savedCookie.length > 10 && System.currentTimeMillis() - savedTimestamp < 600_000) {
-        Log.d("BYPASS", "Using cached cookie ts=${savedTimestamp}")
+    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+    if (!savedCookie.isNullOrBlank() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+        Log.d("BYPASS", "Using cached cookie (15h)")
         return savedCookie
     }
-    Log.e("BYPASS", "Cache expired or empty")
+    Log.d("BYPASS", "Cache expired, fetching new token")
 
-    // Try 1: GET $mainUrl/tv/p.php — no Cloudflare, no form body
-    try {
-        val resp = app.get("$mainUrl/tv/p.php")
-        val body = resp.text
-        Log.e("BYPASS", "tv/p.php GET code=${resp.code} body=${body.take(300)}")
-        val setCookies = resp.headers.values("Set-Cookie")
-        Log.e("BYPASS", "tv/p.php Set-Cookie=$setCookies")
-        val tHash = setCookies.firstOrNull { it.startsWith("t_hash_t=") }
-            ?.substringAfter("=")?.substringBefore(";")?.trim()
-        if (!tHash.isNullOrBlank() && tHash.length > 10) {
-            NetflixMirrorStorage.saveCookie(tHash)
-            Log.e("BYPASS", "Got token via tv/p.php: ${tHash.take(60)}")
-            return tHash
-        }
-    } catch (e: Exception) {
-        Log.e("BYPASS", "tv/p.php failed: ${e.message}")
-    }
-
-    NetflixMirrorStorage.clearCookie()
-
-    // Try 2: WebView-based bypass (handles Cloudflare JS challenge)
-    val wvResult = webViewBypass(mainUrl)
-    if (wvResult != null) {
-        NetflixMirrorStorage.saveCookie(wvResult)
-        Log.e("BYPASS", "Got token via WebView: ${wvResult.take(60)}")
-        return wvResult
-    }
-
-    // Try 3: HTTP-based on mainUrl
-    val browserHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "app.netmirror.netmirrornew",
-        "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+    val headers = mapOf(
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding" to "gzip, deflate, br, zstd",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "Cache-Control" to "max-age=0",
+        "Connection" to "keep-alive",
+        "Content-Type" to "application/x-www-form-urlencoded",
+        "Origin" to "https://net22.cc",
+        "Referer" to "https://net22.cc/verify2",
+        "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
         "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "Android",
-        "Sec-Fetch-Dest" to "empty",
-        "Sec-Fetch-Mode" to "cors",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
         "Sec-Fetch-Site" to "same-origin",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.5",
-        "Referer" to "$mainUrl/mobile/home?app=1",
-        "Origin" to mainUrl,
-        "Cache-Control" to "no-cache",
-        "Pragma" to "no-cache"
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
     )
-    val formBody = FormBody.Builder().add("g-recaptcha-response", UUID.randomUUID().toString()).build()
-    val okClientNoRedirect = OkHttpClient.Builder()
+    val formBody = FormBody.Builder()
+        .add("g-recaptcha-response", UUID.randomUUID().toString())
+        .build()
+    val client = OkHttpClient.Builder()
         .followRedirects(false)
         .followSslRedirects(false)
         .build()
-    for (path in listOf("/verify.php", "/newtv/verify.php", "/newtv/auth.php", "/auth.php")) {
+    val request = okhttp3.Request.Builder()
+        .url("https://net52.cc/verify.php")
+        .post(formBody)
+        .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+        .build()
+    try {
+        val response = client.newCall(request).execute()
+        val newCookie = response.headers("Set-Cookie")
+            .firstOrNull { it.startsWith("t_hash_t=") }
+            ?.substringAfter("t_hash_t=")
+            ?.substringBefore(";")
+            ?.trim()
+        response.close()
+        if (!newCookie.isNullOrBlank() && newCookie.length > 10) {
+            NetflixMirrorStorage.saveCookie(newCookie)
+            Log.d("BYPASS", "Got new token: ${newCookie.take(60)}")
+            return newCookie
+        }
+        Log.d("BYPASS", "No t_hash_t in Set-Cookie")
+    } catch (e: Exception) {
+        Log.d("BYPASS", "verify.php failed: ${e.message}")
+        NetflixMirrorStorage.clearCookie()
+    }
+    return ""
+}
+
+suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
+    val (savedToken, savedTimestamp) = NetflixMirrorStorage.getFullCookie()
+    if (!savedToken.isNullOrBlank() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+        Log.d("USERTOKEN", "Using cached user token")
+        return savedToken
+    }
+    Log.d("USERTOKEN", "Fetching new user token for ott=$ott")
+
+    val otpHeaders = buildNewTvHeaders(ott, emptyMap())
+    for (endpoint in listOf("$apiBase/newtv/otp.php?ott=$ott", "$apiBase/mobile/otp.php?ott=$ott")) {
         try {
-            val getResp = app.get("$mainUrl$path", headers = browserHeaders)
-            val getBody = getResp.text
-            Log.e("BYPASS", "FB GET $path code=${getResp.code} body=${getBody.take(2000)}")
-            Log.e("BYPASS", "FB GET $path cookies=${getResp.headers.values("Set-Cookie")}")
-            if (!getBody.contains("Just a moment") && getResp.code < 400) {
-                val parsed = tryParseJson<NewTvTokenResponse>(getBody)
-                if (parsed?.token_hash != null && parsed.token_hash.length > 10) {
-                    NetflixMirrorStorage.saveCookie(parsed.token_hash); return parsed.token_hash
-                }
+            val resp = app.get(endpoint, headers = otpHeaders)
+            val text = resp.text
+            Log.d("USERTOKEN", "otp $endpoint raw=${text.take(300)}")
+            val parsed = tryParseJson<NewTvOtpResponse>(text)
+            val token = parsed?.usertoken
+            if (!token.isNullOrBlank() && token.length > 10) {
+                NetflixMirrorStorage.saveFullCookie(token)
+                Log.d("USERTOKEN", "Got user token: ${token.take(60)}")
+                return token
             }
         } catch (_: Exception) {}
-            try {
-                val okReq = okhttp3.Request.Builder()
-                    .url("$mainUrl$path")
-                    .post(formBody)
-                    .apply {
-                        browserHeaders.forEach { (k, v) -> addHeader(k, v) }
-                        addHeader("Content-Type", "application/x-www-form-urlencoded")
-                    }
-                    .build()
-                val okResp = okClientNoRedirect.newCall(okReq).execute()
-                val allSetCookies = okResp.headers("Set-Cookie")
-                val setCookie = okResp.header("Set-Cookie", null)
-                Log.e("BYPASS", "FB POST $path code=${okResp.code} All Set-Cookie=$allSetCookies")
-                Log.e("BYPASS", "FB POST $path body=${okResp.body?.string()?.take(2000)}")
-            if (okResp.code < 400 || (okResp.code in 300..399 && setCookie != null)) {
-                val tHash = setCookie
-                    ?.split(";")
-                    ?.firstOrNull { it.trim().startsWith("t_hash_t=") }
-                    ?.substringAfter("=")
-                    ?.trim()
-                if (!tHash.isNullOrBlank() && tHash.length > 10) {
-                    val decoded = try { URLDecoder.decode(tHash, "UTF-8") } catch (_: Exception) { tHash }
-                    NetflixMirrorStorage.saveCookie(decoded)
-                    Log.e("BYPASS", "Got token via POST $path: ${decoded.take(60)}")
-                    return decoded
-                }
-            }
-        } catch (e: Exception) { Log.e("BYPASS", "FB POST $path failed: ${e.message}") }
     }
-    Log.e("BYPASS", "All bypass attempts failed, returning empty token")
     return ""
 }
 
@@ -600,6 +599,15 @@ data class NewTvPlayerResponse(
     val status: String? = null,
     val video_link: String? = null,
     val referer: String? = null
+)
+
+data class NewTvOtpResponse(
+    val otp: String? = null,
+    val status: String? = null,
+    val usertoken: String? = null,
+    val pub_msg: String? = null,
+    val pub_msg_f_size: Int? = null,
+    val pub_msg_color: String? = null
 )
 
 // ---------------------------------------------------------------------------
