@@ -28,53 +28,19 @@ class  NetflixProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                var urlString = request.url.toString()
+                val urlString = request.url.toString()
 
-                // Extraer dinámicamente la cookie/token actual
-                val tokenClean = lastBypassCookie.substringBefore("::")
-
-                // 1. Forzar redirección al video real si detecta la trampa de 10 min (ID 220884)
-                if (urlString.contains("220884/1080p")) {
-                    Log.e("Netmirror", "¡Detectado intento de desvío al video de 10 min! Forzando pista real.")
-                    val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
-
-                    if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
-                        // Usamos la estructura limpia de 720p que descubriste
-                        urlString = "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$lastBypassCookie"
-                        Log.d("Netmirror", "Nueva URL de video forzada con éxito: $urlString")
-                    }
-                }
-
-                // 2. Reparar playlists "unknown" al vuelo
-                if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
-                    urlString = urlString.replace("in=unknown::ep", "in=$tokenClean")
-                        .replace("in=unknown%3A%3Aep", "in=$tokenClean")
-                }
-
-                // 3. ARMADO DE PETICIÓN CON BLINDAJE DE HEADERS CRUCIALES
                 val builder = request.newBuilder()
                     .url(urlString)
-                    // Clonamos un navegador moderno de Android de manera idéntica
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
                     .header("Referer", "https://net52.cc/")
                     .header("Origin", "https://net52.cc")
                     .header("Accept", "*/*")
 
-                // Regla de Cookies balanceada
-                if (urlString.contains("net52.cc") || urlString.contains("net22.cc")) {
-                    builder.header("Cookie", "hd=on; $lastBypassCookie")
-                } else {
-                    // Para el CDN, en lugar de borrar todo, enviamos el token limpio como Cookie por si acaso
-                    builder.header("Cookie", "in=$lastBypassCookie")
-                }
-
                 return chain.proceed(builder.build())
             }
         }
     }
-
-    // Función de extensión utilitaria si no la tienes
-    fun String.isDigitsOnly(): Boolean = this.all { it.isDigit() }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.e("Netmirror", "getMainPage called page=$page")
@@ -268,7 +234,7 @@ class  NetflixProvider : MainAPI() {
         val id = parseJson<NewTvLoadData>(data).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
 
-        // Guardamos la cookie COMPLETA para el interceptor (cabeceras HTTP)
+        // Guardamos la cookie COMPLETA para el interceptor
         lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
@@ -281,22 +247,30 @@ class  NetflixProvider : MainAPI() {
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
 
                 if (!src.isNullOrBlank()) {
-                    // Extraemos el hash limpio (ej: "5c196914154a3303de8c7e3447f7a145") para la URL
-                    val tokenForUrl = if (cookie.contains("::")) cookie.substringBefore("::") else cookie
+                    // 1. Extraemos el ID numérico real del episodio
+                    val episodeId = id.trim()
 
-                    // Reemplazamos usando el token limpio para no romper la estructura de la URL
-                    val fixedSrc = src.replace("in=unknown::ep", "in=$tokenForUrl")
-                        .replace("in=unknown%3A%3Aep", "in=$tokenForUrl")
+                    // 2. Usamos el token dinámico completo para mantener la autorización Unix fresca
+                    val currentToken = if (cookie.isNotEmpty()) cookie else lastBypassCookie
 
-                    val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
+                    // 3. Construimos el MANIFIESTO MAESTRO directamente apuntando al CDN estable (s23 o nm-cdn9)
+                    // Esto une el Video + los Audios sin pasar por la trampa de los 10 minutos
+                    val masterCDNUrl = "https://s23.nm-cdn9.top/files/$episodeId/$episodeId.m3u8?in=$currentToken&hd=on&hp=yes"
 
-                    Log.e("Netmirror", "URL M3U8 Final generada con éxito: $m3u8")
+                    Log.e("Netmirror", "URL M3U8 CDN Maestro construida con éxito: $masterCDNUrl")
 
-                    items.first().tracks.orEmpty().forEach { t ->
+                    // Procesamos subtítulos normales si vienen en la playlist
+                    items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                     }
 
-                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                    // 4. Retornamos el link directo del CDN pasándole el referer obligado de origen
+                    callback(newExtractorLink(
+                        source = name,
+                        name = "$name (720p Directo)",
+                        url = masterCDNUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
                         referer = "$domain/"
                     })
                     return true
