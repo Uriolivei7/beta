@@ -42,7 +42,10 @@ class  NetflixProvider : MainAPI() {
 
                 val response = chain.proceed(builder.build())
 
-                if (urlString.contains("/mobile/hls/") || response.request.url.toString().contains("220884") || urlString.contains("81936153")) {
+                // 2. ROMPE-BUCLES: Interceptamos solo el manifiesto base inicial, NUNCA las peticiones al CDN final (nm-cdn9.top)
+                if ((urlString.contains("/mobile/hls/") || urlString.contains("220884") || urlString.contains("81936153"))
+                    && !urlString.contains("nm-cdn9.top")) {
+
                     val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
 
                     if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
@@ -51,7 +54,7 @@ class  NetflixProvider : MainAPI() {
                         // 1. Limpieza rigurosa de delimitadores en las cookies
                         val cleanCookie = lastBypassCookie.replace("%3A%3A", "::")
 
-                        // 2. Construcción con CRLF (\r\n) requerido estrictamente por la sintaxis HLS en reproductores nativos
+                        // 2. Construcción con CRLF (\r\n) requerido estrictamente por la sintaxis HLS
                         val fakeMasterM3u8 = "#EXTM3U\r\n" +
                                 "#EXT-X-VERSION:3\r\n" +
                                 "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\r\n" +
