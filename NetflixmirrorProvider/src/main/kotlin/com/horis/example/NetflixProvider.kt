@@ -145,8 +145,10 @@ class  NetflixProvider : MainAPI() {
         if (data.episodes.isNullOrEmpty()) {
             episodes.add(newEpisode(NewTvLoadData(title, id)) { name = title })
         } else {
-            val selectedSeasonId = data.season?.find { it.sele == "true" || it.sele == "1" }?.id
-                ?: data.nextPageSeason
+            val selectedSeasonId = data.season?.find {
+                val seleClean = it.sele?.trim()?.lowercase()
+                seleClean == "true" || seleClean == "1" || seleClean == "selected"
+            }?.id ?: data.nextPageSeason
 
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id)) {
@@ -229,7 +231,6 @@ class  NetflixProvider : MainAPI() {
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
-        // Primary: mobile/playlist.php → fix in= parameter to use bypass cookie (already full hash)
         for (domain in listOf("https://net52.cc", "https://net22.cc")) {
             try {
                 val resp = app.get("$domain/mobile/playlist.php?id=$id", headers = mobileHeaders(ott, cookie))
@@ -240,7 +241,10 @@ class  NetflixProvider : MainAPI() {
                 if (!src.isNullOrBlank()) {
                     val fixedSrc = src.replace("in=unknown::ep", "in=$cookie").replace("in=unknown%3A%3Aep", "in=$cookie")
                     val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
-                    Log.e("PLAYURL", m3u8)
+
+                    // Log añadido para certificar el enlace final generado
+                    Log.e("Netmirror", "URL M3U8 Final generada con éxito: $m3u8")
+
                     items.first().tracks.orEmpty().forEach { t ->
                         if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                     }
@@ -248,13 +252,11 @@ class  NetflixProvider : MainAPI() {
                     return true
                 }
             } catch (e: Exception) {
-                Log.d("Netmirror", "$domain exception: ${e.message}")
+                Log.e("Netmirror", "$domain exception en loadLinks: ${e.message}")
             }
         }
 
-        Log.d("Netmirror", "all playback methods failed id=$id")
+        Log.e("Netmirror", "all playback methods failed id=$id")
         return false
     }
-
-
 }
