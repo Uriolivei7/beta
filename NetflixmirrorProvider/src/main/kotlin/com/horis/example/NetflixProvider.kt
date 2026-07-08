@@ -227,46 +227,30 @@ class  NetflixProvider : MainAPI() {
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        Log.d("Netmirror", "loadLinks id=$id cookie=${cookie.take(40)}")
+        Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
-        // Try mobile/hls endpoint directly with bypass token as in= param
-        val ts = System.currentTimeMillis() / 1000
-        val fullHash = "$cookie::$ts::ep::m"
-        val hlsHeaders = mapOf("User-Agent" to USER_AGENT, "Cookie" to "t_hash_t=$cookie; hd=on", "Accept" to "*/*")
+        // Primary: mobile/playlist.php → fix in= parameter to use bypass cookie (already full hash)
         for (domain in listOf("https://net52.cc", "https://net22.cc")) {
             try {
-                val m3u8Url = "$domain/mobile/hls/$id.m3u8?q=720p&in=$fullHash&hd=on&lang=eng"
-                Log.d("Netmirror", "Trying HLS direct: $m3u8Url")
-                val resp = app.get(m3u8Url, headers = hlsHeaders)
-                val body = resp.text
-                Log.d("Netmirror", "HLS body len=${body.length} start=${body.take(150)}")
-                if (body.startsWith("#EXTM3U")) {
-                    Log.e("PLAYURL", m3u8Url)
-                    callback(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) { referer = domain })
+                val resp = app.get("$domain/mobile/playlist.php?id=$id", headers = mobileHeaders(ott, cookie))
+                val text = resp.text
+                Log.d("Netmirror", "playlist $domain raw=${text.take(200)}")
+                val items = tryParseJsonList<PlaylistItem>(text)
+                val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
+                if (!src.isNullOrBlank()) {
+                    val fixedSrc = src.replace("in=unknown::ep", "in=$cookie").replace("in=unknown%3A%3Aep", "in=$cookie")
+                    val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
+                    Log.e("PLAYURL", m3u8)
+                    items.first().tracks.orEmpty().forEach { t ->
+                        if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
+                    }
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) { referer = domain })
                     return true
                 }
             } catch (e: Exception) {
-                Log.d("Netmirror", "HLS $domain exception: ${e.message}")
+                Log.d("Netmirror", "$domain exception: ${e.message}")
             }
         }
-
-        // Fallback: player.php on tv.imgcdn.kim (returned status=otp with M3U8)
-        val imgHeaders = buildNewTvHeaders(ott, mapOf("Usertoken" to "")) + mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
-        try {
-            val resp = app.get("https://tv.imgcdn.kim/newtv/player.php?id=$id", headers = imgHeaders)
-            val parsed = tryParseJson<NewTvPlayerResponse>(resp.text)
-            if (parsed?.status == "otp" && !parsed.video_link.isNullOrBlank()) {
-                val m3u8Resp = app.get(parsed.video_link, headers = mapOf("Cookie" to "t_hash_t=$cookie; hd=on", "User-Agent" to USER_AGENT))
-                val m3u8Body = m3u8Resp.text
-                if (m3u8Body.startsWith("#EXTM3U")) {
-                    Log.d("Netmirror", "player.php M3U8 valid from tv.imgcdn.kim, using video_link")
-                    callback(newExtractorLink(name, name, parsed.video_link, type = ExtractorLinkType.M3U8) {
-                        referer = parsed.referer ?: "https://tv.imgcdn.kim"
-                    })
-                    return true
-                }
-            }
-        } catch (_: Exception) {}
 
         Log.d("Netmirror", "all playback methods failed id=$id")
         return false
