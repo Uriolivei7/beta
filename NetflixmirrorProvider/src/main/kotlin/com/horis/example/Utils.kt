@@ -774,13 +774,18 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             if (cdnHost.contains("nm-cdn") || cdnHost.contains("imgcdn") || cdnHost.contains("freecdn")) {
                 Log.d("CdnFix", "CDN unreachable: $url - ${e.message}")
             }
+            Log.e("CdnFix", "NETWORK ERROR: $url - ${e.message}")
             throw e
         }
         val ct = (resp.body?.contentType()?.toString() ?: "")
-        if (url.contains(".m3u8") || ct.contains("mpegurl") || ct.contains("vnd.apple.mpegurl")) {
+        val isM3u8 = url.contains(".m3u8") || ct.contains("mpegurl") || ct.contains("vnd.apple.mpegurl")
+        if (cdnHost.contains("imgcdn") || cdnHost.contains("tv.imgcdn")) {
+            Log.e("CdnFix", "IMGCDN REQUEST: $url code=${resp.code} ct=$ct len=${resp.body?.contentLength()}")
+        }
+        if (isM3u8) {
             val body = resp.body?.string() ?: return@Interceptor resp
             if (!body.startsWith("#EXT")) {
-                Log.d("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length}")
+                Log.e("CdnFix", "M3U8 NOT valid: $url status=${resp.code} len=${body.length} first100=${body.take(100)}")
                 return@Interceptor resp
             }
             val inParam = Regex("[?&]in=([^&#]+)").find(url)?.groupValues?.get(1)
