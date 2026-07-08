@@ -7,7 +7,9 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import okhttp3.FormBody
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 
 class  NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -30,6 +32,7 @@ class  NetflixProvider : MainAPI() {
                 val request = chain.request()
                 val urlString = request.url.toString()
 
+                // 1. Clonamos cabeceras esenciales para evitar bloqueos del CDN
                 val builder = request.newBuilder()
                     .url(urlString)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
@@ -37,7 +40,36 @@ class  NetflixProvider : MainAPI() {
                     .header("Origin", "https://net52.cc")
                     .header("Accept", "*/*")
 
-                return chain.proceed(builder.build())
+                val response = chain.proceed(builder.build())
+
+                // 2. CAPTURA DE RESPUESTA: Si detectamos que nos quieren dar el video de 10 minutos
+                if (urlString.contains("/mobile/hls/") || response.request.url.toString().contains("220884")) {
+                    val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
+
+                    if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
+                        Log.e("Netmirror", "¡Bypass de Manifiesto! Creando M3U8 virtual para el ID: $realEpisodeId")
+
+                        // Creamos en memoria un archivo de texto .m3u8 válido que apunta directito a tu link de 720p
+                        val fakeMasterM3u8 = """
+                        #EXTM3U
+                        #EXT-X-VERSION:3
+                        #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
+                        https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$lastBypassCookie
+                    """.trimIndent()
+
+                        // Le entregamos este texto a ExoPlayer simulando que vino del servidor original
+                        val contentType = "application/vnd.apple.mpegurl".toMediaTypeOrNull()
+                        val responseBody = fakeMasterM3u8.toResponseBody(contentType)
+
+                        return response.newBuilder()
+                            .code(200)
+                            .message("OK")
+                            .body(responseBody)
+                            .build()
+                    }
+                }
+
+                return response
             }
         }
     }
@@ -234,7 +266,6 @@ class  NetflixProvider : MainAPI() {
         val id = parseJson<NewTvLoadData>(data).id
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
 
-        // Guardamos la cookie COMPLETA para el interceptor
         lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
@@ -247,30 +278,20 @@ class  NetflixProvider : MainAPI() {
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
 
                 if (!src.isNullOrBlank()) {
-                    // 1. Extraemos el ID numérico real del episodio
-                    val episodeId = id.trim()
+                    val tokenForUrl = if (cookie.contains("::")) cookie.substringBefore("::") else cookie
 
-                    // 2. Usamos el token dinámico completo para mantener la autorización Unix fresca
-                    val currentToken = if (cookie.isNotEmpty()) cookie else lastBypassCookie
+                    val fixedSrc = src.replace("in=unknown::ep", "in=$tokenForUrl")
+                        .replace("in=unknown%3A%3Aep", "in=$tokenForUrl")
 
-                    // 3. Construimos el MANIFIESTO MAESTRO directamente apuntando al CDN estable (s23 o nm-cdn9)
-                    // Esto une el Video + los Audios sin pasar por la trampa de los 10 minutos
-                    val masterCDNUrl = "https://s23.nm-cdn9.top/files/$episodeId/$episodeId.m3u8?in=$currentToken&hd=on&hp=yes"
+                    val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
 
-                    Log.e("Netmirror", "URL M3U8 CDN Maestro construida con éxito: $masterCDNUrl")
+                    Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
 
-                    // Procesamos subtítulos normales si vienen en la playlist
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                     }
 
-                    // 4. Retornamos el link directo del CDN pasándole el referer obligado de origen
-                    callback(newExtractorLink(
-                        source = name,
-                        name = "$name (720p Directo)",
-                        url = masterCDNUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true
@@ -279,8 +300,6 @@ class  NetflixProvider : MainAPI() {
                 Log.e("Netmirror", "$domain exception en loadLinks: ${e.message}")
             }
         }
-
-        Log.e("Netmirror", "all playback methods failed id=$id")
         return false
     }
 }
