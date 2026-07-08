@@ -206,29 +206,36 @@ open class PlutotvProvider : MainAPI() {
         val idFromUrl = seriesMatch?.groupValues?.get(1) ?: movieMatch?.groupValues?.get(1)
         val liveIdFromUrl = liveMatch?.groupValues?.get(1)
 
-        // Caso A: Es un canal En Vivo desde favoritos
+        // Caso A: Es un canal En Vivo desde favoritos (URL Plana)
         if (liveIdFromUrl != null) {
             Log.d("PLUTOTV", "load: fetching LIVE channel by id=$liveIdFromUrl from URL")
 
-            val channelResponse = app.get(
-                "${servers.api}/v2/channels",
+            // CORRECCIÓN: Usamos el endpoint y la clase contenedora correcta (ChannelsResponse) para evitar el LinkedHashMap crash
+            val channelsResponse = app.get(
+                "${servers.channels}/v2/guide/channels?sort=number:asc",
                 headers = authHeaders()
-            ).parsedSafe<List<Channel>>()
+            ).parsedSafe<ChannelsResponse>()
 
-            val liveChannel = channelResponse?.find { it.id == liveIdFromUrl }
+            // Buscamos el canal correspondiente dentro de la lista "data" ya parseada de forma segura
+            val liveChannel = channelsResponse?.data?.find { it.id == liveIdFromUrl }
+
             if (liveChannel != null) {
                 Log.d("PLUTOTV", "load: resolved liveId=$liveIdFromUrl to channel=${liveChannel.name}")
                 return createLiveStreamResponse(liveChannel)
+            } else {
+                Log.d("PLUTOTV", "load: liveId=$liveIdFromUrl not found in channels list")
             }
         }
 
+        // Caso B: Series o Películas desde favoritos
         if (idFromUrl != null) {
             Log.d("PLUTOTV", "load: fetching VOD item by id=$idFromUrl from URL")
             val item = app.get(
                 "${servers.vod}/v4/vod/items",
                 headers = authHeaders(),
                 params = mapOf("ids" to idFromUrl)
-            ).parsed<SearchDetailsResponse>().firstOrNull()
+            ).parsedSafe<SearchDetailsResponse>()?.firstOrNull() // Usamos parsedSafe por seguridad también aquí
+
             if (item != null) {
                 Log.d("PLUTOTV", "load: resolved id=$idFromUrl to item=${item.name}")
                 return loadVodDetails(item, servers)

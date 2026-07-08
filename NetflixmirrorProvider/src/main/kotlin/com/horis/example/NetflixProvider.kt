@@ -42,33 +42,35 @@ class  NetflixProvider : MainAPI() {
 
                 val response = chain.proceed(builder.build())
 
-                // 2. CAPTURA DE RESPUESTA: Si detectamos que nos quieren dar el video de 10 minutos
-                if (urlString.contains("/mobile/hls/") || response.request.url.toString().contains("220884")) {
+                if (urlString.contains("/mobile/hls/") || response.request.url.toString().contains("220884") || urlString.contains("81936153")) {
                     val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
 
                     if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
-                        Log.e("Netmirror", "¡Bypass de Manifiesto! Creando M3U8 virtual para el ID: $realEpisodeId")
+                        Log.e("Netmirror", "¡Bypass de Manifiesto Activo! Generando M3U8 compatible para ID: $realEpisodeId")
 
-                        // 1. Decodificamos de forma segura los delimitadores de la cookie
+                        // 1. Limpieza rigurosa de delimitadores en las cookies
                         val cleanCookie = lastBypassCookie.replace("%3A%3A", "::")
 
-                        // 2. Construimos el archivo de manera estrictamente lineal para evitar saltos de línea huérfanos
-                        val fakeMasterM3u8 = "#EXTM3U\n" +
-                                "#EXT-X-VERSION:3\n" +
-                                "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\n" +
-                                "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie"
+                        // 2. Construcción con CRLF (\r\n) requerido estrictamente por la sintaxis HLS en reproductores nativos
+                        val fakeMasterM3u8 = "#EXTM3U\r\n" +
+                                "#EXT-X-VERSION:3\r\n" +
+                                "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\r\n" +
+                                "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie\r\n"
 
-                        // 3. Forzamos el Content-Type nativo para HLS sin codificaciones extrañas
+                        // 3. Forzar el array de bytes con el juego de caracteres e indicar la longitud exacta
+                        val rawBytes = fakeMasterM3u8.toByteArray(Charsets.UTF_8)
                         val contentType = "application/vnd.apple.mpegurl".toMediaTypeOrNull()
-                        val responseBody = fakeMasterM3u8.toByteArray(Charsets.UTF_8).toResponseBody(contentType)
+                        val responseBody = rawBytes.toResponseBody(contentType)
 
-                        // 4. Devolvemos la respuesta inyectada directamente al reproductor
+                        // 4. Construcción de respuesta limpia con cabeceras de tamaño explícitas
                         return response.newBuilder()
                             .code(200)
                             .message("OK")
                             .body(responseBody)
                             .header("Content-Type", "application/vnd.apple.mpegurl")
-                            .header("Cache-Control", "no-cache")
+                            .header("Content-Length", rawBytes.size.toString()) // Evita transferencias chunked que confunden a ExoPlayer
+                            .header("Connection", "close")
+                            .header("Cache-Control", "no-cache, no-store, must-revalidate")
                             .build()
                     }
                 }
