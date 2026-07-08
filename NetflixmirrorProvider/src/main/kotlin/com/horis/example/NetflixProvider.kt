@@ -42,7 +42,7 @@ class  NetflixProvider : MainAPI() {
 
                 val response = chain.proceed(builder.build())
 
-                // 2. ROMPE-BUCLES: Interceptamos solo el manifiesto base inicial, NUNCA las peticiones al CDN final (nm-cdn9.top)
+                // 2. Control estricto: Interceptamos solo el inicio e ignoramos llamadas al CDN de video
                 if ((urlString.contains("/mobile/hls/") || urlString.contains("220884") || urlString.contains("81936153"))
                     && !urlString.contains("nm-cdn9.top")) {
 
@@ -51,28 +51,29 @@ class  NetflixProvider : MainAPI() {
                     if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
                         Log.e("Netmirror", "¡Bypass de Manifiesto Activo! Generando M3U8 compatible para ID: $realEpisodeId")
 
-                        // 1. Limpieza rigurosa de delimitadores en las cookies
-                        val cleanCookie = lastBypassCookie.replace("%3A%3A", "::")
+                        // Decodificación URL profunda para transformar TODOS los %3A%3A en :: legítimos
+                        val cleanCookie = try {
+                            java.net.URLDecoder.decode(lastBypassCookie, "UTF-8")
+                        } catch (_: Exception) {
+                            lastBypassCookie.replace("%3A%3A", "::")
+                        }
 
-                        // 2. Construcción con CRLF (\r\n) requerido estrictamente por la sintaxis HLS
+                        // Construimos el manifiesto usando la pista de 720p sin saltos de línea innecesarios
                         val fakeMasterM3u8 = "#EXTM3U\r\n" +
                                 "#EXT-X-VERSION:3\r\n" +
                                 "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\r\n" +
                                 "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie\r\n"
 
-                        // 3. Forzar el array de bytes con el juego de caracteres e indicar la longitud exacta
                         val rawBytes = fakeMasterM3u8.toByteArray(Charsets.UTF_8)
                         val contentType = "application/vnd.apple.mpegurl".toMediaTypeOrNull()
                         val responseBody = rawBytes.toResponseBody(contentType)
 
-                        // 4. Construcción de respuesta limpia con cabeceras de tamaño explícitas
                         return response.newBuilder()
                             .code(200)
                             .message("OK")
                             .body(responseBody)
                             .header("Content-Type", "application/vnd.apple.mpegurl")
-                            .header("Content-Length", rawBytes.size.toString()) // Evita transferencias chunked que confunden a ExoPlayer
-                            .header("Connection", "close")
+                            .header("Content-Length", rawBytes.size.toString())
                             .header("Cache-Control", "no-cache, no-store, must-revalidate")
                             .build()
                     }

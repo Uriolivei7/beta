@@ -210,13 +210,11 @@ open class PlutotvProvider : MainAPI() {
         if (liveIdFromUrl != null) {
             Log.d("PLUTOTV", "load: fetching LIVE channel by id=$liveIdFromUrl from URL")
 
-            // CORRECCIÓN: Usamos el endpoint y la clase contenedora correcta (ChannelsResponse) para evitar el LinkedHashMap crash
             val channelsResponse = app.get(
                 "${servers.channels}/v2/guide/channels?sort=number:asc",
                 headers = authHeaders()
             ).parsedSafe<ChannelsResponse>()
 
-            // Buscamos el canal correspondiente dentro de la lista "data" ya parseada de forma segura
             val liveChannel = channelsResponse?.data?.find { it.id == liveIdFromUrl }
 
             if (liveChannel != null) {
