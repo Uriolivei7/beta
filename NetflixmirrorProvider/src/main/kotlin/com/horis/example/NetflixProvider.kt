@@ -259,14 +259,49 @@ class  NetflixProvider : MainAPI() {
             try {
                 val masterUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&lang=eng"
                 val masterResp = app.get(masterUrl, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")).text
-                Log.e("NF", "mobile/hls raw=${masterResp.take(1000)}")
+                Log.e("NF", "mobile/hls raw=${masterResp.take(2000)}")
 
                 if (masterResp.startsWith("#EXT")) {
-                    // Verificar que tenga variantes de video
-                    val hasVideo = masterResp.contains("#EXT-X-STREAM-INF:")
+                    // Parse master: audio stays on s23, video freecdn→s23
+                    val lines = masterResp.lines().map { it.trimEnd() }.toMutableList()
+                    val fixedMaster = buildString {
+                        var i = 0
+                        while (i < lines.size) {
+                            val line = lines[i]
+                            if (line.startsWith("#EXT-X-STREAM-INF:") && i + 1 < lines.size) {
+                                appendLine(line)
+                                i++
+                                val urlLine = lines[i]
+                                if (urlLine.contains("freecdn")) {
+                                    val quality = Regex("/(\\d+p)/").find(urlLine)?.groupValues?.get(1) ?: "720p"
+                                    val rewritten = urlLine
+                                        .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
+                                        .replace(Regex("/files/\\d+/"), "/files/$id/")
+                                        .replace("in=unknown::ep", "in=$inParam")
+                                    Log.e("NF", "rewrote video: ${urlLine.take(80)} → ${rewritten.take(80)}")
+                                    appendLine(rewritten)
+                                } else {
+                                    appendLine(urlLine)
+                                }
+                            } else if (line.contains("freecdn")) {
+                                // Solo URL sin #EXT-X-STREAM-INF (reward)
+                                val quality = Regex("/(\\d+p)/").find(line)?.groupValues?.get(1) ?: "720p"
+                                val rewritten = line
+                                    .replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
+                                    .replace(Regex("/files/\\d+/"), "/files/$id/")
+                                    .replace("in=unknown::ep", "in=$inParam")
+                                appendLine(rewritten)
+                            } else {
+                                appendLine(line)
+                            }
+                            i++
+                        }
+                    }
+                    val hasVideo = fixedMaster.contains("#EXT-X-STREAM-INF:")
                     if (hasVideo) {
-                        Log.e("NF", "Server master OK, using directly (hp=yes)")
-                        setCustomMaster(id, masterResp)
+                        Log.e("NF", "Server master OK, fixed CDN")
+                        Log.e("NF", "fixedMaster=${fixedMaster.take(2000)}")
+                        setCustomMaster(id, fixedMaster)
 
                         val cmUrl = "$mainUrl/mobile/hls/$id.m3u8?in=$inParam&hd=on&__cm=1"
                         val cmHeaders = mapOf(
