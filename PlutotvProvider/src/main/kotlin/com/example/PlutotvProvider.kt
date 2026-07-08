@@ -29,7 +29,7 @@ import java.util.UUID
 open class PlutotvProvider : MainAPI() {
     override var mainUrl: String = "https://pluto.tv"
     override var name: String = "PlutoTV"
-    override val supportedTypes: Set<TvType> = setOf(TvType.Movie, TvType.TvSeries, TvType.Live)
+    override val supportedTypes: Set<TvType> = setOf(TvType.Movie, TvType.TvSeries, TvType.Live, TvType.Cartoon)
     override var lang: String = "mx"
 
     open val bootUrl = "https://boot.pluto.tv"
@@ -204,7 +204,6 @@ open class PlutotvProvider : MainAPI() {
             return loadVodDetails(details, servers)
         }
 
-        // Fallback: url es una URL de Pluto (ej: desde favoritos)
         val seriesMatch = Regex("""/series/([^/?]+)""").find(url)
         val movieMatch = Regex("""/movies/([^/?]+)""").find(url)
         val idFromUrl = seriesMatch?.groupValues?.get(1) ?: movieMatch?.groupValues?.get(1)
