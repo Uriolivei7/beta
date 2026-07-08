@@ -229,64 +229,28 @@ class  NetflixProvider : MainAPI() {
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
         Log.d("Netmirror", "loadLinks id=$id cookie=${cookie.take(40)}")
 
-        val mHeaders = mobileHeaders(ott, cookie)
-        // Test play.php → playlist.php flow
+        // Primary: mobile/playlist.php → fix in= parameter to use bypass cookie
         for (domain in listOf("https://net52.cc", "https://net22.cc")) {
             try {
-                val playResp = app.post("$domain/play.php",
-                    requestBody = FormBody.Builder().add("id", id).build(),
-                    headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "*/*", "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8", "Cookie" to "t_hash_t=$cookie")
-                )
-                Log.d("Netmirror", "play.php $domain raw=${playResp.text.take(300)}")
-                val playText = playResp.text.trim()
-                if (playText.startsWith("{")) {
-                    val ph = tryParseJson<PlayHashResponse>(playText)
-                    val h = ph?.h?.removePrefix("in=")
-                    if (!h.isNullOrBlank()) {
-                        val parts = h.split("::")
-                        val cleanHash = parts.take(3).joinToString("::")
-                        val ts = parts.getOrNull(2) ?: "0"
-                        Log.d("Netmirror", "play.php hash=$cleanHash ts=$ts")
-                        val plResp = app.get("$domain/playlist.php?id=$id&t=&tm=$ts&h=$cleanHash",
-                            headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "*/*", "X-Requested-With" to "NetmirrorNewTV v1.0", "Cookie" to "t_hash_t=$cookie"))
-                        val plText = plResp.text
-                        Log.d("Netmirror", "playlist.php response=$plText")
-                        val items = tryParseJsonList<PlaylistItem>(plText)
-                        val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
-                        if (!src.isNullOrBlank()) {
-                            val m3u8 = if (src.startsWith("http")) src else "$domain$src"
-                            Log.e("PLAYURL", m3u8)
-                            items.first().tracks.orEmpty().forEach { t ->
-                                if (!t.file.isNullOrBlank()) subtitleCallback(SubtitleFile(t.language ?: "und", t.file))
-                            }
-                            callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) { referer = domain })
-                            return true
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.d("Netmirror", "$domain exception: ${e.message}")
-            }
-        }
-
-        // Fallback: direct mobile/playlist.php (known to return valid JSON)
-        for (domain in listOf("https://net52.cc", "https://net22.cc")) {
-            try {
-                val resp = app.get("$domain/mobile/playlist.php?id=$id", headers = mHeaders)
+                val resp = app.get("$domain/mobile/playlist.php?id=$id", headers = mobileHeaders(ott, cookie))
                 val text = resp.text
-                Log.d("Netmirror", "mobile/playlist.php $domain raw=${text.take(200)}")
+                Log.d("Netmirror", "playlist $domain raw=${text.take(200)}")
                 val items = tryParseJsonList<PlaylistItem>(text)
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
                 if (!src.isNullOrBlank()) {
-                    val m3u8 = if (src.startsWith("http")) src else "$domain$src"
+                    // Replace unknown::ep with bypass token in M3U8 URL
+                    val fixedSrc = src.replace("in=unknown::ep", "in=$cookie").replace("in=unknown%3A%3Aep", "in=$cookie")
+                    val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
                     Log.e("PLAYURL", m3u8)
                     items.first().tracks.orEmpty().forEach { t ->
-                        if (!t.file.isNullOrBlank()) subtitleCallback(SubtitleFile(t.language ?: "und", t.file))
+                        if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                     }
                     callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) { referer = domain })
                     return true
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.d("Netmirror", "$domain exception: ${e.message}")
+            }
         }
 
         Log.d("Netmirror", "all playback methods failed id=$id")
