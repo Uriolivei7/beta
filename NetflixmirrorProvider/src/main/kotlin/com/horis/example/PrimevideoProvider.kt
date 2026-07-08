@@ -298,7 +298,7 @@ class PrimevideoProvider : MainAPI() {
                         .replace(Regex("[?&]in=[^&\n\r]*"), "")
                     Log.d("Netmirror", "Video variant: $videoUrl quality=$quality")
                     callback(newExtractorLink(name, "$quality", videoUrl, type = ExtractorLinkType.M3U8) {
-                        headers = masterHeaders + mapOf("Cookie" to "hd=on")
+                        headers = masterHeaders + mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
                         referer = "$mainUrl/mobile/home?app=1"
                         this.quality = quality
                     })

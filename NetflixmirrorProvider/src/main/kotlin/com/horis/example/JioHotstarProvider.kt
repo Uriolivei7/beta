@@ -267,7 +267,7 @@ class JioHotstarProvider : MainAPI() {
                     val videoUrl = urlLine.replace(Regex("https://[^/]+"), "https://s23.nm-cdn9.top")
                         .replace(Regex("[?&]in=[^&\n\r]*"), "")
                     callback(newExtractorLink(name, "$quality", videoUrl, type = ExtractorLinkType.M3U8) {
-                        headers = masterHeaders + mapOf("Cookie" to "hd=on")
+                        headers = masterHeaders + mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
                         referer = "$mainUrl/mobile/home?app=1"; this.quality = quality
                     })
                     foundAny = true; i++; continue
