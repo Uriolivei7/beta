@@ -29,41 +29,43 @@ class  NetflixProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 var urlString = request.url.toString()
+
+                // Extraer dinámicamente la cookie/token actual
                 val tokenClean = lastBypassCookie.substringBefore("::")
 
-                // 1. CAPTURA Y CORRECCIÓN DE LA TRAMPA (Desvío al video falso de 10 min)
+                // 1. Forzar redirección al video real si detecta la trampa de 10 min (ID 220884)
                 if (urlString.contains("220884/1080p")) {
                     Log.e("Netmirror", "¡Detectado intento de desvío al video de 10 min! Forzando pista real.")
-                    // Si el servidor intenta enviarnos al ID falso, lo redirigimos a la fuerza
-                    // usando la estructura de video real que descubriste en resolución 720p
                     val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
 
-                    // Reemplazamos dinámicamente el host y la ruta usando un CDN activo
-                    if (realEpisodeId.isNotEmpty() && realEpisodeId.isDigitsOnly()) {
+                    if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
+                        // Usamos la estructura limpia de 720p que descubriste
                         urlString = "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$lastBypassCookie"
-                        Log.d("Netmirror", "Nueva URL de video forzada: $urlString")
+                        Log.d("Netmirror", "Nueva URL de video forzada con éxito: $urlString")
                     }
                 }
 
-                // 2. PARCHADO DE SUB-PLAYLISTS MUDAS O "UNKNOWN"
+                // 2. Reparar playlists "unknown" al vuelo
                 if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
                     urlString = urlString.replace("in=unknown::ep", "in=$tokenClean")
                         .replace("in=unknown%3A%3Aep", "in=$tokenClean")
                 }
 
-                // 3. ARMADO DE PETICIÓN CON HEADERS DE CONFIANZA
-                val isMainDomain = urlString.contains("net52.cc") || urlString.contains("net22.cc")
+                // 3. ARMADO DE PETICIÓN CON BLINDAJE DE HEADERS CRUCIALES
                 val builder = request.newBuilder()
                     .url(urlString)
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile)")
+                    // Clonamos un navegador moderno de Android de manera idéntica
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
                     .header("Referer", "https://net52.cc/")
                     .header("Origin", "https://net52.cc")
                     .header("Accept", "*/*")
 
-                if (isMainDomain) {
+                // Regla de Cookies balanceada
+                if (urlString.contains("net52.cc") || urlString.contains("net22.cc")) {
                     builder.header("Cookie", "hd=on; $lastBypassCookie")
                 } else {
-                    builder.removeHeader("Cookie") // Los CDNs fallan si llevan cookies cruzadas
+                    // Para el CDN, en lugar de borrar todo, enviamos el token limpio como Cookie por si acaso
+                    builder.header("Cookie", "in=$lastBypassCookie")
                 }
 
                 return chain.proceed(builder.build())
