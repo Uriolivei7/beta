@@ -28,44 +28,33 @@ class  NetflixProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 var request = chain.request()
-                val urlString = request.url.toString()
-
-                // Extraemos el token limpio del bypass (sin los "::") para parchar URLs redirigidas
+                var urlString = request.url.toString()
                 val tokenClean = lastBypassCookie.substringBefore("::")
 
-                // CASO 1: Si la petición va a los dominios principales de Netmirror
-                if (urlString.contains("net52.cc") || urlString.contains("net22.cc")) {
-                    if (urlString.contains(".m3u8") || urlString.contains(".ts")) {
-                        val cookieHeader = "hd=on; $lastBypassCookie"
-
-                        Log.d("Netmirror", "Inyectando cookies en dominio principal")
-                        request = request.newBuilder()
-                            .removeHeader("Cookie")
-                            .header("Cookie", cookieHeader)
-                            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile)")
-                            .build()
-                    }
-                }
-                // CASO 2: Si la petición va hacia los servidores CDN de streaming externos
-                else if (urlString.contains("freecdn") || urlString.contains("nm-cdn")) {
-                    var newUrl = urlString
-
-                    // Si la URL arrastra el "unknown", lo parchamos en caliente con el token autorizado
-                    if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
-                        newUrl = urlString.replace("in=unknown::ep", "in=$tokenClean")
-                            .replace("in=unknown%3A%3Aep", "in=$tokenClean")
-                        Log.e("Netmirror", "Parchando URL de video externa -> Nueva URL: $newUrl")
-                    }
-
-                    request = request.newBuilder()
-                        .url(newUrl)
-                        .removeHeader("Cookie") // NUNCA enviar la cookie de netmirror a servidores externos
-                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile)")
-                        .header("Accept", "*/*")
-                        .build()
+                // 1. SI LA URL TIENE UNKNOWN, LA PARCHAMOS DE INMEDIATO (Sea el dominio que sea)
+                if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
+                    urlString = urlString.replace("in=unknown::ep", "in=$tokenClean")
+                        .replace("in=unknown%3A%3Aep", "in=$tokenClean")
+                    request = request.newBuilder().url(urlString).build()
                 }
 
-                return chain.proceed(request)
+                // 2. INYECTAMOS LOS HEADERS DE CAMUFLAJE MÓVIL A TODAS LAS PETICIONES DE VIDEO
+                val isMainDomain = urlString.contains("net52.cc") || urlString.contains("net22.cc")
+
+                val requestBuilder = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0")
+                    .header("Referer", "$mainUrl/")
+                    .header("Origin", mainUrl)
+                    .header("Accept", "*/*")
+
+                // Solo enviamos la cookie pesada al dominio de origen, no a los CDNs externos
+                if (isMainDomain) {
+                    requestBuilder.header("Cookie", "hd=on; $lastBypassCookie")
+                } else {
+                    requestBuilder.removeHeader("Cookie")
+                }
+
+                return chain.proceed(requestBuilder.build())
             }
         }
     }
