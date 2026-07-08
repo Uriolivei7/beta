@@ -248,7 +248,7 @@ class  NetflixProvider : MainAPI() {
         val ts = System.currentTimeMillis() / 1000
         val hash2 = if (playHash.length > 10) playHash
             else cookie5.substringAfter("::").substringBefore("::")
-        val inParam = "$h1::$hash2::$ts::ep::99"
+        val inParam = "$h1::$hash2::ep"
         val cookieEscaped = URLEncoder.encode(cookie5, "UTF-8")
         val cookieHeader = mapOf("Cookie" to "t_hash_t=$cookieEscaped; ott=nf; hd=on")
 
@@ -263,17 +263,23 @@ class  NetflixProvider : MainAPI() {
                 Log.e("Netmirror", "mobile/hls raw=${masterResp.take(2000)}")
                 Log.e("Netmirror", "mobile/hls status=${masterResponse.code} headers=${masterResponse.headers?.toString()?.take(500)}")
 
-                // Probar varios formatos de URL en s23 para encontrar video
+                // Probar distintos in= formats en s23 para encontrar video
                 try {
-                    for ((suffix, desc) in listOf(
-                        "1080p/1080p.m3u8" to "std",
-                        "1080p.m3u8" to "flat",
-                        "v/1080p/1080p.m3u8" to "v-prefix",
-                        "1080p/1080p.m3u8?in=unknown::ep" to "std+in",
+                    val cid = "81936153"
+                    val h1 = cookie5.substringBefore("::")
+                    val h2 = cookie5.substringAfter("::").substringBefore("::")
+                    val ts = System.currentTimeMillis() / 1000
+                    for ((inVal, desc) in listOf(
+                        "" to "no-in",
+                        "?in=$h1::$h2::ep" to "h1h2ep",
+                        "?in=$h1::$h2::$ts::ep" to "h1h2tsep",
+                        "?in=$h1::$h2::$ts::ep::99" to "h1h2tsep99",
+                        "?in=$h2" to "h2only",
+                        "?in=$h1::$h2" to "h1h2",
                     )) {
-                        val url = "https://s23.nm-cdn9.top/files/$id/$suffix"
+                        val url = "https://s23.nm-cdn9.top/files/$cid/1080p/1080p.m3u8$inVal"
                         val r = app.get(url, headers = newTvBaseHeaders, cookies = mapOf("t_hash_t" to cookie5, "hd" to "on", "ott" to "nf")).text.take(100)
-                        Log.e("Netmirror", "s23-probe $desc: $url → ${r.take(80)}")
+                        Log.e("Netmirror", "s23-in-probe $desc: ${r.take(80)}")
                     }
                 } catch (e: Exception) {
                     Log.e("Netmirror", "s23-probe error: ${e.message}")
