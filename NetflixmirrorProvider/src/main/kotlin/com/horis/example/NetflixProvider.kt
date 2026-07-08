@@ -31,30 +31,30 @@ class  NetflixProvider : MainAPI() {
                 var urlString = request.url.toString()
                 val tokenClean = lastBypassCookie.substringBefore("::")
 
-                // 1. SI LA URL TIENE UNKNOWN, LA PARCHAMOS DE INMEDIATO (Sea el dominio que sea)
+                // 1. CORRECCIÓN DE PARÁMETRO AL VUELO: Parcha cualquier token huérfano en la URL
                 if (urlString.contains("in=unknown") && tokenClean.isNotEmpty()) {
                     urlString = urlString.replace("in=unknown::ep", "in=$tokenClean")
                         .replace("in=unknown%3A%3Aep", "in=$tokenClean")
                     request = request.newBuilder().url(urlString).build()
                 }
 
-                // 2. INYECTAMOS LOS HEADERS DE CAMUFLAJE MÓVIL A TODAS LAS PETICIONES DE VIDEO
                 val isMainDomain = urlString.contains("net52.cc") || urlString.contains("net22.cc")
-
-                val requestBuilder = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0")
+                val builder = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile)")
                     .header("Referer", "$mainUrl/")
                     .header("Origin", mainUrl)
                     .header("Accept", "*/*")
 
-                // Solo enviamos la cookie pesada al dominio de origen, no a los CDNs externos
+                // 2. CONTROL ESTRICTO DE COOKIES SEGÚN EL DESTINO
                 if (isMainDomain) {
-                    requestBuilder.header("Cookie", "hd=on; $lastBypassCookie")
+                    // El dominio principal requiere la cookie bypass entera
+                    builder.header("Cookie", "hd=on; $lastBypassCookie")
                 } else {
-                    requestBuilder.removeHeader("Cookie")
+                    // Los CDN externos (freecdn, nm-cdn, etc.) se rompen si les envías la cookie de Netmirror
+                    builder.removeHeader("Cookie")
                 }
 
-                return chain.proceed(requestBuilder.build())
+                return chain.proceed(builder.build())
             }
         }
     }
@@ -279,7 +279,13 @@ class  NetflixProvider : MainAPI() {
                         if (!t.file.isNullOrBlank()) subtitleCallback(newSubtitleFile(t.language ?: "und", t.file))
                     }
 
-                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) { referer = domain })
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                        referer = "$domain/"
+                        headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; Mobile)",
+                            "Accept" to "*/*"
+                        )
+                    })
                     return true
                 }
             } catch (e: Exception) {
