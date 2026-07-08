@@ -388,23 +388,7 @@ class PrimevideoProvider : MainAPI() {
         if (currentBypassToken.length <= 10) return ""
         for (domain in domains) {
             try {
-                val resp = app.get(
-                    "$domain/newtv/play.php?id=$id",
-                    headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
-                        "X-Requested-With" to "app.netmirror.netmirrornew",
-                        "Referer" to "$domain/mobile/home?app=1"
-                    ),
-                    cookies = mapOf("t_hash_t" to currentBypassToken, "hd" to "on", "ott" to "pv")
-                )
-                val text = resp.text.trim()
-                Log.e("PV", "play.php GET $domain raw=${text.take(200)}")
-                if (text.length > 10) {
-                    val parts = text.split("::")
-                    return if (parts.size >= 2) parts[1] else text
-                }
-            } catch (_: Exception) {}
-            try {
+                // POST like playlist.php (endpoint is /play.php, not /newtv/play.php)
                 val resp = app.post(
                     "$domain/play.php",
                     requestBody = FormBody.Builder().add("id", id).build(),
@@ -419,6 +403,8 @@ class PrimevideoProvider : MainAPI() {
                 )
                 val text = resp.text.trim()
                 Log.e("PV", "play.php POST $domain raw=${text.take(200)}")
+                // Ignorar respuestas HTML (404, etc.)
+                if (text.startsWith("<")) continue
                 val parsed = tryParseJson<PlayHashResponse>(text)
                 val h = parsed?.h?.removePrefix("in=")?.substringBefore("::ep")
                 if (h != null && h.length > 10) {
