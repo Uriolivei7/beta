@@ -263,6 +263,7 @@ class  NetflixProvider : MainAPI() {
                     // Log tracks from JSON response
                     val tracks = items.firstOrNull()?.tracks.orEmpty()
                     Log.d("Netmirror", "tracks from playlist.php count=${tracks.size}")
+                    tracks.forEachIndexed { i, t -> Log.d("Netmirror", "track[$i] kind=${t.kind} file=${t.file} label=${t.label} lang=${t.language}") }
 
                     // Parse subtitles from the M3U8 master playlist
                     try {
@@ -273,7 +274,7 @@ class  NetflixProvider : MainAPI() {
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
                         val masterBody = masterResp.text
-                        Log.d("Netmirror", "M3U8 body length=${masterBody.length} startsWithEXTM3U=${masterBody.startsWith("#EXTM3U")}")
+                        Log.d("Netmirror", "M3U8 body length=${masterBody.length} startsWithEXTM3U=${masterBody.startsWith("#EXTM3U")} first500=${masterBody.take(500)}")
                         // Parse subtitle entries from M3U8
                         Regex("""#EXT-X-MEDIA:TYPE=SUBTITLES[^#]+URI="([^"]+)"[^#]*LANGUAGE="([^"]+)"""").findAll(masterBody).forEach { m ->
                             val subUrl = m.groupValues[1]
