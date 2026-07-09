@@ -627,7 +627,8 @@ data class MobilePostData(
     val cast: String? = null,
     val match: String? = null,
     val runtime: String? = null,
-    val suggest: List<MobileSuggest>? = null
+    val suggest: List<MobileSuggest>? = null,
+    val lang: List<NewTvLang>? = null
 )
 
 data class MobileEpisodesData(

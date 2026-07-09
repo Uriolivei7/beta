@@ -109,6 +109,16 @@ class PrimevideoProvider : MainAPI() {
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.episodes?.any { it != null } == true
 
+        // Build audio language list
+        val audioNames = data.lang?.mapNotNull { lang -> lang.l?.takeIf { it.isNotBlank() } }
+        val audioInfo = if (audioNames.isNullOrEmpty()) null else audioNames.joinToString(", ")
+        val enhancedPlot = buildString {
+            append(data.desc ?: "")
+            if (audioInfo != null) {
+                append("\n\nAudio: $audioInfo")
+            }
+        }
+
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", NewTvId(it.id).toJson()) {
                 posterUrl = pvPoster(it.id)
@@ -119,7 +129,7 @@ class PrimevideoProvider : MainAPI() {
             return newMovieLoadResponse(title, url, TvType.Movie, NewTvLoadData(title, id).toJson()) {
                 posterUrl = pvPoster(id)
                 backgroundPosterUrl = pvBg(id)
-                plot = data.desc; year = data.year?.toIntOrNull(); this.tags = genre
+                plot = enhancedPlot; year = data.year?.toIntOrNull(); this.tags = genre
                 actors = cast; this.score = Score.from10(rating); duration = runTime
                 recommendations = suggest
                 contentRating = data.ua
@@ -128,12 +138,14 @@ class PrimevideoProvider : MainAPI() {
 
         val episodes = arrayListOf<Episode>()
 
-        if (data.episodes.isNullOrEmpty()) {
-            episodes.add(newEpisode(NewTvLoadData(title, id)) { name = title })
-        } else {
-            val selectedSeasonId = data.season?.find { it.sele == "true" || it.sele == "1" }?.id
-                ?: data.nextPageSeason
+        // Load ALL seasons from page 1
+        data.season?.forEach { season ->
+            if (!season.id.isNullOrBlank())
+                episodes.addAll(getEpisodes(title, season.id, 1))
+        }
 
+        // If no seasons, try the direct episode list
+        if (episodes.isEmpty() && !data.episodes.isNullOrEmpty()) {
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id)) {
                     name = it.t
@@ -141,30 +153,14 @@ class PrimevideoProvider : MainAPI() {
                     season = it.s.replace("S", "").toIntOrNull()
                     posterUrl = pvEpPoster(it.id)
                     this.runTime = it.time.replace("m", "").toIntOrNull()
-                    description = it.complate.ifBlank { null }
                 }
-            }
-
-            if (data.nextPageShow == 1 && !selectedSeasonId.isNullOrBlank())
-                episodes.addAll(getEpisodes(title, selectedSeasonId, 2))
-
-            data.season?.forEach { season ->
-                if (season.id != selectedSeasonId && !season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1))
-            }
-        }
-
-        if (episodes.isEmpty() && !data.season.isNullOrEmpty()) {
-            data.season.forEach { season ->
-                if (!season.id.isNullOrBlank())
-                    episodes.addAll(getEpisodes(title, season.id, 1))
             }
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             posterUrl = pvPoster(id)
             backgroundPosterUrl = pvBg(id)
-            plot = data.desc; year = data.year?.toIntOrNull(); this.tags = genre
+            plot = enhancedPlot; year = data.year?.toIntOrNull(); this.tags = genre
             actors = cast; this.score = Score.from10(rating); duration = runTime
             recommendations = suggest
             contentRating = data.ua
@@ -197,7 +193,6 @@ class PrimevideoProvider : MainAPI() {
                     season = it.s.replace("S", "").toIntOrNull()
                     posterUrl = pvEpPoster(it.id)
                     this.runTime = it.time.replace("m", "").toIntOrNull()
-                    description = it.complate.ifBlank { null }
                 }
             }
 
