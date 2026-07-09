@@ -30,12 +30,16 @@ class  NetflixProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                val urlString = request.url.toString()
+                val rawCookie = try {
+                    java.net.URLDecoder.decode(lastBypassCookie, "UTF-8")
+                } catch (_: Exception) {
+                    lastBypassCookie.replace("%3A%3A", "::")
+                }
 
-                // Add User-Agent and Referer to all requests
                 val newRequest = request.newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
                     .header("Referer", "https://net52.cc/")
+                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=nf")
                     .build()
 
                 return chain.proceed(newRequest)
@@ -247,8 +251,12 @@ class  NetflixProvider : MainAPI() {
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
 
                 if (!src.isNullOrBlank()) {
-                    val fixedSrc = src.replace("in=unknown::ep", "in=$cookie")
+                    // Replace ::ep::99 (preview) with ::ep::m (full quality) in the in= hash
+                    val fixedSrc = src
+                        .replace("in=unknown::ep", "in=$cookie")
                         .replace("in=unknown%3A%3Aep", "in=$cookie")
+                        .replace("::ep::99", "::ep::m")
+                        .replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
 
                     val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
 
