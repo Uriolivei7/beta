@@ -32,45 +32,13 @@ class  NetflixProvider : MainAPI() {
                 val request = chain.request()
                 val urlString = request.url.toString()
 
-                // 1. Si la petición va dirigida al manifiesto falso o problemático
-                if ((urlString.contains("/mobile/hls/") || urlString.contains("220884") || urlString.contains("81936153"))
-                    && !urlString.contains("nm-cdn9.top")) {
-
-                    val realEpisodeId = extractorLink.url.substringAfter("/hls/").substringBefore(".m3u8")
-
-                    if (realEpisodeId.isNotEmpty() && realEpisodeId.all { it.isDigit() }) {
-                        Log.e("Netmirror", "¡Bypass por Redirección Directa! Desviando petición al CDN real para ID: $realEpisodeId")
-
-                        // Decodificamos por completo el token de acceso
-                        val cleanCookie = try {
-                            java.net.URLDecoder.decode(lastBypassCookie, "UTF-8")
-                        } catch (_: Exception) {
-                            lastBypassCookie.replace("%3A%3A", "::")
-                        }
-
-                        // Construimos la URL física final que ya sabemos que no da error 404
-                        val targetVideoUrl = "https://s23.nm-cdn9.top/files/$realEpisodeId/720p/720p.m3u8?in=$cleanCookie"
-
-                        // Reescribimos la petición original en caliente para apuntar al archivo final
-                        val newRequest = request.newBuilder()
-                            .url(targetVideoUrl)
-                            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                            .header("Referer", "https://net52.cc/")
-                            .header("Origin", "https://net52.cc")
-                            .header("Accept", "*/*")
-                            .build()
-
-                        return chain.proceed(newRequest)
-                    }
-                }
-
-                // 2. Para el resto de peticiones (fragmentos de video .ts, etc.), añadimos cabeceras estándar
-                val defaultBuilder = request.newBuilder()
+                // Add User-Agent and Referer to all requests
+                val newRequest = request.newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
                     .header("Referer", "https://net52.cc/")
                     .build()
 
-                return chain.proceed(defaultBuilder)
+                return chain.proceed(newRequest)
             }
         }
     }
@@ -279,10 +247,8 @@ class  NetflixProvider : MainAPI() {
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
 
                 if (!src.isNullOrBlank()) {
-                    val tokenForUrl = if (cookie.contains("::")) cookie.substringBefore("::") else cookie
-
-                    val fixedSrc = src.replace("in=unknown::ep", "in=$tokenForUrl")
-                        .replace("in=unknown%3A%3Aep", "in=$tokenForUrl")
+                    val fixedSrc = src.replace("in=unknown::ep", "in=$cookie")
+                        .replace("in=unknown%3A%3Aep", "in=$cookie")
 
                     val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
 
