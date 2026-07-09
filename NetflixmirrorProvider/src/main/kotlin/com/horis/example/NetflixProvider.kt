@@ -20,6 +20,7 @@ class  NetflixProvider : MainAPI() {
 
     private val ott = "nf"
     private var lastBypassCookie = ""
+    private fun nfEpPoster(id: String) = "https://imgcdn.kim/epimg/150/$id.jpg"
 
     init {
         Log.e("Netmirror", "NetflixProvider init called")
@@ -174,7 +175,7 @@ class  NetflixProvider : MainAPI() {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    posterUrl = buildVerticalPosterUrl(it.id, ott)
+                    posterUrl = nfEpPoster(it.id)
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -214,7 +215,7 @@ class  NetflixProvider : MainAPI() {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    posterUrl = buildVerticalPosterUrl(it.id, ott)
+                    posterUrl = nfEpPoster(it.id)
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
