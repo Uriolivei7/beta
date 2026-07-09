@@ -260,12 +260,17 @@ class  NetflixProvider : MainAPI() {
                     val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
                     Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
 
-                    // Log tracks from JSON response
-                    val tracks = items.firstOrNull()?.tracks.orEmpty()
-                    Log.d("Netmirror", "tracks from playlist.php count=${tracks.size}")
-                    tracks.forEachIndexed { i, t -> Log.d("Netmirror", "track[$i] kind=${t.kind} file=${t.file} label=${t.label} lang=${t.language}") }
+                    // Parse subtitle tracks from JSON response
+                    items.firstOrNull()?.tracks.orEmpty().forEach { t ->
+                        if (t.kind == "captions" && !t.file.isNullOrBlank()) {
+                            val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
+                            val subUrl = if (t.file.startsWith("//")) "https:$t.file" else t.file
+                            Log.d("Netmirror", "subtitle lang=$subLang url=$subUrl")
+                            subtitleCallback(newSubtitleFile(subLang, subUrl))
+                        }
+                    }
 
-                    // Parse subtitles from the M3U8 master playlist
+                    // Log M3U8 details (no subtitle entries - they come from JSON tracks above)
                     try {
                         val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                         val masterResp = app.get(m3u8, headers = mapOf(
@@ -273,26 +278,9 @@ class  NetflixProvider : MainAPI() {
                             "Referer" to "$domain/",
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
-                        val masterBody = masterResp.text
-                        Log.d("Netmirror", "M3U8 body length=${masterBody.length} startsWithEXTM3U=${masterBody.startsWith("#EXTM3U")} first500=${masterBody.take(500)}")
-                        // Parse subtitle entries from M3U8
-                        Regex("""#EXT-X-MEDIA:TYPE=SUBTITLES[^#]+URI="([^"]+)"[^#]*LANGUAGE="([^"]+)"""").findAll(masterBody).forEach { m ->
-                            val subUrl = m.groupValues[1]
-                            val subLang = m.groupValues[2]
-                            val fullSubUrl = if (subUrl.startsWith("http")) subUrl else "${m3u8.substringBeforeLast("/")}/$subUrl"
-                            Log.d("Netmirror", "subtitle lang=$subLang url=$fullSubUrl")
-                            subtitleCallback(newSubtitleFile(subLang, fullSubUrl))
-                        }
-                        // Also try single-line format
-                        Regex("""#EXT-X-MEDIA:TYPE=SUBTITLES[^,]*,[^U]*URI="([^"]+)"[^L]*LANGUAGE="([^"]+)"""").findAll(masterBody).forEach { m ->
-                            val subUrl = m.groupValues[1]
-                            val subLang = m.groupValues[2]
-                            val fullSubUrl = if (subUrl.startsWith("http")) subUrl else "${m3u8.substringBeforeLast("/")}/$subUrl"
-                            Log.d("Netmirror", "subtitle (alt) lang=$subLang url=$fullSubUrl")
-                            subtitleCallback(newSubtitleFile(subLang, fullSubUrl))
-                        }
+                        Log.d("Netmirror", "M3U8 OK len=${masterResp.text.length}")
                     } catch (e: Exception) {
-                        Log.e("Netmirror", "subtitle parsing failed: ${e.message}")
+                        Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
                     }
 
                     callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
