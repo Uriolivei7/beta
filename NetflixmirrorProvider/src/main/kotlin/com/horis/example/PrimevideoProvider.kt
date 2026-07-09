@@ -207,18 +207,24 @@ class PrimevideoProvider : MainAPI() {
         return episodes
     }
 
+    private var lastBypassCookie = ""
+
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
+                val rawCookie = try {
+                    java.net.URLDecoder.decode(lastBypassCookie, "UTF-8")
+                } catch (_: Exception) {
+                    lastBypassCookie.replace("%3A%3A", "::")
                 }
-                return chain.proceed(request)
+                val newRequest = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .header("Referer", "https://net52.cc/")
+                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
+                    .build()
+                return chain.proceed(newRequest)
             }
         }
     }
@@ -227,41 +233,47 @@ class PrimevideoProvider : MainAPI() {
         data: String, isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val apiBase = try { resolveApiUrl() } catch (_: Exception) { mainUrl }
         val id = parseJson<NewTvLoadData>(data).id
-        Log.d("Netmirror", "loadLinks id=$id apiBase=$apiBase")
-
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        val cookies = mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
-        val mHeaders = mobileHeaders(ott, cookie)
+        lastBypassCookie = cookie
+        Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
-        // Primary: player.php
-        val userToken = try { getNewTvUserToken(apiBase, ott) } catch (e: Exception) { Log.d("Netmirror", "getNewTvUserToken failed: ${e.message}"); "" }
-        val playerHeaders = buildNewTvHeaders(ott, mapOf("Usertoken" to userToken)) + cookies
-        val playerResp = app.get("$apiBase/newtv/player.php?id=$id", headers = playerHeaders)
-            .parsed<NewTvPlayerResponse>()
-        if (playerResp.status == "ok" && !playerResp.video_link.isNullOrBlank()) {
-            callback(newExtractorLink(name, name, playerResp.video_link, type = ExtractorLinkType.M3U8) {
-                referer = playerResp.referer ?: apiBase
-            })
-            return true
+        for (domain in listOf("https://net52.cc", "https://net22.cc")) {
+            try {
+                val resp = app.get("$domain/mobile/pv/playlist.php?id=$id", headers = mobileHeaders(ott, cookie))
+                val text = resp.text
+                Log.d("Netmirror", "playlist $domain raw=${text.take(200)}")
+                val items = tryParseJsonList<PlaylistItem>(text)
+                val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
+                if (!src.isNullOrBlank()) {
+                    val fixedSrc = src
+                        .replace("in=unknown::ep", "in=$cookie")
+                        .replace("in=unknown%3A%3Aep", "in=$cookie")
+                        .replace("::ep::99", "::ep::m")
+                        .replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
+
+                    val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
+                    Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
+
+                    // Parse subtitle tracks from JSON response
+                    items.firstOrNull()?.tracks.orEmpty().forEach { t ->
+                        if (t.kind == "captions" && !t.file.isNullOrBlank()) {
+                            val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
+                            val subUrl = if (t.file.startsWith("//")) "https:${t.file}" else t.file
+                            Log.d("Netmirror", "subtitle lang=$subLang url=$subUrl")
+                            subtitleCallback(newSubtitleFile(subLang, subUrl))
+                        }
+                    }
+
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                        referer = "$domain/"
+                    })
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.e("Netmirror", "$domain exception en loadLinks: ${e.message}")
+            }
         }
-
-        Log.d("Netmirror", "player.php status=${playerResp.status}, trying playlist.php fallback")
-        val playResp = app.get("$apiBase/mobile/pv/playlist.php?id=$id", headers = mHeaders, cookies = mapOf("t_hash_t" to cookie, "hd" to "on", "ott" to ott))
-        val playText = playResp.text
-        Log.d("Netmirror", "playlist.php raw=${playText.take(300)}")
-        val items = tryParseJsonList<PlaylistItem>(playText)
-        val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
-        if (src != null) {
-            val m3u8 = if (src.startsWith("http")) src else "${apiBase}${src}"
-            callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
-                referer = apiBase
-            })
-            return true
-        }
-
-        Log.d("Netmirror", "all playback methods failed id=$id")
         return false
     }
 

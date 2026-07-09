@@ -264,7 +264,7 @@ class  NetflixProvider : MainAPI() {
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (t.kind == "captions" && !t.file.isNullOrBlank()) {
                             val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
-                            val subUrl = if (t.file.startsWith("//")) "https:$t.file" else t.file
+                            val subUrl = if (t.file.startsWith("//")) "https:${t.file}" else t.file
                             Log.d("Netmirror", "subtitle lang=$subLang url=$subUrl")
                             subtitleCallback(newSubtitleFile(subLang, subUrl))
                         }
