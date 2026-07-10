@@ -19,7 +19,8 @@ class  NetflixProvider : MainAPI() {
     override val hasMainPage = true
 
     private val ott = "nf"
-    private var lastBypassCookie = ""
+    @Volatile private var lastBypassCookie = ""
+    private var lastLoadedId = ""
     private fun nfEpPoster(id: String) = "https://imgcdn.kim/epimg/150/$id.jpg"
 
     init {
@@ -31,10 +32,15 @@ class  NetflixProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
+                // Try lastBypassCookie first, fall back to SharedPreferences storage
+                var cookie = lastBypassCookie
+                if (cookie.isBlank()) {
+                    cookie = NetflixMirrorStorage.getCookie().first ?: ""
+                }
                 val rawCookie = try {
-                    java.net.URLDecoder.decode(lastBypassCookie, "UTF-8")
+                    java.net.URLDecoder.decode(cookie, "UTF-8")
                 } catch (_: Exception) {
-                    lastBypassCookie.replace("%3A%3A", "::")
+                    cookie.replace("%3A%3A", "::")
                 }
 
                 val newRequest = request.newBuilder()
@@ -231,6 +237,12 @@ class  NetflixProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
+
+        // Force fresh bypass when episode changes (fixes "next episode" showing 10-min preview)
+        if (id != lastLoadedId) {
+            NetflixMirrorStorage.clearCookie()
+            lastLoadedId = id
+        }
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
 
         lastBypassCookie = cookie

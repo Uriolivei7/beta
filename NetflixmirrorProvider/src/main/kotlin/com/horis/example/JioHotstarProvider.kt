@@ -16,6 +16,7 @@ class JioHotstarProvider : MainAPI() {
     override val hasMainPage = true
 
     private val ott = "hs"
+    private var lastLoadedId = ""
 
     private val androidHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
@@ -195,13 +196,16 @@ class JioHotstarProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
+                val cookie = NetflixMirrorStorage.getCookie().first ?: ""
+                val rawCookie = try {
+                    java.net.URLDecoder.decode(cookie, "UTF-8")
+                } catch (_: Exception) {
+                    cookie.replace("%3A%3A", "::")
                 }
-                return chain.proceed(request)
+                val newRequest = request.newBuilder()
+                    .header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
+                    .build()
+                return chain.proceed(newRequest)
             }
         }
     }
@@ -214,6 +218,12 @@ class JioHotstarProvider : MainAPI() {
         val id = parseJson<NewTvLoadData>(data).id
         Log.d("JioHotstar", "loadLinks id=$id apiBase=$apiBase")
 
+        // Force fresh bypass when episode changes
+        if (id != lastLoadedId) {
+            NetflixMirrorStorage.clearCookie()
+            NetflixMirrorStorage.clearFullCookie()
+            lastLoadedId = id
+        }
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
         val cookies = mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
         val mHeaders = mobileHeaders(ott, cookie)

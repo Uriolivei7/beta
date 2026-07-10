@@ -16,6 +16,8 @@ class PrimevideoProvider : MainAPI() {
     override val hasMainPage = true
 
     private val ott = "pv"
+    @Volatile private var lastBypassCookie = ""
+    private var lastLoadedId = ""
 
     init {
         Log.e("Netmirror", "PrimevideoProvider init called")
@@ -209,10 +211,14 @@ class PrimevideoProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
+                var cookie = lastBypassCookie
+                if (cookie.isBlank()) {
+                    cookie = NetflixMirrorStorage.getCookie().first ?: ""
+                }
                 val rawCookie = try {
-                    java.net.URLDecoder.decode(lastBypassCookie, "UTF-8")
+                    java.net.URLDecoder.decode(cookie, "UTF-8")
                 } catch (_: Exception) {
-                    lastBypassCookie.replace("%3A%3A", "::")
+                    cookie.replace("%3A%3A", "::")
                 }
                 val newRequest = request.newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
@@ -229,6 +235,11 @@ class PrimevideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
+
+        if (id != lastLoadedId) {
+            NetflixMirrorStorage.clearCookie()
+            lastLoadedId = id
+        }
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
         lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
