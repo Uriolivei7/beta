@@ -86,27 +86,45 @@ class MonoschinosProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val doc = app.get("$mainUrl/buscar?q=$encodedQuery",
-            timeout = 120,
-            headers = mapOf("User-Agent" to USER_AGENT, "Referer" to mainUrl)
-        ).document
-        val items = doc.select("li.col").ifEmpty { doc.select("li.col article") }
-        if (items.isEmpty()) {
-            Log.d(TAG, "search: no results found for query='$query'")
+        try {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            Log.d(TAG, "search: query='$query' encoded='$encodedQuery' url=$mainUrl/buscar?q=$encodedQuery")
+            val resp = app.get("$mainUrl/buscar?q=$encodedQuery",
+                timeout = 120,
+                headers = mapOf("User-Agent" to USER_AGENT, "Referer" to mainUrl)
+            )
+            Log.d(TAG, "search: HTTP ${resp.code}, url final=${resp.url}")
+            val html = resp.text
+            Log.d(TAG, "search: body length=${html.length}")
+            if (html.contains("Resultados de búsqueda para")) {
+                Log.d(TAG, "search: found 'Resultados de búsqueda para' in body")
+            }
+            val doc = resp.document
+
+            // Try multiple selectors
+            val items = doc.select("li.col")
+                .ifEmpty { doc.select("li.col article") }
+                .ifEmpty { doc.select("div.item") }
+                .ifEmpty { doc.select("article") }
+            Log.d(TAG, "search: found ${items.size} items with selector")
+
+            return items.mapNotNull { el ->
+                val title = el.selectFirst("h3")?.text() ?: el.selectFirst("h2")?.text() ?: el.selectFirst("a")?.attr("title") ?: return@mapNotNull null
+                val href = el.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+                val image = el.selectFirst("img")?.attr("data-src") ?: el.selectFirst("img")?.attr("src") ?: ""
+                Log.d(TAG, "search: item title='$title' href=$href")
+                newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
+                    this.posterUrl = fixUrl(image)
+                    this.dubStatus = if (title.contains("Latino") || title.contains("Castellano"))
+                        EnumSet.of(DubStatus.Dubbed)
+                    else EnumSet.of(DubStatus.Subbed)
+                }
+            }.also { Log.d(TAG, "search: returning ${it.size} results") }
+        } catch (e: Exception) {
+            Log.e(TAG, "search: failed: ${e.message}")
+            e.printStackTrace()
             return emptyList()
         }
-        return items.map {
-            val title = it.selectFirst("h3")?.text() ?: it.selectFirst("h2")?.text() ?: return@map null
-            val href = fixUrl(it.selectFirst("a")?.attr("href") ?: return@map null)
-            val image = it.selectFirst("img")?.attr("data-src") ?: it.selectFirst("img")?.attr("src") ?: ""
-            newAnimeSearchResponse(title, href, TvType.Anime) {
-                this.posterUrl = fixUrl(image)
-                this.dubStatus = if (title.contains("Latino") || title.contains("Castellano"))
-                    EnumSet.of(DubStatus.Dubbed)
-                else EnumSet.of(DubStatus.Subbed)
-            }
-        }.filterNotNull()
     }
 
     data class CapList(
