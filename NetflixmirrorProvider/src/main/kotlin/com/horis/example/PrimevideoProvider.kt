@@ -222,6 +222,8 @@ class PrimevideoProvider : MainAPI() {
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
                     .header("Referer", "https://net52.cc/")
                     .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
                     .build()
                 return chain.proceed(newRequest)
             }
@@ -256,7 +258,7 @@ class PrimevideoProvider : MainAPI() {
                         .replace("::ep::99", "::ep::m")
                         .replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
 
-                    val m3u8 = if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc"
+                    val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
                     Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
 
                     // Parse subtitle tracks from JSON response

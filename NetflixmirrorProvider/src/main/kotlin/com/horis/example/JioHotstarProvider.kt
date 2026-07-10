@@ -204,6 +204,8 @@ class JioHotstarProvider : MainAPI() {
                 }
                 val newRequest = request.newBuilder()
                     .header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
                     .build()
                 return chain.proceed(newRequest)
             }
@@ -234,7 +236,8 @@ class JioHotstarProvider : MainAPI() {
         val playerResp = app.get("$apiBase/newtv/player.php?id=$id", headers = playerHeaders)
             .parsed<NewTvPlayerResponse>()
         if (playerResp.status == "ok" && !playerResp.video_link.isNullOrBlank()) {
-            callback(newExtractorLink(name, name, playerResp.video_link, type = ExtractorLinkType.M3U8) {
+            val m3u8 = playerResp.video_link + (if (playerResp.video_link.contains("?")) "&_t=${System.currentTimeMillis()}" else "?_t=${System.currentTimeMillis()}")
+            callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                 referer = playerResp.referer ?: apiBase
             })
             return true
@@ -247,7 +250,7 @@ class JioHotstarProvider : MainAPI() {
         val items = tryParseJsonList<PlaylistItem>(playText)
         val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
         if (src != null) {
-            val m3u8 = if (src.startsWith("http")) src else "${apiBase}${src}"
+            val m3u8 = (if (src.startsWith("http")) src else "${apiBase}${src}") + (if (src.contains("?")) "&_t=${System.currentTimeMillis()}" else "?_t=${System.currentTimeMillis()}")
             callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                 referer = apiBase
             })
