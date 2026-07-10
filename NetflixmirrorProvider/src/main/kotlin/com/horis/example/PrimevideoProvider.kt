@@ -204,8 +204,6 @@ class PrimevideoProvider : MainAPI() {
         return episodes
     }
 
-    private var lastBypassCookie = ""
-
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         return object : Interceptor {
