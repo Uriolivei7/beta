@@ -21,7 +21,7 @@
     "name": "NetMirror",
     "internalName": "NetflixmirrorProvider",
     "authors": ["Ranita"],
-    "description": "https://net11.cc/",
+    "description": "Basado en la API de la aplicación móvil de Netmirror",
     "tvTypes": ["TvSeries", "Movie", "Anime", "AsianDrama"],
     "iconUrl": "https://net51.cc/img/nf2/icon_x192.png",
     "language": "en",
