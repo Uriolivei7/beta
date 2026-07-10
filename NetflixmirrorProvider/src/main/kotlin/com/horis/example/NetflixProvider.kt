@@ -7,8 +7,12 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import okhttp3.FormBody
 import okhttp3.Interceptor
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Protocol
 import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 
 class  NetflixProvider : MainAPI() {
@@ -34,6 +38,28 @@ class  NetflixProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
                 val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+
+                // __cm=1 → serve custom master from memory (bypasses server, avoids cache)
+                if (url.contains("__cm=1")) {
+                    val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
+                    if (id != null) {
+                        val master = customMasters[id]
+                        if (master != null) {
+                            Log.d("Netmirror", "Serving custom master for id=$id")
+                            val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
+                            val body = ResponseBody.create(mediaType, master)
+                            return Response.Builder()
+                                .request(request)
+                                .protocol(Protocol.HTTP_1_1)
+                                .code(200)
+                                .message("OK")
+                                .body(body)
+                                .build()
+                        } else {
+                            Log.w("Netmirror", "No custom master for id=$id, falling through")
+                        }
+                    }
+                }
 
                 // Try lastBypassCookie first, fall back to SharedPreferences storage
                 var cookie = lastBypassCookie
@@ -289,7 +315,7 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    // Log M3U8 details (no subtitle entries - they come from JSON tracks above)
+                    // Fetch and log M3U8 body
                     try {
                         val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                         val masterResp = app.get(m3u8, headers = mapOf(
@@ -297,12 +323,17 @@ class  NetflixProvider : MainAPI() {
                             "Referer" to "$domain/",
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
-                        Log.d("Netmirror", "M3U8 OK len=${masterResp.text.length}")
+                        val m3u8Body = masterResp.text
+                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(1000)}")
+                        // Store as custom master for use with __cm=1
+                        setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
                     }
 
-                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                    // Use __cm=1 URL so interceptor serves custom master inline (avoids ExoPlayer caching)
+                    val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
+                    callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true

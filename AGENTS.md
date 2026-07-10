@@ -114,18 +114,21 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - ✅ Domain-aware interceptor (t_hash_t only to main domain, hd=on only to CDN)
 - ✅ `hp=yes` stripped from M3U8 URL
 - ✅ MonoschinosProvider search fixed
+- ✅ **NEW: customMasters + __cm=1** — M3U8 descargado en loadLinks (fuera del interceptor compartido), servido inline a ExoPlayer
+- ✅ **NEW: M3U8 body logging** — log de primeras 1000 chars del body para comparar EP1 vs EP2
 - ⏸️ **BUG: "next episode → 10-min preview" still occurs** — audio/subs correct, video preview only
 - ⏸️ Trabajando en: identificar por qué el video se muestra como preview en EP2
 
 ## Hipótesis actual (10 Jul 2026)
-- El interceptor anterior enviaba `t_hash_t` a TODOS los dominios, incluyendo CDN
-- CDN (s23.nm-cdn9.top) usa `in=` URL param para auth, **no** la cookie `t_hash_t`
-- `hp=yes` podría ser flag "homepage preview" del servidor
-- `Connection: close` force fresh TCP connections (evita reuse de conexiones HTTP/2 entre episodios)
-- Posible race condition: CloudStream podría reusar el mismo OkHttpClient entre episodios
+- El problema NO es de cookie/bypass (ya comprobado con clearCookie + fresh bypass)
+- El problema NO es de cache HTTP (ya comprobado con `_t=` + Cache-Control headers)
+- El problema NO es de `t_hash_t` en CDN (ya domain-aware)
+- El problema NO es `hp=yes`
+- **NUEVA hipótesis**: CloudStream/ExoPlayer REUSA el mismo reproductor/HTTP client entre episodios. Cuando EP1 sigue activo (faltan 40s), las conexiones HTTP de EP1 se reusan para EP2, y el servidor/CDN sirve preview al ver el `in=` hash cambiado en la misma conexión.
+- **customMasters + __cm=1**: descarga el M3U8 en loadLinks (conexión FRESCA, no compartida), lo sirve inline. Los segmentos aún van por el interceptor compartido, pero el M3U8 en sí es correcto.
 
 ## Files
-- `NetflixProvider.kt` — `loadLinks()` playlist.php → mobile/hls primary
+- `NetflixProvider.kt` — `loadLinks()` playlist.php → mobile/hls primary + __cm=1
 - `PrimevideoProvider.kt` — idem (ott="pv")
 - `JioHotstarProvider.kt` — player.php primary, playlist.php fallback
 - `Utils.kt` — `bypass()`, `getNewTvUserToken()`, `resolveApiUrl()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`, `NetflixMirrorStorage`
@@ -133,7 +136,8 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 
 ## Next Steps
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
-2. ⏸️ **PROBAR cambios del 10 Jul** (domain-aware + Connection: close + hp=yes strip)
-3. ⏸️ Si sigue fallando: probar loguear el body del M3U8 para comparar EP1 vs EP2
-4. ⏸️ Si sigue fallando: considerar usar `customMasters` + `__cm=1` con contenido M3U8 descargado propio
-5. ⏸️ Si funciona, replicar en DisneyStudioProvider.kt
+2. ⏸️ **PROBAR cambios del 10 Jul v2** (customMasters + __cm=1 + M3U8 body logging)
+3. ⏸️ Revisar los logs del M3U8 body — comparar contenido de EP1 vs EP2
+4. ⏸️ Si el M3U8 es IDÉNTICO pero preview persiste: el problema es en los segmentos CDN, no en el M3U8
+5. ⏸️ Si el M3U8 es DIFERENTE (EP2 tiene segmentos preview): el servidor limita EP2 cuando EP1 sigue activo
+6. ⏸️ Próximo paso si es CDN: probar `Connection: close` en segment requests (ya implementado) o crear OkHttpClient propio para segmentos
