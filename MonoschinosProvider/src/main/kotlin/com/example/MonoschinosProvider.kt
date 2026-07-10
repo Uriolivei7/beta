@@ -88,31 +88,27 @@ class MonoschinosProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            Log.d(TAG, "search: query='$query' encoded='$encodedQuery' url=$mainUrl/buscar?q=$encodedQuery")
+            Log.d(TAG, "search: query='$query' encoded='$encodedQuery'")
             val resp = app.get("$mainUrl/buscar?q=$encodedQuery",
                 timeout = 120,
                 headers = mapOf("User-Agent" to USER_AGENT, "Referer" to mainUrl)
             )
-            Log.d(TAG, "search: HTTP ${resp.code}, url final=${resp.url}")
-            val html = resp.text
-            Log.d(TAG, "search: body length=${html.length}")
-            if (html.contains("Resultados de búsqueda para")) {
-                Log.d(TAG, "search: found 'Resultados de búsqueda para' in body")
-            }
             val doc = resp.document
 
-            // Try multiple selectors
-            val items = doc.select("li.col")
-                .ifEmpty { doc.select("li.col article") }
-                .ifEmpty { doc.select("div.item") }
-                .ifEmpty { doc.select("article") }
-            Log.d(TAG, "search: found ${items.size} items with selector")
+            // Scope search to the results container (after the heading "Resultados de búsqueda para")
+            val resultsHeading = doc.selectFirst("h3:contains(Resultados de búsqueda)")
+            val container = resultsHeading?.parent()?.parent() ?: doc
+            Log.d(TAG, "search: resultsHeading=$resultsHeading container tag=${container.tagName()}")
+            val items = container.select("li.col, div.col, div.item")
+                .ifEmpty { container.select("article") }
+                .ifEmpty { doc.select("li.col") }
+            Log.d(TAG, "search: found ${items.size} items")
 
             return items.mapNotNull { el ->
                 val title = el.selectFirst("h3")?.text() ?: el.selectFirst("h2")?.text() ?: el.selectFirst("a")?.attr("title") ?: return@mapNotNull null
                 val href = el.selectFirst("a")?.attr("href") ?: return@mapNotNull null
                 val image = el.selectFirst("img")?.attr("data-src") ?: el.selectFirst("img")?.attr("src") ?: ""
-                Log.d(TAG, "search: item title='$title' href=$href")
+                Log.d(TAG, "search: item title='$title' href=$href img=$image")
                 newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
                     this.posterUrl = fixUrl(image)
                     this.dubStatus = if (title.contains("Latino") || title.contains("Castellano"))
@@ -122,7 +118,6 @@ class MonoschinosProvider : MainAPI() {
             }.also { Log.d(TAG, "search: returning ${it.size} results") }
         } catch (e: Exception) {
             Log.e(TAG, "search: failed: ${e.message}")
-            e.printStackTrace()
             return emptyList()
         }
     }
