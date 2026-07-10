@@ -97,41 +97,43 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - Player.php demoted to fallback (returns preview content, wrong episode)
 
 ### Fallbacks (in order)
-1. ❌ ~~Scraping HTML~~ — reemplazado por mobile/hls
-2. `playlist.php` — preview only, pero mantiene compatibilidad
-3. `player.php` — preview only
+1. `playlist.php` — primary flow
+2. `player.php` — fallback (JioHotstar primary)
+3. Direct M3U8 with clean hash (via `getPlaylistUrl` in Utils.kt)
 
-### `getVideoInterceptor`
-- Adds `Cookie: hd=on` to all `.m3u8` requests (preserves existing cookie from ExtractorLink)
-- Replaces `in=unknown::ep` watermark with bypass token
-- Fixes relative JPG segment URLs by appending `in=<token>` param
-- Does NOT strip audio/subtitle groups (s23 has everything on same CDN)
+### `getVideoInterceptor` (10 Jul 2026) — Domain-aware
+- **net52.cc/net22.cc/net11.cc** requests: Cookie `t_hash_t=...; hd=on; ott=nf/pv/hs` + User-Agent + Referer
+- **CDN domains** (nm-cdn, freecdn, imgcdn): ONLY `Cookie: hd=on` (no `t_hash_t` — CDN uses `in=` URL param)
+- All requests: `Cache-Control: no-cache`, `Pragma: no-cache`, `Connection: close`
+- `hp=yes` stripped from M3U8 URL (suspected "homepage preview" flag)
 
-## Current State (08 Jul 2026)
-- ✅ `newTvBaseHeaders` actualizado: Chrome/149 WebView + `app.netmirror.netmirrornew`
-- ✅ `loadLinks` primario: mobile/hls → s23 (cookie auth, no `in=` param)
-- ✅ `bypass()` actualizado: Chrome 147 Windows + `g-recaptcha-response=${UUID}` + 15h cache
-- ✅ `getNewTvUserToken()` NUEVO: OTP-based auth (NewTvOtpResponse.usertoken)
-- ✅ `loadLinks` simplificado: apiBase → bypass → userToken → mobile/hls → parse M3U8
-- ✅ `loadLinks` actualizado en NetflixProvider, PrimevideoProvider, JioHotstarProvider
-- ✅ `NetflixMirrorStorage` extendido con saveFullCookie/getFullCookie/clearFullCookie
-- ✅ Fallbacks: player.php → playlist.php
-- ✅ Bypass: OkHttp no-redirect POST verify.php con Chrome 147 headers
-- ✅ Interceptor: m3u8CdnFixInterceptor() (parches)
-- ⏸️ `getNewTvUserToken` endpoint sin probar → probar en dispositivo
-- ⏸️ `otp.php` endpoint depende del server — puede cambiar
+## Current State (10 Jul 2026)
+- ✅ `bypass()` + `clearCookie()` on episode change (fresh t_hash_t per episode)
+- ✅ `_t=` cache-busting on M3U8 URL
+- ✅ Anti-cache headers in interceptor (Cache-Control, Pragma, Connection: close)
+- ✅ Domain-aware interceptor (t_hash_t only to main domain, hd=on only to CDN)
+- ✅ `hp=yes` stripped from M3U8 URL
+- ✅ MonoschinosProvider search fixed
+- ⏸️ **BUG: "next episode → 10-min preview" still occurs** — audio/subs correct, video preview only
+- ⏸️ Trabajando en: identificar por qué el video se muestra como preview en EP2
+
+## Hipótesis actual (10 Jul 2026)
+- El interceptor anterior enviaba `t_hash_t` a TODOS los dominios, incluyendo CDN
+- CDN (s23.nm-cdn9.top) usa `in=` URL param para auth, **no** la cookie `t_hash_t`
+- `hp=yes` podría ser flag "homepage preview" del servidor
+- `Connection: close` force fresh TCP connections (evita reuse de conexiones HTTP/2 entre episodios)
+- Posible race condition: CloudStream podría reusar el mismo OkHttpClient entre episodios
 
 ## Files
-- `NetflixProvider.kt` — `loadLinks()` mobile/hls → s23 primary + OTP auth
+- `NetflixProvider.kt` — `loadLinks()` playlist.php → mobile/hls primary
 - `PrimevideoProvider.kt` — idem (ott="pv")
-- `JioHotstarProvider.kt` — idem (ott="hs")
-- `Utils.kt` — `bypass()`, `getNewTvUserToken()`, `resolveApiUrl()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`
+- `JioHotstarProvider.kt` — player.php primary, playlist.php fallback
+- `Utils.kt` — `bypass()`, `getNewTvUserToken()`, `resolveApiUrl()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`, `NetflixMirrorStorage`
 - `PlutotvProvider/PlutotvProvider.kt` — PlutoTV provider (separado)
 
 ## Next Steps
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
-2. ✅ Verificar que los JPG segments de s23 se reproducen en CloudStream
-3. ✅ Eliminar dependencia de `in=` param — s23 acepta Cookie sola
-4. ⏸️ **PROBAR el nuevo bypass() + getNewTvUserToken() en dispositivo real**
-5. ⏸️ Si falla getNewTvUserToken, ajustar endpoint de otp.php
-6. ⏸️ Si funciona, replicar en DisneyStudioProvider.kt
+2. ⏸️ **PROBAR cambios del 10 Jul** (domain-aware + Connection: close + hp=yes strip)
+3. ⏸️ Si sigue fallando: probar loguear el body del M3U8 para comparar EP1 vs EP2
+4. ⏸️ Si sigue fallando: considerar usar `customMasters` + `__cm=1` con contenido M3U8 descargado propio
+5. ⏸️ Si funciona, replicar en DisneyStudioProvider.kt

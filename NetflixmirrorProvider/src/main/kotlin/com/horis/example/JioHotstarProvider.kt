@@ -196,18 +196,28 @@ class JioHotstarProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
+                val url = request.url.toString()
+                val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+
                 val cookie = NetflixMirrorStorage.getCookie().first ?: ""
                 val rawCookie = try {
                     java.net.URLDecoder.decode(cookie, "UTF-8")
                 } catch (_: Exception) {
                     cookie.replace("%3A%3A", "::")
                 }
-                val newRequest = request.newBuilder()
-                    .header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
+
+                val builder = request.newBuilder()
                     .header("Cache-Control", "no-cache, no-store, must-revalidate")
                     .header("Pragma", "no-cache")
-                    .build()
-                return chain.proceed(newRequest)
+                    .header("Connection", "close")
+
+                if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
+                    builder.header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
+                } else {
+                    builder.header("Cookie", "hd=on")
+                }
+
+                return chain.proceed(builder.build())
             }
         }
     }
@@ -248,9 +258,13 @@ class JioHotstarProvider : MainAPI() {
         val playText = playResp.text
         Log.d("JioHotstar", "playlist.php raw=${playText.take(300)}")
         val items = tryParseJsonList<PlaylistItem>(playText)
-        val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
+            val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
         if (src != null) {
-            val m3u8 = (if (src.startsWith("http")) src else "${apiBase}${src}") + (if (src.contains("?")) "&_t=${System.currentTimeMillis()}" else "?_t=${System.currentTimeMillis()}")
+            val fixedSrc = src
+                .replace("&hp=yes", "")
+                .replace("hp=yes&", "")
+                .replace("?hp=yes", "?")
+            val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "${apiBase}${fixedSrc}") + (if (fixedSrc.contains("?")) "&_t=${System.currentTimeMillis()}" else "?_t=${System.currentTimeMillis()}")
             callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                 referer = apiBase
             })
