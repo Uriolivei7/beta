@@ -95,8 +95,8 @@ class MonoschinosProvider : MainAPI() {
             )
             Log.d(TAG, "search: HTTP ${resp.code}, len=${resp.text.length}")
             val doc = resp.document
-            val items = doc.select("li.col, div.item, article")
-            Log.d(TAG, "search: found ${items.size} items total")
+            val items = doc.select("li.col")
+            Log.d(TAG, "search: found ${items.size} items")
 
             val results = items.mapNotNull { el ->
                 try {
