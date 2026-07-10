@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import java.net.URLEncoder
 import java.util.*
 import kotlin.collections.ArrayList
 
@@ -85,22 +86,27 @@ class MonoschinosProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl/buscar?q=$query", timeout = 120).document.select("li.col article").map {
-            val title = it.selectFirst("h3")!!.text()
-            val href = fixUrl(it.selectFirst("a")!!.attr("href"))
-            val image = it.selectFirst("img")!!.attr("data-src")
-            newAnimeSearchResponse(
-                    title,
-                    href,
-                    TvType.Anime,
-            ){
-                this.posterUrl = fixUrl(image)
-                this.dubStatus = if (title.contains("Latino") || title.contains("Castellano")) EnumSet.of(
-                            DubStatus.Dubbed
-                    ) else EnumSet.of(DubStatus.Subbed)
-
-            }
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val doc = app.get("$mainUrl/buscar?q=$encodedQuery",
+            timeout = 120,
+            headers = mapOf("User-Agent" to USER_AGENT, "Referer" to mainUrl)
+        ).document
+        val items = doc.select("li.col").ifEmpty { doc.select("li.col article") }
+        if (items.isEmpty()) {
+            Log.d(TAG, "search: no results found for query='$query'")
+            return emptyList()
         }
+        return items.map {
+            val title = it.selectFirst("h3")?.text() ?: it.selectFirst("h2")?.text() ?: return@map null
+            val href = fixUrl(it.selectFirst("a")?.attr("href") ?: return@map null)
+            val image = it.selectFirst("img")?.attr("data-src") ?: it.selectFirst("img")?.attr("src") ?: ""
+            newAnimeSearchResponse(title, href, TvType.Anime) {
+                this.posterUrl = fixUrl(image)
+                this.dubStatus = if (title.contains("Latino") || title.contains("Castellano"))
+                    EnumSet.of(DubStatus.Dubbed)
+                else EnumSet.of(DubStatus.Subbed)
+            }
+        }.filterNotNull()
     }
 
     data class CapList(
