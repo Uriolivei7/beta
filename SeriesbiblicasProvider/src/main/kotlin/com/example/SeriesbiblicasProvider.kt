@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
 import org.json.JSONArray
+import org.jsoup.nodes.Element
 
 class SeriesbiblicasProvider : MainAPI() {
     override var mainUrl = "https://seriesbiblicas.net"
@@ -25,7 +26,7 @@ class SeriesbiblicasProvider : MainAPI() {
     )
 
     private suspend fun fetchSeriesFromApi(): List<Pair<String, String>> {
-        val resp = app.get("$mainUrl/wp-json/wp/v2/pages?per_page=100")
+        val resp = app.get("$mainUrl/wp-json/wp/v2/pages?per_page=100&_fields=author,id,slug,link,title")
         val pages = JSONArray(resp.text)
         val series = mutableListOf<Pair<String, String>>()
         val seen = mutableSetOf<String>()
@@ -69,7 +70,7 @@ class SeriesbiblicasProvider : MainAPI() {
         val result = mutableListOf<SearchResponse>()
 
         try {
-            val resp = app.get("$mainUrl/wp-json/wp/v2/pages?search=$query&per_page=30")
+            val resp = app.get("$mainUrl/wp-json/wp/v2/pages?search=$query&per_page=30&_fields=author,id,slug,link,title")
             val pages = JSONArray(resp.text)
             Log.d("SeriesBiblicas", "search: API returned ${pages.length()} results")
 
@@ -132,14 +133,14 @@ class SeriesbiblicasProvider : MainAPI() {
         spoilers.forEachIndexed { index, spoiler ->
             val epTitle = spoiler.selectFirst(".su-spoiler-title")?.text() ?: "Capítulo ${index + 1}"
             val epNum = Regex("""\d+""").find(epTitle)?.value?.toIntOrNull() ?: (index + 1)
-            val lightboxCount = spoiler.select(".su-lightbox[data-mfp-src]").size
+            val videoUrls = extractVideoUrls(spoiler)
 
-            if (lightboxCount == 0) {
-                Log.d("SeriesBiblicas", "load: skipping spoiler $index ($epTitle) - no lightboxes")
+            if (videoUrls.isEmpty()) {
+                Log.d("SeriesBiblicas", "load: skipping spoiler $index ($epTitle) - no video links")
                 return@forEachIndexed
             }
 
-            Log.d("SeriesBiblicas", "load: ep$index title=$epNum lightboxes=$lightboxCount")
+            Log.d("SeriesBiblicas", "load: ep$index title=$epNum urls=${videoUrls.size}")
             episodes.add(newEpisode("$url?ep=$index") {
                 this.name = epTitle
                 this.episode = epNum
@@ -165,10 +166,9 @@ class SeriesbiblicasProvider : MainAPI() {
         Log.d("SeriesBiblicas", "loadLinks: epIndex=$epIndex seriesUrl=$seriesUrl")
 
         val document = app.get(seriesUrl).document
-        val spoilersWithVideo = document.select(".su-accordion .su-spoiler").filter { spoiler ->
-            spoiler.select(".su-lightbox[data-mfp-src]").isNotEmpty()
-        }
-        Log.d("SeriesBiblicas", "loadLinks: spoilers with video=${spoilersWithVideo.size}, index=$epIndex")
+        val allSpoilers = document.select(".su-accordion .su-spoiler")
+        val spoilersWithVideo = allSpoilers.filter { extractVideoUrls(it).isNotEmpty() }
+        Log.d("SeriesBiblicas", "loadLinks: spoilers with video=${spoilersWithVideo.size}, total=${allSpoilers.size}, index=$epIndex")
 
         val spoiler = spoilersWithVideo.getOrNull(epIndex)
         if (spoiler == null) {
@@ -176,12 +176,11 @@ class SeriesbiblicasProvider : MainAPI() {
             return false
         }
 
-        val lightboxes = spoiler.select(".su-lightbox[data-mfp-src]")
-        Log.d("SeriesBiblicas", "loadLinks: found ${lightboxes.size} lightboxes")
+        val videoUrls = extractVideoUrls(spoiler)
+        Log.d("SeriesBiblicas", "loadLinks: found ${videoUrls.size} video URLs")
 
         var found = false
-        lightboxes.forEach { lightbox ->
-            val videoUrl = lightbox.attr("data-mfp-src")
+        videoUrls.forEach { videoUrl ->
             Log.d("SeriesBiblicas", "loadLinks: videoUrl=$videoUrl")
             if (videoUrl.isNotBlank()) {
                 loadExtractor(videoUrl, seriesUrl, subtitleCallback, callback)
@@ -191,6 +190,31 @@ class SeriesbiblicasProvider : MainAPI() {
 
         Log.d("SeriesBiblicas", "loadLinks: found=$found")
         return found
+    }
+
+    private fun extractVideoUrls(spoiler: Element): List<String> {
+        val urls = mutableListOf<String>()
+
+        spoiler.select(".su-lightbox[data-mfp-src]").forEach {
+            urls.add(it.attr("data-mfp-src"))
+        }
+
+        spoiler.select("iframe[src]").forEach {
+            val src = it.attr("abs:src")
+            if (src.isNotBlank()) urls.add(src)
+        }
+
+        spoiler.select("a[href]").forEach {
+            val href = it.attr("abs:href")
+            if (href.contains("ok.ru") || href.contains("youtube") || href.contains("sendvid") ||
+                href.contains("filemoon") || href.contains("vk.com") || href.contains("tokyvideo") ||
+                href.contains("drive.google") || href.contains("mega.nz") || href.contains("vimeo") ||
+                href.contains("dailymotion")) {
+                urls.add(href)
+            }
+        }
+
+        return urls.distinct()
     }
 
     private fun slugToTitle(slug: String): String {
