@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
+import org.json.JSONArray
 
 class SeriesbiblicasProvider : MainAPI() {
     override var mainUrl = "https://seriesbiblicas.net"
@@ -13,37 +14,50 @@ class SeriesbiblicasProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.TvSeries)
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Cartoon)
 
     override val mainPage = mainPageOf("/" to "Todas las Series")
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(mainUrl).document
-        Log.d("SeriesBiblicas", "getMainPage: fetched homepage, title=${document.title()}")
+    private val excludedSlugs = setOf(
+        "portada", "peliculas", "biblias", "ensenanzas", "alabanzas",
+        "devocionales", "donar", "aviso-legal", "politica-de-privacidad",
+        "category"
+    )
 
-        val home = ArrayList<SearchResponse>()
+    private suspend fun fetchSeriesFromApi(): List<Pair<String, String>> {
+        val resp = app.get("$mainUrl/wp-json/wp/v2/pages?per_page=100")
+        val pages = JSONArray(resp.text)
+        val series = mutableListOf<Pair<String, String>>()
         val seen = mutableSetOf<String>()
 
-        val figures = document.select("figure[class*='ct-hover'] a[href]")
-        Log.d("SeriesBiblicas", "getMainPage: found ${figures.size} ct-hover figures")
-
-        figures.forEach { link ->
-            val url = link.attr("abs:href")
-            if (url.isBlank() || !url.startsWith(mainUrl) || !seen.add(url)) return@forEach
-
-            val poster = link.parent()?.selectFirst("img")?.let { img ->
-                img.attr("data-lazy-src").ifBlank { img.attr("src") }
-            }
-
-            val slug = url.removeSuffix("/").substringAfterLast("/")
-            val title = slugToTitle(slug)
-            Log.d("SeriesBiblicas", "getMainPage: series $slug -> $title, poster=$poster")
-            home.add(newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                this.posterUrl = fixUrl(poster)
-            })
+        for (i in 0 until pages.length()) {
+            val page = pages.getJSONObject(i)
+            val slug = page.getString("slug")
+            if (slug.isBlank() || slug in excludedSlugs || !seen.add(slug)) continue
+            val link = page.getString("link")
+            val title = page.getJSONObject("title").getString("rendered")
+                .replace("&#8211;", "-")
+                .replace("&#8220;", "\"")
+                .replace("&#8221;", "\"")
+                .replace(Regex("""\s*\u25b6\s*$"""), "")
+                .trim()
+            series.add(title to link)
         }
 
-        Log.d("SeriesBiblicas", "getMainPage: returning ${home.size} series")
+        return series
+    }
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        Log.d("SeriesBiblicas", "getMainPage: fetching via REST API")
+        val series = fetchSeriesFromApi()
+        Log.d("SeriesBiblicas", "getMainPage: got ${series.size} series from API")
+
+        val home = series.map { (title, url) ->
+            newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                this.posterUrl = null
+            }
+        }
+
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
             hasNext = false
@@ -51,66 +65,57 @@ class SeriesbiblicasProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/?s=$query"
-        Log.d("SeriesBiblicas", "search: query=$query url=$searchUrl")
-        val doc = app.get(searchUrl).document
-        Log.d("SeriesBiblicas", "search: page title=${doc.title()}")
+        Log.d("SeriesBiblicas", "search: query=$query via REST API")
+        val result = mutableListOf<SearchResponse>()
 
-        val results = ArrayList<SearchResponse>()
-        var modules = doc.select("div.td_module_wrap")
-        Log.d("SeriesBiblicas", "search: found ${modules.size} td_module_wrap entries")
-        if (modules.isEmpty()) {
-            modules = doc.select("article, .td-module, .td_module")
-            Log.d("SeriesBiblicas", "search: fallback selectors gave ${modules.size} entries")
-        }
+        try {
+            val resp = app.get("$mainUrl/wp-json/wp/v2/pages?search=$query&per_page=30")
+            val pages = JSONArray(resp.text)
+            Log.d("SeriesBiblicas", "search: API returned ${pages.length()} results")
 
-        modules.forEach { module ->
-            val link = module.selectFirst("h3.entry-title a[href], h3 a[href], .entry-title a[href]")
-                ?: module.selectFirst("a[href^='$mainUrl/']")
-            val url = link?.attr("abs:href") ?: return@forEach
-            val title = link.ownText().trim().ifBlank { link.text().trim() }
-            if (title.isBlank()) return@forEach
-            val poster = module.selectFirst("img")?.let { img ->
-                img.attr("data-lazy-src").ifBlank { img.attr("src") }
+            for (i in 0 until pages.length()) {
+                val page = pages.getJSONObject(i)
+                val slug = page.getString("slug")
+                if (slug.isBlank() || slug in excludedSlugs) continue
+                val link = page.getString("link")
+                val title = page.getJSONObject("title").getString("rendered")
+                    .replace("&#8211;", "-")
+                    .replace("&#8220;", "\"")
+                    .replace("&#8221;", "\"")
+                    .replace(Regex("""\s*\u25b6\s*$"""), "")
+                    .trim()
+                Log.d("SeriesBiblicas", "search: result $title -> $link")
+                result.add(newTvSeriesSearchResponse(title, link, TvType.TvSeries))
             }
-            Log.d("SeriesBiblicas", "search result: $title -> $url")
-            results.add(newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                this.posterUrl = fixUrl(poster)
-            })
-        }
-
-        if (results.isEmpty()) {
-            Log.d("SeriesBiblicas", "search: trying VC grid fallback")
-            doc.select("figure[class*='ct-hover'] a[href]").forEach { link ->
+        } catch (e: Exception) {
+            Log.e("SeriesBiblicas", "search: API failed, fallback to HTML. ${e.message}")
+            val doc = app.get("$mainUrl/?s=$query").document
+            doc.select("a[href^='$mainUrl/']").forEach { link ->
                 val url = link.attr("abs:href")
                 if (url.isBlank()) return@forEach
-                val poster = link.parent()?.selectFirst("img")?.let { img ->
-                    img.attr("data-lazy-src").ifBlank { img.attr("src") }
-                }
                 val slug = url.removeSuffix("/").substringAfterLast("/")
-                val title = slugToTitle(slug)
-                Log.d("SeriesBiblicas", "search (VC): $title -> $url")
-                results.add(newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                    this.posterUrl = fixUrl(poster)
-                })
+                if (slug.isBlank() || slug in excludedSlugs) return@forEach
+                val title = link.ownText().trim().ifBlank { link.text().trim() }
+                if (title.isBlank() || title.length < 3) return@forEach
+                result.add(newTvSeriesSearchResponse(title, url, TvType.TvSeries))
             }
         }
 
-        Log.d("SeriesBiblicas", "search: total=${results.size}")
-        return results
+        Log.d("SeriesBiblicas", "search: total=${result.size}")
+        return result
     }
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d("SeriesBiblicas", "load: $url")
         val document = app.get(url).document
-        Log.d("SeriesBiblicas", "load: page title=${document.title()}")
 
         val title = document.selectFirst("title")?.text()
+            ?.replace(Regex("""\s*[-–|]\s*SERIESBIBLICAS\.NET"""), "")
             ?.replace(Regex("""\s*[-–|]\s*Series\s*Biblicas"""), "")
             ?.trim()
             ?: document.selectFirst(".entry-title")?.text()
             ?: slugToTitle(url.removeSuffix("/").substringAfterLast("/"))
-        Log.d("SeriesBiblicas", "load: cleaned title=$title")
+        Log.d("SeriesBiblicas", "load: title=$title")
 
         val poster = fixUrl(document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("img.aligncenter.size-full")?.attr("src"))
@@ -120,18 +125,21 @@ class SeriesbiblicasProvider : MainAPI() {
             ?: document.selectFirst("meta[name='description']")?.attr("content")
         Log.d("SeriesBiblicas", "load: description len=${description?.length ?: 0}")
 
-        val tabsCount = document.select(".su-tabs").size
-        val accordionCount = document.select(".su-accordion").size
-        Log.d("SeriesBiblicas", "load: su-tabs=$tabsCount, su-accordion=$accordionCount")
-
         val episodes = ArrayList<Episode>()
         val spoilers = document.select(".su-accordion .su-spoiler")
-        Log.d("SeriesBiblicas", "load: found ${spoilers.size} spoilers")
+        Log.d("SeriesBiblicas", "load: total spoilers=${spoilers.size}")
+
         spoilers.forEachIndexed { index, spoiler ->
             val epTitle = spoiler.selectFirst(".su-spoiler-title")?.text() ?: "Capítulo ${index + 1}"
             val epNum = Regex("""\d+""").find(epTitle)?.value?.toIntOrNull() ?: (index + 1)
             val lightboxCount = spoiler.select(".su-lightbox[data-mfp-src]").size
-            Log.d("SeriesBiblicas", "load: ep$index title=$epTitle num=$epNum lightboxes=$lightboxCount")
+
+            if (lightboxCount == 0) {
+                Log.d("SeriesBiblicas", "load: skipping spoiler $index ($epTitle) - no lightboxes")
+                return@forEachIndexed
+            }
+
+            Log.d("SeriesBiblicas", "load: ep$index title=$epNum lightboxes=$lightboxCount")
             episodes.add(newEpisode("$url?ep=$index") {
                 this.name = epTitle
                 this.episode = epNum
@@ -157,22 +165,19 @@ class SeriesbiblicasProvider : MainAPI() {
         Log.d("SeriesBiblicas", "loadLinks: epIndex=$epIndex seriesUrl=$seriesUrl")
 
         val document = app.get(seriesUrl).document
-        val spoilers = document.select(".su-accordion .su-spoiler")
-        Log.d("SeriesBiblicas", "loadLinks: total spoilers=${spoilers.size}, requested index=$epIndex")
+        val spoilersWithVideo = document.select(".su-accordion .su-spoiler").filter { spoiler ->
+            spoiler.select(".su-lightbox[data-mfp-src]").isNotEmpty()
+        }
+        Log.d("SeriesBiblicas", "loadLinks: spoilers with video=${spoilersWithVideo.size}, index=$epIndex")
 
-        val spoiler = spoilers.getOrNull(epIndex)
+        val spoiler = spoilersWithVideo.getOrNull(epIndex)
         if (spoiler == null) {
             Log.d("SeriesBiblicas", "loadLinks: spoiler $epIndex not found!")
             return false
         }
 
         val lightboxes = spoiler.select(".su-lightbox[data-mfp-src]")
-        Log.d("SeriesBiblicas", "loadLinks: found ${lightboxes.size} lightboxes in spoiler $epIndex")
-        if (lightboxes.isEmpty()) {
-            val allLinks = spoiler.select("a[href]")
-            Log.d("SeriesBiblicas", "loadLinks: no lightboxes, ${allLinks.size} links in spoiler instead")
-            allLinks.forEach { Log.d("SeriesBiblicas", "loadLinks: link href=${it.attr("abs:href")} class=${it.attr("class")}") }
-        }
+        Log.d("SeriesBiblicas", "loadLinks: found ${lightboxes.size} lightboxes")
 
         var found = false
         lightboxes.forEach { lightbox ->
