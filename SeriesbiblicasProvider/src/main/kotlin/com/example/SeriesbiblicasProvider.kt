@@ -210,6 +210,7 @@ class SeriesbiblicasProvider : MainAPI() {
                 this.name = name
                 this.episode = epNum
                 this.season = currentSeason
+                this.posterUrl = poster
             })
             globalIndex++
         }
@@ -261,7 +262,9 @@ class SeriesbiblicasProvider : MainAPI() {
         val urls = mutableListOf<String>()
 
         parent.select(".su-lightbox[data-mfp-src]").forEach {
-            urls.add(it.attr("data-mfp-src"))
+            var src = it.attr("data-mfp-src")
+            if (src.startsWith("//")) src = "https:$src"
+            urls.add(src)
         }
 
         parent.select("iframe[src]").forEach {
