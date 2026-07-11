@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import okhttp3.Interceptor
-import okhttp3.Response
 
 class JioHotstarProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -193,28 +192,7 @@ class JioHotstarProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val url = request.url.toString()
-                val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
-
-                val cookie = NetflixMirrorStorage.getCookie().first ?: ""
-                val rawCookie = try {
-                    java.net.URLDecoder.decode(cookie, "UTF-8")
-                } catch (_: Exception) {
-                    cookie.replace("%3A%3A", "::")
-                }
-
-                val builder = request.newBuilder()
-                    .header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
-                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
-                    .header("Pragma", "no-cache")
-                    .header("Connection", "close")
-
-                return chain.proceed(builder.build())
-            }
-        }
+        return null
     }
 
     override suspend fun loadLinks(
