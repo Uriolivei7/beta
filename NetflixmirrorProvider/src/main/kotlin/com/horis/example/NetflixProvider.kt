@@ -33,56 +33,8 @@ class  NetflixProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val url = request.url.toString()
-                val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
-
-                // __cm=1 → serve custom master from memory (bypasses server, avoids cache)
-                if (url.contains("__cm=1")) {
-                    val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
-                    if (id != null) {
-                        val master = customMasters[id]
-                        if (master != null) {
-                            Log.d("Netmirror", "Serving custom master for id=$id")
-                            val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
-                            val body = ResponseBody.create(mediaType, master)
-                            return Response.Builder()
-                                .request(request)
-                                .protocol(Protocol.HTTP_1_1)
-                                .code(200)
-                                .message("OK")
-                                .body(body)
-                                .build()
-                        } else {
-                            Log.w("Netmirror", "No custom master for id=$id, falling through")
-                        }
-                    }
-                }
-
-                // Try lastBypassCookie first, fall back to SharedPreferences storage
-                var cookie = lastBypassCookie
-                if (cookie.isBlank()) {
-                    cookie = NetflixMirrorStorage.getCookie().first ?: ""
-                }
-                val rawCookie = try {
-                    java.net.URLDecoder.decode(cookie, "UTF-8")
-                } catch (_: Exception) {
-                    cookie.replace("%3A%3A", "::")
-                }
-
-                val builder = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                    .header("Referer", "https://net52.cc/")
-                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=nf")
-                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
-                    .header("Pragma", "no-cache")
-                    .header("Connection", "close")
-
-                return chain.proceed(builder.build())
-            }
-        }
+        // No interceptor needed — M3U8 URLs already have in= for auth
+        return null
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -310,27 +262,8 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    // Fetch and log M3U8 body
-                    try {
-                        val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
-                        val masterResp = app.get(m3u8, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
-                            "Referer" to "$domain/",
-                            "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
-                        ))
-                        val m3u8Body = masterResp.text
-                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
-                        // Log video-variant lines separately
-                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
-                        // Store as custom master for use with __cm=1
-                        setCustomMaster(id, m3u8Body)
-                    } catch (e: Exception) {
-                        Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
-                    }
-
-                    // Use __cm=1 URL so interceptor serves custom master inline (avoids ExoPlayer caching)
-                    val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
-                    callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
+                    // Use the M3U8 URL directly with cache-buster
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true
