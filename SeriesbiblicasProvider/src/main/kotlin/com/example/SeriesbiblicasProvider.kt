@@ -6,7 +6,10 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
 import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.nodes.Element
+
+data class SeriesInfo(val title: String, val url: String, val posterUrl: String?)
 
 class SeriesbiblicasProvider : MainAPI() {
     override var mainUrl = "https://seriesbiblicas.net"
@@ -22,27 +25,70 @@ class SeriesbiblicasProvider : MainAPI() {
     private val excludedSlugs = setOf(
         "portada", "peliculas", "biblias", "ensenanzas", "alabanzas",
         "devocionales", "donar", "aviso-legal", "politica-de-privacidad",
-        "category"
+        "category", "series"
     )
 
-    private suspend fun fetchSeriesFromApi(): List<Pair<String, String>> {
-        val resp = app.get("$mainUrl/wp-json/wp/v2/pages?per_page=100&_fields=author,id,slug,link,title")
+    private fun parsePageTitle(page: JSONObject): String {
+        return page.getJSONObject("title").getString("rendered")
+            .replace("&#8211;", "-")
+            .replace("&#8220;", "\"")
+            .replace("&#8221;", "\"")
+            .replace(Regex("""\s*\u25b6\s*$"""), "")
+            .trim()
+    }
+
+    private fun isRedirected(title: String): Boolean {
+        return title.contains("(REDIRECTED)", ignoreCase = true)
+    }
+
+    private suspend fun fetchMediaUrlMap(ids: Collection<Int>): Map<Int, String> {
+        if (ids.isEmpty()) return emptyMap()
+        val map = mutableMapOf<Int, String>()
+        try {
+            val resp = app.get("$mainUrl/wp-json/wp/v2/media?include=${ids.joinToString(",")}&per_page=100&_fields=id,source_url")
+            val arr = JSONArray(resp.text)
+            for (i in 0 until arr.length()) {
+                val m = arr.getJSONObject(i)
+                map[m.getInt("id")] = m.getString("source_url")
+            }
+        } catch (e: Exception) {
+            Log.e("SeriesBiblicas", "fetchMediaUrlMap: ${e.message}")
+        }
+        return map
+    }
+
+    private suspend fun fetchSeriesWithPosters(): List<SeriesInfo> {
+        val resp = app.get("$mainUrl/wp-json/wp/v2/pages?per_page=100&_fields=featured_media,id,slug,link,title")
         val pages = JSONArray(resp.text)
-        val series = mutableListOf<Pair<String, String>>()
+        val series = mutableListOf<SeriesInfo>()
         val seen = mutableSetOf<String>()
+        val mediaIds = mutableSetOf<Int>()
+        val mediaToIndices = mutableMapOf<Int, MutableList<Int>>()
 
         for (i in 0 until pages.length()) {
             val page = pages.getJSONObject(i)
             val slug = page.getString("slug")
             if (slug.isBlank() || slug in excludedSlugs || !seen.add(slug)) continue
+            val title = parsePageTitle(page)
+            if (isRedirected(title)) continue
             val link = page.getString("link")
-            val title = page.getJSONObject("title").getString("rendered")
-                .replace("&#8211;", "-")
-                .replace("&#8220;", "\"")
-                .replace("&#8221;", "\"")
-                .replace(Regex("""\s*\u25b6\s*$"""), "")
-                .trim()
-            series.add(title to link)
+            val mediaId = page.optInt("featured_media", 0)
+            val idx = series.size
+            series.add(SeriesInfo(title, link, null))
+            if (mediaId > 0) {
+                mediaIds.add(mediaId)
+                mediaToIndices.getOrPut(mediaId) { mutableListOf() }.add(idx)
+            }
+        }
+
+        val mediaMap = fetchMediaUrlMap(mediaIds)
+        for ((mediaId, indices) in mediaToIndices) {
+            val url = mediaMap[mediaId]
+            if (url != null) {
+                for (idx in indices) {
+                    series[idx] = series[idx].copy(posterUrl = url)
+                }
+            }
         }
 
         return series
@@ -50,12 +96,12 @@ class SeriesbiblicasProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         Log.d("SeriesBiblicas", "getMainPage: fetching via REST API")
-        val series = fetchSeriesFromApi()
+        val series = fetchSeriesWithPosters()
         Log.d("SeriesBiblicas", "getMainPage: got ${series.size} series from API")
 
-        val home = series.map { (title, url) ->
-            newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                this.posterUrl = null
+        val home = series.map { info ->
+            newTvSeriesSearchResponse(info.title, info.url, TvType.TvSeries) {
+                this.posterUrl = info.posterUrl
             }
         }
 
@@ -70,23 +116,45 @@ class SeriesbiblicasProvider : MainAPI() {
         val result = mutableListOf<SearchResponse>()
 
         try {
-            val resp = app.get("$mainUrl/wp-json/wp/v2/pages?search=$query&per_page=30&_fields=author,id,slug,link,title")
+            val resp = app.get("$mainUrl/wp-json/wp/v2/pages?search=$query&per_page=30&_fields=featured_media,id,slug,link,title")
             val pages = JSONArray(resp.text)
             Log.d("SeriesBiblicas", "search: API returned ${pages.length()} results")
+
+            val series = mutableListOf<SeriesInfo>()
+            val mediaIds = mutableSetOf<Int>()
+            val mediaToIndices = mutableMapOf<Int, MutableList<Int>>()
 
             for (i in 0 until pages.length()) {
                 val page = pages.getJSONObject(i)
                 val slug = page.getString("slug")
                 if (slug.isBlank() || slug in excludedSlugs) continue
+                val title = parsePageTitle(page)
+                if (isRedirected(title)) continue
                 val link = page.getString("link")
-                val title = page.getJSONObject("title").getString("rendered")
-                    .replace("&#8211;", "-")
-                    .replace("&#8220;", "\"")
-                    .replace("&#8221;", "\"")
-                    .replace(Regex("""\s*\u25b6\s*$"""), "")
-                    .trim()
-                Log.d("SeriesBiblicas", "search: result $title -> $link")
-                result.add(newTvSeriesSearchResponse(title, link, TvType.TvSeries))
+                val mediaId = page.optInt("featured_media", 0)
+                val idx = series.size
+                series.add(SeriesInfo(title, link, null))
+                if (mediaId > 0) {
+                    mediaIds.add(mediaId)
+                    mediaToIndices.getOrPut(mediaId) { mutableListOf() }.add(idx)
+                }
+            }
+
+            val mediaMap = fetchMediaUrlMap(mediaIds)
+            for ((mediaId, indices) in mediaToIndices) {
+                val url = mediaMap[mediaId]
+                if (url != null) {
+                    for (idx in indices) {
+                        series[idx] = series[idx].copy(posterUrl = url)
+                    }
+                }
+            }
+
+            for (info in series) {
+                Log.d("SeriesBiblicas", "search: ${info.title} -> ${info.url}")
+                result.add(newTvSeriesSearchResponse(info.title, info.url, TvType.TvSeries) {
+                    this.posterUrl = info.posterUrl
+                })
             }
         } catch (e: Exception) {
             Log.e("SeriesBiblicas", "search: API failed, fallback to HTML. ${e.message}")
@@ -97,7 +165,7 @@ class SeriesbiblicasProvider : MainAPI() {
                 val slug = url.removeSuffix("/").substringAfterLast("/")
                 if (slug.isBlank() || slug in excludedSlugs) return@forEach
                 val title = link.ownText().trim().ifBlank { link.text().trim() }
-                if (title.isBlank() || title.length < 3) return@forEach
+                if (title.isBlank() || title.length < 3 || isRedirected(title)) return@forEach
                 result.add(newTvSeriesSearchResponse(title, url, TvType.TvSeries))
             }
         }
