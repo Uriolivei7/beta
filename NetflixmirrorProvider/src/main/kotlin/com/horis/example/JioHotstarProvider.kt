@@ -203,7 +203,6 @@ class JioHotstarProvider : MainAPI() {
         val id = parseJson<NewTvLoadData>(data).id
         Log.d("JioHotstar", "loadLinks id=$id apiBase=$apiBase")
 
-        // Force fresh bypass when episode changes
         if (id != lastLoadedId) {
             NetflixMirrorStorage.clearCookie()
             NetflixMirrorStorage.clearFullCookie()
@@ -213,14 +212,13 @@ class JioHotstarProvider : MainAPI() {
         val cookies = mapOf("Cookie" to "t_hash_t=$cookie; hd=on")
         val mHeaders = mobileHeaders(ott, cookie)
 
-        // Primary: player.php
         val userToken = try { getNewTvUserToken(apiBase, ott) } catch (e: Exception) { Log.d("JioHotstar", "getNewTvUserToken failed: ${e.message}"); "" }
         val playerHeaders = buildNewTvHeaders(ott, mapOf("Usertoken" to userToken)) + cookies
         val playerResp = app.get("$apiBase/newtv/player.php?id=$id", headers = playerHeaders)
             .parsed<NewTvPlayerResponse>()
         if (playerResp.status == "ok" && !playerResp.video_link.isNullOrBlank()) {
             val m3u8 = playerResp.video_link + (if (playerResp.video_link.contains("?")) "&_t=${System.currentTimeMillis()}" else "?_t=${System.currentTimeMillis()}")
-            // Log M3U8 body for debugging
+
             try {
                 val masterResp = app.get(m3u8, headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
@@ -250,7 +248,7 @@ class JioHotstarProvider : MainAPI() {
                 .replace("hp=yes&", "")
                 .replace("?hp=yes", "?")
             val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "${apiBase}${fixedSrc}") + (if (fixedSrc.contains("?")) "&_t=${System.currentTimeMillis()}" else "?_t=${System.currentTimeMillis()}")
-            // Fetch M3U8 body, log it, and serve via custom master
+
             try {
                 val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                 val masterResp = app.get(m3u8, headers = mapOf(

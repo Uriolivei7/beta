@@ -121,7 +121,6 @@ class  NetflixProvider : MainAPI() {
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.episodes?.any { it != null } == true
 
-        // Build audio language list
         val audioNames = data.lang?.mapNotNull { lang -> lang.l?.takeIf { it.isNotBlank() } }
         val audioInfo = if (audioNames.isNullOrEmpty()) null else audioNames.joinToString(", ")
         val enhancedPlot = buildString {
@@ -150,13 +149,11 @@ class  NetflixProvider : MainAPI() {
 
         val episodes = arrayListOf<Episode>()
 
-        // Load ALL seasons from page 1
         data.season?.forEach { season ->
             if (!season.id.isNullOrBlank())
                 episodes.addAll(getEpisodes(title, season.id, 1))
         }
 
-        // If no seasons, try the direct episode list
         if (episodes.isEmpty() && !data.episodes.isNullOrEmpty()) {
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id)) {
@@ -220,7 +217,6 @@ class  NetflixProvider : MainAPI() {
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
 
-        // Force fresh bypass when episode changes (fixes "next episode" showing 10-min preview)
         if (id != lastLoadedId) {
             NetflixMirrorStorage.clearCookie()
             lastLoadedId = id
@@ -261,7 +257,6 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    // Fetch M3U8 body, log it, and serve via custom master
                     try {
                         val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                         val masterResp = app.get(m3u8, headers = mapOf(

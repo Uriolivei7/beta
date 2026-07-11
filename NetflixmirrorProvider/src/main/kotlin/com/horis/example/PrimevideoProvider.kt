@@ -110,7 +110,6 @@ class PrimevideoProvider : MainAPI() {
         val runTime = convertRuntimeToMinutes(data.runtime ?: "")
         val isSeries = data.episodes?.any { it != null } == true
 
-        // Build audio language list
         val audioNames = data.lang?.mapNotNull { lang -> lang.l?.takeIf { it.isNotBlank() } }
         val audioInfo = if (audioNames.isNullOrEmpty()) null else audioNames.joinToString(", ")
         val enhancedPlot = buildString {
@@ -139,13 +138,11 @@ class PrimevideoProvider : MainAPI() {
 
         val episodes = arrayListOf<Episode>()
 
-        // Load ALL seasons from page 1
         data.season?.forEach { season ->
             if (!season.id.isNullOrBlank())
                 episodes.addAll(getEpisodes(title, season.id, 1))
         }
 
-        // If no seasons, try the direct episode list
         if (episodes.isEmpty() && !data.episodes.isNullOrEmpty()) {
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(NewTvLoadData(title, it.id)) {
@@ -242,7 +239,6 @@ class PrimevideoProvider : MainAPI() {
                     val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
                     Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
 
-                    // Parse subtitle tracks from JSON response
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (t.kind == "captions" && !t.file.isNullOrBlank()) {
                             val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
@@ -252,7 +248,6 @@ class PrimevideoProvider : MainAPI() {
                         }
                     }
 
-                    // Fetch M3U8 body, log it, and serve via custom master
                     try {
                         val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                         val masterResp = app.get(m3u8, headers = mapOf(
@@ -268,7 +263,7 @@ class PrimevideoProvider : MainAPI() {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
                     }
 
-                    val cmUrl = "$domain/mobile/$ott/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
+                    val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
                     callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
@@ -280,5 +275,4 @@ class PrimevideoProvider : MainAPI() {
         }
         return false
     }
-
 }

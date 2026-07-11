@@ -45,7 +45,6 @@ import kotlin.coroutines.suspendCoroutine
 // JSON / HTTP
 // ---------------------------------------------------------------------------
 
-// Shared Jackson mapper — avoids Kotlin KClass.java reflection at runtime
 val jsonMapper: ObjectMapper = jacksonObjectMapper().configure(
     DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
 ).configure(
@@ -369,7 +368,6 @@ suspend fun <T> retryOnDbError(maxRetries: Int = 3, block: suspend () -> T): T {
     throw lastException ?: Exception("Retry failed after $maxRetries attempts")
 }
 
-/** Check raw API text for MySQL error HTML and throw for retryOnDbError to catch */
 fun checkDbError(text: String) {
     if (text.startsWith("<") && (text.contains("mysqli_connect") || text.contains("Too many connections") || text.contains("1040"))) {
         throw Exception("mysqli_connect(): Too many connections (detected in response body)")
@@ -380,8 +378,6 @@ fun checkDbError(text: String) {
 // NewTV shared infrastructure
 // ---------------------------------------------------------------------------
 
-// Headers basados en tPacketCapture (tráfico REAL que funciona)
-// NOTA: el decompilado muestra Firefox/NetmirrorNewTV v1.0, pero el tráfico capturado usaba Chrome/app.netmirror.netmirrornew
 val newTvBaseHeaders = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma"        to "no-cache",
@@ -578,7 +574,7 @@ data class NewTvOtpResponse(
 )
 
 // ---------------------------------------------------------------------------
-// Mobile API data classes (match original com.horis.cncverse.entities.*)
+// Mobile API data classes
 // ---------------------------------------------------------------------------
 
 data class MobileSearchResult(
@@ -638,7 +634,6 @@ data class MobileEpisodesData(
     val nextPageShow: Int = 0
 )
 
-// Mobile browser-style headers (matches original cncverse)
 fun mobileHeaders(ott: String, cookie: String, extra: Map<String, String> = emptyMap()): Map<String, String> {
     val headers = mutableMapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -673,7 +668,6 @@ data class PlayHashResponse(
     val h: String? = null
 )
 
-// Source entity matching decompiled cncverse entities/Source.java
 data class Source(
     val file: String? = null,
     val label: String? = null,
@@ -687,7 +681,6 @@ data class PlaylistTrack(
     val language: String? = null
 )
 
-// Playlist item returned by playlist.php — array of these
 data class PlaylistItem(
     val sources: List<Source>? = null,
     val tracks: List<PlaylistTrack>? = null
@@ -695,7 +688,6 @@ data class PlaylistItem(
 
 val playPhpDomains = listOf("https://net52.cc", "https://net22.cc")
 
-// Store for custom master playlists (keyed by content id)
 val customMasters = java.util.concurrent.ConcurrentHashMap<String, String>()
 private val customMastersLogged = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -710,7 +702,6 @@ fun createNetmirrorInterceptor(): Interceptor {
         val request = chain.request()
         val url = request.url.toString()
 
-        // __cm=1 → serve custom master from memory
         if (url.contains("__cm=1")) {
             val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
             if (id != null) {
@@ -732,7 +723,6 @@ fun createNetmirrorInterceptor(): Interceptor {
             }
         }
 
-        // CDN segment requests: force fresh connection + hd=on cookie
         val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
         if (host.contains("nm-cdn") || host.contains("freecdn") || host.contains("imgcdn")) {
             val builder = request.newBuilder()
@@ -773,7 +763,6 @@ fun m3u8CdnFixInterceptor(): Interceptor {
                 }
             }
         }
-        // Add hd=on to Cookie for CDN requests (nm-cdn, freecdn, imgcdn)
         val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
         if (cdnHost.contains("nm-cdn") || cdnHost.contains("freecdn") || cdnHost.contains("imgcdn")) {
             val existing = req.header("Cookie") ?: ""
@@ -814,13 +803,11 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             val inParam = Regex("[?&]in=([^&#]+)").find(url)?.groupValues?.get(1)
             Log.d("Netmirror", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
             var fixed = body
-            // Fix broken https:///files/ → net11.cc/hls/ (CDN path /files/ → origin path /hls/)
             if (fixed.contains("https:///files/")) {
                 fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")
                 Log.d("Netmirror", "CDN fix broken →net11.cc/hls/: $url")
                 Log.d("Netmirror", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
             }
-            // Fix relative segment URLs by prepending base URL (add in= if present in request)
             val relSegmentRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
             var segmentFixed = 0
             fixed = relSegmentRegex.replace(fixed) { match ->
@@ -839,7 +826,6 @@ fun m3u8CdnFixInterceptor(): Interceptor {
             if (segmentFixed > 0) {
                 Log.d("Netmirror", "Fixed $segmentFixed relative segment URLs (base=$url)")
             }
-            // Siempre crear un nuevo body (el original fue consumido por .string())
             val newBody = ResponseBody.create(resp.body?.contentType(), fixed)
             return@Interceptor resp.newBuilder().body(newBody).build()
         }
@@ -929,11 +915,11 @@ suspend fun getPlaylistUrl(
             Log.d("PlayPhp", "Playlist $hlsDomain tracks=${tracks.size} sourceUrl=$sourceUrl")
             if (sourceUrl != null) {
                 val body = app.get(sourceUrl, headers = m3u8Headers).text
-            if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
-                Log.d("Netmirror", "playlist source OK len=${body.length} hasBroken=${body.contains("https:///files/")}")
-                Log.e("PLAYURL", sourceUrl)
-                return Pair(sourceUrl, tracks)
-            }
+                if (body.startsWith("#EXTM3U") && !body.contains("unknown::ep")) {
+                    Log.d("Netmirror", "playlist source OK len=${body.length} hasBroken=${body.contains("https:///files/")}")
+                    Log.e("PLAYURL", sourceUrl)
+                    return Pair(sourceUrl, tracks)
+                }
                 Log.d("PlayPhp", "Source M3U8 body invalid: ${body.take(200)}")
                 sourceUrl = null
             }
