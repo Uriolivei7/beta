@@ -23,6 +23,15 @@ class AnimeParadiseProvider : MainAPI() {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
+    private val streamHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Referer" to "$mainUrl/",
+        "Origin" to mainUrl,
+        "Connection" to "close",
+        "Cache-Control" to "no-cache, no-store, must-revalidate",
+        "Pragma" to "no-cache"
+    )
+
     private val apiHeaders = mapOf(
         "accept" to "*/*",
         "accept-language" to "es-ES,es;q=0.9,en;q=0.8",
@@ -196,7 +205,7 @@ class AnimeParadiseProvider : MainAPI() {
                     ) {
                         this.referer = "$mainUrl/"
                         this.quality = Qualities.Unknown.value
-                        this.headers = apiHeaders
+                        this.headers = streamHeaders
                     }
                 )
             }
