@@ -207,15 +207,10 @@ class JioHotstarProvider : MainAPI() {
                 }
 
                 val builder = request.newBuilder()
+                    .header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
                     .header("Cache-Control", "no-cache, no-store, must-revalidate")
                     .header("Pragma", "no-cache")
                     .header("Connection", "close")
-
-                if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
-                    builder.header("Cookie", if (rawCookie.isNotBlank()) "t_hash_t=$rawCookie; hd=on" else "hd=on")
-                } else {
-                    builder.header("Cookie", "hd=on")
-                }
 
                 return chain.proceed(builder.build())
             }

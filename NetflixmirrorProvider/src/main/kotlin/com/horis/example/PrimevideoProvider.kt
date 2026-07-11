@@ -249,17 +249,12 @@ class PrimevideoProvider : MainAPI() {
                 }
 
                 val builder = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .header("Referer", "https://net52.cc/")
+                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
                     .header("Cache-Control", "no-cache, no-store, must-revalidate")
                     .header("Pragma", "no-cache")
                     .header("Connection", "close")
-
-                if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
-                    builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                        .header("Referer", "https://net52.cc/")
-                        .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
-                } else {
-                    builder.header("Cookie", "hd=on")
-                }
 
                 return chain.proceed(builder.build())
             }
