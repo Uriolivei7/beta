@@ -107,7 +107,7 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - All requests: `Cache-Control: no-cache`, `Pragma: no-cache`, `Connection: close`
 - `hp=yes` stripped from M3U8 URL (suspected "homepage preview" flag)
 
-## Current State (10 Jul 2026)
+## Current State (11 Jul 2026)
 - ✅ `bypass()` + `clearCookie()` on episode change (fresh t_hash_t per episode)
 - ✅ `_t=` cache-busting on M3U8 URL
 - ✅ Anti-cache headers in interceptor (Cache-Control, Pragma, Connection: close)
@@ -116,6 +116,7 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - ✅ MonoschinosProvider search fixed
 - ✅ **NEW: customMasters + __cm=1** — M3U8 descargado en loadLinks (fuera del interceptor compartido), servido inline a ExoPlayer
 - ✅ **NEW: M3U8 body logging** — log de primeras 1000 chars del body para comparar EP1 vs EP2
+
 - ⏸️ **BUG: "next episode → 10-min preview" still occurs** — audio/subs correct, video preview only
 - ⏸️ Trabajando en: identificar por qué el video se muestra como preview en EP2
 
