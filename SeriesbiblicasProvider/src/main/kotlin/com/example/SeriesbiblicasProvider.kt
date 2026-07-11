@@ -10,6 +10,7 @@ import org.json.JSONObject
 import org.jsoup.nodes.Element
 
 data class SeriesInfo(val title: String, val url: String, val posterUrl: String?)
+data class VideoEntry(val name: String, val urls: List<String>, val isNewSeason: Boolean = false)
 
 class SeriesbiblicasProvider : MainAPI() {
     override var mainUrl = "https://seriesbiblicas.net"
@@ -190,30 +191,27 @@ class SeriesbiblicasProvider : MainAPI() {
             ?: document.selectFirst("img.aligncenter.size-full")?.attr("src"))
         Log.d("SeriesBiblicas", "load: poster=$poster")
 
-        val description = document.select(".su-tabs-pane").getOrNull(1)?.text()
+        val description = document.selectFirst(".su-tabs-pane:not(.su-u-clearfix)")?.text()
             ?: document.selectFirst("meta[name='description']")?.attr("content")
         Log.d("SeriesBiblicas", "load: description len=${description?.length ?: 0}")
 
         val episodes = ArrayList<Episode>()
-        val spoilers = document.select(".su-accordion .su-spoiler")
-        Log.d("SeriesBiblicas", "load: total spoilers=${spoilers.size}")
+        val allVideoEntries = extractAllVideoEntries(document)
+        Log.d("SeriesBiblicas", "load: total video entries=${allVideoEntries.size}")
 
-        spoilers.forEachIndexed { index, spoiler ->
-            val epTitle = spoiler.selectFirst(".su-spoiler-title")?.text() ?: "Capítulo ${index + 1}"
-            val epNum = Regex("""\d+""").find(epTitle)?.value?.toIntOrNull() ?: (index + 1)
-            val videoUrls = extractVideoUrls(spoiler)
-
-            if (videoUrls.isEmpty()) {
-                Log.d("SeriesBiblicas", "load: skipping spoiler $index ($epTitle) - no video links")
-                return@forEachIndexed
-            }
-
-            Log.d("SeriesBiblicas", "load: ep$index title=$epNum urls=${videoUrls.size}")
-            episodes.add(newEpisode("$url?ep=$index") {
-                this.name = epTitle
+        var globalIndex = 0
+        var currentSeason = 1
+        for ((index, entry) in allVideoEntries.withIndex()) {
+            val (name, urls, isNewSeason) = entry
+            if (isNewSeason && globalIndex > 0) currentSeason++
+            val epNum = index + 1
+            Log.d("SeriesBiblicas", "load: ep$globalIndex title=$name urls=${urls.size} season=$currentSeason")
+            episodes.add(newEpisode("$url?ep=$globalIndex") {
+                this.name = name
                 this.episode = epNum
-                this.season = 1
+                this.season = currentSeason
             })
+            globalIndex++
         }
 
         Log.d("SeriesBiblicas", "load: returning ${episodes.size} episodes for $title")
@@ -234,17 +232,16 @@ class SeriesbiblicasProvider : MainAPI() {
         Log.d("SeriesBiblicas", "loadLinks: epIndex=$epIndex seriesUrl=$seriesUrl")
 
         val document = app.get(seriesUrl).document
-        val allSpoilers = document.select(".su-accordion .su-spoiler")
-        val spoilersWithVideo = allSpoilers.filter { extractVideoUrls(it).isNotEmpty() }
-        Log.d("SeriesBiblicas", "loadLinks: spoilers with video=${spoilersWithVideo.size}, total=${allSpoilers.size}, index=$epIndex")
+        val allEntries = extractAllVideoEntries(document)
+        Log.d("SeriesBiblicas", "loadLinks: total entries=${allEntries.size}, index=$epIndex")
 
-        val spoiler = spoilersWithVideo.getOrNull(epIndex)
-        if (spoiler == null) {
-            Log.d("SeriesBiblicas", "loadLinks: spoiler $epIndex not found!")
+        val entry = allEntries.getOrNull(epIndex)
+        if (entry == null) {
+            Log.d("SeriesBiblicas", "loadLinks: entry $epIndex not found!")
             return false
         }
 
-        val videoUrls = extractVideoUrls(spoiler)
+        val videoUrls = entry.urls
         Log.d("SeriesBiblicas", "loadLinks: found ${videoUrls.size} video URLs")
 
         var found = false
@@ -260,19 +257,19 @@ class SeriesbiblicasProvider : MainAPI() {
         return found
     }
 
-    private fun extractVideoUrls(spoiler: Element): List<String> {
+    private fun extractVideoUrls(parent: Element): List<String> {
         val urls = mutableListOf<String>()
 
-        spoiler.select(".su-lightbox[data-mfp-src]").forEach {
+        parent.select(".su-lightbox[data-mfp-src]").forEach {
             urls.add(it.attr("data-mfp-src"))
         }
 
-        spoiler.select("iframe[src]").forEach {
+        parent.select("iframe[src]").forEach {
             val src = it.attr("abs:src")
             if (src.isNotBlank()) urls.add(src)
         }
 
-        spoiler.select("a[href]").forEach {
+        parent.select("a[href]").forEach {
             val href = it.attr("abs:href")
             if (href.contains("ok.ru") || href.contains("youtube") || href.contains("sendvid") ||
                 href.contains("filemoon") || href.contains("vk.com") || href.contains("tokyvideo") ||
@@ -283,6 +280,48 @@ class SeriesbiblicasProvider : MainAPI() {
         }
 
         return urls.distinct()
+    }
+
+    private fun extractAllVideoEntries(document: org.jsoup.nodes.Document): List<VideoEntry> {
+        val spoilers = document.select(".su-accordion .su-spoiler")
+        if (spoilers.isNotEmpty()) {
+            var spoilerIsNewSeason = false
+            val entries = spoilers.mapNotNull { spoiler ->
+                val videoUrls = extractVideoUrls(spoiler)
+                if (videoUrls.isEmpty()) return@mapNotNull null
+                val title = spoiler.selectFirst(".su-spoiler-title")?.text() ?: "Capítulo"
+                VideoEntry(title, videoUrls)
+            }
+            if (entries.isNotEmpty()) return entries
+        }
+
+        val entries = mutableListOf<VideoEntry>()
+        val carousels = document.select(".su-tabs-pane .owl-carousel")
+        Log.d("SeriesBiblicas", "extractAllVideoEntries: found ${carousels.size} carousels")
+
+        carousels.forEachIndexed { carouselIdx, carousel ->
+            val prevSpan = carousel.parent()?.previousElementSibling()
+            val seasonName = when {
+                prevSpan != null && prevSpan.text().contains("TEMPORADA", true) -> prevSpan.text().trim()
+                else -> "Temporada ${carouselIdx + 1}"
+            }
+            Log.d("SeriesBiblicas", "extractAllVideoEntries: carousel $carouselIdx = $seasonName")
+
+            val containers = carousel.select(".sa_hover_container")
+            containers.forEachIndexed { epIdx, container ->
+                val urls = extractVideoUrls(container)
+                if (urls.isEmpty()) return@forEachIndexed
+                val rawText = container.wholeText()
+                val epName = Regex("""CAP\s*[#:]?\s*(\d+)""").find(rawText)
+                    ?.let { "Capítulo ${it.groupValues[1]}" }
+                    ?: rawText.trim().takeIf { it.isNotBlank() }
+                    ?: "${seasonName} - Episodio ${epIdx + 1}"
+                Log.d("SeriesBiblicas", "extractAllVideoEntries: ep=${epName} urls=${urls.size}")
+                entries.add(VideoEntry(epName, urls, isNewSeason = epIdx == 0))
+            }
+        }
+
+        return entries
     }
 
     private fun slugToTitle(slug: String): String {
