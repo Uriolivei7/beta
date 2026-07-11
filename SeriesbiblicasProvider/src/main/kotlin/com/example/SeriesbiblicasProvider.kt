@@ -183,6 +183,7 @@ class SeriesbiblicasProvider : MainAPI() {
             ?.replace(Regex("""\s*[-–|]\s*SERIESBIBLICAS\.NET"""), "")
             ?.replace(Regex("""\s*[-–|]\s*Series\s*Bíblicas"""), "")
             ?.replace(Regex("""\s*[-–|]\s*Series\s*Biblicas"""), "")
+            ?.replace(Regex("""\s*[-–|.]\s*NET\s*$"""), "")
             ?.trim()
             ?: document.selectFirst(".entry-title")?.text()
             ?: slugToTitle(url.removeSuffix("/").substringAfterLast("/"))
