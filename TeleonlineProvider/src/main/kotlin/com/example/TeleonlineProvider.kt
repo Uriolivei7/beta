@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
@@ -118,15 +119,25 @@ class TeleonlineProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val doc = try {
-                app.get(url, interceptor = cfKiller).document
-            } catch (_: Exception) {
-                return null
-            }
-            val title = doc.selectFirst("h1")?.text()
+            val html = app.get(url, interceptor = cfKiller).text
+            val doc = Jsoup.parse(html)
+
+            val title = doc.selectFirst(".titulo-canal-manual")?.text()
+                ?: doc.selectFirst("h1")?.text()
                 ?: doc.selectFirst("title")?.text()
                 ?: "Canal"
-            val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
+
+            // Extract channel logo (not og:image which is generic)
+            var poster = doc.selectFirst(".logo-channel img")?.attr("src")
+            if (poster.isNullOrBlank()) {
+                // Try JSON-LD logo
+                val jsonLd = Regex(""""logo"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""").find(html)
+                if (jsonLd != null) poster = jsonLd.groupValues[1]
+            }
+            if (poster.isNullOrBlank()) {
+                poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
+            }
+
             val desc = doc.selectFirst("meta[property='og:description']")?.attr("content")
                 ?: doc.selectFirst("meta[name=description]")?.attr("content")
                 ?: ""
@@ -159,6 +170,30 @@ class TeleonlineProvider : MainAPI() {
             val mainHtml = withTimeoutOrNull(20000L) {
                 app.get(data, headers = mainHeaders, interceptor = cfKiller)
             }?.text ?: return false
+
+            // Try base64-encoded M3U8 (teleonline stores them as window.atob('...'))
+            val b64Pattern = Regex("""(?:atob|btoa)\s*\(\s*['"]([A-Za-z0-9+/=]+)['"]""")
+            val b64Matches = b64Pattern.findAll(mainHtml).toList()
+            if (b64Matches.isNotEmpty()) {
+                var found = false
+                for ((idx, match) in b64Matches.withIndex()) {
+                    try {
+                        val decoded = String(Base64.decode(match.groupValues[1], Base64.DEFAULT))
+                        if (decoded.contains(".m3u8")) {
+                            val m3u8Url = decoded.replace("\\/", "/").trim()
+                            Log.d("Teleonline", "M3U8 from base64 (opción ${idx + 1}): $m3u8Url")
+                            callback(newExtractorLink(name, "En Vivo - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
+                                this.headers = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                    "Referer" to data
+                                )
+                            })
+                            found = true
+                        }
+                    } catch (_: Exception) {}
+                }
+                if (found) return true
+            }
 
             // Direct M3U8 on page
             val directM3u8 = extractM3u8FromHtml(mainHtml)
