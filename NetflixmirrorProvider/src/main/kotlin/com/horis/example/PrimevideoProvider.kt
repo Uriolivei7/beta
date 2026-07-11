@@ -205,7 +205,7 @@ class PrimevideoProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return null
+        return createNetmirrorInterceptor()
     }
 
     override suspend fun loadLinks(
@@ -252,7 +252,24 @@ class PrimevideoProvider : MainAPI() {
                         }
                     }
 
-                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                    // Fetch M3U8 body, log it, and serve via custom master
+                    try {
+                        val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
+                        val masterResp = app.get(m3u8, headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
+                            "Referer" to "$domain/",
+                            "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
+                        ))
+                        val m3u8Body = masterResp.text
+                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
+                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
+                        setCustomMaster(id, m3u8Body)
+                    } catch (e: Exception) {
+                        Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
+                    }
+
+                    val cmUrl = "$domain/mobile/$ott/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
+                    callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true

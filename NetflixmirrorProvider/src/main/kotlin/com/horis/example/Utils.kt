@@ -704,6 +704,48 @@ fun setCustomMaster(id: String, master: String) {
     Log.d("Netmirror", "setCustomMaster id=$id size=${master.length}")
 }
 
+fun createNetmirrorInterceptor(): Interceptor {
+    Log.d("Netmirror", "createNetmirrorInterceptor()")
+    return Interceptor { chain ->
+        val request = chain.request()
+        val url = request.url.toString()
+
+        // __cm=1 → serve custom master from memory
+        if (url.contains("__cm=1")) {
+            val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
+            if (id != null) {
+                val master = customMasters[id]
+                if (master != null) {
+                    Log.d("Netmirror", "Serving custom master for id=$id")
+                    val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
+                    val body = ResponseBody.create(mediaType, master)
+                    return@Interceptor Response.Builder()
+                        .request(request)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body)
+                        .build()
+                } else {
+                    Log.w("Netmirror", "No custom master found for id=$id")
+                }
+            }
+        }
+
+        // CDN segment requests: force fresh connection + hd=on cookie
+        val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+        if (host.contains("nm-cdn") || host.contains("freecdn") || host.contains("imgcdn")) {
+            val builder = request.newBuilder()
+                .header("Cookie", "hd=on")
+                .header("Connection", "close")
+                .header("Cache-Control", "no-cache")
+            return@Interceptor chain.proceed(builder.build())
+        }
+
+        chain.proceed(request)
+    }
+}
+
 fun m3u8CdnFixInterceptor(): Interceptor {
     Log.d("Netmirror", "m3u8CdnFixInterceptor() called - creating new interceptor")
     return Interceptor { chain ->
