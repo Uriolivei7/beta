@@ -181,6 +181,7 @@ class SeriesbiblicasProvider : MainAPI() {
 
         val title = document.selectFirst("title")?.text()
             ?.replace(Regex("""\s*[-–|]\s*SERIESBIBLICAS\.NET"""), "")
+            ?.replace(Regex("""\s*[-–|]\s*Series\s*Bíblicas"""), "")
             ?.replace(Regex("""\s*[-–|]\s*Series\s*Biblicas"""), "")
             ?.trim()
             ?: document.selectFirst(".entry-title")?.text()
@@ -191,9 +192,18 @@ class SeriesbiblicasProvider : MainAPI() {
             ?: document.selectFirst("img.aligncenter.size-full")?.attr("src"))
         Log.d("SeriesBiblicas", "load: poster=$poster")
 
-        val description = document.selectFirst(".su-tabs-pane:not(.su-u-clearfix)")?.text()
-            ?: document.selectFirst("meta[name='description']")?.attr("content")
-        Log.d("SeriesBiblicas", "load: description len=${description?.length ?: 0}")
+        val slugLang = languageFromSlug(url.removeSuffix("/").substringAfterLast("/"))
+        val description = document.select(".su-tabs-pane").getOrNull(1)?.let { pane ->
+            val txt = pane.text()
+            val markers = listOf("SINOPSIS", "SIPNOSIS", "sinopsis", "sipnosis", "Argumento")
+            markers.firstNotNullOfOrNull { marker ->
+                val idx = txt.indexOf(marker)
+                if (idx >= 0) txt.substring(idx + marker.length).trim().takeIf { it.length > 20 } else null
+            }
+        } ?: document.selectFirst("meta[name='description']")?.attr("content")
+            ?.let { if (slugLang != null) "$slugLang — $it" else it }
+            ?: slugLang
+        Log.d("SeriesBiblicas", "load: description=${description?.take(80) ?: "null"}")
 
         val episodes = ArrayList<Episode>()
         val allVideoEntries = extractAllVideoEntries(document)
@@ -201,14 +211,18 @@ class SeriesbiblicasProvider : MainAPI() {
 
         var globalIndex = 0
         var currentSeason = 1
+        var epInSeason = 0
         for ((index, entry) in allVideoEntries.withIndex()) {
             val (name, urls, isNewSeason) = entry
-            if (isNewSeason && globalIndex > 0) currentSeason++
-            val epNum = index + 1
+            if (isNewSeason && globalIndex > 0) {
+                currentSeason++
+                epInSeason = 0
+            }
+            epInSeason++
             Log.d("SeriesBiblicas", "load: ep$globalIndex title=$name urls=${urls.size} season=$currentSeason")
             episodes.add(newEpisode("$url?ep=$globalIndex") {
                 this.name = name
-                this.episode = epNum
+                this.episode = epInSeason
                 this.season = currentSeason
                 this.posterUrl = poster
             })
@@ -303,28 +317,35 @@ class SeriesbiblicasProvider : MainAPI() {
         Log.d("SeriesBiblicas", "extractAllVideoEntries: found ${carousels.size} carousels")
 
         carousels.forEachIndexed { carouselIdx, carousel ->
-            val prevSpan = carousel.parent()?.previousElementSibling()
-            val seasonName = when {
-                prevSpan != null && prevSpan.text().contains("TEMPORADA", true) -> prevSpan.text().trim()
-                else -> "Temporada ${carouselIdx + 1}"
-            }
-            Log.d("SeriesBiblicas", "extractAllVideoEntries: carousel $carouselIdx = $seasonName")
-
             val containers = carousel.select(".sa_hover_container")
+            Log.d("SeriesBiblicas", "extractAllVideoEntries: carousel $carouselIdx has ${containers.size} items")
+
             containers.forEachIndexed { epIdx, container ->
                 val urls = extractVideoUrls(container)
                 if (urls.isEmpty()) return@forEachIndexed
                 val rawText = container.wholeText()
                 val epName = Regex("""CAP\s*[#:]?\s*(\d+)""").find(rawText)
                     ?.let { "Capítulo ${it.groupValues[1]}" }
-                    ?: rawText.trim().takeIf { it.isNotBlank() }
-                    ?: "${seasonName} - Episodio ${epIdx + 1}"
+                    ?: "Capítulo ${epIdx + 1}"
                 Log.d("SeriesBiblicas", "extractAllVideoEntries: ep=${epName} urls=${urls.size}")
                 entries.add(VideoEntry(epName, urls, isNewSeason = epIdx == 0))
             }
         }
 
         return entries
+    }
+
+    private fun languageFromSlug(slug: String): String? {
+        return when {
+            slug.contains("audio-latino") -> "Audio Latino"
+            slug.contains("subtitulada") -> "Subtitulada"
+            slug.contains("sub") && !slug.contains("super") -> "Subtitulada"
+            slug.contains("latino") -> "Latino"
+            slug.contains("espanol") || slug.contains("español") -> "Español"
+            slug.contains("portugues") || slug.contains("português") -> "Português"
+            slug.contains("english") || slug.contains("subtitled") -> "English Subtitled"
+            else -> null
+        }
     }
 
     private fun slugToTitle(slug: String): String {
