@@ -319,7 +319,8 @@ class PrimevideoProvider : MainAPI() {
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
                         val m3u8Body = masterResp.text
-                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(1000)}")
+                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
+                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
