@@ -1058,7 +1058,7 @@ class YoutubeProvider(
                             if (isLockup) {
                                 val vId = videoRenderer["contentId"] as? String ?: return@forEach
                                 val metadata = videoRenderer.getMapKey("metadata")?.getMapKey("lockupMetadataViewModel")
-                                val vidTitle = extractTitle(metadata?.getMapKey("title")) ?: "Video"
+                                val vidTitle = getText(metadata?.getMapKey("title")).ifEmpty { "Video" }
                                 val (channel, views) = extractLockupMetadata(videoRenderer)
                                 val thumb = getBestThumbnail(
                                     videoRenderer.getMapKey("contentImage")?.getMapKey("thumbnailViewModel")?.getMapKey("image")?.getListKey("sources")
