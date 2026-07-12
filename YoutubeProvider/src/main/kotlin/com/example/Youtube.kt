@@ -19,8 +19,6 @@ class YoutubeProvider(
     private val sharedPref: SharedPreferences? = null
 ) : MainAPI() {
 
-
-
     data class CustomSection(
         @JsonProperty("name") var name: String = "",
         @JsonProperty("url") var url: String = "",
@@ -230,6 +228,11 @@ class YoutubeProvider(
         val videoData = renderer.getMapKey("videoRenderer")
             ?: renderer.getMapKey("compactVideoRenderer")
             ?: renderer.getMapKey("gridVideoRenderer")
+            ?: renderer.getMapKey("richItemRenderer")?.getMapKey("content")?.let { content ->
+                content.getMapKey("videoRenderer")
+                    ?: content.getMapKey("gridVideoRenderer")
+                    ?: content.getMapKey("compactVideoRenderer")
+            }
 
         if (videoData != null) {
             val videoId = videoData.getString("videoId")
@@ -448,6 +451,10 @@ class YoutubeProvider(
                 "itemSectionRenderer",
                 "richShelfRenderer",
                 "reelShelfRenderer",
+                "richGridRenderer",
+                "gridRenderer",
+                "richItemRenderer",
+                "content",
                 "appendContinuationItemsAction",
                 "onResponseReceivedCommands"
             )
@@ -620,6 +627,8 @@ class YoutubeProvider(
                     else -> mainUrl
                 }
 
+                Log.d("YTMain", "getMainPage: request='$requestData' targetUrl='$targetUrl' isPlaylist=$isPlaylist")
+
                 val html = app.get(targetUrl, interceptor = ytInterceptor).text
 
                 savedApiKey = findConfig(html, "INNERTUBE_API_KEY")
@@ -651,8 +660,22 @@ class YoutubeProvider(
 
                         processRecursive(initialData, results, seenIds, playlistMode = false)
                         nextContinuation = findTokenRecursive(initialData)
+
+                        // Fallback for channels: try without /videos
+                        if (results.isEmpty() && requestData.startsWith("http") && cleanUrl.endsWith("/videos")) {
+                            Log.w("YTMain", "No results with /videos, trying base URL")
+                            val baseUrl = cleanUrl.removeSuffix("/videos")
+                            val fallbackHtml = app.get(baseUrl, interceptor = ytInterceptor).text
+                            val fallbackData = extractYtInitialData(fallbackHtml)
+                            if (fallbackData != null) {
+                                processRecursive(fallbackData, results, seenIds, playlistMode = false)
+                                nextContinuation = findTokenRecursive(fallbackData)
+                                Log.d("YTMain", "Fallback (without /videos) found ${results.size} results")
+                            }
+                        }
                     }
                 }
+                Log.d("YTMain", "getMainPage: done, results=${results.size}")
             } else {
 
 

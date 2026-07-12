@@ -129,10 +129,31 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
     }
 
     fun channelToSearchResponseList(url: String, page: Int): HomePageList? {
-        val channelInfo = ChannelInfo.getInfo(url)
-        val tabsLinkHandlers = channelInfo.tabs
-        val tabs = tabsLinkHandlers.mapNotNull { runCatching { ChannelTabInfo.getInfo(service, it) }.getOrNull() }
-        val videoTab = tabs.firstOrNull { it.name.equals("videos", ignoreCase = true) } ?: return null
+        val channelInfo = runCatching { ChannelInfo.getInfo(url) }.getOrNull()
+        if (channelInfo == null) {
+            Log.d("YTProvider", "channelToSearchResponseList: Failed to get ChannelInfo for $url")
+            return null
+        }
+        Log.d("YTProvider", "channelToSearchResponseList: channel=${channelInfo.name}, tabs=${channelInfo.tabs.map { it.url }}")
+
+        val tabs = channelInfo.tabs.mapNotNull { tabHandler ->
+            val tabInfo = runCatching {
+                ChannelTabInfo.getInfo(service, tabHandler)
+            }.getOrNull()
+            if (tabInfo != null) {
+                Log.d("YTProvider", "  tab OK: name='${tabInfo.name}' url=${tabHandler.url}")
+                tabInfo
+            } else {
+                Log.d("YTProvider", "  tab FAILED: url=${tabHandler.url}")
+                null
+            }
+        }
+        val videoTab = tabs.firstOrNull { it.name.equals("videos", ignoreCase = true) }
+        if (videoTab == null) {
+            Log.d("YTProvider", "channelToSearchResponseList: No 'videos' tab found. Available tabs: ${tabs.map { it.name }}")
+            return null
+        }
+        Log.d("YTProvider", "channelToSearchResponseList: videoTab items=${videoTab.relatedItems.size}")
 
         val videos = if (page == 1) {
             videoTab.relatedItems.toMutableList()
@@ -146,7 +167,7 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
             var count = 1
             var nextPage = videoTab.nextPage
             while (count < page && hasNext) {
-                val videoTabHandler = tabsLinkHandlers.firstOrNull {
+                val videoTabHandler = channelInfo.tabs.firstOrNull {
                     it.url.contains("/videos", ignoreCase = true)
                 } ?: return null
                 val more = ChannelTabInfo.getMoreItems(service, videoTabHandler, nextPage)
