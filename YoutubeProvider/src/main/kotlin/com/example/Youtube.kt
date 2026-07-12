@@ -1296,9 +1296,9 @@ class YoutubeProvider(
 
                 val episodes = mutableListOf<Episode>()
                 val contents = safeGet(
-                    data, "contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
+                    data, "contents", "twoColumnBrowseResultsRenderer", "tabs", 0,
                     "tabRenderer", "content", "sectionListRenderer", "contents",
-                    "0", "itemSectionRenderer", "contents"
+                    0, "itemSectionRenderer", "contents"
                 ) as? List<*>
 
                 if (contents == null) {
