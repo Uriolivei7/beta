@@ -1295,33 +1295,71 @@ class YoutubeProvider(
                 val description = extractTitle(safeGet(header, "description") as? Map<*, *>)
 
                 val episodes = mutableListOf<Episode>()
-                val contents = safeGet(
-                    data, "contents", "twoColumnBrowseResultsRenderer", "tabs", 0,
-                    "tabRenderer", "content", "sectionListRenderer", "contents",
-                    0, "itemSectionRenderer", "contents", 0,
-                    "playlistVideoListRenderer", "contents"
-                ) as? List<*>
+                val contentsPath = listOf(
+                    listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
+                        "tabRenderer", "content", "sectionListRenderer", "contents",
+                        "0", "itemSectionRenderer", "contents", "0",
+                        "playlistVideoListRenderer", "contents"),
+                    listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
+                        "tabRenderer", "content", "richGridRenderer", "contents"),
+                    listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
+                        "tabRenderer", "content", "sectionListRenderer", "contents",
+                        "0", "itemSectionRenderer", "contents", "0",
+                        "lockupViewModelListRenderer", "contents")
+                )
+                var contents: List<*>? = null
+                var usedPath = ""
+                for (path in contentsPath) {
+                    contents = safeGet(data, *path.toTypedArray()) as? List<*>
+                    if (contents != null) {
+                        usedPath = path.joinToString(".")
+                        Log.d("YtPlaylist", "Found contents via: $usedPath -> ${contents.size} items")
+                        break
+                    }
+                }
+                if (contents == null) {
+                    Log.w("YtPlaylist", "No playlist contents found. data top keys: ${data.keys.joinToString(",")}")
+                    data.keys.firstOrNull()?.let { k ->
+                        Log.w("YtPlaylist", "first key '$k' preview: ${data[k].toString().take(300)}")
+                    }
+                }
 
                 contents?.forEachIndexed { index, item ->
-                    val videoMap = item as? Map<*, *>
-                    val renderer = videoMap?.get("playlistVideoRenderer") as? Map<*, *>
-                    if (renderer != null) {
-                        val vId = renderer["videoId"] as? String
-                        if (vId != null) {
-                            val vidTitle = extractTitle(renderer["title"] as? Map<*, *>) ?: "Episode ${index + 1}"
-                            val thumb = getBestThumbnail(renderer["thumbnail"]) ?: buildThumbnailFromId(vId)
-                            val vidUrl = "$mainUrl/watch?v=$vId"
-                            val durationText = extractTitle(safeGet(renderer, "lengthText") as? Map<*, *>)
-                            val durationSec = parseDurationToSeconds(durationText)
-                            com.lagradost.api.Log.d("YoutubeProvider", "Playlist video $vId lengthText=$durationText durationSec=$durationSec")
-                            episodes.add(newEpisode(vidUrl) {
-                                this.name = vidTitle
-                                this.episode = index + 1
-                                this.posterUrl = thumb
-                                this.runTime = (durationSec ?: 0) / 60
-                                this.description = if (durationText != null) "Duración: $durationText" else null
-                            })
+                    val videoMap = item as? Map<*, *> ?: return@forEachIndexed
+                    val renderer = videoMap["playlistVideoRenderer"] as? Map<*, *>
+                        ?: (videoMap["lockupViewModel"] as? Map<*, *>)
+                    if (renderer == null) {
+                        Log.w("YtPlaylist", "Item $index has neither playlistVideoRenderer nor lockupViewModel, keys: ${videoMap.keys.joinToString(",")}")
+                        return@forEachIndexed
+                    }
+                    val vId = renderer["videoId"] as? String
+                        ?: renderer["contentId"] as? String
+                    if (vId != null) {
+                        val metadata = renderer.getMapKey("metadata")?.getMapKey("lockupMetadataViewModel")
+                        val vidTitle = if (renderer.containsKey("contentId")) {
+                            getText(metadata?.getMapKey("title")).ifEmpty { "Episode ${index + 1}" }
+                        } else {
+                            extractTitle(renderer["title"] as? Map<*, *>) ?: "Episode ${index + 1}"
                         }
+                        val thumb = if (renderer.containsKey("contentId")) {
+                            getBestThumbnail(
+                                renderer.getMapKey("contentImage")?.getMapKey("thumbnailViewModel")?.getMapKey("image")?.getListKey("sources")
+                                    ?: renderer.getMapKey("contentImage")?.getMapKey("image")?.getListKey("sources")
+                            ) ?: buildThumbnailFromId(vId)
+                        } else {
+                            getBestThumbnail(renderer["thumbnail"]) ?: buildThumbnailFromId(vId)
+                        }
+                        val vidUrl = "$mainUrl/watch?v=$vId"
+                        val durationText = extractTitle(safeGet(renderer, "lengthText") as? Map<*, *>)
+                        val durationSec = parseDurationToSeconds(durationText)
+                        Log.d("YtPlaylist", "Playlist video $index: id=$vId title=$vidTitle duration=$durationText")
+                        episodes.add(newEpisode(vidUrl) {
+                            this.name = vidTitle
+                            this.episode = index + 1
+                            this.posterUrl = thumb
+                            this.runTime = (durationSec ?: 0) / 60
+                            this.description = if (durationText != null) "Duración: $durationText" else null
+                        })
                     }
                 }
 
