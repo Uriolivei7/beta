@@ -131,8 +131,8 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
     fun channelToSearchResponseList(url: String, page: Int): HomePageList? {
         val channelInfo = ChannelInfo.getInfo(url)
         val tabsLinkHandlers = channelInfo.tabs
-        val tabs = tabsLinkHandlers.map { ChannelTabInfo.getInfo(service, it) }
-        val videoTab = tabs.first { it.name == "videos" }
+        val tabs = tabsLinkHandlers.mapNotNull { runCatching { ChannelTabInfo.getInfo(service, it) }.getOrNull() }
+        val videoTab = tabs.firstOrNull { it.name.equals("videos", ignoreCase = true) } ?: return null
 
         val videos = if (page == 1) {
             videoTab.relatedItems.toMutableList()
@@ -142,14 +142,13 @@ open class YouTubeProvider(language: String, private val sharedPrefs: SharedPref
 
         if (page > 1) {
             var hasNext = videoTab.hasNextPage()
-            if (!hasNext) {
-                return null
-            }
+            if (!hasNext) return null
             var count = 1
             var nextPage = videoTab.nextPage
             while (count < page && hasNext) {
-
-                val videoTabHandler = tabsLinkHandlers.first { it.url.endsWith("/videos") }
+                val videoTabHandler = tabsLinkHandlers.firstOrNull {
+                    it.url.contains("/videos", ignoreCase = true)
+                } ?: return null
                 val more = ChannelTabInfo.getMoreItems(service, videoTabHandler, nextPage)
                 if (count == page - 1) {
                     videos.addAll(more.items)

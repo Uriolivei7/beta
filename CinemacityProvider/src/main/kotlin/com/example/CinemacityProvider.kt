@@ -45,7 +45,7 @@ import org.jsoup.nodes.Element
 class CinemacityProvider : MainAPI() {
     override var mainUrl = "https://cinemacity.cc"
     override var name = "CinemaCity"
-    override var lang = "es"
+    override var lang = "en"
     override val hasMainPage = true
     override val hasDownloadSupport = false
     override val hasQuickSearch = true
