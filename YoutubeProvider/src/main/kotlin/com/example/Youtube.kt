@@ -1329,6 +1329,33 @@ class YoutubeProvider(
                                                     Log.d("YtPlaylist", "tab $i content '$k'.'$vk' is List size=${vv.size}")
                                                     val firstKeys = (vv.firstOrNull() as? Map<*, *>)?.keys?.joinToString(",")
                                                     Log.d("YtPlaylist", "tab $i content '$k'.'$vk'[0] keys: $firstKeys")
+                                                    // Dig deeper into itemSectionRenderer contents
+                                                    if (firstKeys != null && firstKeys.contains("itemSectionRenderer")) {
+                                                        val itemSection = (vv.firstOrNull() as? Map<*, *>)?.get("itemSectionRenderer") as? Map<*, *>
+                                                        val itemSectionContents = itemSection?.get("contents") as? List<*>
+                                                        if (itemSectionContents != null) {
+                                                            Log.d("YtPlaylist", "tab $i itemSectionRenderer.contents size=${itemSectionContents.size}")
+                                                            itemSectionContents.forEachIndexed { ici, ic ->
+                                                                val icMap = ic as? Map<*, *>
+                                                                Log.d("YtPlaylist", "tab $i itemSectionRenderer.contents[$ici] keys: ${icMap?.keys?.joinToString(",") ?: "null"}")
+                                                                icMap?.keys?.forEach { ick ->
+                                                                    Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick' is ${icMap[ick]?.javaClass?.simpleName}")
+                                                                    val subMap = icMap[ick] as? Map<*, *>
+                                                                    if (subMap != null) {
+                                                                        Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick' keys: ${subMap.keys.joinToString(",")}")
+                                                                        subMap.keys.forEach { smk ->
+                                                                            val smv = subMap[smk]
+                                                                            if (smv is List<*>) {
+                                                                                Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick'.'$smk' is List size=${smv.size}")
+                                                                                val smfKeys = (smv.firstOrNull() as? Map<*, *>)?.keys?.joinToString(",")
+                                                                                Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick'.'$smk'[0] keys: $smfKeys")
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         } else {
