@@ -1035,7 +1035,20 @@ class YoutubeProvider(
                             }
                             map.containsKey("richItemRenderer") -> {
                                 val content = safeGet(map, "richItemRenderer", "content") as? Map<*, *>
-                                (content?.get("videoRenderer") ?: content?.get("gridVideoRenderer") ?: content?.get("shortsLockupViewModel")) as? Map<*, *>
+                                if (content == null) {
+                                    Log.w("YtChannel", "richItemRenderer.content is null, richItemRenderer keys: ${map["richItemRenderer"]?.let { (it as? Map<*, *>)?.keys?.joinToString(",") }}")
+                                    null
+                                } else {
+                                    val vr = content["videoRenderer"] ?: content["gridVideoRenderer"] ?: content["shortsLockupViewModel"]
+                                    if (vr == null) {
+                                        Log.w("YtChannel", "content keys WHITOUT videoRenderer: ${content.keys.joinToString(",")}")
+                                        content.keys.firstOrNull()?.let { k ->
+                                            val v = content[k]
+                                            Log.w("YtChannel", "first content key '$k' type=${v?.javaClass?.simpleName} preview=${v.toString().take(200)}")
+                                        }
+                                    }
+                                    vr as? Map<*, *>
+                                }
                             }
                             else -> null
                         }
