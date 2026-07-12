@@ -24,7 +24,6 @@ import com.lagradost.cloudstream3.addDate
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.base64Decode
-import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.fixUrlNull
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newEpisode
@@ -46,10 +45,11 @@ import org.jsoup.nodes.Element
 class CinemacityProvider : MainAPI() {
     override var mainUrl = "https://cinemacity.cc"
     override var name = "CinemaCity"
-    override var lang = "en"
+    override var lang = "es"
     override val hasMainPage = true
     override val hasDownloadSupport = false
     override val hasQuickSearch = true
+    override val hasChromecastSupport = true
     override val supportedTypes = setOf(
         TvType.Movie, TvType.TvSeries, TvType.Cartoon, TvType.AsianDrama, TvType.Anime
     )
@@ -84,7 +84,7 @@ class CinemacityProvider : MainAPI() {
         val result = runCatching {
             val enc = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
             val resp = app.get(
-                "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=$enc",
+                "$TMDB_BASE/search/multi?api_key=$TMDB_API_KEY&query=$enc",
                 timeout = 8000L
             )
             val tmdbArr = JSONObject(resp.text).optJSONArray("results") ?: JSONArray()
@@ -134,9 +134,13 @@ class CinemacityProvider : MainAPI() {
     }
 
     companion object {
+        private const val TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
+        private const val TMDB_BASE = "https://api.themoviedb.org/3"
         private const val TMDBIMAGEBASEURL = "https://image.tmdb.org/t/p/original"
         private const val cinemeta_url =
             "https://aiometadata.elfhosted.com/stremio/b7cb164b-074b-41d5-b458-b3a834e197bb/meta"
+        private val seasonRegex = Regex("Season\\s*(\\d+)", RegexOption.IGNORE_CASE)
+        private val episodeRegex = Regex("Episode\\s*(\\d+)", RegexOption.IGNORE_CASE)
     }
 
     fun parseCredits(jsonText: String?): List<ActorData> {
@@ -159,8 +163,14 @@ class CinemacityProvider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/tv-series/" to "Series",
         "$mainUrl/movies/" to "Movies",
+        "$mainUrl/tv-series/" to "TV Series",
+        "$mainUrl/genre/animation/" to "Animation",
+        "$mainUrl/genre/anime/" to "Anime",
+        "$mainUrl/genre/asian/" to "Asian",
+        "$mainUrl/genre/indian/" to "Indian",
+        "$mainUrl/genre/documentary/" to "Documentary",
+        "$mainUrl/genre/horror/" to "Horror",
     )
 
     override suspend fun getMainPage(
@@ -181,16 +191,11 @@ class CinemacityProvider : MainAPI() {
             (h.contains("/movies/") || h.contains("/tv-series/")) && !h.contains(Regex("\\.(webp|jpg|png)"))
         } ?: return null
 
-        val title = link.text().split(" (", " S0", " -")[0].trim()
+        val title = link.text().trim().split(" (", " S0")[0].trim()
         val href = fixUrlNull(link.attr("href")) ?: return null
-        val img = this.selectFirst("img")
-        val imgSrc = img?.attr("src")
-        val imgDataSrc = img?.attr("data-src")
-        val poster = fixUrlNull(imgSrc) ?: fixUrlNull(imgDataSrc)
-        Log.d(
-            "Cinemacity",
-            "SearchResult: title='$title', img=$img, src='$imgSrc', data-src='$imgDataSrc', poster='$poster'"
-        )
+        // Use full image (strip /thumbs/ from path)
+        val thumbEl = this.selectFirst("img.xfieldimage")
+        val poster = thumbEl?.attr("src")?.replace("/thumbs/", "/")?.let { fixUrlNull(it) }
         val isTv = href.contains("/tv-series/")
         val score = this.selectFirst("span.rating-color")?.text()
         val date = this.selectFirst("span a[href*=year]")?.text()?.toIntOrNull()
@@ -260,6 +265,9 @@ class CinemacityProvider : MainAPI() {
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
         val bgposter = doc.selectFirst("div.dar-full_bg a")?.attr("href")
         val trailer = doc.select("div.dar-full_bg.e-cover > div").attr("data-vbg")
+            .takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("iframe[src*=youtube]")?.attr("src")
+                ?.replace("embed/", "watch?v=")?.split("?")?.get(0)
 
         val audioLanguages = doc
             .select("li")
@@ -274,17 +282,11 @@ class CinemacityProvider : MainAPI() {
 
         val descriptions = doc.selectFirst("#about div.ta-full_text1")?.text()
 
-        val recommendation = doc.select("div.ta-rel > div.ta-rel_item").map {
-            val recTitle = it.select("a").text().substringBefore("(").trim()
-            val recHref = fixUrl(it.selectFirst("> div > a")?.attr("href") ?: "")
-            val recImg = it.selectFirst("img")
-            val recImgSrc = recImg?.attr("src")
-            val recImgDataSrc = recImg?.attr("data-src")
-            val recPosterUrl = fixUrlNull(recImgSrc) ?: fixUrlNull(recImgDataSrc)
-            Log.d(
-                "Cinemacity",
-                "Recommendation: title='$recTitle', img=$recImg, src='$recImgSrc', data-src='$recImgDataSrc', poster='$recPosterUrl'"
-            )
+        val recommendation = doc.select("div.ta-rel > div.ta-rel_item").mapNotNull { recEl ->
+            val recTitle = recEl.select("a").text().trim()
+            val recHref = fixUrlNull(recEl.selectFirst("a")?.attr("href")) ?: return@mapNotNull null
+            val recPosterUrl = recEl.selectFirst("img.xfieldimage")
+                ?.attr("src")?.replace("/thumbs/", "/")?.let { fixUrlNull(it) }
 
             newMovieSearchResponse(recTitle, recHref, TvType.Movie) {
                 this.posterUrl = recPosterUrl
@@ -293,7 +295,6 @@ class CinemacityProvider : MainAPI() {
         enrichTmdbPosters(recommendation)
 
         val year = ogTitle.substringAfter("(", "").substringBefore(")").toIntOrNull()
-        val contenttype = doc.select("div.dar-full_meta > span:nth-child(5) > a").text()
 
         val tvtype = if (url.contains("/movies/", true)) TvType.Movie else TvType.TvSeries
         val tmdbmetatype = if (tvtype == TvType.TvSeries) "tv" else "movie"
@@ -312,8 +313,8 @@ class CinemacityProvider : MainAPI() {
             runCatching {
                 val obj = JSONObject(
                     app.get(
-                        "https://api.themoviedb.org/3/find/$id" +
-                                "?api_key=1865f43a0549ca50d341dd9ab8b29f49" +
+                        "$TMDB_BASE/find/$id" +
+                                "?api_key=$TMDB_API_KEY" +
                                 "&external_source=imdb_id"
                     ).textLarge
                 )
@@ -325,15 +326,11 @@ class CinemacityProvider : MainAPI() {
             }.getOrNull()?.toString()
         }
 
-        val logoPath = imdbId?.let {
-            "https://live.metahub.space/logo/medium/$it/img"
-        }
-
         val creditsJson = tmdbId?.let {
             runCatching {
                 app.get(
-                    "https://api.themoviedb.org/3/$tmdbmetatype/$it/credits" +
-                            "?api_key=1865f43a0549ca50d341dd9ab8b29f49&language=en-US"
+                    "$TMDB_BASE/$tmdbmetatype/$it/credits" +
+                            "?api_key=$TMDB_API_KEY&language=en-US"
                 ).textLarge
             }.getOrNull()
         }
@@ -343,7 +340,7 @@ class CinemacityProvider : MainAPI() {
         val tmdbPoster = tmdbId?.let { id ->
             runCatching {
                 val obj = JSONObject(app.get(
-                    "https://api.themoviedb.org/3/$tmdbmetatype/$id?api_key=1865f43a0549ca50d341dd9ab8b29f49"
+                    "$TMDB_BASE/$tmdbmetatype/$id?api_key=$TMDB_API_KEY"
                 ).textLarge)
                 obj.optString("poster_path").takeIf { it.isNotBlank() }
                     ?.let { "$TMDBIMAGEBASEURL$it" }
@@ -368,16 +365,35 @@ class CinemacityProvider : MainAPI() {
                 ?.associateBy { "${it.season}:${it.episode}" }
                 ?: emptyMap()
 
-        val atobScripts = doc.select("script:containsData(atob)")
-        val playerScript = atobScripts.getOrNull(1)?.data()
+        fun extractB64FromScript(script: String): String? {
+            val afterAtob = script.substringAfter("atob(")
+            val quote = when {
+                '"' in afterAtob.take(3) -> "\""
+                '\'' in afterAtob.take(3) -> "'"
+                else -> return null
+            }
+            return afterAtob.substringAfter(quote).substringBefore(quote)
+        }
+
+        val playerScript = doc.select("script:containsData(atob)")
+            .mapNotNull { script ->
+                val data = script.data()
+                val b64 = extractB64FromScript(data)
+                if (b64 != null) {
+                    val decoded = base64Decode(b64)
+                    if (decoded.isNotEmpty() && "new Playerjs(" in decoded) script else null
+                } else null
+            }
+            .firstOrNull()
+            ?.data()
 
         val fileArray: JSONArray = if (playerScript != null) {
-            val b64 = playerScript.substringAfter("atob(\"").substringBefore("\")")
-            val decodedPlayer = base64Decode(b64)
+            val b64 = extractB64FromScript(playerScript)
+            val decodedPlayer = if (b64 != null) base64Decode(b64) else ""
 
-            val playerJsonStr = decodedPlayer
-                ?.substringAfter("new Playerjs(")
-                ?.substringBeforeLast(");")
+            val playerJsonStr = if (decodedPlayer.isNotEmpty() && "new Playerjs(" in decodedPlayer) {
+                decodedPlayer.substringAfter("new Playerjs(").substringBeforeLast(");")
+            } else null
 
             if (playerJsonStr.isNullOrBlank()) {
                 JSONArray()
@@ -417,9 +433,6 @@ class CinemacityProvider : MainAPI() {
             }
         }
 
-        val seasonRegex = Regex("Season\\s*(\\d+)", RegexOption.IGNORE_CASE)
-        val episodeRegex = Regex("Episode\\s*(\\d+)", RegexOption.IGNORE_CASE)
-
         val episodeList = mutableListOf<Episode>()
 
         val movieHrefs: String? = fileArray.optJSONObject(0)
@@ -430,13 +443,12 @@ class CinemacityProvider : MainAPI() {
         val movieSubtitleTracks = parseSubtitles(
             when {
                 playerScript != null -> {
-                    val decodedPlayer = base64Decode(
-                        playerScript.substringAfter("atob(\"").substringBefore("\")")
-                    ) ?: ""
-                    val str = decodedPlayer
-                        .substringAfter("new Playerjs(")
-                        .substringBeforeLast(");")
-                    if (str.isNotBlank()) {
+                    val b64 = extractB64FromScript(playerScript)
+                    val decodedPlayer = if (b64 != null) base64Decode(b64) else ""
+                    val str = if (decodedPlayer.isNotEmpty() && "new Playerjs(" in decodedPlayer) {
+                        decodedPlayer.substringAfter("new Playerjs(").substringBeforeLast(");")
+                    } else null
+                    if (str?.isNotBlank() == true) {
                         val pj = JSONObject(str)
                         pj.optString("subtitle").takeIf { it.isNotBlank() }
                             ?: fileArray.optJSONObject(0)?.optString("subtitle")?.takeIf { it.isNotBlank() }
@@ -529,6 +541,7 @@ class CinemacityProvider : MainAPI() {
                 this.tags = genre
                 this.score = Score.from10(responseData?.meta?.imdbRating)
                 this.contentRating = responseData?.meta?.appExtras?.certification
+                this.actors = castList
                 addImdbId(imdbId)
                 addTMDbId(tmdbId)
                 addTrailer(trailer)
@@ -554,6 +567,7 @@ class CinemacityProvider : MainAPI() {
             this.recommendations = recommendation
             this.tags = genre
             this.contentRating = responseData?.meta?.appExtras?.certification
+            this.actors = castList
             this.score = Score.from10(responseData?.meta?.imdbRating)
             addImdbId(imdbId)
             addTMDbId(tmdbId)
