@@ -1295,148 +1295,37 @@ class YoutubeProvider(
                 val description = extractTitle(safeGet(header, "description") as? Map<*, *>)
 
                 val episodes = mutableListOf<Episode>()
-                Log.d("YtPlaylist", "data contents key type: ${data["contents"]?.javaClass?.simpleName}")
-                val twoCol = safeGet(data, "contents", "twoColumnBrowseResultsRenderer") as? Map<*, *>
-                if (twoCol != null) {
-                    Log.d("YtPlaylist", "twoColumnBrowseResultsRenderer keys: ${twoCol.keys.joinToString(",")}")
-                    val tabs = twoCol["tabs"] as? List<*>
-                    if (tabs != null) {
-                        Log.d("YtPlaylist", "tabs size=${tabs.size}")
-                        tabs.forEachIndexed { i, tab ->
-                            val tabMap = tab as? Map<*, *>
-                            val tabRenderer = tabMap?.get("tabRenderer") as? Map<*, *>
-                            val tabTitle = extractTitle(safeGet(tabRenderer, "title") as? Map<*, *>) ?: "tab$i"
-                            val hasContent = tabRenderer?.containsKey("content") == true
-                            Log.d("YtPlaylist", "tab $i: '$tabTitle' hasContent=$hasContent")
-                            if (hasContent) {
-                                val content = tabRenderer?.get("content") as? Map<*, *>
-                                Log.d("YtPlaylist", "tab $i content keys: ${content?.keys?.joinToString(",") ?: "null"}")
-                                if (content != null) {
-                                    content.keys.forEach { k ->
-                                        val v = content[k]
-                                        if (v is List<*>) {
-                                            Log.d("YtPlaylist", "tab $i content key '$k' is List size=${v.size}")
-                                            v.firstOrNull()?.let { first ->
-                                                if (first is Map<*, *>) {
-                                                    Log.d("YtPlaylist", "tab $i content '$k'[0] keys: ${first.keys.joinToString(",")}")
-                                                }
-                                            }
-                                        } else if (v is Map<*, *>) {
-                                            Log.d("YtPlaylist", "tab $i content key '$k' is Map with keys: ${v.keys.joinToString(",")}")
-                                            v.keys.forEach { vk ->
-                                                val vv = v[vk]
-                                                if (vv is List<*>) {
-                                                    Log.d("YtPlaylist", "tab $i content '$k'.'$vk' is List size=${vv.size}")
-                                                    val firstKeys = (vv.firstOrNull() as? Map<*, *>)?.keys?.joinToString(",")
-                                                    Log.d("YtPlaylist", "tab $i content '$k'.'$vk'[0] keys: $firstKeys")
-                                                    // Dig deeper into itemSectionRenderer contents
-                                                    if (firstKeys != null && firstKeys.contains("itemSectionRenderer")) {
-                                                        val itemSection = (vv.firstOrNull() as? Map<*, *>)?.get("itemSectionRenderer") as? Map<*, *>
-                                                        val itemSectionContents = itemSection?.get("contents") as? List<*>
-                                                        if (itemSectionContents != null) {
-                                                            Log.d("YtPlaylist", "tab $i itemSectionRenderer.contents size=${itemSectionContents.size}")
-                                                            itemSectionContents.forEachIndexed { ici, ic ->
-                                                                val icMap = ic as? Map<*, *>
-                                                                Log.d("YtPlaylist", "tab $i itemSectionRenderer.contents[$ici] keys: ${icMap?.keys?.joinToString(",") ?: "null"}")
-                                                                icMap?.keys?.forEach { ick ->
-                                                                    Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick' is ${icMap[ick]?.javaClass?.simpleName}")
-                                                                    val subMap = icMap[ick] as? Map<*, *>
-                                                                    if (subMap != null) {
-                                                                        Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick' keys: ${subMap.keys.joinToString(",")}")
-                                                                        subMap.keys.forEach { smk ->
-                                                                            val smv = subMap[smk]
-                                                                            if (smv is List<*>) {
-                                                                                Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick'.'$smk' is List size=${smv.size}")
-                                                                                val smfKeys = (smv.firstOrNull() as? Map<*, *>)?.keys?.joinToString(",")
-                                                                                Log.d("YtPlaylist", "tab $i itemsection[$ici].'$ick'.'$smk'[0] keys: $smfKeys")
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            Log.d("YtPlaylist", "tab $i content key '$k' is ${v?.javaClass?.simpleName}")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Log.w("YtPlaylist", "twoColumnBrowseResultsRenderer has no tabs list")
-                    }
-                } else {
-                    Log.w("YtPlaylist", "No twoColumnBrowseResultsRenderer under contents, contents keys: ${(data["contents"] as? Map<*, *>)?.keys?.joinToString(",") ?: (data["contents"]?.javaClass?.simpleName ?: "null")}")
-                }
-                val contentsPath = listOf(
-                    listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
-                        "tabRenderer", "content", "sectionListRenderer", "contents",
-                        "0", "itemSectionRenderer", "contents", "0",
-                        "playlistVideoListRenderer", "contents"),
-                    listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
-                        "tabRenderer", "content", "richGridRenderer", "contents"),
-                    listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
-                        "tabRenderer", "content", "sectionListRenderer", "contents",
-                        "0", "itemSectionRenderer", "contents", "0",
-                        "lockupViewModelListRenderer", "contents")
-                )
-                var contents: List<*>? = null
-                var usedPath = ""
-                for (path in contentsPath) {
-                    contents = safeGet(data, *path.toTypedArray()) as? List<*>
-                    if (contents != null) {
-                        usedPath = path.joinToString(".")
-                        Log.d("YtPlaylist", "Found contents via: $usedPath -> ${contents.size} items")
-                        break
-                    }
-                }
+                val contents = safeGet(
+                    data, "contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
+                    "tabRenderer", "content", "sectionListRenderer", "contents",
+                    "0", "itemSectionRenderer", "contents"
+                ) as? List<*>
+
                 if (contents == null) {
-                    Log.w("YtPlaylist", "No playlist contents found. data top keys: ${data.keys.joinToString(",")}")
-                    data.keys.firstOrNull()?.let { k ->
-                        Log.w("YtPlaylist", "first key '$k' preview: ${data[k].toString().take(300)}")
-                    }
+                    Log.w("YtPlaylist", "No itemSectionRenderer.contents found. data top keys: ${data.keys.joinToString(",")}")
                 }
 
                 contents?.forEachIndexed { index, item ->
                     val videoMap = item as? Map<*, *> ?: return@forEachIndexed
-                    val renderer = videoMap["playlistVideoRenderer"] as? Map<*, *>
-                        ?: (videoMap["lockupViewModel"] as? Map<*, *>)
+                    val renderer = videoMap["lockupViewModel"] as? Map<*, *>
                     if (renderer == null) {
-                        Log.w("YtPlaylist", "Item $index has neither playlistVideoRenderer nor lockupViewModel, keys: ${videoMap.keys.joinToString(",")}")
+                        Log.w("YtPlaylist", "Item $index has no lockupViewModel, keys: ${videoMap.keys.joinToString(",")}")
                         return@forEachIndexed
                     }
-                    val vId = renderer["videoId"] as? String
-                        ?: renderer["contentId"] as? String
-                    if (vId != null) {
-                        val metadata = renderer.getMapKey("metadata")?.getMapKey("lockupMetadataViewModel")
-                        val vidTitle = if (renderer.containsKey("contentId")) {
-                            getText(metadata?.getMapKey("title")).ifEmpty { "Episode ${index + 1}" }
-                        } else {
-                            extractTitle(renderer["title"] as? Map<*, *>) ?: "Episode ${index + 1}"
-                        }
-                        val thumb = if (renderer.containsKey("contentId")) {
-                            getBestThumbnail(
-                                renderer.getMapKey("contentImage")?.getMapKey("thumbnailViewModel")?.getMapKey("image")?.getListKey("sources")
-                                    ?: renderer.getMapKey("contentImage")?.getMapKey("image")?.getListKey("sources")
-                            ) ?: buildThumbnailFromId(vId)
-                        } else {
-                            getBestThumbnail(renderer["thumbnail"]) ?: buildThumbnailFromId(vId)
-                        }
-                        val vidUrl = "$mainUrl/watch?v=$vId"
-                        val durationText = extractTitle(safeGet(renderer, "lengthText") as? Map<*, *>)
-                        val durationSec = parseDurationToSeconds(durationText)
-                        Log.d("YtPlaylist", "Playlist video $index: id=$vId title=$vidTitle duration=$durationText")
-                        episodes.add(newEpisode(vidUrl) {
-                            this.name = vidTitle
-                            this.episode = index + 1
-                            this.posterUrl = thumb
-                            this.runTime = (durationSec ?: 0) / 60
-                            this.description = if (durationText != null) "Duración: $durationText" else null
-                        })
-                    }
+                    val vId = renderer["contentId"] as? String ?: return@forEachIndexed
+                    val metadata = renderer.getMapKey("metadata")?.getMapKey("lockupMetadataViewModel")
+                    val vidTitle = getText(metadata?.getMapKey("title")).ifEmpty { "Episode ${index + 1}" }
+                    val thumb = getBestThumbnail(
+                        renderer.getMapKey("contentImage")?.getMapKey("thumbnailViewModel")?.getMapKey("image")?.getListKey("sources")
+                            ?: renderer.getMapKey("contentImage")?.getMapKey("image")?.getListKey("sources")
+                    ) ?: buildThumbnailFromId(vId)
+                    val vidUrl = "$mainUrl/watch?v=$vId"
+                    Log.d("YtPlaylist", "Playlist video $index: id=$vId title=$vidTitle")
+                    episodes.add(newEpisode(vidUrl) {
+                        this.name = vidTitle
+                        this.episode = index + 1
+                        this.posterUrl = thumb
+                    })
                 }
 
                 val playlistPoster = episodes.firstOrNull()?.posterUrl ?: response.document.selectFirst("meta[property=og:image]")?.attr("content")
@@ -1451,8 +1340,6 @@ class YoutubeProvider(
 
             }
         }
-
-
 
         val videoId = url.extractYoutubeId() ?: throw ErrorLoadingException("Invalid YouTube URL")
 
