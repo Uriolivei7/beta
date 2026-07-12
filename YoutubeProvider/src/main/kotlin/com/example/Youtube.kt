@@ -1039,7 +1039,7 @@ class YoutubeProvider(
                                     Log.w("YtChannel", "richItemRenderer.content is null, richItemRenderer keys: ${map["richItemRenderer"]?.let { (it as? Map<*, *>)?.keys?.joinToString(",") }}")
                                     null
                                 } else {
-                                    val vr = content["videoRenderer"] ?: content["gridVideoRenderer"] ?: content["shortsLockupViewModel"]
+                                    val vr = content["videoRenderer"] ?: content["gridVideoRenderer"] ?: content["shortsLockupViewModel"] ?: content["lockupViewModel"]
                                     if (vr == null) {
                                         Log.w("YtChannel", "content keys WHITOUT videoRenderer: ${content.keys.joinToString(",")}")
                                         content.keys.firstOrNull()?.let { k ->
@@ -1054,26 +1054,43 @@ class YoutubeProvider(
                         }
 
                         if (videoRenderer != null) {
-                            val vId = videoRenderer["videoId"] as? String ?: return@forEach
-                            val vidTitle = extractTitle(videoRenderer["title"] as? Map<*, *>)
-                                ?: extractTitle(videoRenderer["headline"] as? Map<*, *>)
-                                ?: extractTitle(videoRenderer["shortBylineText"] as? Map<*, *>)
-                                ?: "Video"
-                            val thumb = getBestThumbnail(videoRenderer["thumbnail"]) ?: buildThumbnailFromId(vId)
-                            val vidUrl = "$mainUrl/watch?v=$vId"
-                            val viewCount = formatViews(safeGet(videoRenderer, "viewCountText", "simpleText") as? String)
-                            val publishedTime = extractTitle(safeGet(videoRenderer, "publishedTimeText") as? Map<*, *>)
-                            val durationText = extractTitle(safeGet(videoRenderer, "lengthText") as? Map<*, *>)
-                            val durationSec = parseDurationToSeconds(durationText)
-                            Log.d("YoutubeProvider", "Video $vId lengthText=$durationText durationSec=$durationSec")
-                            val finalName = if (durationText != null) "{$durationText} $vidTitle" else vidTitle
-
-                            collectTo.add(newEpisode(vidUrl) {
-                                this.name = finalName
-                                this.posterUrl = thumb
-                                this.runTime = (durationSec ?: 0) / 60
-                                this.description = listOfNotNull(viewCount, translateDateToSpanish(publishedTime)).joinToString(" • ")
-                            })
+                            val isLockup = videoRenderer.containsKey("contentId") || videoRenderer.containsKey("contentType")
+                            if (isLockup) {
+                                val vId = videoRenderer["contentId"] as? String ?: return@forEach
+                                val metadata = videoRenderer.getMapKey("metadata")?.getMapKey("lockupMetadataViewModel")
+                                val vidTitle = extractTitle(metadata?.getMapKey("title")) ?: "Video"
+                                val (channel, views) = extractLockupMetadata(videoRenderer)
+                                val thumb = getBestThumbnail(
+                                    videoRenderer.getMapKey("contentImage")?.getMapKey("thumbnailViewModel")?.getMapKey("image")?.getListKey("sources")
+                                        ?: videoRenderer.getMapKey("contentImage")?.getMapKey("image")?.getListKey("sources")
+                                ) ?: "https://i.ytimg.com/vi/$vId/hqdefault.jpg"
+                                val vidUrl = "$mainUrl/watch?v=$vId"
+                                val finalName = if (channel.isNotBlank()) "{$channel | $views} $vidTitle" else "{$views} $vidTitle"
+                                collectTo.add(newEpisode(vidUrl) {
+                                    this.name = finalName
+                                    this.posterUrl = thumb
+                                })
+                            } else {
+                                val vId = videoRenderer["videoId"] as? String ?: return@forEach
+                                val vidTitle = extractTitle(videoRenderer["title"] as? Map<*, *>)
+                                    ?: extractTitle(videoRenderer["headline"] as? Map<*, *>)
+                                    ?: extractTitle(videoRenderer["shortBylineText"] as? Map<*, *>)
+                                    ?: "Video"
+                                val thumb = getBestThumbnail(videoRenderer["thumbnail"]) ?: buildThumbnailFromId(vId)
+                                val vidUrl = "$mainUrl/watch?v=$vId"
+                                val viewCount = formatViews(safeGet(videoRenderer, "viewCountText", "simpleText") as? String)
+                                val publishedTime = extractTitle(safeGet(videoRenderer, "publishedTimeText") as? Map<*, *>)
+                                val durationText = extractTitle(safeGet(videoRenderer, "lengthText") as? Map<*, *>)
+                                val durationSec = parseDurationToSeconds(durationText)
+                                Log.d("YoutubeProvider", "Video $vId lengthText=$durationText durationSec=$durationSec")
+                                val finalName = if (durationText != null) "{$durationText} $vidTitle" else vidTitle
+                                collectTo.add(newEpisode(vidUrl) {
+                                    this.name = finalName
+                                    this.posterUrl = thumb
+                                    this.runTime = (durationSec ?: 0) / 60
+                                    this.description = listOfNotNull(viewCount, translateDateToSpanish(publishedTime)).joinToString(" • ")
+                                })
+                            }
                         }
                     }
                 }
@@ -1196,7 +1213,7 @@ class YoutubeProvider(
                     Log.w("YtChannel", "No videos yet, trying recursive search of full data tree")
                     fun findVideosRecursive(obj: Any?) {
                         if (obj is Map<*, *>) {
-                            if (obj.containsKey("videoRenderer") || obj.containsKey("gridVideoRenderer") || obj.containsKey("compactVideoRenderer")) {
+                            if (obj.containsKey("videoRenderer") || obj.containsKey("gridVideoRenderer") || obj.containsKey("compactVideoRenderer") || obj.containsKey("lockupViewModel")) {
                                 extractVideosFromItems(listOf(obj), allEpisodes)
                                 return
                             }
