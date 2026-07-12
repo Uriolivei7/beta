@@ -119,7 +119,7 @@ class TeleonlineProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val html = app.get(url, interceptor = cfKiller).text
+            val html = safeGet(url, 20000L) ?: return null
             val doc = Jsoup.parse(html)
 
             val title = doc.selectFirst(".titulo-canal-manual")?.text()
@@ -209,7 +209,7 @@ class TeleonlineProvider : MainAPI() {
 
             // Look for iframes and player links
             val doc = Jsoup.parse(mainHtml)
-            val playerUrls = doc.select("iframe[src], a[href*=/live], a[href*=.php], div[data-player] a, [data-src]")
+            val playerUrls = doc.select("iframe[src], a[href*=/live], a[href*=.php], div[data-player] a, [data-src], iframe[src*=/embed]")
                 .mapNotNull { el ->
                     when {
                         el.tagName() == "iframe" -> el.attr("src")
@@ -217,14 +217,20 @@ class TeleonlineProvider : MainAPI() {
                         else -> el.attr("href")
                     }
                 }
-                .filter { it.isNotBlank() && !it.contains("facebook") && !it.contains("twitter") }
+                .filter { it.isNotBlank() && !it.contains("facebook") && !it.contains("twitter") && !it.contains("supportiveinvoicevarnish") }
                 .distinct()
                 .map { if (it.startsWith("http")) it else "$mainUrl$it" }
+                .filter { it.startsWith("http") }
 
             Log.d("Teleonline", "playerUrls: $playerUrls")
 
             for ((idx, playerUrl) in playerUrls.withIndex()) {
                 try {
+                    if (playerUrl.contains("youtube.com") || playerUrl.contains("youtu.be")) {
+                        callback(newExtractorLink(name, "YouTube", playerUrl, ExtractorLinkType.EXTRACTOR))
+                        return true
+                    }
+
                     val playerHtml = withTimeoutOrNull(15000L) {
                         app.get(playerUrl, headers = mainHeaders + mapOf("Referer" to data), interceptor = cfKiller)
                     }?.text ?: continue
