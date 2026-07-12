@@ -1295,6 +1295,55 @@ class YoutubeProvider(
                 val description = extractTitle(safeGet(header, "description") as? Map<*, *>)
 
                 val episodes = mutableListOf<Episode>()
+                Log.d("YtPlaylist", "data contents key type: ${data["contents"]?.javaClass?.simpleName}")
+                val twoCol = safeGet(data, "contents", "twoColumnBrowseResultsRenderer") as? Map<*, *>
+                if (twoCol != null) {
+                    Log.d("YtPlaylist", "twoColumnBrowseResultsRenderer keys: ${twoCol.keys.joinToString(",")}")
+                    val tabs = twoCol["tabs"] as? List<*>
+                    if (tabs != null) {
+                        Log.d("YtPlaylist", "tabs size=${tabs.size}")
+                        tabs.forEachIndexed { i, tab ->
+                            val tabMap = tab as? Map<*, *>
+                            val tabRenderer = tabMap?.get("tabRenderer") as? Map<*, *>
+                            val tabTitle = extractTitle(safeGet(tabRenderer, "title") as? Map<*, *>) ?: "tab$i"
+                            val hasContent = tabRenderer?.containsKey("content") == true
+                            Log.d("YtPlaylist", "tab $i: '$tabTitle' hasContent=$hasContent")
+                            if (hasContent) {
+                                val content = tabRenderer?.get("content") as? Map<*, *>
+                                Log.d("YtPlaylist", "tab $i content keys: ${content?.keys?.joinToString(",") ?: "null"}")
+                                if (content != null) {
+                                    content.keys.forEach { k ->
+                                        val v = content[k]
+                                        if (v is List<*>) {
+                                            Log.d("YtPlaylist", "tab $i content key '$k' is List size=${v.size}")
+                                            v.firstOrNull()?.let { first ->
+                                                if (first is Map<*, *>) {
+                                                    Log.d("YtPlaylist", "tab $i content '$k'[0] keys: ${first.keys.joinToString(",")}")
+                                                }
+                                            }
+                                        } else if (v is Map<*, *>) {
+                                            Log.d("YtPlaylist", "tab $i content key '$k' is Map with keys: ${v.keys.joinToString(",")}")
+                                            v.keys.forEach { vk ->
+                                                val vv = v[vk]
+                                                if (vv is List<*>) {
+                                                    Log.d("YtPlaylist", "tab $i content '$k'.'$vk' is List size=${vv.size}")
+                                                    val firstKeys = (vv.firstOrNull() as? Map<*, *>)?.keys?.joinToString(",")
+                                                    Log.d("YtPlaylist", "tab $i content '$k'.'$vk'[0] keys: $firstKeys")
+                                                }
+                                            }
+                                        } else {
+                                            Log.d("YtPlaylist", "tab $i content key '$k' is ${v?.javaClass?.simpleName}")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Log.w("YtPlaylist", "twoColumnBrowseResultsRenderer has no tabs list")
+                    }
+                } else {
+                    Log.w("YtPlaylist", "No twoColumnBrowseResultsRenderer under contents, contents keys: ${(data["contents"] as? Map<*, *>)?.keys?.joinToString(",") ?: (data["contents"]?.javaClass?.simpleName ?: "null")}")
+                }
                 val contentsPath = listOf(
                     listOf("contents", "twoColumnBrowseResultsRenderer", "tabs", "0",
                         "tabRenderer", "content", "sectionListRenderer", "contents",
