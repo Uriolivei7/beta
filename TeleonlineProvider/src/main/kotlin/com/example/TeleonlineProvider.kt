@@ -227,7 +227,7 @@ class TeleonlineProvider : MainAPI() {
             for ((idx, playerUrl) in playerUrls.withIndex()) {
                 try {
                     if (playerUrl.contains("youtube.com") || playerUrl.contains("youtu.be")) {
-                        callback(newExtractorLink(name, "YouTube", playerUrl, ExtractorLinkType.EXTRACTOR))
+                        callback(newExtractorLink(name, "YouTube", playerUrl, ExtractorLinkType.M3U8))
                         return true
                     }
 
