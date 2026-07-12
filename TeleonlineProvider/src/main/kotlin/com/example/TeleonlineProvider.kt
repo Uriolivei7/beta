@@ -227,7 +227,9 @@ class TeleonlineProvider : MainAPI() {
             for ((idx, playerUrl) in playerUrls.withIndex()) {
                 try {
                     if (playerUrl.contains("youtube.com") || playerUrl.contains("youtu.be")) {
-                        callback(newExtractorLink(name, "YouTube", playerUrl, ExtractorLinkType.M3U8))
+                        val ytId = Regex("""embed/([^/?]+)""").find(playerUrl)?.groupValues?.get(1)
+                        val ytUrl = if (ytId != null) "https://www.youtube.com/watch?v=$ytId" else playerUrl
+                        callback(newExtractorLink(name, "YouTube", ytUrl, ExtractorLinkType.M3U8))
                         return true
                     }
 
