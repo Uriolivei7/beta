@@ -1066,12 +1066,19 @@ class YoutubeProvider(
                 }
 
                 fun extractItemsFromTabContent(content: Map<*, *>): List<*>? {
-                    if (content.containsKey("richGridRenderer"))
-                        return safeGet(content, "richGridRenderer", "contents") as? List<*>
-                    if (content.containsKey("gridRenderer"))
-                        return safeGet(content, "gridRenderer", "items") as? List<*>
+                    if (content.containsKey("richGridRenderer")) {
+                        val items = safeGet(content, "richGridRenderer", "contents") as? List<*>
+                        Log.d("YtChannel", "extractItems: richGridRenderer -> ${items?.size ?: 0} items")
+                        return items
+                    }
+                    if (content.containsKey("gridRenderer")) {
+                        val items = safeGet(content, "gridRenderer", "items") as? List<*>
+                        Log.d("YtChannel", "extractItems: gridRenderer -> ${items?.size ?: 0} items")
+                        return items
+                    }
                     if (content.containsKey("sectionListRenderer")) {
                         val sectionItems = safeGet(content, "sectionListRenderer", "contents") as? List<*>
+                        Log.d("YtChannel", "extractItems: sectionListRenderer -> ${sectionItems?.size ?: 0} section items")
                         if (sectionItems != null) {
                             val flattened = mutableListOf<Map<*, *>>()
                             for (item in sectionItems) {
@@ -1092,8 +1099,15 @@ class YoutubeProvider(
                                     }
                                 }
                             }
+                            Log.d("YtChannel", "extractItems: sectionListRenderer flattened -> ${flattened.size} items")
                             return flattened
                         }
+                    }
+                    Log.w("YtChannel", "extractItems: UNKNOWN content keys: ${content.keys.joinToString(",")}")
+                    // Log first key's value type to help diagnose
+                    content.keys.firstOrNull()?.let { k ->
+                        val v = content[k]
+                        Log.w("YtChannel", "extractItems: first key '$k' is ${v?.javaClass?.simpleName} : ${v.toString().take(300)}")
                     }
                     return null
                 }
@@ -1107,16 +1121,28 @@ class YoutubeProvider(
                         val tabRenderer = tabMap?.get("tabRenderer") as? Map<*, *>
                         val tabTitle = extractTitle(safeGet(tabRenderer, "title") as? Map<*, *>) ?: "tab$tabIdx"
                         val hasContent = tabRenderer?.containsKey("content") == true
-                        Log.d("YtChannel", "Tab $tabIdx: '$tabTitle' hasContent=$hasContent")
+                        Log.d("YtChannel", "Tab $tabIdx: '$tabTitle' hasContent=$hasContent selected=${tabRenderer?.get("selected")}")
                         val content = tabRenderer?.get("content") as? Map<*, *>
                         if (content != null) {
                             val foundKeys = content.keys.joinToString(",")
                             Log.d("YtChannel", "Tab $tabIdx content keys: $foundKeys")
+                            // Log first 200 chars of first content value to understand structure
+                            content.keys.firstOrNull()?.let { firstKey ->
+                                val firstVal = content[firstKey]
+                                Log.d("YtChannel", "Tab $tabIdx firstKey='$firstKey' type=${firstVal?.javaClass?.simpleName}")
+                            }
                             initialItems = extractItemsFromTabContent(content)
                             Log.d("YtChannel", "Tab $tabIdx extractItems: ${initialItems?.size ?: 0} items")
-                            if (initialItems != null) break
+                            if (initialItems != null) {
+                                Log.d("YtChannel", "Tab $tabIdx first item keys: ${(initialItems!!.firstOrNull() as? Map<*, *>)?.keys?.joinToString(",") ?: "null"}")
+                                break
+                            }
+                        } else {
+                            Log.d("YtChannel", "Tab $tabIdx NO content - tabRenderer keys: ${tabRenderer?.keys?.joinToString(",") ?: "null"}")
                         }
                     }
+                } else {
+                    Log.w("YtChannel", "No tabs array found. data keys under twoColumnBrowseResultsRenderer: ${safeGet(data, "contents", "twoColumnBrowseResultsRenderer")?.let { (it as? Map<*, *>)?.keys?.joinToString(",") ?: "not a map" }}")
                 }
 
                 // Si no se encontraron videos con /videos, intentar sin /videos
