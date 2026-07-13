@@ -387,12 +387,9 @@ class PandramaProvider : MainAPI() {
                             found = true
                         }
                         video.type == "embed" || video.type == "url" -> {
-                            val langCallback: (ExtractorLink) -> Unit = { link ->
-                                callback.invoke(newExtractorLink("${link.name}$langSuffix", "${link.name}$langSuffix", link.url))
-                            }
                             val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
                             if (hasExtractor) {
-                                found = loadExtractor(cleanSrc, data, subtitleCallback, langCallback) || found
+                                found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
                             } else {
                                 try {
                                     val embedHtml = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")).text
@@ -405,10 +402,10 @@ class PandramaProvider : MainAPI() {
                                         })
                                         found = true
                                     } else {
-                                        found = loadExtractor(cleanSrc, data, subtitleCallback, langCallback) || found
+                                        found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
                                     }
                                 } catch (e: Exception) {
-                                    found = loadExtractor(cleanSrc, data, subtitleCallback, langCallback) || found
+                                    found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
                                 }
                             }
                         }
