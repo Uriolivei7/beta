@@ -171,55 +171,66 @@ class DanimadosProvider : MainAPI() {
         }
         Log.d("Danimados", "loadLinks: resolved ajaxUrl=$ajaxUrl")
 
-        val postId = doc.selectFirst("#player-option-1")?.attr("data-post")
-            ?: doc.selectFirst(".dooplay_player_option")?.attr("data-post")
-        Log.d("Danimados", "loadLinks: postId=$postId")
-        if (postId == null) {
-            Log.d("Danimados", "loadLinks: NO POST ID - player options=${doc.select(".dooplay_player_option").size}")
+        val playerOptions = doc.select(".dooplay_player_option")
+        Log.d("Danimados", "loadLinks: player options count=${playerOptions.size}")
+        if (playerOptions.isEmpty()) {
+            Log.d("Danimados", "loadLinks: NO player options found")
             return false
         }
 
-        val playerResp = app.post(
-            ajaxUrl,
-            headers = mapOf(
-                "X-Requested-With" to "XMLHttpRequest",
-                "Accept" to "*/*",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "Referer" to data,
-            ),
-            data = mapOf(
-                "action" to "doo_player_ajax",
-                "post" to postId,
-                "nume" to "1",
-                "type" to "tv",
-            )
-        ).parsedSafe<PlayerResponse>()
-        Log.d("Danimados", "loadLinks: playerResp=$playerResp")
-        if (playerResp == null) return false
+        // Try each player option (nume=1,2,3,...) until one works
+        for (option in playerOptions) {
+            val postId = option.attr("data-post")
+            val nume = option.attr("data-nume").toIntOrNull() ?: 1
+            val type = option.attr("data-type").ifBlank { "tv" }
+            Log.d("Danimados", "loadLinks: trying player nume=$nume postId=$postId type=$type")
 
-        val embedHtml = playerResp.embedUrl ?: run {
-            Log.d("Danimados", "loadLinks: no embedUrl in response")
-            return false
-        }
-        Log.d("Danimados", "loadLinks: embedHtml=${embedHtml.take(400)}")
+            val playerResp = app.post(
+                ajaxUrl,
+                headers = mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "*/*",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Referer" to data,
+                ),
+                data = mapOf(
+                    "action" to "doo_player_ajax",
+                    "post" to postId,
+                    "nume" to nume.toString(),
+                    "type" to type,
+                )
+            ).parsedSafe<PlayerResponse>()
+            if (playerResp == null) {
+                Log.d("Danimados", "loadLinks: player nume=$nume returned null response")
+                continue
+            }
+            val embedHtml = playerResp.embedUrl ?: continue
+            Log.d("Danimados", "loadLinks: embedHtml (nume=$nume)=${embedHtml.take(400)}")
 
-        val videoUrl = if (embedHtml.startsWith("http://") || embedHtml.startsWith("https://")) {
-            embedHtml
-        } else {
-            Regex("""src=["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
-        }
-        Log.d("Danimados", "loadLinks: videoUrl=$videoUrl")
-        if (videoUrl != null && videoUrl.isNotBlank()) {
-            Log.d("Danimados", "loadLinks: calling loadExtractor with $videoUrl")
+            val videoUrl = if (embedHtml.startsWith("http://") || embedHtml.startsWith("https://")) {
+                embedHtml
+            } else {
+                Regex("""src=["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+            }
+            if (videoUrl.isNullOrBlank()) continue
+            Log.d("Danimados", "loadLinks: trying videoUrl=$videoUrl")
+
+            // Try loadExtractor first
             val extracted = loadExtractor(videoUrl, data, subtitleCallback, callback)
-            Log.d("Danimados", "loadLinks: loadExtractor returned $extracted")
+            Log.d("Danimados", "loadLinks: loadExtractor returned $extracted for nume=$nume")
             if (extracted) return true
-            Log.d("Danimados", "loadLinks: loadExtractor failed, trying direct fetch of $videoUrl")
+
+            // Fallback: try direct fetch with anti-adblock headers
+            Log.d("Danimados", "loadLinks: trying direct fetch of $videoUrl")
             try {
-                val embedResp = app.get(videoUrl, headers = browserHeaders)
+                val embedResp = app.get(videoUrl, headers = browserHeaders + mapOf(
+                    "Referer" to data,
+                    "Accept" to "*/*",
+                ))
                 Log.d("Danimados", "loadLinks: embed page code=${embedResp.code}, len=${embedResp.text.length}")
-                Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(500)}")
-                val directSrc = Regex("""(?:src|file|source)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
+                Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(1000)}")
+                // Search for common video source patterns in JS/data
+                val directSrc = Regex("""(?:src|file|source|url|link)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
                 if (directSrc != null) {
                     Log.d("Danimados", "loadLinks: found direct source $directSrc")
@@ -233,13 +244,32 @@ class DanimadosProvider : MainAPI() {
                     ))
                     return true
                 }
+                // Also try base64-encoded sources
+                val b64Match = Regex("""(?:src|file|source|url)\s*[=:]\s*["']([A-Za-z0-9+/=]{20,})["']""",
+                    RegexOption.IGNORE_CASE).find(embedResp.text)
+                if (b64Match != null) {
+                    val decoded = try {
+                        String(android.util.Base64.decode(b64Match.groupValues[1], android.util.Base64.DEFAULT))
+                    } catch (_: Exception) { null }
+                    if (decoded?.contains("m3u8") == true || decoded?.contains("mp4") == true) {
+                        Log.d("Danimados", "loadLinks: found base64 source $decoded")
+                        callback.invoke(ExtractorLink(
+                            source = name,
+                            name = name,
+                            url = decoded,
+                            type = ExtractorLinkType.M3U8,
+                            quality = 720,
+                            referer = videoUrl,
+                        ))
+                        return true
+                    }
+                }
             } catch (e: Exception) {
                 Log.d("Danimados", "loadLinks: direct fetch failed: ${e.message}")
             }
-            return false
         }
 
-        Log.d("Danimados", "loadLinks: failed to extract video URL")
+        Log.d("Danimados", "loadLinks: all player options exhausted")
         return false
     }
 
