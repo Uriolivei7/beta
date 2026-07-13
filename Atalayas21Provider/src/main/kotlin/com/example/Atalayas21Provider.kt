@@ -213,10 +213,9 @@ class Atalayas21Provider : MainAPI() {
 
     private fun cleanEpisodeTitle(raw: String): String {
         val parts = raw.split(" - ")
-        if (parts.size <= 1) return raw
-        val last = parts.last().trim()
-        if (last.isNotEmpty()) return last
-        return raw
+        val last = if (parts.size > 1) parts.last().trim() else raw.trim()
+        if (last.isEmpty() || last.matches(Regex("""\d+x\d+"""))) return ""
+        return last
     }
 
     private suspend fun handleVideoUrl(
