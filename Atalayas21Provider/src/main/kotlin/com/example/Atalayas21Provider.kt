@@ -132,10 +132,12 @@ class Atalayas21Provider : MainAPI() {
         val resp = parseJson<ApiResponse<List<SerieItem>>>(json)
         val serie = resp.data?.firstOrNull() ?: throw ErrorLoadingException("Serie no encontrada")
 
-        val epJson = app.get("$BASE_URL/api/episodios.php?serie_id=$id&limit=500", headers = apiHeaders).text
+        val epJson = app.get("$BASE_URL/api/episodios.php?serie_id=$id&get_seasons=true", headers = apiHeaders).text
         val epResp = parseJson<ApiResponse<List<EpisodeItem>>>(epJson)
-        val seasons = epResp.seasons?.ifEmpty { listOf(1) } ?: listOf(1)
         val allEps = epResp.data ?: emptyList()
+        val seasons = epResp.seasons?.ifEmpty { null }
+            ?: allEps.mapNotNull { it.temporada }.distinct().sorted()
+            ?: listOf(1)
 
         val episodes = mutableListOf<Episode>()
         for (season in seasons) {
@@ -143,10 +145,10 @@ class Atalayas21Provider : MainAPI() {
                 .sortedBy { it.numeroEpisodio ?: it.numero ?: 0 }
             for (ep in seasonEps) {
                 val epNum = ep.numeroEpisodio ?: ep.numero ?: 0
-                val epTitle = ep.titulo ?: ep.title ?: "Episodio $epNum"
+                val epTitle = cleanEpisodeTitle(ep.titulo ?: ep.title ?: "")
                 episodes.add(
                     newEpisode("$BASE_URL/api/episodios.php?id=${ep.id}") {
-                        this.name = epTitle
+                        this.name = epTitle.ifEmpty { "Episodio $epNum" }
                         this.season = season
                         this.episode = epNum
                         this.posterUrl = ep.imagenUrl?.let { fixUrl(it) }
@@ -208,6 +210,14 @@ class Atalayas21Provider : MainAPI() {
         }
 
         return found
+    }
+
+    private fun cleanEpisodeTitle(raw: String): String {
+        val parts = raw.split(" - ")
+        if (parts.size <= 1) return raw
+        val last = parts.last().trim()
+        if (last.isNotEmpty()) return last
+        return raw
     }
 
     private suspend fun handleVideoUrl(
