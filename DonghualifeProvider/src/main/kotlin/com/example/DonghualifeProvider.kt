@@ -112,7 +112,7 @@ class DonghualifeProvider : MainAPI() {
 
         if (doc.selectFirst(".view-empty") != null) return emptyList()
 
-        val allItems = doc.select(".views-row .serie, .views-row .movie")
+        val allItems = doc.select(".region-content .views-row .serie, .region-content .views-row .movie")
 
         return allItems.mapNotNull { parseListingItem(it) }
     }
