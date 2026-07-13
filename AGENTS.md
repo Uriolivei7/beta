@@ -134,6 +134,25 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - `JioHotstarProvider.kt` — player.php primary, playlist.php fallback
 - `Utils.kt` — `bypass()`, `getNewTvUserToken()`, `resolveApiUrl()`, `newTvBaseHeaders`, `m3u8CdnFixInterceptor()`, `NetflixMirrorStorage`
 - `PlutotvProvider/PlutotvProvider.kt` — PlutoTV provider (separado)
+- `PandramaProvider/` — Provider para pandrama.tv (Inertia.js SPA)
+
+## Providers actualizados recientemente
+| Provider | Fecha | Cambio |
+|----------|-------|--------|
+| `YoutubeProvider/Youtube.kt` | 12 Jul | Channel y playlist: lockupViewModel |
+| `MundodonghuaProvider` | 12 Jul | Rewrite v4.0.4 + search URL fix |
+| `DonghualifeProvider` | 12 Jul | Search fix + RumbleExtractor |
+| `PandramaProvider` | 12 Jul | Rewrite completo: channel model, episode URLs, loadLinks via page data |
+
+## PandramaProvider — Estructura
+- **Arquitectura**: Laravel + Inertia.js (Vue SPA). Datos embedidos en `window.bootstrapData = {...}` dentro de `<script>`
+- **Main page**: `/dramas`, `/peliculas` → parsea `loaders.channelPage.channels[].content.data[]`
+- **Search**: `/search/{query}` → `loaders.searchPage.results[]`
+- **Load (detalle)**: `/titulo/{id}/{slug}` → `loaders.titlePage.episodes.data[]` + `loaders.titlePage.title`
+- **loadLinks (video)**: `/titulo/{id}/{slug}/temporada/{season}/episodio/{epNum}` → `loaders.episodePage.current_video.src`
+- **Tipos de video**: `embed` (OK.ru, VK, YouTube, Dailymotion), `video/stream` (HLS/DASH directo), `shaka` (DRM)
+- **Subtítulos**: `current_video.captions[]` con url, name, language
+- **No usa API** (`/api/*` retorna 401) — todo se obtiene del JSON embedido en HTML
 
 ## Next Steps
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
