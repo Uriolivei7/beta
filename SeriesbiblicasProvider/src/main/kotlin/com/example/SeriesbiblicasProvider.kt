@@ -19,7 +19,7 @@ class SeriesbiblicasProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Cartoon)
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Cartoon)
 
     override val mainPage = mainPageOf("/" to "Todas las Series")
 

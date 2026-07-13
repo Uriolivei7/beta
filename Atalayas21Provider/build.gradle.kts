@@ -7,7 +7,7 @@ cloudstream {
 
     status = 1
 
-    tvTypes = listOf("AsianDrama")
+    tvTypes = listOf("TvSeries")
 
     iconUrl = "https://atalayas21.com/favicon.ico"
 }
