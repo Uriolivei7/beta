@@ -4,6 +4,7 @@ import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.nodes.Element
@@ -210,7 +211,32 @@ class DanimadosProvider : MainAPI() {
         Log.d("Danimados", "loadLinks: videoUrl=$videoUrl")
         if (videoUrl != null && videoUrl.isNotBlank()) {
             Log.d("Danimados", "loadLinks: calling loadExtractor with $videoUrl")
-            return loadExtractor(videoUrl, data, subtitleCallback, callback)
+            val extracted = loadExtractor(videoUrl, data, subtitleCallback, callback)
+            Log.d("Danimados", "loadLinks: loadExtractor returned $extracted")
+            if (extracted) return true
+            Log.d("Danimados", "loadLinks: loadExtractor failed, trying direct fetch of $videoUrl")
+            try {
+                val embedResp = app.get(videoUrl, headers = browserHeaders)
+                Log.d("Danimados", "loadLinks: embed page code=${embedResp.code}, len=${embedResp.text.length}")
+                Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(500)}")
+                val directSrc = Regex("""(?:src|file|source)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
+                    RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
+                if (directSrc != null) {
+                    Log.d("Danimados", "loadLinks: found direct source $directSrc")
+                    callback.invoke(ExtractorLink(
+                        source = name,
+                        name = name,
+                        url = if (directSrc.startsWith("http")) directSrc else "https:$directSrc",
+                        type = ExtractorLinkType.M3U8,
+                        quality = 720,
+                        referer = videoUrl,
+                    ))
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.d("Danimados", "loadLinks: direct fetch failed: ${e.message}")
+            }
+            return false
         }
 
         Log.d("Danimados", "loadLinks: failed to extract video URL")
