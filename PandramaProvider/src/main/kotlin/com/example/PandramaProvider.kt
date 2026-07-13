@@ -62,7 +62,8 @@ class PandramaProvider : MainAPI() {
         @JsonProperty("is_series") var isSeries: Boolean? = null,
         @JsonProperty("episodes_count") var episodesCount: Int? = null,
         @JsonProperty("rating") var rating: Double? = null,
-        @JsonProperty("status") var status: String? = null
+        @JsonProperty("status") var status: String? = null,
+        @JsonProperty("model_type") var modelType: String? = null
     )
 
     data class SearchPageData(
@@ -205,7 +206,7 @@ class PandramaProvider : MainAPI() {
 
                     val channel = bootstrap.loaders?.channelPage?.channel ?: continue
                     val titles = channel.content?.data?.filter {
-                        it.id != null && it.name != null
+                        it.id != null && it.name != null && (it.modelType == null || it.modelType == "title")
                     }?.take(20) ?: continue
 
                     val searchItems = titles.mapNotNull { info ->
@@ -249,6 +250,7 @@ class PandramaProvider : MainAPI() {
 
             val results = bootstrap.loaders?.searchPage?.results
             results?.forEach { title ->
+                if (title.modelType != null && title.modelType != "title") return@forEach
                 val id = title.id ?: return@forEach
                 val slug = title.slug ?: title.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: return@forEach
                 val url = "$mainUrl/titulo/$id/$slug"
@@ -258,19 +260,6 @@ class PandramaProvider : MainAPI() {
                 else
                     newAnimeSearchResponse(title.name ?: "Unknown", url, TvType.AsianDrama) { this.posterUrl = getImageUrl(title.poster) }
                 )
-            }
-
-            if (search.isEmpty()) {
-                bootstrap.loaders?.searchPage?.trendingTitles?.forEach { title ->
-                    val id = title.id ?: return@forEach
-                    val slug = title.slug ?: title.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: return@forEach
-                    val url = "$mainUrl/titulo/$id/$slug"
-                    if (search.none { it.url == url }) {
-                        search.add(newAnimeSearchResponse(title.name ?: "Unknown", url, TvType.AsianDrama) {
-                            this.posterUrl = getImageUrl(title.poster)
-                        })
-                    }
-                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "search error: ${e.message}")
@@ -398,9 +387,12 @@ class PandramaProvider : MainAPI() {
                             found = true
                         }
                         video.type == "embed" || video.type == "url" -> {
+                            val langCallback: (ExtractorLink) -> Unit = { link ->
+                                callback.invoke(newExtractorLink("${link.name}$langSuffix", "${link.name}$langSuffix", link.url))
+                            }
                             val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
                             if (hasExtractor) {
-                                found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                found = loadExtractor(cleanSrc, data, subtitleCallback, langCallback) || found
                             } else {
                                 try {
                                     val embedHtml = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")).text
@@ -413,10 +405,10 @@ class PandramaProvider : MainAPI() {
                                         })
                                         found = true
                                     } else {
-                                        found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                        found = loadExtractor(cleanSrc, data, subtitleCallback, langCallback) || found
                                     }
                                 } catch (e: Exception) {
-                                    found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                    found = loadExtractor(cleanSrc, data, subtitleCallback, langCallback) || found
                                 }
                             }
                         }
