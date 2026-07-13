@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.nodes.Element
 
 class DanimadosProvider : MainAPI() {
@@ -68,9 +69,34 @@ class DanimadosProvider : MainAPI() {
         val resp = app.get("$BASE_URL/?s=$query", headers = browserHeaders)
         Log.d("Danimados", "search: code=${resp.code}, html.len=${resp.text.length}")
         val doc = resp.document
-        val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
-        Log.d("Danimados", "search: found ${items.size} items")
-        return items.ifEmpty { null }
+        Log.d("Danimados", "search: title=${doc.title()}")
+        Log.d("Danimados", "search: article.item=${doc.select("article.item").size}")
+        Log.d("Danimados", "search: article=${doc.select("article").size}")
+        Log.d("Danimados", "search: .item=${doc.select(".item").size}")
+        Log.d("Danimados", "search: .result-item=${doc.select(".result-item").size}")
+
+        // Try common Dooplay result selectors
+        val results = mutableListOf<SearchResponse>()
+        for (selector in listOf("article.item.tvshows", "article.item", ".result-item", ".search-item")) {
+            val found = doc.select(selector).mapNotNull { it.toSearchResponse() }
+            results.addAll(found)
+            if (results.isNotEmpty()) break
+        }
+
+        // Fallback: parse any article with series link
+        if (results.isEmpty()) {
+            for (article in doc.select("article")) {
+                val link = article.select(".data h3 a, h3 a, a[href*='/series/']").first() ?: continue
+                val href = link.attr("abs:href")
+                val title = link.text().trim()
+                if (title.isBlank() || !href.contains("/series/")) continue
+                val poster = article.select("img").first()?.attr("src")?.let { fixUrl(it) }
+                results.add(newMovieSearchResponse(title, href, TvType.Cartoon) { this.posterUrl = poster })
+            }
+        }
+
+        Log.d("Danimados", "search: found ${results.size} items")
+        return results.ifEmpty { null }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -175,16 +201,20 @@ class DanimadosProvider : MainAPI() {
             Log.d("Danimados", "loadLinks: no embedUrl in response")
             return false
         }
-        Log.d("Danimados", "loadLinks: embedHtml=${embedHtml.take(300)}")
+        Log.d("Danimados", "loadLinks: embedHtml=${embedHtml.take(400)}")
 
-        val iframeSrc = Regex("""src=["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
-        Log.d("Danimados", "loadLinks: iframeSrc=$iframeSrc")
-        if (iframeSrc != null && iframeSrc.isNotBlank()) {
-            Log.d("Danimados", "loadLinks: calling loadExtractor with $iframeSrc")
-            return loadExtractor(iframeSrc, data, subtitleCallback, callback)
+        val videoUrl = if (embedHtml.startsWith("http://") || embedHtml.startsWith("https://")) {
+            embedHtml
+        } else {
+            Regex("""src=["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+        }
+        Log.d("Danimados", "loadLinks: videoUrl=$videoUrl")
+        if (videoUrl != null && videoUrl.isNotBlank()) {
+            Log.d("Danimados", "loadLinks: calling loadExtractor with $videoUrl")
+            return loadExtractor(videoUrl, data, subtitleCallback, callback)
         }
 
-        Log.d("Danimados", "loadLinks: failed to extract iframe src")
+        Log.d("Danimados", "loadLinks: failed to extract video URL")
         return false
     }
 
@@ -244,9 +274,9 @@ class DanimadosProvider : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val link = select(".data h3 a[href*='/series/']").first()
+        val link = select(".data h3 a[href*='/series/'], h3 a[href*='/series/'], a[href*='/series/']").first()
         if (link == null) {
-            Log.d("Danimados", "toSearchResponse: no .data h3 link in ${this.className()} #${this.id()}")
+            Log.d("Danimados", "toSearchResponse: no series link in ${this.className()} #${this.id()}")
             return null
         }
         val href = link.attr("abs:href")
@@ -255,8 +285,9 @@ class DanimadosProvider : MainAPI() {
             Log.d("Danimados", "toSearchResponse: blank title for href=$href")
             return null
         }
+        if (!href.contains("/series/")) return null
         val poster = select("img").first()?.attr("src")?.let { fixUrl(it) }
-        val year = select(".data span").first()?.text()?.let { extractYear(it) }
+        val year = select(".data span, .year, span.date").first()?.text()?.let { extractYear(it) }
         val rating = select(".rating").first()?.text()?.toDoubleOrNull()
 
         return newMovieSearchResponse(title, href, TvType.Cartoon) {
