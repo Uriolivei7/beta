@@ -27,7 +27,9 @@ class DanimadosProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Cartoon, TvType.TvSeries)
 
     override val mainPage = mainPageOf(
-        "/" to "Últimas",
+        "/" to "Últimas Series Agregadas",
+        "/genero/60s/" to "Años 60",
+        "/genero/70s/" to "Años 70",
         "/genero/80s/" to "Años 80",
         "/genero/90s/" to "Años 90",
         "/genero/00s/" to "Años 2000",
@@ -75,7 +77,6 @@ class DanimadosProvider : MainAPI() {
         Log.d("Danimados", "search: .item=${doc.select(".item").size}")
         Log.d("Danimados", "search: .result-item=${doc.select(".result-item").size}")
 
-        // Try common Dooplay result selectors
         val results = mutableListOf<SearchResponse>()
         for (selector in listOf("article.item.tvshows", "article.item", ".result-item", ".search-item")) {
             val found = doc.select(selector).mapNotNull { it.toSearchResponse() }
@@ -83,10 +84,11 @@ class DanimadosProvider : MainAPI() {
             if (results.isNotEmpty()) break
         }
 
-        // Fallback: parse any article with series link
         if (results.isEmpty()) {
             for (article in doc.select("article")) {
-                val link = article.select(".data h3 a, h3 a, a[href*='/series/']").first() ?: continue
+                val link = article.select(".data h3 a[href*='/series/']").first()
+                    ?: article.select("h3 a[href*='/series/']").first()
+                    ?: article.select("a[href*='/series/']").first() ?: continue
                 val href = link.attr("abs:href")
                 val title = link.text().trim()
                 if (title.isBlank() || !href.contains("/series/")) continue
@@ -154,7 +156,6 @@ class DanimadosProvider : MainAPI() {
         Log.d("Danimados", "loadLinks: code=${resp.code}, html.len=${resp.text.length}")
         val doc = resp.document
 
-        // Get admin-ajax.php URL
         val ajaxScript = doc.selectFirst("#dt_main_ajax-js-extra")
         val ajaxUrl = if (ajaxScript != null) {
             val html = ajaxScript.html()
@@ -169,7 +170,6 @@ class DanimadosProvider : MainAPI() {
         }
         Log.d("Danimados", "loadLinks: resolved ajaxUrl=$ajaxUrl")
 
-        // Get post ID from player option
         val postId = doc.selectFirst("#player-option-1")?.attr("data-post")
             ?: doc.selectFirst(".dooplay_player_option")?.attr("data-post")
         Log.d("Danimados", "loadLinks: postId=$postId")
@@ -178,7 +178,6 @@ class DanimadosProvider : MainAPI() {
             return false
         }
 
-        // POST to admin-ajax.php
         val playerResp = app.post(
             ajaxUrl,
             headers = mapOf(
@@ -224,7 +223,6 @@ class DanimadosProvider : MainAPI() {
         Log.d("Danimados", "extractEpisodes: #seasons size=${doc.select("#seasons").size}")
         Log.d("Danimados", "extractEpisodes: .se-c size=${doc.select("#seasons > .se-c").size}")
 
-        // Dooplay #seasons .se-c structure
         val seasonContainers = doc.select("#seasons > .se-c")
         if (seasonContainers.isNotEmpty()) {
             for (seasonContainer in seasonContainers) {
@@ -251,7 +249,6 @@ class DanimadosProvider : MainAPI() {
             return episodes
         }
 
-        // Fallback: flat episodios list
         val flatEps = doc.select("#seasons .se-a ul.episodios > li")
         for ((ei, li) in flatEps.withIndex()) {
             val link = li.selectFirst(".episodiotitle a") ?: continue
@@ -274,17 +271,19 @@ class DanimadosProvider : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val link = select(".data h3 a[href*='/series/']").first()
+        val titleEl = select(".data h3 a[href*='/series/']").first()
             ?: select("h3 a[href*='/series/']").first()
-            ?: select("a[href*='/series/']").first()
-        if (link == null) {
-            Log.d("Danimados", "toSearchResponse: no series link in ${this.className()} #${this.id()}")
+            ?: select(".title").first()
+        if (titleEl == null) {
+            Log.d("Danimados", "toSearchResponse: no title element in ${this.className()} #${this.id()}")
             return null
         }
-        val href = link.attr("abs:href")
-        val title = link.text().trim()
+        val linkEl = if (titleEl.tagName() == "a") titleEl
+            else titleEl.selectFirst("a[href*='/series/']") ?: titleEl.closest("a[href*='/series/']")
+        val href = linkEl?.attr("abs:href") ?: titleEl.attr("abs:href")
+        val title = titleEl.text().trim()
         if (title.isBlank()) {
-            Log.d("Danimados", "toSearchResponse: blank title for href=$href, element=${link.className()}")
+            Log.d("Danimados", "toSearchResponse: blank title for href=$href")
             return null
         }
         if (!href.contains("/series/")) return null
@@ -292,6 +291,7 @@ class DanimadosProvider : MainAPI() {
         val year = select(".data span, .year, span.date").first()?.text()?.let { extractYear(it) }
         val rating = select(".rating").first()?.text()?.toDoubleOrNull()
 
+        Log.d("Danimados", "toSearchResponse: title=$title href=$href")
         return newMovieSearchResponse(title, href, TvType.Cartoon) {
             this.posterUrl = poster
             this.year = year
