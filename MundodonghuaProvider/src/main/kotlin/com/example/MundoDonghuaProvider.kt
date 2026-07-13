@@ -64,7 +64,7 @@ class MundoDonghuaProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl/busquedas/?donghua=$query", timeout = 120).document.select("div.md-card-grid div.md-card > a").mapNotNull {
+        return app.get("$mainUrl/busquedas/$query", timeout = 120).document.select("div.md-card-grid div.md-card > a").mapNotNull {
             val title = it.selectFirst(".md-card-title")?.text() ?: return@mapNotNull null
             val href = fixUrl(it.attr("href"))
             val image = it.selectFirst(".md-card-img img")?.attr("src")
