@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -40,10 +41,21 @@ class DanimadosProvider : MainAPI() {
         } else {
             "${mainUrl}${request.data.removeSuffix("/")}/page/$page/"
         }
-        val doc = app.get(url, headers = browserHeaders).document
+        Log.d("Danimados", "getMainPage: name=${request.name}, url=$url, page=$page")
+        val resp = app.get(url, headers = browserHeaders)
+        Log.d("Danimados", "getMainPage: code=${resp.code}, html.len=${resp.text.length}")
+        val doc = resp.document
+        Log.d("Danimados", "getMainPage: title=${doc.title()}")
 
         val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
-        if (items.isEmpty()) return null
+        Log.d("Danimados", "getMainPage: found ${items.size} items")
+        if (items.isEmpty()) {
+            Log.d("Danimados", "getMainPage: NO ITEMS - checking raw selectors...")
+            Log.d("Danimados", "getMainPage: article.tvshows=${doc.select("article.item").size}")
+            Log.d("Danimados", "getMainPage: any article=${doc.select("article").size}")
+            Log.d("Danimados", "getMainPage: body length=${doc.html().length}")
+            return null
+        }
 
         return newHomePageResponse(
             list = HomePageList(request.name, items),
@@ -52,21 +64,31 @@ class DanimadosProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        val doc = app.get("$BASE_URL/?s=$query", headers = browserHeaders).document
+        Log.d("Danimados", "search: query=$query")
+        val resp = app.get("$BASE_URL/?s=$query", headers = browserHeaders)
+        Log.d("Danimados", "search: code=${resp.code}, html.len=${resp.text.length}")
+        val doc = resp.document
         val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
+        Log.d("Danimados", "search: found ${items.size} items")
         return items.ifEmpty { null }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = app.get(url, headers = browserHeaders).document
+        Log.d("Danimados", "load: url=$url")
+        val resp = app.get(url, headers = browserHeaders)
+        Log.d("Danimados", "load: code=${resp.code}, html.len=${resp.text.length}")
+        val doc = resp.document
+        Log.d("Danimados", "load: title=${doc.title()}")
 
         val title = doc.selectFirst(".sheader .data h1")?.text()
             ?: doc.selectFirst("title")?.text()?.substringBefore(" –")?.substringBefore(" -")?.trim()
-            ?: return null
+        Log.d("Danimados", "load: parsed title=$title")
+        if (title == null) return null
 
         val poster = doc.selectFirst(".sheader .poster img")?.attr("src")
             ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
             ?: ""
+        Log.d("Danimados", "load: poster=$poster")
 
         val description = doc.selectFirst(".hero-overview, .wp-content p")?.text()
             ?: doc.selectFirst("meta[name='description']")?.attr("content")
@@ -76,6 +98,7 @@ class DanimadosProvider : MainAPI() {
         val rating = doc.selectFirst("#repimdb strong")?.text()?.toDoubleOrNull()
 
         val episodes = extractEpisodes(doc)
+        Log.d("Danimados", "load: ${episodes.size} episodes")
 
         if (episodes.isNotEmpty()) {
             return newTvSeriesLoadResponse(title, url, TvType.Cartoon, episodes) {
@@ -100,21 +123,34 @@ class DanimadosProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data, headers = browserHeaders).document
+        Log.d("Danimados", "loadLinks: data=$data")
+        val resp = app.get(data, headers = browserHeaders)
+        Log.d("Danimados", "loadLinks: code=${resp.code}, html.len=${resp.text.length}")
+        val doc = resp.document
 
         // Get admin-ajax.php URL
         val ajaxScript = doc.selectFirst("#dt_main_ajax-js-extra")
         val ajaxUrl = if (ajaxScript != null) {
-            val match = Regex("""url["']?\s*:\s*["']([^"']+)""").find(ajaxScript.html())
-            match?.groupValues?.get(1)?.let { fixRelativeUrl(it) } ?: "$BASE_URL/wp-admin/admin-ajax.php"
+            val html = ajaxScript.html()
+            Log.d("Danimados", "loadLinks: dtAjax script found, len=${html.length}")
+            val match = Regex("""url["']?\s*:\s*["']([^"']+)""").find(html)
+            val url = match?.groupValues?.get(1)
+            Log.d("Danimados", "loadLinks: ajax url from script=$url")
+            url?.let { fixRelativeUrl(it) } ?: "$BASE_URL/wp-admin/admin-ajax.php"
         } else {
+            Log.d("Danimados", "loadLinks: dtAjax script NOT found!")
             "$BASE_URL/wp-admin/admin-ajax.php"
         }
+        Log.d("Danimados", "loadLinks: resolved ajaxUrl=$ajaxUrl")
 
         // Get post ID from player option
         val postId = doc.selectFirst("#player-option-1")?.attr("data-post")
             ?: doc.selectFirst(".dooplay_player_option")?.attr("data-post")
-        if (postId == null) return false
+        Log.d("Danimados", "loadLinks: postId=$postId")
+        if (postId == null) {
+            Log.d("Danimados", "loadLinks: NO POST ID - player options=${doc.select(".dooplay_player_option").size}")
+            return false
+        }
 
         // POST to admin-ajax.php
         val playerResp = app.post(
@@ -131,25 +167,39 @@ class DanimadosProvider : MainAPI() {
                 "nume" to "1",
                 "type" to "tv",
             )
-        ).parsedSafe<PlayerResponse>() ?: return false
+        ).parsedSafe<PlayerResponse>()
+        Log.d("Danimados", "loadLinks: playerResp=$playerResp")
+        if (playerResp == null) return false
 
-        val embedHtml = playerResp.embedUrl ?: return false
+        val embedHtml = playerResp.embedUrl ?: run {
+            Log.d("Danimados", "loadLinks: no embedUrl in response")
+            return false
+        }
+        Log.d("Danimados", "loadLinks: embedHtml=${embedHtml.take(300)}")
+
         val iframeSrc = Regex("""src=["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+        Log.d("Danimados", "loadLinks: iframeSrc=$iframeSrc")
         if (iframeSrc != null && iframeSrc.isNotBlank()) {
+            Log.d("Danimados", "loadLinks: calling loadExtractor with $iframeSrc")
             return loadExtractor(iframeSrc, data, subtitleCallback, callback)
         }
 
+        Log.d("Danimados", "loadLinks: failed to extract iframe src")
         return false
     }
 
     private fun extractEpisodes(doc: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
+        Log.d("Danimados", "extractEpisodes: #seasons size=${doc.select("#seasons").size}")
+        Log.d("Danimados", "extractEpisodes: .se-c size=${doc.select("#seasons > .se-c").size}")
+
         // Dooplay #seasons .se-c structure
         val seasonContainers = doc.select("#seasons > .se-c")
         if (seasonContainers.isNotEmpty()) {
             for (seasonContainer in seasonContainers) {
                 val seasonNum = seasonContainer.selectFirst(".se-q .se-t")?.text()?.toIntOrNull() ?: continue
+                Log.d("Danimados", "extractEpisodes: season $seasonNum")
                 val episodeItems = seasonContainer.select(".se-a ul.episodios > li")
                 for ((epIdx, li) in episodeItems.withIndex()) {
                     val link = li.selectFirst(".episodiotitle a") ?: continue
@@ -194,7 +244,11 @@ class DanimadosProvider : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val link = select("a[href*='/series/']").first() ?: return null
+        val link = select("a[href*='/series/']").first()
+        if (link == null) {
+            Log.d("Danimados", "toSearchResponse: no series link in ${this.className()} #${this.id()}")
+            return null
+        }
         val href = link.attr("abs:href")
         val title = link.text().trim()
         if (title.isBlank()) return null
