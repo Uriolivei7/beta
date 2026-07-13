@@ -9,6 +9,11 @@ import org.jsoup.nodes.Element
 class DanimadosProvider : MainAPI() {
     companion object {
         private const val BASE_URL = "https://danimados.cc"
+        private val browserHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        )
     }
 
     override var mainUrl = BASE_URL
@@ -19,42 +24,41 @@ class DanimadosProvider : MainAPI() {
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Cartoon, TvType.TvSeries)
 
-    override val mainPage = mainPageOf("/" to "Series")
-
-    private val genreSelectors = listOf(
-        "#genre_60s" to "Años 60",
-        "#genre_70s" to "Años 70",
-        "#genre_80s" to "Años 80",
-        "#genre_90s" to "Años 90",
-        "#genre_00s" to "Años 2000",
-        "#genre_10s" to "Años 2010",
-        "#genre_20s" to "Años 2020",
-        "#genre_sitcom" to "Sitcoms",
+    override val mainPage = mainPageOf(
+        "/" to "Últimas",
+        "/genero/80s/" to "Años 80",
+        "/genero/90s/" to "Años 90",
+        "/genero/00s/" to "Años 2000",
+        "/genero/10s/" to "Años 2010",
+        "/genero/20s/" to "Años 2020",
+        "/genero/sitcom/" to "Sitcoms",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val doc = app.get(BASE_URL).document
-        val homeLists = mutableListOf<HomePageList>()
-
-        for ((selector, title) in genreSelectors) {
-            val items = doc.select("$selector > article.item.tvshows").mapNotNull { it.toSearchResponse() }
-            if (items.isNotEmpty()) {
-                homeLists.add(HomePageList(title, items))
-            }
+        val url = if (request.data == "/") {
+            mainUrl
+        } else {
+            "${mainUrl}${request.data.removeSuffix("/")}/page/$page/"
         }
+        val doc = app.get(url, headers = browserHeaders).document
 
-        return newHomePageResponse(homeLists)
+        val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
+        if (items.isEmpty()) return null
+
+        return newHomePageResponse(
+            list = HomePageList(request.name, items),
+            hasNext = items.size >= 20
+        )
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        val doc = app.get("$BASE_URL/?s=$query").document
+        val doc = app.get("$BASE_URL/?s=$query", headers = browserHeaders).document
         val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
-        if (items.isNotEmpty()) return items
-        return null
+        return items.ifEmpty { null }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = app.get(url).document
+        val doc = app.get(url, headers = browserHeaders).document
 
         val title = doc.selectFirst(".sheader .data h1")?.text()
             ?: doc.selectFirst("title")?.text()?.substringBefore(" –")?.substringBefore(" -")?.trim()
@@ -96,7 +100,7 @@ class DanimadosProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
+        val doc = app.get(data, headers = browserHeaders).document
 
         // Get admin-ajax.php URL
         val ajaxScript = doc.selectFirst("#dt_main_ajax-js-extra")
