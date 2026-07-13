@@ -16,12 +16,12 @@ class Atalayas21Provider : MainAPI() {
 
     override var mainUrl = BASE_URL
     override var name = "Atalayas21"
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.AsianDrama,
+        TvType.TvSeries, TvType.Cartoon
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
