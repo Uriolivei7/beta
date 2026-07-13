@@ -127,6 +127,7 @@ class PandramaProvider : MainAPI() {
         @JsonProperty("src") var src: String? = null,
         @JsonProperty("type") var type: String? = null,
         @JsonProperty("quality") var quality: String? = null,
+        @JsonProperty("language") var language: String? = null,
         @JsonProperty("captions") var captions: List<CaptionItem>? = null
     )
 
@@ -372,15 +373,25 @@ class PandramaProvider : MainAPI() {
                 }
 
                 try {
+                    val langSuffix = when (video.language) {
+                        "es", "es-419", "es-ES", "es-MX" -> " (Latino)"
+                        "en", "en-US" -> " (ENG)"
+                        "ko" -> " (KO)"
+                        "ja" -> " (JP)"
+                        "zh" -> " (CN)"
+                        else -> if (video.language != null) " (${video.language})" else ""
+                    }
+                    val linkName = "${video.name ?: video.type ?: "Video"}$langSuffix"
                     val isDirectPlay = cleanSrc.endsWith(".m3u8") || cleanSrc.endsWith(".mpd")
                     when {
                         isDirectPlay -> {
                             callback.invoke(
                                 newExtractorLink(
-                                    video.name ?: video.type ?: "Video",
-                                    video.name ?: video.type ?: "Video",
+                                    linkName,
+                                    linkName,
                                     cleanSrc
                                 ) {
+                                    this.referer = "$mainUrl/"
                                     this.quality = getQualityFromName(video.quality ?: "720p")
                                 }
                             )
