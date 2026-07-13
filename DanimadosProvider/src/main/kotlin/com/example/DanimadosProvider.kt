@@ -244,14 +244,17 @@ class DanimadosProvider : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val link = select("a[href*='/series/']").first()
+        val link = select(".data h3 a[href*='/series/']").first()
         if (link == null) {
-            Log.d("Danimados", "toSearchResponse: no series link in ${this.className()} #${this.id()}")
+            Log.d("Danimados", "toSearchResponse: no .data h3 link in ${this.className()} #${this.id()}")
             return null
         }
         val href = link.attr("abs:href")
         val title = link.text().trim()
-        if (title.isBlank()) return null
+        if (title.isBlank()) {
+            Log.d("Danimados", "toSearchResponse: blank title for href=$href")
+            return null
+        }
         val poster = select("img").first()?.attr("src")?.let { fixUrl(it) }
         val year = select(".data span").first()?.text()?.let { extractYear(it) }
         val rating = select(".rating").first()?.text()?.toDoubleOrNull()
