@@ -107,11 +107,13 @@ class DonghualifeProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/search?search_api_fulltext=$query"
-        val doc = app.get(searchUrl).document
-        
-        val allItems = doc.select(".view-content .views-row .serie, .view-content .views-row .movie")
-        
+        val searchUrl = "$mainUrl/search?search_api_fulltext=${java.net.URLEncoder.encode(query, "utf-8")}"
+        val doc = app.get(searchUrl, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")).document
+
+        if (doc.selectFirst(".view-empty") != null) return emptyList()
+
+        val allItems = doc.select(".views-row .serie, .views-row .movie")
+
         return allItems.mapNotNull { parseListingItem(it) }
     }
 
