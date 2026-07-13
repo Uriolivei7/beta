@@ -398,21 +398,26 @@ class PandramaProvider : MainAPI() {
                             found = true
                         }
                         video.type == "embed" || video.type == "url" -> {
-                            try {
-                                val embedHtml = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")).text
-                                val videoUrlRegex = Regex("""https?://[^"'\s<>]+\.(?:m3u8|mp4|mpd)[^"'\s<>]*""")
-                                val match = videoUrlRegex.find(embedHtml)
-                                if (match != null) {
-                                    callback.invoke(newExtractorLink(linkName, linkName, match.value) {
-                                        this.referer = cleanSrc
-                                        this.quality = getQualityFromName(video.quality ?: "720p")
-                                    })
-                                    found = true
-                                } else {
+                            val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
+                            if (hasExtractor) {
+                                found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                            } else {
+                                try {
+                                    val embedHtml = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")).text
+                                    val videoUrlRegex = Regex("""https?://[^"'\s<>]+\.(?:m3u8|mp4|mpd)[^"'\s<>]*""")
+                                    val match = videoUrlRegex.find(embedHtml)
+                                    if (match != null) {
+                                        callback.invoke(newExtractorLink(linkName, linkName, match.value) {
+                                            this.referer = cleanSrc
+                                            this.quality = getQualityFromName(video.quality ?: "720p")
+                                        })
+                                        found = true
+                                    } else {
+                                        found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                    }
+                                } catch (e: Exception) {
                                     found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
                                 }
-                            } catch (e: Exception) {
-                                found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
                             }
                         }
                         else -> {
