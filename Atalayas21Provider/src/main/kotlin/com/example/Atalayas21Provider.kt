@@ -21,22 +21,25 @@ class Atalayas21Provider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-        TvType.TvSeries, TvType.Cartoon
+        TvType.AsianDrama,
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiResponse<T>(
         @JsonProperty("success") var success: Boolean = false,
+        @JsonProperty("message") var message: String? = null,
         @JsonProperty("data") var data: T? = null,
         @JsonProperty("seasons") var seasons: List<Int>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SerieItem(
-        @JsonProperty("id") var id: Int? = null,
+        @JsonProperty("id") var id: Long? = null,
         @JsonProperty("titulo") var titulo: String? = null,
+        @JsonProperty("nombre_categoria") var nombreCategoria: String? = null,
         @JsonProperty("thumb") var thumb: String? = null,
         @JsonProperty("imagen_url") var imagenUrl: String? = null,
+        @JsonProperty("portada_url") var portadaUrl: String? = null,
         @JsonProperty("slug") var slug: String? = null,
         @JsonProperty("temporadas") var temporadas: Int? = null,
         @JsonProperty("total") var total: Int? = null,
@@ -45,34 +48,46 @@ class Atalayas21Provider : MainAPI() {
         @JsonProperty("status") var status: String? = null,
         @JsonProperty("finalizada") var finalizada: Boolean? = null,
         @JsonProperty("año_estreno") var añoEstreno: Int? = null,
-        @JsonProperty("popularidad") var popularidad: Double? = null
+        @JsonProperty("año") var año: Int? = null,
+        @JsonProperty("popularidad") var popularidad: Double? = null,
+        @JsonProperty("url") var url: String? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodeItem(
-        @JsonProperty("id") var id: Int? = null,
+        @JsonProperty("id") var id: Long? = null,
         @JsonProperty("titulo") var titulo: String? = null,
         @JsonProperty("title") var title: String? = null,
         @JsonProperty("numero_episodio") var numeroEpisodio: Int? = null,
         @JsonProperty("numero") var numero: Int? = null,
         @JsonProperty("temporada") var temporada: Int? = null,
-        @JsonProperty("serie_id") var serieId: Int? = null,
+        @JsonProperty("serie_id") var serieId: Long? = null,
         @JsonProperty("duracion") var duracion: String? = null,
         @JsonProperty("imagen_url") var imagenUrl: String? = null,
         @JsonProperty("descripcion") var descripcion: String? = null,
         @JsonProperty("video_url") var videoUrl: String? = null,
         @JsonProperty("link_video") var linkVideo: String? = null,
         @JsonProperty("embed_url") var embedUrl: String? = null,
-        @JsonProperty("url_video") var urlVideo: String? = null
+        @JsonProperty("url_video") var urlVideo: String? = null,
+        @JsonProperty("vistas") var vistas: Int? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class SearchData(
+        @JsonProperty("series") var series: List<SearchItem>? = null,
+        @JsonProperty("episodes") var episodes: List<SearchItem>? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SearchItem(
-        @JsonProperty("id") var id: Int? = null,
+        @JsonProperty("id") var id: Long? = null,
         @JsonProperty("titulo") var titulo: String? = null,
-        @JsonProperty("thumb") var thumb: String? = null,
-        @JsonProperty("type") var type: String? = null,
-        @JsonProperty("slug") var slug: String? = null
+        @JsonProperty("imagen_url") var imagenUrl: String? = null,
+        @JsonProperty("tipo") var tipo: String? = null,
+        @JsonProperty("url") var url: String? = null,
+        @JsonProperty("slug") var slug: String? = null,
+        @JsonProperty("episodios") var episodios: Int? = null,
+        @JsonProperty("descripcion") var descripcion: String? = null
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -106,8 +121,9 @@ class Atalayas21Provider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse>? {
         val json = app.get("$BASE_URL/api/search-advanced.php?query=${query.encodeURI()}&lang=es", headers = apiHeaders).text
-        val resp = parseJson<ApiResponse<List<SearchItem>>>(json)
-        return resp.data?.filter { it.type == "serie" }?.mapNotNull { it.toSearchResponse() }
+        val resp = parseJson<ApiResponse<SearchData>>(json)
+        val series = resp.data?.series?.filter { it.tipo == "serie" }?.mapNotNull { it.toSearchResponse() } ?: emptyList()
+        return series
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -153,7 +169,7 @@ class Atalayas21Provider : MainAPI() {
         ) {
             this.posterUrl = poster?.let { fixUrl(it) }
             this.plot = serie.descripcion
-            this.year = serie.añoEstreno
+            this.year = serie.añoEstreno ?: serie.año
             this.showStatus = showStatus
         }
     }
@@ -222,16 +238,30 @@ class Atalayas21Provider : MainAPI() {
     private fun SerieItem.toSearchResponse(): SearchResponse? {
         val id = this.id ?: return null
         val poster = this.imagenUrl ?: this.thumb
-        return newMovieSearchResponse(this.titulo ?: "Sin título", "$BASE_URL/api/series.php?id=$id&lang=es", TvType.AsianDrama) {
-            this.posterUrl = poster?.let { fixUrl(it) }
+        return newMovieSearchResponse(
+            this.titulo ?: "Sin título",
+            "$BASE_URL/api/series.php?id=$id&lang=es",
+            TvType.AsianDrama
+        ) {
+            this.posterUrl = when {
+                poster?.startsWith("http") == true -> fixUrl(poster)
+                poster != null -> "$BASE_URL/$poster"
+                else -> null
+            }
             this.year = this@toSearchResponse.añoEstreno
         }
     }
 
     private fun SearchItem.toSearchResponse(): SearchResponse? {
         val id = this.id ?: return null
-        return newMovieSearchResponse(this.titulo ?: "Sin título", "$BASE_URL/api/series.php?id=$id&lang=es", TvType.AsianDrama) {
-            this.posterUrl = this@toSearchResponse.thumb?.let { fixUrl(it) }
+        return newMovieSearchResponse(
+            this.titulo ?: "Sin título",
+            "$BASE_URL/api/series.php?id=$id&lang=es",
+            TvType.AsianDrama
+        ) {
+            this.posterUrl = this@toSearchResponse.imagenUrl?.let {
+                if (it.startsWith("http")) fixUrl(it) else "$BASE_URL/$it"
+            }
         }
     }
 
