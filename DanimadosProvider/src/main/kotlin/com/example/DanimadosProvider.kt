@@ -274,7 +274,9 @@ class DanimadosProvider : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val link = select(".data h3 a[href*='/series/'], h3 a[href*='/series/'], a[href*='/series/']").first()
+        val link = select(".data h3 a[href*='/series/']").first()
+            ?: select("h3 a[href*='/series/']").first()
+            ?: select("a[href*='/series/']").first()
         if (link == null) {
             Log.d("Danimados", "toSearchResponse: no series link in ${this.className()} #${this.id()}")
             return null
@@ -282,7 +284,7 @@ class DanimadosProvider : MainAPI() {
         val href = link.attr("abs:href")
         val title = link.text().trim()
         if (title.isBlank()) {
-            Log.d("Danimados", "toSearchResponse: blank title for href=$href")
+            Log.d("Danimados", "toSearchResponse: blank title for href=$href, element=${link.className()}")
             return null
         }
         if (!href.contains("/series/")) return null
