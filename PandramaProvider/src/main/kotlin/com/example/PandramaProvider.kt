@@ -6,7 +6,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class PandramaProvider : MainAPI() {
     companion object {
@@ -39,7 +41,7 @@ class PandramaProvider : MainAPI() {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ChannelPageData(
-        @JsonProperty("channels") var channels: List<ChannelItem>? = null
+        @JsonProperty("channel") var channel: ChannelItem? = null
     )
 
     data class ChannelItem(
@@ -200,34 +202,28 @@ class PandramaProvider : MainAPI() {
                     val html = app.get("$mainUrl$endpoint").text
                     val bootstrap = parseBootstrapData(html) ?: continue
 
-                    val channels = bootstrap.loaders?.channelPage?.channels ?: continue
+                    val channel = bootstrap.loaders?.channelPage?.channel ?: continue
+                    val titles = channel.content?.data?.filter {
+                        it.id != null && it.name != null
+                    }?.take(20) ?: continue
 
-                    for (channel in channels.take(4)) {
-                        val titles = channel.content?.data?.filter {
-                            it.id != null && it.name != null
-                        }?.take(20) ?: continue
-
-                        val searchItems = titles.map { info ->
-                            val url = if (info.isSeries == true || (info.episodesCount ?: 0) > 0) {
-                                "$mainUrl/titulo/${info.id}/${info.slug ?: info.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: "unknown"}"
-                            } else {
-                                "$mainUrl/titulo/${info.id}/${info.slug ?: info.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: "unknown"}"
+                    val searchItems = titles.mapNotNull { info ->
+                        val slug = info.slug ?: info.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: return@mapNotNull null
+                        val url = "$mainUrl/titulo/${info.id}/$slug"
+                        val isMovie = info.isSeries == false
+                        if (isMovie) {
+                            newMovieSearchResponse(info.name ?: "Unknown", url, TvType.AsianDrama) {
+                                this.posterUrl = getImageUrl(info.poster)
                             }
-                            val isMovie = info.isSeries == false || (info.episodesCount ?: 0) == 0
-                            if (isMovie) {
-                                newMovieSearchResponse(info.name ?: "Unknown", url, TvType.AsianDrama) {
-                                    this.posterUrl = getImageUrl(info.poster)
-                                }
-                            } else {
-                                newAnimeSearchResponse(info.name ?: "Unknown", url, TvType.AsianDrama) {
-                                    this.posterUrl = getImageUrl(info.poster)
-                                }
+                        } else {
+                            newAnimeSearchResponse(info.name ?: "Unknown", url, TvType.AsianDrama) {
+                                this.posterUrl = getImageUrl(info.poster)
                             }
                         }
+                    }
 
                         if (searchItems.isNotEmpty()) {
-                            items.add(HomePageList(channel.name ?: displayName, searchItems))
-                        }
+                        items.add(HomePageList(channel.name ?: displayName, searchItems))
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "Section error: ${e.message}")
@@ -255,7 +251,7 @@ class PandramaProvider : MainAPI() {
                 val id = title.id ?: return@forEach
                 val slug = title.slug ?: title.name?.lowercase()?.replace(" ", "-")?.replace(Regex("[^a-z0-9-]"), "") ?: return@forEach
                 val url = "$mainUrl/titulo/$id/$slug"
-                val isMovie = title.isSeries == false || (title.episodesCount ?: 0) == 0
+                val isMovie = title.isSeries == false
                 search.add(if (isMovie)
                     newMovieSearchResponse(title.name ?: "Unknown", url, TvType.AsianDrama) { this.posterUrl = getImageUrl(title.poster) }
                 else
@@ -363,7 +359,7 @@ class PandramaProvider : MainAPI() {
 
             if (allVideos.isEmpty()) return false
 
-            var found = false
+                    var found = false
             for (video in allVideos) {
                 val src = video.src ?: continue
                 val cleanSrc = src.replace("\\/", "/")
@@ -375,15 +371,30 @@ class PandramaProvider : MainAPI() {
                     subtitleCallback.invoke(newSubtitleFile(caption.name ?: caption.language ?: "Español", fullUrl))
                 }
 
-                when (video.type) {
-                    "embed" -> {
-                        loadExtractor(cleanSrc, data, subtitleCallback, callback)
-                        found = true
+                try {
+                    val isDirectPlay = cleanSrc.endsWith(".m3u8") || cleanSrc.endsWith(".mpd")
+                    when {
+                        isDirectPlay -> {
+                            callback.invoke(
+                                newExtractorLink(
+                                    video.name ?: video.type ?: "Video",
+                                    video.name ?: video.type ?: "Video",
+                                    cleanSrc
+                                ) {
+                                    this.quality = getQualityFromName(video.quality ?: "720p")
+                                }
+                            )
+                            found = true
+                        }
+                        video.type == "embed" || video.type == "url" -> {
+                            found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                        }
+                        else -> {
+                            found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                        }
                     }
-                    else -> {
-                        loadExtractor(cleanSrc, data, subtitleCallback, callback)
-                        found = true
-                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Video error for $cleanSrc: ${e.message}")
                 }
             }
 
