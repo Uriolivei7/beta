@@ -132,12 +132,11 @@ class Atalayas21Provider : MainAPI() {
         val resp = parseJson<ApiResponse<List<SerieItem>>>(json)
         val serie = resp.data?.firstOrNull() ?: throw ErrorLoadingException("Serie no encontrada")
 
-        val epJson = app.get("$BASE_URL/api/episodios.php?serie_id=$id&get_seasons=true", headers = apiHeaders).text
+        val epJson = app.get("$BASE_URL/api/episodios.php?serie_id=$id&limit=500", headers = apiHeaders).text
         val epResp = parseJson<ApiResponse<List<EpisodeItem>>>(epJson)
         val allEps = epResp.data ?: emptyList()
-        val seasons = epResp.seasons?.ifEmpty { null }
-            ?: allEps.mapNotNull { it.temporada }.distinct().sorted()
-            ?: listOf(1)
+        val seasons = allEps.mapNotNull { it.temporada }.distinct().sorted()
+            .ifEmpty { epResp.seasons?.ifEmpty { listOf(1) } ?: listOf(1) }
 
         val episodes = mutableListOf<Episode>()
         for (season in seasons) {
