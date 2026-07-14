@@ -90,7 +90,7 @@ class Cubeembed : ExtractorApi() {
             val tiktokUrl = "$baseUrl$hlsTiktok"
             Log.d("Cubeembed", "TikTok M3U8: $tiktokUrl")
             callback.invoke(
-                newExtractorLink(this.name, "$name (TikTok)", tiktokUrl, ExtractorLinkType.M3U8) {
+                newExtractorLink(this.name, "$name TK", tiktokUrl, ExtractorLinkType.M3U8) {
                     this.referer = url
                     this.quality = Qualities.Unknown.value
                 }
