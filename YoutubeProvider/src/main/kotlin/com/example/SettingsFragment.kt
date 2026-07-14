@@ -72,15 +72,12 @@ class YoutubeSettingsBottomSheet(private val sharedPref: SharedPreferences) : Bo
         }
     }
 
-
-
     class PrefsFragment(private val sharedPref: SharedPreferences) : PreferenceFragmentCompat() {
 
         private val KEY_VISITOR = "VISITOR_INFO1_LIVE"
         private val KEY_PAGES = "channel_pages_limit"
         private val KEY_PLAYLIST_TAG = "playlist_search_tag"
         private val KEY_LANGUAGE = "youtube_language"
-        private val KEY_PLAYER_TYPE = "youtube_player_type"
 
         private lateinit var languagePref: ListPreference
         private lateinit var authCategory: PreferenceCategory
@@ -89,7 +86,6 @@ class YoutubeSettingsBottomSheet(private val sharedPref: SharedPreferences) : Bo
         private lateinit var loginStatusPref: Preference
         private lateinit var visitorPref: EditTextPreference
         private lateinit var clearPref: Preference
-        private lateinit var playerTypePref: ListPreference
         private lateinit var pagesPref: SeekBarPreference
         private lateinit var playlistTagPref: EditTextPreference
         private lateinit var homeCategory: PreferenceCategory
@@ -196,15 +192,6 @@ class YoutubeSettingsBottomSheet(private val sharedPref: SharedPreferences) : Bo
             customCategory = PreferenceCategory(ctx)
             preferenceScreen.addPreference(customCategory)
 
-            playerTypePref = ListPreference(ctx).apply {
-                key = KEY_PLAYER_TYPE
-                entryValues = arrayOf("advanced", "classic")
-                if (value == null) setValue("advanced")
-                summaryProvider = ListPreference.SimpleSummaryProvider.getInstance()
-                setOnPreferenceChangeListener { _, _ -> true }
-            }
-            customCategory.addPreference(playerTypePref)
-
             pagesPref = SeekBarPreference(ctx).apply {
                 key = KEY_PAGES
                 min = 1; max = 50
@@ -262,14 +249,6 @@ class YoutubeSettingsBottomSheet(private val sharedPref: SharedPreferences) : Bo
             visitorPref.setNegativeButtonText(Loc.getString(sharedPref, "cancel"))
 
             clearPref.title = Loc.getString(sharedPref, "logout_btn")
-
-            playerTypePref.title = Loc.getString(sharedPref, "player_engine")
-            playerTypePref.entries = arrayOf(
-                Loc.getString(sharedPref, "player_advanced"),
-                Loc.getString(sharedPref, "player_classic")
-            )
-            playerTypePref.setPositiveButtonText(Loc.getString(sharedPref, "ok"))
-            playerTypePref.setNegativeButtonText(Loc.getString(sharedPref, "cancel"))
 
             pagesPref.title = Loc.getString(sharedPref, "pages_limit")
             pagesPref.summary = Loc.getString(sharedPref, "pages_sum")

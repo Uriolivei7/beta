@@ -11,8 +11,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import okhttp3.Interceptor
 import okhttp3.Response
 import java.net.URLEncoder
-import com.lagradost.cloudstream3.AcraApplication
-import androidx.preference.PreferenceManager
 import com.example.YoutubeProvider.Config.SLEEP_BETWEEN
 
 class YoutubeProvider(
@@ -1513,26 +1511,19 @@ class YoutubeProvider(
             foundAnyLink = true
         }
 
-        val context = AcraApplication.context
-        val playerType = if (context != null) {
-            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-            prefs.getString("youtube_player_type", "classic")
-        } else {
-            "classic"
-        }
+        // 1. Try CS3 built-in extractor
+        Log.i("YtExtractor", "Video $videoId: Trying loadExtractor (CS3 built-in)")
+        loadExtractor(fullUrl, subtitleCallback, trackingCallback)
 
-        Log.i("YtExtractor", "Video $videoId: Player type=$playerType")
-
-        if (playerType == "classic") {
-            Log.i("YtExtractor", "Video $videoId: Using loadExtractor (CS3 built-in)")
-            loadExtractor(fullUrl, subtitleCallback, trackingCallback)
-        } else {
-            Log.i("YtExtractor", "Video $videoId: Using NewPipe YoutubeExtractor")
+        // 2. If no links, try NewPipe + local DASH server
+        if (!foundAnyLink) {
+            Log.i("YtExtractor", "Video $videoId: loadExtractor gave no links, trying NewPipe YoutubeExtractor")
             com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
         }
 
+        // 3. If still no links, try InnerTube API
         if (!foundAnyLink) {
-            Log.i("YtExtractor", "Video $videoId: Primary extractor gave no links, trying InnerTube API")
+            Log.i("YtExtractor", "Video $videoId: NewPipe gave no links, trying InnerTube API")
             var watchHtml: String? = null
             try {
                 watchHtml = app.get(fullUrl, interceptor = ytInterceptor).text
