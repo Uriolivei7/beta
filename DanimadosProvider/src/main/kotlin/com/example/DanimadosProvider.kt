@@ -178,7 +178,7 @@ class DanimadosProvider : MainAPI() {
             return false
         }
 
-        // Try each player option (nume=1,2,3,...) until one works
+        var anySuccess = false
         for (option in playerOptions) {
             val postId = option.attr("data-post")
             val nume = option.attr("data-nume").toIntOrNull() ?: 1
@@ -215,12 +215,10 @@ class DanimadosProvider : MainAPI() {
             if (videoUrl.isNullOrBlank()) continue
             Log.d("Danimados", "loadLinks: trying videoUrl=$videoUrl")
 
-            // Try loadExtractor first
             val extracted = loadExtractor(videoUrl, data, subtitleCallback, callback)
             Log.d("Danimados", "loadLinks: loadExtractor returned $extracted for nume=$nume")
-            if (extracted) return true
+            if (extracted) anySuccess = true
 
-            // Fallback: try direct fetch with anti-adblock headers
             Log.d("Danimados", "loadLinks: trying direct fetch of $videoUrl")
             try {
                 val embedResp = app.get(videoUrl, headers = browserHeaders + mapOf(
@@ -229,7 +227,7 @@ class DanimadosProvider : MainAPI() {
                 ))
                 Log.d("Danimados", "loadLinks: embed page code=${embedResp.code}, len=${embedResp.text.length}")
                 Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(1000)}")
-                // Search for common video source patterns in JS/data
+
                 val directSrc = Regex("""(?:src|file|source|url|link)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
                 if (directSrc != null) {
@@ -242,9 +240,8 @@ class DanimadosProvider : MainAPI() {
                         quality = 720,
                         referer = videoUrl,
                     ))
-                    return true
+                    anySuccess = true
                 }
-                // Also try base64-encoded sources
                 val b64Match = Regex("""(?:src|file|source|url)\s*[=:]\s*["']([A-Za-z0-9+/=]{20,})["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)
                 if (b64Match != null) {
@@ -261,7 +258,7 @@ class DanimadosProvider : MainAPI() {
                             quality = 720,
                             referer = videoUrl,
                         ))
-                        return true
+                        anySuccess = true
                     }
                 }
             } catch (e: Exception) {
@@ -269,8 +266,8 @@ class DanimadosProvider : MainAPI() {
             }
         }
 
-        Log.d("Danimados", "loadLinks: all player options exhausted")
-        return false
+        Log.d("Danimados", "loadLinks: anySuccess=$anySuccess (${playerOptions.size} players tried)")
+        return anySuccess
     }
 
     private fun extractEpisodes(doc: org.jsoup.nodes.Document): List<Episode> {
