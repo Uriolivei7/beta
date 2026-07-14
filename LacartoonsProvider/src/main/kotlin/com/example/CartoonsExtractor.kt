@@ -59,9 +59,6 @@ class Cubeembed : ExtractorApi() {
         val source = Regex("\"source\":\"(.*?)\"").find(decryptedText)
             ?.groupValues?.get(1)
             ?.replace("\\/", "/") ?: ""
-        val cfUrl = Regex("\"cf\":\"(.*?)\"").find(decryptedText)
-            ?.groupValues?.get(1)
-            ?.replace("\\/", "/") ?: ""
 
         val subtitleSection = Regex("\"subtitle\":\\{(.*?)\\}").find(decryptedText)?.groupValues?.get(1)
         subtitleSection?.let { section ->
@@ -76,15 +73,6 @@ class Cubeembed : ExtractorApi() {
             }
         }
 
-        if (cfUrl.isNotEmpty()) {
-            Log.d("Cubeembed", "CF M3U8: $cfUrl")
-            callback.invoke(
-                newExtractorLink(this.name, "$name CF", cfUrl, ExtractorLinkType.M3U8) {
-                    this.referer = url
-                    this.quality = Qualities.Unknown.value
-                }
-            )
-        }
         if (source.isNotEmpty()) {
             val sourceHttp = source.replaceFirst("https://", "http://")
             Log.d("Cubeembed", "Source M3U8 (HTTP): $sourceHttp")
