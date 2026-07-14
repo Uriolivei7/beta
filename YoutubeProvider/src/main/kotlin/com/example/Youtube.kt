@@ -1511,14 +1511,13 @@ class YoutubeProvider(
             foundAnyLink = true
         }
 
-        // 1. Try CS3 built-in extractor
-        Log.i("YtExtractor", "Video $videoId: Trying loadExtractor (CS3 built-in)")
-        loadExtractor(fullUrl, subtitleCallback, trackingCallback)
+        Log.i("YtExtractor", "Video $videoId: Trying NewPipe YoutubeExtractor")
+        com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
 
-        // 2. If no links, try NewPipe + local DASH server
+        // 2. If no links, try CS3 built-in extractor
         if (!foundAnyLink) {
-            Log.i("YtExtractor", "Video $videoId: loadExtractor gave no links, trying NewPipe YoutubeExtractor")
-            com.example.YoutubeExtractor().getUrl(fullUrl, null, subtitleCallback, trackingCallback)
+            Log.i("YtExtractor", "Video $videoId: NewPipe gave no links, trying loadExtractor (CS3 built-in)")
+            loadExtractor(fullUrl, subtitleCallback, trackingCallback)
         }
 
         // 3. If still no links, try InnerTube API

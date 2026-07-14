@@ -191,7 +191,7 @@ open class YoutubeExtractor : ExtractorApi() {
                                 val dashXml = buildDashManifestXml(video, singleAudioList, durationSeconds)
                                 val localLink = registerManifestAndGetUrl(dashXml)
                                 if (localLink != null) {
-                                    val finalName = if (lang != "DEFAULT") "${this.name} ${video.label} ($lang) [DASH]" else "${this.name} ${video.label} [DASH]"
+                                    val finalName = if (lang != "DEFAULT") "${this.name} ${video.label} ($lang)" else "${this.name} ${video.label}"
                                     builtLinks.add(
                                         newExtractorLink(this.name, finalName, localLink, type = ExtractorLinkType.DASH) {
                                             this.referer = mainUrl
@@ -356,7 +356,7 @@ open class YoutubeExtractor : ExtractorApi() {
 
     private fun buildVideoLabelNumber(vs: org.schabi.newpipe.extractor.stream.VideoStream): String {
         val height = runCatching { vs.height }.getOrNull() ?: 0
-        if (height > 0) return height.toString()
+        if (height > 0) return "${height}p"
         return "video"
     }
 }
