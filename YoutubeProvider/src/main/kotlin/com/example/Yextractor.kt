@@ -32,7 +32,6 @@ open class YoutubeExtractor : ExtractorApi() {
     companion object {
         private var ytVideos: MutableMap<String, List<ExtractorLink>> = mutableMapOf()
         private var ytVideosSubtitles: MutableMap<String, List<SubtitlesStream>> = mutableMapOf()
-
         private var activeServer: ServerSocket? = null
         private var serverPort: Int = 0
         private val manifestMap = ConcurrentHashMap<String, String>()
@@ -142,45 +141,7 @@ open class YoutubeExtractor : ExtractorApi() {
 
                 startServerIfNeeded()
 
-                if (audiosByLanguage.isNotEmpty()) {
-                    Log.i("YtExtractor", "Video $videoId: Building DASH manifests with audio")
-                    for (video in videoOnlyList) {
-                        for ((lang, audios) in audiosByLanguage) {
-
-                            val bestAudioForLang = if (video.mimeType.contains("webm")) {
-                                audios.sortedWith(compareByDescending<AudioInfo> { it.mimeType.contains("webm") }.thenByDescending { it.bitrate }).firstOrNull()
-                            } else {
-                                audios.sortedWith(compareByDescending<AudioInfo> { it.mimeType.contains("mp4") }.thenByDescending { it.bitrate }).firstOrNull()
-                            }
-
-                            if (bestAudioForLang != null) {
-                                val singleAudioList = listOf(bestAudioForLang)
-                                val dashXml = buildDashManifestXml(video, singleAudioList, durationSeconds)
-                                val localLink = registerManifestAndGetUrl(dashXml)
-
-                                if (localLink != null) {
-
-                                    val finalName = if (lang != "DEFAULT") "${this.name} ${video.label} ($lang)" else "${this.name} ${video.label}"
-
-                                    builtLinks.add(
-                                        newExtractorLink(
-                                            this.name,
-                                            finalName,
-                                            localLink,
-                                            type = ExtractorLinkType.DASH
-                                        ) {
-                                            this.referer = mainUrl
-                                            this.quality = video.height
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    Log.w("YtExtractor", "Video $videoId: NO audio streams found! Skipping video-only DASH streams. Relying only on muxed (progressive) streams.")
-                }
-
+                // 1. Muxed streams FIRST — always reliable (progressive download)
                 val muxedSeenUrls = mutableSetOf<String>()
                 val muxedList = (s.videoStreams ?: emptyList()).mapNotNull { vs ->
                     try {
@@ -200,6 +161,54 @@ open class YoutubeExtractor : ExtractorApi() {
                             this.quality = mHeight
                         }
                     )
+                }
+
+                // 2. DASH (video-only + audio) SECOND — only when segment params are complete
+                val dashEligibleVideo = videoOnlyList.filter { it.initRange != null && it.indexRange != null }
+                val dashEligibleAudio = audioInfoList.filter { it.initRange != null && it.indexRange != null }
+                val skippedVideoHeights = videoOnlyList.filter { it.initRange == null || it.indexRange == null }.map { it.height }
+                val skippedAudioLangs = audioInfoList.filter { it.initRange == null || it.indexRange == null }.map { it.language }
+
+                if (skippedVideoHeights.isNotEmpty()) {
+                    Log.w("YtExtractor", "Video $videoId: DASH skip video heights=$skippedVideoHeights (missing initRange or indexRange)")
+                }
+                if (skippedAudioLangs.isNotEmpty()) {
+                    Log.w("YtExtractor", "Video $videoId: DASH skip audio languages=$skippedAudioLangs (missing initRange or indexRange)")
+                }
+
+                val audiosByLangEligible = dashEligibleAudio.groupBy { it.language }
+                if (audiosByLangEligible.isNotEmpty() && dashEligibleVideo.isNotEmpty()) {
+                    Log.i("YtExtractor", "Video $videoId: Building DASH manifests with complete segment params (video=${dashEligibleVideo.size}, audio=${dashEligibleAudio.size})")
+                    for (video in dashEligibleVideo) {
+                        for ((lang, audios) in audiosByLangEligible) {
+                            val bestAudioForLang = if (video.mimeType.contains("webm")) {
+                                audios.sortedWith(compareByDescending<AudioInfo> { it.mimeType.contains("webm") }.thenByDescending { it.bitrate }).firstOrNull()
+                            } else {
+                                audios.sortedWith(compareByDescending<AudioInfo> { it.mimeType.contains("mp4") }.thenByDescending { it.bitrate }).firstOrNull()
+                            }
+                            if (bestAudioForLang != null) {
+                                val singleAudioList = listOf(bestAudioForLang)
+                                val dashXml = buildDashManifestXml(video, singleAudioList, durationSeconds)
+                                val localLink = registerManifestAndGetUrl(dashXml)
+                                if (localLink != null) {
+                                    val finalName = if (lang != "DEFAULT") "${this.name} ${video.label} ($lang) [DASH]" else "${this.name} ${video.label} [DASH]"
+                                    builtLinks.add(
+                                        newExtractorLink(this.name, finalName, localLink, type = ExtractorLinkType.DASH) {
+                                            this.referer = mainUrl
+                                            this.quality = video.height
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    val reason = when {
+                        dashEligibleVideo.isEmpty() && audiosByLangEligible.isEmpty() -> "no streams with complete segment params"
+                        dashEligibleVideo.isEmpty() -> "no video-only streams with segment params"
+                        else -> "no audio streams with segment params"
+                    }
+                    Log.w("YtExtractor", "Video $videoId: Skipping DASH manifests: $reason")
                 }
 
                 val totalLinks = builtLinks.size
