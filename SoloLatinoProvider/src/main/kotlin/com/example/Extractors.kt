@@ -19,18 +19,33 @@ open class VoeExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit,
     ) {
         Log.d("SoloLatino", "[Voe] URL: $url")
+        val voeHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "en-US,en;q=0.9",
+        )
         val redirectRegex = Regex("""(?:window\.)?location(?:\.href)?\s*=\s*'([^']+)'""")
         var currentUrl = url
-        var res = app.get(currentUrl, referer = referer)
+        var currentReferer = referer ?: url
+        var res = app.get(currentUrl, headers = voeHeaders, referer = currentReferer)
         var maxRedirects = 5
         var redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
         while (redirectUrl != null && maxRedirects > 0) {
             Log.d("SoloLatino", "[Voe] Redirect to: $redirectUrl")
+            currentReferer = currentUrl
             currentUrl = redirectUrl
-            res = app.get(currentUrl, referer = referer)
+            res = app.get(currentUrl, headers = voeHeaders, referer = currentReferer)
             maxRedirects--
             redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
         }
+
+        if (maxRedirects == 0 && redirectUrl != null) {
+            Log.e("SoloLatino", "[Voe] Too many redirects, giving up")
+        }
+
+        // Debug: log HTML snippet if encoded string not found
+        val pageText = res.text
+        val htmlSnippet = pageText.take(2000)
 
         var encodedString: String? = null
 
@@ -44,13 +59,13 @@ open class VoeExtractor : ExtractorApi() {
         if (encodedString == null) {
             encodedString = res.document.select("script").mapNotNull { script ->
                 val html = script.html()
-                // The encoded string is rot13'd, so it looks like gibberish with A-Za-z
                 Regex("""["']([A-Za-z0-9+/=]{100,})["']""").find(html)?.groupValues?.get(1)
             }.firstOrNull()
         }
 
         if (encodedString == null) {
             Log.e("SoloLatino", "[Voe] encoded string not found after ${5 - maxRedirects} redirect(s)")
+            Log.w("SoloLatino", "[Voe] HTML snippet (first 2000 chars): $htmlSnippet")
             return
         }
 
