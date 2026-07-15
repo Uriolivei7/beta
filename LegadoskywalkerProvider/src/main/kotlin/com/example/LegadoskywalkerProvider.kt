@@ -185,33 +185,42 @@ class LegadoskywalkerProvider : MainAPI() {
             }
         }
 
-        val body = doc.select(".post-body.entry-content, .post-body, #post-body, .entry-content, div[class*='post'], article").firstOrNull()
+        val body = doc.select(".post-body.entry-content").firstOrNull()
+            ?: doc.select(".post-body").firstOrNull()
         Log.d("LegadoSkywalker", "loadSeries: body=${body != null}")
 
-        var seasonUrls = (body ?: doc).select("a[href*='temporada']").mapNotNull { a ->
+        // Collect season URLs specific to this series
+        val linkPool = (body ?: doc).select("a[href*='temporada']")
+        Log.d("LegadoSkywalker", "loadSeries: ${linkPool.size} raw 'temporada' links")
+
+        var seasonUrls = linkPool.mapNotNull { a ->
             a.attr("abs:href").ifBlank { null }
-        }.map { it.replace("http://", "https://") }
-            .distinctBy { it.substringAfter(mainUrl).substringBefore("#").substringBefore("?") }
-            .filter { it.contains("temporada") }
+        }.filter { it.contains(slug, ignoreCase = true) && it.contains("temporada") }
+            .map { it.replace("http://", "https://") }
+            .distinctBy { 
+                it.substringAfter(mainUrl).substringBefore("#").substringBefore("?")
+                    .replace(Regex("""temporada[-\s]*(\d+)_\d+"""), "temporada-$1")
+            }
             .sorted()
-        Log.d("LegadoSkywalker", "loadSeries: ${seasonUrls.size} season URLs: $seasonUrls")
+        Log.d("LegadoSkywalker", "loadSeries: ${seasonUrls.size} season URLs for slug '$slug': $seasonUrls")
 
         if (seasonUrls.isEmpty()) {
-            Log.w("LegadoSkywalker", "loadSeries: no season links, trying doc-wide")
-            val allAnchors = doc.select("a[href]")
-            Log.d("LegadoSkywalker", "loadSeries: total anchors in doc: ${allAnchors.size}")
+            Log.w("LegadoSkywalker", "loadSeries: no season links for slug='$slug', trying doc-wide")
+            val allAnchors = doc.select("a[href*='temporada']")
+            Log.d("LegadoSkywalker", "loadSeries: doc-wide a[href*='temporada']: ${allAnchors.size}")
             allAnchors.forEach { a ->
                 val h = a.attr("abs:href")
                 val r = a.attr("href")
-                if (h.contains("temporada") || r.contains("temporada")) {
-                    Log.d("LegadoSkywalker", "  anchor href=$r abs:href=$h text=[${a.text()}]")
-                }
+                Log.d("LegadoSkywalker", "  href=$r abs:href=$h text=[${a.text()}]")
             }
-            seasonUrls = doc.select("a[href*='temporada']").mapNotNull { a ->
+            seasonUrls = allAnchors.mapNotNull { a ->
                 a.attr("abs:href").ifBlank { null }
-            }.map { it.replace("http://", "https://") }
-                .distinctBy { it.substringAfter(mainUrl).substringBefore("#").substringBefore("?") }
-                .filter { it.contains("temporada") }
+            }.filter { it.contains(slug, ignoreCase = true) && it.contains("temporada") }
+                .map { it.replace("http://", "https://") }
+                .distinctBy { 
+                    it.substringAfter(mainUrl).substringBefore("#").substringBefore("?")
+                        .replace(Regex("""temporada[-\s]*(\d+)_\d+"""), "temporada-$1")
+                }
                 .sorted()
         }
 
