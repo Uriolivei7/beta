@@ -20,11 +20,16 @@ open class VoeExtractor : ExtractorApi() {
     ) {
         Log.d("SoloLatino", "[Voe] URL: $url")
         val redirectRegex = Regex("""window\.location\.href\s*=\s*'([^']+)';""")
-        var res = app.get(url, referer = referer)
-        val redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
-        if (redirectUrl != null) {
+        var currentUrl = url
+        var res = app.get(currentUrl, referer = referer)
+        var maxRedirects = 5
+        var redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
+        while (redirectUrl != null && maxRedirects > 0) {
             Log.d("SoloLatino", "[Voe] Redirect to: $redirectUrl")
-            res = app.get(redirectUrl, referer = referer)
+            currentUrl = redirectUrl
+            res = app.get(currentUrl, referer = referer)
+            maxRedirects--
+            redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
         }
 
         val encodedString = res.document.selectFirst("script[type=application/json]")
@@ -33,7 +38,7 @@ open class VoeExtractor : ExtractorApi() {
             ?.substringBeforeLast("\"]")
 
         if (encodedString == null) {
-            Log.e("SoloLatino", "[Voe] encoded string not found")
+            Log.e("SoloLatino", "[Voe] encoded string not found after ${5 - maxRedirects} redirect(s)")
             return
         }
 
@@ -133,6 +138,10 @@ class VoeNathan : VoeExtractor() {
 
 class VoeMetagnath : VoeExtractor() {
     override val mainUrl = "https://metagnathtuggers.com"
+}
+
+class VoePamelachangemission : VoeExtractor() {
+    override val mainUrl = "https://pamelachangemission.com"
 }
 
 data class VoeDecrypted(

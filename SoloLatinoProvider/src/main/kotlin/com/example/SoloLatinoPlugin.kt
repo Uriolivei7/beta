@@ -19,5 +19,6 @@ class SoloLatinoPlugin : Plugin() {
         registerExtractorAPI(VoeUroch())
         registerExtractorAPI(VoeNathan())
         registerExtractorAPI(VoeMetagnath())
+        registerExtractorAPI(VoePamelachangemission())
     }
 }

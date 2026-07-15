@@ -480,7 +480,7 @@ class SoloLatinoProvider : MainAPI() {
                     fixedSrc.contains("donaldlineelse") || fixedSrc.contains("charlestoughrace") ||
                     fixedSrc.contains("tubelessceliolymph") || fixedSrc.contains("simpulumlamerop") ||
                     fixedSrc.contains("urochsunloath") || fixedSrc.contains("nathanfromsubject") ||
-                    fixedSrc.contains("metagnathtuggers") -> {
+                    fixedSrc.contains("metagnathtuggers") || fixedSrc.contains("pamelachangemission") -> {
                     Log.d("SoloLatino", "BRANCH: Voe extraction")
                     loadExtractor(fixedSrc, targetUrl, subtitleCallback, callback)
                 }
