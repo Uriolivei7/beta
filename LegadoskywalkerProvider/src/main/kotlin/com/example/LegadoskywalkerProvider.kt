@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import android.util.Log
 import kotlinx.coroutines.*
 
@@ -158,7 +159,7 @@ class LegadoskywalkerProvider : MainAPI() {
         }
         return results
     }
- 
+
     override suspend fun load(url: String): LoadResponse {
         Log.d("LegadoSkywalker", "load: $url")
         val u = url.removePrefix(mainUrl).removePrefix("/")
@@ -184,32 +185,21 @@ class LegadoskywalkerProvider : MainAPI() {
             }
         }
 
-        val body = doc.select(".post-body.entry-content, .post-body").firstOrNull()
-        if (body == null) {
-            Log.e("LegadoSkywalker", "loadSeries: no post-body found")
-            return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList())
-        }
+        val body = doc.select(".post-body.entry-content, .post-body, #post-body, .entry-content, div[class*='post'], article").firstOrNull()
 
-        val seasonAnchors = body.select("a[href*='temporada']")
-        Log.d("LegadoSkywalker", "loadSeries: ${seasonAnchors.size} season links found")
-
-        if (seasonAnchors.isEmpty()) {
-            Log.w("LegadoSkywalker", "loadSeries: no season links, trying all <a> in body")
-            body.select("a[href]").forEach { a ->
-                val h = a.attr("abs:href")
-                if (h.contains("/p/") && h.contains(mainUrl)) {
-                    Log.d("LegadoSkywalker", "  link: $h")
-                }
-            }
-        }
-
-        val seasonUrls = seasonAnchors.mapNotNull { a ->
+        // Collect all links from series page (from body or whole doc)
+        val allLinks = mutableListOf<String>()
+        val anchors = (body ?: doc).select("a[href]")
+        anchors.forEach { a ->
             val h = a.attr("abs:href")
-            if (h.isBlank()) a.attr("href").let { if (it.startsWith("/")) "$mainUrl$it" else if (it.startsWith("http")) it else null }
-            else h
-        }.distinct()
-
+            if (h.isNotBlank() && h.contains("temporada")) allLinks.add(h)
+        }
+        // Normalize: https only, deduplicate by path
+        val seasonUrls = allLinks.map { it.replace("http://", "https://") }
+            .distinctBy { it.substringAfter(mainUrl).substringBefore("#").substringBefore("?") }
+            .sorted() // sort so we process in order
         Log.d("LegadoSkywalker", "loadSeries: ${seasonUrls.size} unique season URLs: $seasonUrls")
+
         if (seasonUrls.isEmpty()) {
             return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
                 this.plot = "No se encontraron temporadas"
@@ -218,51 +208,62 @@ class LegadoskywalkerProvider : MainAPI() {
 
         val allEpisodes = mutableListOf<Episode>()
         seasonUrls.forEach { seasonUrl ->
+            val seasonNum = Regex("""temporada[-\s]*(\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
             try {
-                val seasonNum = Regex("""temporada[-\s]*(\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
-                val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
-                val seasonBody = seasonDoc.select(".post-body.entry-content, .post-body").firstOrNull()
-                if (seasonBody == null) {
-                    Log.w("LegadoSkywalker", "  season $seasonNum: no post-body")
+                // If this is a post URL (contains /20XX/), treat as direct episode
+                if (seasonUrl.contains("/20") && !seasonUrl.contains("/p/")) {
+                    Log.d("LegadoSkywalker", "  season $seasonNum: direct episode post $seasonUrl")
+                    val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
+                    val epTitle = seasonDoc.select("h1, h2").firstOrNull()?.text()?.trim()
+                        ?: seasonDoc.select("title").text().trim().substringBefore("|").trim()
+                    val epName = epTitle.replace(Regex("""\s*\[T\d+[-\s]*C\d+\]\s*"""), "").trim()
+                    val epFromUrl = Regex("""[cC](\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
+                    allEpisodes.add(newEpisode(seasonUrl) {
+                        this.name = epName.ifBlank { "Episodio ${seasonNum ?: (allEpisodes.size + 1)}" }
+                        this.season = seasonNum ?: 1
+                        this.episode = epFromUrl ?: (seasonNum ?: (allEpisodes.size + 1))
+                    })
                     return@forEach
                 }
 
-                // Find episode links within post-body
-                val epLinks = seasonBody.select("a[href*='blogspot.com/20'], a[href*='blogspot.com/20'], a[href*='/20']")
-                Log.d("LegadoSkywalker", "  season $seasonNum: ${epLinks.size} episode links")
-
-                if (epLinks.isEmpty()) {
-                    // Try any <a> inside numbered divs
-                    seasonBody.select("div a[href]").forEach { a ->
-                        val h = a.attr("abs:href")
-                        if (h.contains("/20") && !h.contains("temporada") && !h.contains("label")) {
-                            val epNum = a.parents().select("div, span").text().trim()
-                            val title = a.text().trim()
-                            Log.d("LegadoSkywalker", "    ep: $title -> $h")
-                            allEpisodes.add(newEpisode(h) {
-                                this.name = title.ifBlank { "Episodio ${allEpisodes.size + 1}" }
-                                this.season = seasonNum ?: 1
-                                this.episode = allEpisodes.size + 1
+                // Static page: /p/...temporada-N.html → parse episode list
+                val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
+                val seasonBody = seasonDoc.select(".post-body.entry-content, .post-body, #post-body, .entry-content").firstOrNull()
+                if (seasonBody == null) {
+                    Log.w("LegadoSkywalker", "  season $seasonNum: no post-body, trying doc links")
+                    seasonDoc.select("a[href]").forEachIndexed { idx, a ->
+                        val href = a.attr("abs:href")
+                        val text = a.text().trim()
+                        if (href.contains("/20") && text.isNotBlank()
+                            && !text.contains("Anterior", true) && !text.contains("Siguiente", true)
+                            && !text.contains("Temporada", true) && !href.contains("temporada")) {
+                            val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                            allEpisodes.add(newEpisode(href) {
+                                this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
                             })
                         }
                     }
                     return@forEach
                 }
 
-                epLinks.forEachIndexed { idx, a ->
+                // Parse episode links from static season page
+                seasonBody.select("a[href]").forEachIndexed { idx, a ->
                     val href = a.attr("abs:href")
-                    val title = a.text().trim()
-                    if (href.contains("temporada") || href.contains("label") || title.isBlank()) return@forEachIndexed
-                    // Try to get ep number from URL
+                    val text = a.text().trim()
+                    // Skip nav links and season/index links
+                    if (href.isBlank() || !href.contains("/20")
+                        || text.contains("Anterior", true) || text.contains("Siguiente", true)
+                        || text.contains("Temporada", true) || text.contains("atrás", true)
+                        || text.contains("regresar", true) || text.contains("volver", true)
+                        || href.contains("temporada") || href.contains("label")) return@forEachIndexed
+                    if (!href.startsWith(mainUrl)) return@forEachIndexed
                     val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
                     allEpisodes.add(newEpisode(href) {
-                        this.name = title
-                        this.season = seasonNum ?: 1
-                        this.episode = epFromUrl ?: (idx + 1)
+                        this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
                     })
                 }
             } catch (e: Exception) {
-                Log.e("LegadoSkywalker", "  season error: ${e.message}")
+                Log.e("LegadoSkywalker", "  season $seasonNum error: ${e.message}")
             }
         }
 
@@ -396,15 +397,60 @@ class LegadoskywalkerProvider : MainAPI() {
         var anySuccess = false
         urls.distinct().forEach { url ->
             try {
+                // First try loadExtractor (works for FileMoon, GDrive, etc)
                 Log.d("LegadoSkywalker", "loadExtractor: $url")
                 val success = loadExtractor(url, data, subtitleCallback) { link ->
                     Log.d("LegadoSkywalker", "Extracted: ${link.url.take(80)} quality=${link.quality}")
                     callback(link)
                     anySuccess = true
                 }
-                if (!success) Log.w("LegadoSkywalker", "loadExtractor false for $url")
+                if (success) return@forEach
+                Log.w("LegadoSkywalker", "loadExtractor false, trying app.get fallback")
+
+                // Fallback: fetch via WebView and try to extract video URL
+                val resp = app.get(url, referer = data, timeout = 60L)
+                val html = resp.text
+                Log.d("LegadoSkywalker", "fallback page ${html.length} chars")
+
+                // Try sources: file, src, data-file, etc
+                val patterns = listOf(
+                    Regex("""(?:file|src|url)\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
+                    Regex("""<source[^>]+src=["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
+                    Regex("""<video[^>]+src=["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
+                    Regex("""https?://[^"'\s<>]+\.(?:m3u8|mp4)[^"'\s<>]*"""),
+                    Regex("""data-file\s*=\s*["']([^"']+)["']"""),
+                    Regex("""data-hash\s*=\s*["']([^"']+)["']"""),
+                )
+                var found = false
+                for (p in patterns) {
+                    val m = p.find(html)
+                    if (m != null) {
+                        val videoUrl = m.groupValues[1].ifBlank { m.value }.replace("\\/", "/")
+                        Log.d("LegadoSkywalker", "  extracted: $videoUrl")
+                        callback(newExtractorLink("Legado", "Video $videoUrl.takeLast(30)", videoUrl) {
+                            this.referer = url
+                        })
+                        anySuccess = true; found = true; break
+                    }
+                }
+                if (found) return@forEach
+
+                // Look for nested iframe
+                val iframeUrl = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(html)
+                if (iframeUrl != null) {
+                    val inner = iframeUrl.groupValues[1].let {
+                        when {
+                            it.startsWith("//") -> "https:$it"
+                            it.startsWith("http") -> it
+                            else -> "$mainUrl/$it"
+                        }
+                    }
+                    Log.d("LegadoSkywalker", "  nested iframe: $inner")
+                    val success2 = loadExtractor(inner, url, subtitleCallback, callback)
+                    if (success2) { anySuccess = true }
+                }
             } catch (e: Exception) {
-                Log.e("LegadoSkywalker", "loadExtractor error: ${e.message}")
+                Log.e("LegadoSkywalker", "loadLinks error: ${e.message}")
             }
         }
         return anySuccess
