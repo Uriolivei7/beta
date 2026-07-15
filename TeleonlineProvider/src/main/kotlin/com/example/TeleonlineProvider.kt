@@ -18,9 +18,15 @@ class TeleonlineProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
+    override val usesWebView = true
 
     private val cfKiller = CloudflareKiller()
     private val maxPagesGeneral = 2
+    private val desktopHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9"
+    )
 
     private val countrySections = listOf(
         "Perú" to "/canales/peru/",
@@ -77,12 +83,14 @@ class TeleonlineProvider : MainAPI() {
         return channels
     }
 
-    private suspend fun safeGet(url: String, timeoutMs: Long = 15000L): String? {
-        for (attempt in 1..2) {
+    private suspend fun safeGet(url: String, timeoutMs: Long = 60000L): String? {
+        for (attempt in 1..3) {
             try {
-                val interceptor = if (attempt > 1) cfKiller else null
-                val res = app.get(url, timeout = timeoutMs * attempt, interceptor = interceptor)
-                if (res.isSuccessful) return res.text
+                val res = app.get(url, timeout = timeoutMs, headers = desktopHeaders, interceptor = cfKiller)
+                if (res.isSuccessful) {
+                    val text = res.text
+                    if (!text.contains("One moment") && !text.contains("Please wait")) return text
+                }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 Log.e("Teleonline", "safeGet error (intento $attempt): ${e.message}")
@@ -161,15 +169,11 @@ class TeleonlineProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            val mainHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language" to "es-ES,es;q=0.9"
-            )
-
-            val mainHtml = withTimeoutOrNull(20000L) {
-                app.get(data, headers = mainHeaders, interceptor = cfKiller)
+            val mainHtml = withTimeoutOrNull(60000L) {
+                app.get(data, headers = desktopHeaders, interceptor = cfKiller)
             }?.text ?: return false
+
+            if (mainHtml.contains("One moment") || mainHtml.contains("Please wait")) return false
 
             // Try base64-encoded M3U8 (teleonline stores them as window.atob('...'))
             val b64Pattern = Regex("""(?:atob|btoa)\s*\(\s*['"]([A-Za-z0-9+/=]+)['"]""")
@@ -183,10 +187,7 @@ class TeleonlineProvider : MainAPI() {
                             val m3u8Url = decoded.replace("\\/", "/").trim()
                             Log.d("Teleonline", "M3U8 from base64 (opción ${idx + 1}): $m3u8Url")
                             callback(newExtractorLink(name, "En Vivo - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
-                                this.headers = mapOf(
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                    "Referer" to data
-                                )
+                                this.headers = desktopHeaders + mapOf("Referer" to data)
                             })
                             found = true
                         }
@@ -199,10 +200,7 @@ class TeleonlineProvider : MainAPI() {
             val directM3u8 = extractM3u8FromHtml(mainHtml)
             if (directM3u8 != null) {
                 callback(newExtractorLink(name, "$name - En Vivo", directM3u8, ExtractorLinkType.M3U8) {
-                    this.headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer" to data
-                    )
+                    this.headers = desktopHeaders + mapOf("Referer" to data)
                 })
                 return true
             }
@@ -233,17 +231,14 @@ class TeleonlineProvider : MainAPI() {
                         return true
                     }
 
-                    val playerHtml = withTimeoutOrNull(15000L) {
-                        app.get(playerUrl, headers = mainHeaders + mapOf("Referer" to data), interceptor = cfKiller)
+                    val playerHtml = withTimeoutOrNull(45000L) {
+                        app.get(playerUrl, headers = desktopHeaders + mapOf("Referer" to data), interceptor = cfKiller)
                     }?.text ?: continue
 
                     val m3u8Url = extractM3u8FromHtml(playerHtml)
                     if (m3u8Url != null) {
                         callback(newExtractorLink(name, "$name - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
-                            this.headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Referer" to playerUrl
-                            )
+                            this.headers = desktopHeaders + mapOf("Referer" to playerUrl)
                         })
                         return true
                     }
