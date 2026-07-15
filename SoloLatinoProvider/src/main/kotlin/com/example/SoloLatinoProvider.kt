@@ -6,6 +6,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
@@ -24,7 +25,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-//yeji
 class SoloLatinoProvider : MainAPI() {
     override var mainUrl = "https://sololatino.net"
     override var name = "SoloLatino"
@@ -474,6 +474,15 @@ class SoloLatinoProvider : MainAPI() {
                             }
                         } ?: Log.e("SoloLatino", "embed69 - No se pudo parsear dataLink JSON")
                     }
+                }
+
+                fixedSrc.contains("voe") || fixedSrc.contains("yip.su") ||
+                    fixedSrc.contains("donaldlineelse") || fixedSrc.contains("charlestoughrace") ||
+                    fixedSrc.contains("tubelessceliolymph") || fixedSrc.contains("simpulumlamerop") ||
+                    fixedSrc.contains("urochsunloath") || fixedSrc.contains("nathanfromsubject") ||
+                    fixedSrc.contains("metagnathtuggers") -> {
+                    Log.d("SoloLatino", "BRANCH: Voe extraction")
+                    loadExtractor(fixedSrc, targetUrl, subtitleCallback, callback)
                 }
 
                 fixedSrc.contains("xupalace.org") -> {
