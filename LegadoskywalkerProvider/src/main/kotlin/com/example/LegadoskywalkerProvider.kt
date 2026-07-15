@@ -18,8 +18,8 @@ data class SeriesDef(
 
 class LegadoskywalkerProvider : MainAPI() {
     override var mainUrl = "https://serieslegadoskywalker.blogspot.com"
-    override var name = "Legado Skywalker"
-    override var lang = "es"
+    override var name = "LegadoSkywalker"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = false
@@ -186,21 +186,37 @@ class LegadoskywalkerProvider : MainAPI() {
         }
 
         val body = doc.select(".post-body.entry-content, .post-body, #post-body, .entry-content, div[class*='post'], article").firstOrNull()
+        Log.d("LegadoSkywalker", "loadSeries: body=${body != null}")
 
-        // Collect all links from series page (from body or whole doc)
-        val allLinks = mutableListOf<String>()
-        val anchors = (body ?: doc).select("a[href]")
-        anchors.forEach { a ->
-            val h = a.attr("abs:href")
-            if (h.isNotBlank() && h.contains("temporada")) allLinks.add(h)
-        }
-        // Normalize: https only, deduplicate by path
-        val seasonUrls = allLinks.map { it.replace("http://", "https://") }
+        var seasonUrls = (body ?: doc).select("a[href*='temporada']").mapNotNull { a ->
+            a.attr("abs:href").ifBlank { null }
+        }.map { it.replace("http://", "https://") }
             .distinctBy { it.substringAfter(mainUrl).substringBefore("#").substringBefore("?") }
-            .sorted() // sort so we process in order
-        Log.d("LegadoSkywalker", "loadSeries: ${seasonUrls.size} unique season URLs: $seasonUrls")
+            .filter { it.contains("temporada") }
+            .sorted()
+        Log.d("LegadoSkywalker", "loadSeries: ${seasonUrls.size} season URLs: $seasonUrls")
 
         if (seasonUrls.isEmpty()) {
+            Log.w("LegadoSkywalker", "loadSeries: no season links, trying doc-wide")
+            val allAnchors = doc.select("a[href]")
+            Log.d("LegadoSkywalker", "loadSeries: total anchors in doc: ${allAnchors.size}")
+            allAnchors.forEach { a ->
+                val h = a.attr("abs:href")
+                val r = a.attr("href")
+                if (h.contains("temporada") || r.contains("temporada")) {
+                    Log.d("LegadoSkywalker", "  anchor href=$r abs:href=$h text=[${a.text()}]")
+                }
+            }
+            seasonUrls = doc.select("a[href*='temporada']").mapNotNull { a ->
+                a.attr("abs:href").ifBlank { null }
+            }.map { it.replace("http://", "https://") }
+                .distinctBy { it.substringAfter(mainUrl).substringBefore("#").substringBefore("?") }
+                .filter { it.contains("temporada") }
+                .sorted()
+        }
+
+        if (seasonUrls.isEmpty()) {
+            Log.e("LegadoSkywalker", "loadSeries: no temporada links for $slug")
             return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
                 this.plot = "No se encontraron temporadas"
             }
