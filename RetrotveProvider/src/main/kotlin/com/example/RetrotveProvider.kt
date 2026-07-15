@@ -46,10 +46,16 @@ class RetrotveProvider : MainAPI() {
             try {
                 val resp = app.get(url, headers = baseHeaders, timeout = 30000L, interceptor = cfKiller)
                 val text = resp.text
-                if (text.contains("Please wait while your request is being verified") || text.contains("One moment, please") || text.contains("challenge-platform")) {
-                    Log.w("RetrotveProvider", "Challenge page detected on attempt ${i+1}, retrying...")
+                val title = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1) ?: "no-title"
+                val urlFinal = resp.url
+                Log.d("RetrotveProvider", "safeGet attempt ${i+1}: url=$url, finalUrl=$urlFinal, code=${resp.code}, title=$title, len=${text.length}, cookies=${resp.cookies}")
+                if (text.contains("Please wait") || text.contains("One moment, please") || text.contains("challenge-platform") || text.contains("__cf_chl_frm") || text.contains("pamelachangemission")) {
+                    Log.w("RetrotveProvider", "Challenge page detected on attempt ${i+1}. First 300 chars: ${text.take(300)}")
                     kotlinx.coroutines.delay(3000L)
                     continue
+                }
+                if (text.length < 500) {
+                    Log.w("RetrotveProvider", "safeGet: response suspiciously short (${text.length} chars). Full body: $text")
                 }
                 return resp.document
             } catch (e: Exception) {
@@ -60,6 +66,21 @@ class RetrotveProvider : MainAPI() {
         return null
     }
 
+    private fun logDocumentDebug(tag: String, doc: org.jsoup.nodes.Document?) {
+        if (doc == null) {
+            Log.e("RetrotveProvider", "$tag: document is NULL")
+            return
+        }
+        val html = doc.html()
+        Log.d("RetrotveProvider", "$tag: doc title=${doc.title()}, html len=${html.length}")
+        if (html.length > 200) {
+            Log.d("RetrotveProvider", "$tag: first 500 chars: ${html.take(500)}")
+        } else {
+            Log.d("RetrotveProvider", "$tag: FULL html=$html")
+        }
+        Log.d("RetrotveProvider", "$tag: selectors test -> .MovieList: ${doc.select(".MovieList").size}, .TPostMv: ${doc.select(".TPostMv").size}, .TpRwCont: ${doc.select(".TpRwCont").size}, a[href*='/serie/']: ${doc.select("a[href*='/serie/']").size}, a[href*='/pelicula/']: ${doc.select("a[href*='/pelicula/']").size}")
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) {
             "$mainUrl${request.data}"
@@ -68,7 +89,12 @@ class RetrotveProvider : MainAPI() {
         }
         Log.d("RetrotveProvider", "getMainPage: URL = $url")
         
-        val document = safeGet(url) ?: return newHomePageResponse(emptyList(), false)
+        val document = safeGet(url)
+        if (document == null) {
+            Log.e("RetrotveProvider", "getMainPage: safeGet returned null after retries for $url")
+            return newHomePageResponse(emptyList(), false)
+        }
+        logDocumentDebug("getMainPage", document)
         val home = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
@@ -106,7 +132,12 @@ class RetrotveProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("RetrotveProvider", "search: query = $query")
-        val document = safeGet("$mainUrl/?s=$query") ?: return emptyList()
+        val document = safeGet("$mainUrl/?s=$query")
+        if (document == null) {
+            Log.e("RetrotveProvider", "search: safeGet returned null after retries")
+            return emptyList()
+        }
+        logDocumentDebug("search", document)
         val results = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
@@ -163,9 +194,18 @@ class RetrotveProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d("RetrotveProvider", "load: url = $url")
-        val document = safeGet(url) ?: return null
+        val document = safeGet(url)
+        if (document == null) {
+            Log.e("RetrotveProvider", "load: safeGet returned null for $url")
+            return null
+        }
+        logDocumentDebug("load", document)
         
-        val title = document.selectFirst("h1.Title, h1")?.text() ?: return null
+        val title = document.selectFirst("h1.Title, h1")?.text()
+        if (title == null) {
+            Log.e("RetrotveProvider", "load: no title found. Tried selectors: h1.Title, h1")
+            return null
+        }
         val poster = fixPosterUrl(document.selectFirst(".TPost.Single .Image img")?.attr("src")
             ?: document.selectFirst(".TPost.Single .Image img")?.attr("data-src")
             ?: document.selectFirst(".TPostBg img")?.attr("src")
@@ -202,6 +242,8 @@ class RetrotveProvider : MainAPI() {
             }
             
             if (episodes.isEmpty()) {
+                Log.w("RetrotveProvider", "load: no episodes found with .Wdgt.AABox selector. Trying flat .TPTblCn table")
+                Log.d("RetrotveProvider", "load: .Wdgt.AABox count=${document.select(".Wdgt.AABox").size}, .TPTblCn count=${document.select(".TPTblCn").size}, table tr count=${document.select("table tr").size}")
                 document.select(".TPTblCn tbody tr").forEach { row ->
                     val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
                     val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
@@ -480,8 +522,12 @@ class RetrotveProvider : MainAPI() {
     ): Boolean {
         Log.d("RetrotveProvider", "loadLinks: data = $data")
         
-        val document = safeGet(data) ?: return false
-        Log.d("RetrotveProvider", "loadLinks: page title = ${document.title()}")
+        val document = safeGet(data)
+        if (document == null) {
+            Log.e("RetrotveProvider", "loadLinks: safeGet returned null for $data")
+            return false
+        }
+        logDocumentDebug("loadLinks", document)
         
         val trtype = if (data.contains("/pelicula/")) "1" else "2"
         
@@ -547,6 +593,10 @@ class RetrotveProvider : MainAPI() {
             }
         }
         
+        Log.d("RetrotveProvider", "loadLinks: found ${allEmbeds.size} embeds, correctTrid=$correctTrid")
+        if (allEmbeds.isEmpty()) {
+            Log.w("RetrotveProvider", "loadLinks: NO embeds found! Check selectors. Trying alternative: iframe[src]: ${document.select("iframe[src]").size}, div[data-src]: ${document.select("div[data-src]").size}, video[src]: ${document.select("video[src]").size}")
+        }
         if (correctTrid != null) {
             Log.d("RetrotveProvider", "Using correct trid: $correctTrid, trying all trembed options")
             
