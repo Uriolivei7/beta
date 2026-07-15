@@ -11,6 +11,15 @@ import android.util.Log
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import android.webkit.CookieManager
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class RetrotveProvider : MainAPI() {
     override var mainUrl = "https://retrotve.com"
@@ -34,6 +43,8 @@ class RetrotveProvider : MainAPI() {
     )
 
     private val cfKiller = CloudflareKiller()
+    private var wvResolved = false
+    private var sessionCookies = mapOf<String, String>()
 
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -42,29 +53,100 @@ class RetrotveProvider : MainAPI() {
         "Referer" to mainUrl
     )
 
-    private suspend fun safeGet(url: String, retries: Int = 3): org.jsoup.nodes.Document? {
-        for (i in 0 until retries) {
-            try {
-                val resp = app.get(url, headers = baseHeaders, timeout = 30000L, interceptor = cfKiller)
-                val text = resp.text
-                val title = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1) ?: "no-title"
-                val urlFinal = resp.url
-                Log.d("RetrotveProvider", "safeGet attempt ${i+1}: url=$url, finalUrl=$urlFinal, code=${resp.code}, title=$title, len=${text.length}, cookies=${resp.cookies}")
-                if (text.contains("Please wait") || text.contains("One moment") || text.contains("Un momento") || text.contains("challenge-platform") || text.contains("__cf_chl_frm") || text.contains("pamelachangemission") || text.contains("spinner") || text.contains("just a moment") || text.contains("window.location.reload")) {
-                    Log.w("RetrotveProvider", "Challenge page detected on attempt ${i+1}. First 300 chars: ${text.take(300)}")
-                    kotlinx.coroutines.delay(3000L)
-                    continue
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private suspend fun resolveChallengeWithWebView(): Boolean {
+        val ctx = retrotveAppContext ?: run {
+            Log.e("RetrotveProvider", "resolveChallenge: appContext null")
+            return false
+        }
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resumed = false
+                fun done(v: Boolean) { if (!resumed) { resumed = true; cont.resume(v) } }
+                try {
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().removeAllCookies(null)
+                    val view = WebView(ctx.applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    }
+                    var pageFinishedCount = 0
+                    view.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String) {
+                            pageFinishedCount++
+                            Log.d("RetrotveProvider", "resolveChallenge: onPageFinished #$pageFinishedCount url=${url.take(80)}")
+                        }
+                    }
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                    val poll = object : Runnable {
+                        var attempts = 0
+                        override fun run() {
+                            if (resumed) return
+                            if (attempts++ > 60) {
+                                Log.e("RetrotveProvider", "resolveChallenge: timeout (30s) after $pageFinishedCount page loads")
+                                view.destroy()
+                                done(false)
+                                return
+                            }
+                            val cookies = CookieManager.getInstance().getCookie(mainUrl)
+                            Log.d("RetrotveProvider", "resolveChallenge: attempt $attempts, pageFinished=$pageFinishedCount, cookies=$cookies")
+                            if (pageFinishedCount >= 2 && cookies != null && cookies.isNotEmpty()) {
+                                val map = cookies.split(";").mapNotNull { kv ->
+                                    val parts = kv.trim().split("=", limit = 2)
+                                    if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
+                                }.toMap()
+                                sessionCookies = map
+                                wvResolved = true
+                                Log.d("RetrotveProvider", "resolveChallenge: solved. Page loads=$pageFinishedCount, cookies=${map.keys}")
+                                view.destroy()
+                                done(true)
+                                return
+                            }
+                            handler.postDelayed(this, 500)
+                        }
+                    }
+                    view.loadUrl(mainUrl)
+                    handler.post(poll)
+                } catch (e: Exception) {
+                    Log.e("RetrotveProvider", "resolveChallenge error: ${e.message}")
+                    done(false)
                 }
-                if (text.length < 500) {
-                    Log.w("RetrotveProvider", "safeGet: response suspiciously short (${text.length} chars). Full body: $text")
-                }
-                return resp.document
-            } catch (e: Exception) {
-                Log.e("RetrotveProvider", "safeGet error attempt ${i+1}: ${e.message}")
-                if (i < retries - 1) kotlinx.coroutines.delay(2000L)
             }
         }
-        return null
+    }
+
+    private suspend fun safeGet(url: String): org.jsoup.nodes.Document? {
+        if (!wvResolved) {
+            Log.d("RetrotveProvider", "safeGet: WebView not resolved, resolving...")
+            val ok = resolveChallengeWithWebView()
+            if (!ok) {
+                Log.e("RetrotveProvider", "safeGet: WebView challenge resolution failed")
+                return null
+            }
+            Log.d("RetrotveProvider", "safeGet: WebView resolved, cookies=${sessionCookies.keys}")
+            delay(1000)
+        }
+        try {
+            val resp = app.get(url, headers = baseHeaders, timeout = 30000L, interceptor = cfKiller, cookies = sessionCookies)
+            val text = resp.text
+            val title = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1) ?: "no-title"
+            Log.d("RetrotveProvider", "safeGet: url=$url, code=${resp.code}, title=$title, len=${text.length}")
+            if (text.contains("Un momento") || text.contains("spinner") || text.contains("window.location.reload")) {
+                Log.w("RetrotveProvider", "safeGet: still on challenge page after WebView. Clearing and retrying WebView...")
+                wvResolved = false
+                sessionCookies = emptyMap()
+                return null
+            }
+            if (text.length < 500) {
+                Log.w("RetrotveProvider", "safeGet: response suspiciously short (${text.length} chars)")
+            }
+            return resp.document
+        } catch (e: Exception) {
+            Log.e("RetrotveProvider", "safeGet error: ${e.message}")
+            return null
+        }
     }
 
     private fun logDocumentDebug(tag: String, doc: org.jsoup.nodes.Document?) {
@@ -92,75 +174,69 @@ class RetrotveProvider : MainAPI() {
         
         val document = safeGet(url)
         if (document == null) {
-            Log.e("RetrotveProvider", "getMainPage: safeGet returned null after retries for $url")
+            Log.e("RetrotveProvider", "getMainPage: safeGet returned null for $url")
+            if (!wvResolved) {
+                val retry = safeGet(url)
+                if (retry != null) {
+                    logDocumentDebug("getMainPage_retry", retry)
+                    val home = parseListing(retry)
+                    return newHomePageResponse(
+                        list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
+                        hasNext = home.size >= 20
+                    )
+                }
+            }
             return newHomePageResponse(emptyList(), false)
         }
         logDocumentDebug("getMainPage", document)
-        val home = ArrayList<SearchResponse>()
+        val home = parseListing(document)
+        Log.d("RetrotveProvider", "getMainPage: found ${home.size} items")
+        return newHomePageResponse(
+            list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
+            hasNext = home.size >= 20
+        )
+    }
+
+    private fun parseListing(doc: org.jsoup.nodes.Document): List<SearchResponse> {
+        val results = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
-        
-        document.select(".TpRwCont .MovieList > li, .TpRwCont .MovieList .TPostMv, section .MovieList > li").forEach { element ->
+        doc.select(".TpRwCont .MovieList > li, .TpRwCont .MovieList .TPostMv, section .MovieList > li").forEach { element ->
             val linkElement = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")
             val link = linkElement?.attr("href") ?: return@forEach
             if (seenLinks.contains(link)) return@forEach
             seenLinks.add(link)
-            
             val title = element.selectFirst(".Title")?.text() ?: element.selectFirst("h3")?.text() ?: return@forEach
             val poster = fixPosterUrl(element.selectFirst(".Image img")?.attr("src")
                 ?: element.selectFirst(".Image img")?.attr("data-src"))
-            
             if (title.isNotEmpty() && title.length > 2) {
                 val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-                home.add(
-                    newTvSeriesSearchResponse(title, link, tvType) {
-                        this.posterUrl = poster
-                    }
-                )
+                results.add(newTvSeriesSearchResponse(title, link, tvType) { this.posterUrl = poster })
             }
         }
-        
-        Log.d("RetrotveProvider", "getMainPage: found ${home.size} items")
-        
-        return newHomePageResponse(
-            list = HomePageList(
-                name = request.name,
-                list = home,
-                isHorizontalImages = false
-            ),
-            hasNext = home.size >= 20
-        )
+        return results
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("RetrotveProvider", "search: query = $query")
         val document = safeGet("$mainUrl/?s=$query")
         if (document == null) {
-            Log.e("RetrotveProvider", "search: safeGet returned null after retries")
+            Log.e("RetrotveProvider", "search: safeGet returned null")
             return emptyList()
         }
         logDocumentDebug("search", document)
         val results = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
-        
         document.select("section .MovieList > li, section .TPostMv, .TpRwCont main .MovieList > li").forEach { element ->
             val link = element.selectFirst("a[href*='/serie/'], a[href*='/pelicula/']")?.attr("href") ?: return@forEach
-            
             if (!link.contains("/serie/") && !link.contains("/pelicula/")) return@forEach
             if (seenLinks.contains(link)) return@forEach
             seenLinks.add(link)
-            
             val title = element.selectFirst(".Title")?.text() ?: element.selectFirst("h3")?.text() ?: return@forEach
             val poster = fixPosterUrl(element.selectFirst(".Image img")?.attr("src")
                 ?: element.selectFirst(".Image img")?.attr("data-src"))
-            
             if (title.isEmpty() || title.length < 3) return@forEach
-            
             val tvType = if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-            results.add(
-                newTvSeriesSearchResponse(title, link, tvType) {
-                    this.posterUrl = poster
-                }
-            )
+            results.add(newTvSeriesSearchResponse(title, link, tvType) { this.posterUrl = poster })
         }
         Log.d("RetrotveProvider", "search: ${results.size} resultados")
         return results
@@ -212,11 +288,8 @@ class RetrotveProvider : MainAPI() {
             ?: document.selectFirst(".TPostBg img")?.attr("src")
             ?: document.selectFirst("meta[property='og:image']")?.attr("content"))
         val description = document.selectFirst(".Description p")?.text()
-        
         val year = document.selectFirst(".Year")?.text()?.filter { it.isDigit() }?.take(4)?.toIntOrNull()
-        
         val isMovie = url.contains("/pelicula/")
-        
         val episodes = ArrayList<Episode>()
         
         if (!isMovie) {
@@ -224,15 +297,11 @@ class RetrotveProvider : MainAPI() {
                 val seasonTitle = seasonBox.selectFirst(".Title.AA-Season span")?.text()
                     ?: seasonBox.selectFirst(".Title")?.text()
                 val seasonNum = seasonTitle?.filter { it.isDigit() }?.toIntOrNull() ?: 1
-                
-                Log.d("RetrotveProvider", "Found season: $seasonNum")
-                
                 seasonBox.select(".TPTblCn tbody tr").forEach { row ->
                     val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
                     val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
                     val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
                     val posterUrl = extractEpisodePoster(row)
-                    
                     episodes.add(newEpisode(episodeUrl) {
                         this.name = episodeName
                         this.episode = episodeNum ?: episodes.size + 1
@@ -241,16 +310,13 @@ class RetrotveProvider : MainAPI() {
                     })
                 }
             }
-            
             if (episodes.isEmpty()) {
-                Log.w("RetrotveProvider", "load: no episodes found with .Wdgt.AABox selector. Trying flat .TPTblCn table")
-                Log.d("RetrotveProvider", "load: .Wdgt.AABox count=${document.select(".Wdgt.AABox").size}, .TPTblCn count=${document.select(".TPTblCn").size}, table tr count=${document.select("table tr").size}")
+                Log.w("RetrotveProvider", "load: no episodes with .Wdgt.AABox. Trying .TPTblCn")
                 document.select(".TPTblCn tbody tr").forEach { row ->
                     val episodeUrl = row.selectFirst("a[href*='/seriestv/']")?.attr("href") ?: return@forEach
                     val episodeName = row.selectFirst(".MvTbTtl a")?.text() ?: "Episodio"
                     val episodeNum = row.selectFirst(".Num")?.text()?.toIntOrNull()
                     val posterUrl = extractEpisodePoster(row)
-                    
                     episodes.add(newEpisode(episodeUrl) {
                         this.name = episodeName
                         this.episode = episodeNum ?: episodes.size + 1
@@ -265,26 +331,17 @@ class RetrotveProvider : MainAPI() {
             if (!recUrl.contains("/serie/") && !recUrl.contains("/pelicula/")) return@mapNotNull null
             val recTitle = element.selectFirst(".Title")?.text() ?: return@mapNotNull null
             val recPoster = fixPosterUrl(element.selectFirst("img")?.attr("src") ?: element.selectFirst("img")?.attr("data-src"))
-            
             val recType = if (recUrl.contains("/pelicula/")) TvType.Movie else TvType.TvSeries
-            newTvSeriesSearchResponse(recTitle, recUrl, recType) {
-                this.posterUrl = recPoster
-            }
+            newTvSeriesSearchResponse(recTitle, recUrl, recType) { this.posterUrl = recPoster }
         }
         
         return if (isMovie) {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = poster
-                this.plot = description
-                this.year = year
-                this.recommendations = recommendations
+                this.posterUrl = poster; this.plot = description; this.year = year; this.recommendations = recommendations
             }
         } else {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                this.posterUrl = poster
-                this.plot = description
-                this.year = year
-                this.recommendations = recommendations
+                this.posterUrl = poster; this.plot = description; this.year = year; this.recommendations = recommendations
             }
         }
     }
@@ -292,11 +349,9 @@ class RetrotveProvider : MainAPI() {
     private suspend fun extractSendvid(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
             val embedUrl = if (url.contains("/embed/")) url else url.replace("/?", "/embed/?")
-            Log.d("RetrotveProvider", "Sendvid: Using custom extractor for: $embedUrl")
             SendvidExtractor().getUrl(embedUrl, referer, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e("RetrotveProvider", "Sendvid error: ${e.message}")
-            e.printStackTrace()
         }
     }
 
@@ -304,76 +359,39 @@ class RetrotveProvider : MainAPI() {
         try {
             val resp = app.get(url, referer = referer)
             val doc = resp.document
-            Log.d("RetrotveProvider", "TokyoVideo: code=${resp.code}, len=${doc.html().length}")
-
             val source = doc.selectFirst("video source[src]")
             if (source != null) {
-                val videoUrl = source.attr("src")
-                Log.d("RetrotveProvider", "TokyoVideo: found $videoUrl")
-                callback(newExtractorLink("TokyoVideo", "TokyoVideo", videoUrl) {
-                    this.referer = "https://www.tokyvideo.com/"
-                    this.quality = 1080
+                callback(newExtractorLink("TokyoVideo", "TokyoVideo", source.attr("src")) {
+                    this.referer = "https://www.tokyvideo.com/"; this.quality = 1080
                 })
             } else {
-                Log.d("RetrotveProvider", "TokyoVideo: no source found, falling back to loadExtractor")
                 loadExtractor(url, referer, subtitleCallback, callback)
             }
         } catch (e: Exception) {
-            Log.e("RetrotveProvider", "TokyoVideo error: ${e.message}")
             loadExtractor(url, referer, subtitleCallback, callback)
         }
     }
 
     private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
-            val resp = app.get(url, referer = referer)
-            val page = resp.text
-            Log.d("RetrotveProvider", "Filemoon: code=${resp.code}, url=${resp.url}, page len=${page.length}")
-            if (page.length < 10000) Log.d("RetrotveProvider", "Filemoon: HTML=$page")
-
+            val page = app.get(url, referer = referer).text
             val sources1 = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").findAll(page).toList()
             if (sources1.isNotEmpty()) {
-                sources1.forEach { match ->
-                    val videoUrl = match.groupValues[1].replace("\\/", "/")
-                    Log.d("RetrotveProvider", "Filemoon: found $videoUrl")
-                    callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) {
-                        this.referer = "https://filemoon.to/"
-                        this.quality = 1080
-                    })
-                }
+                sources1.forEach { m -> callback(newExtractorLink("Filemoon", "Filemoon", m.groupValues[1].replace("\\/", "/")) { this.referer = "https://filemoon.to/"; this.quality = 1080 }) }
                 return
             }
-
             val sources2 = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*'([^']+)'\s*\}?\s*\]?""").findAll(page).toList()
             if (sources2.isNotEmpty()) {
-                sources2.forEach { match ->
-                    val videoUrl = match.groupValues[1].replace("\\/", "/")
-                    Log.d("RetrotveProvider", "Filemoon: found $videoUrl")
-                    callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) {
-                        this.referer = "https://filemoon.to/"
-                        this.quality = 1080
-                    })
-                }
+                sources2.forEach { m -> callback(newExtractorLink("Filemoon", "Filemoon", m.groupValues[1].replace("\\/", "/")) { this.referer = "https://filemoon.to/"; this.quality = 1080 }) }
                 return
             }
-
             val directUrls = Regex("""https?://[^"'\s<>]+\.(?:mp4|m3u8)[^"'\s<>]*""").findAll(page).toList()
             if (directUrls.isNotEmpty()) {
-                directUrls.forEach { match ->
-                    Log.d("RetrotveProvider", "Filemoon: direct $match.value")
-                    callback(newExtractorLink("Filemoon", "Filemoon", match.value) {
-                        this.referer = "https://filemoon.to/"
-                        this.quality = 1080
-                    })
-                }
+                directUrls.forEach { m -> callback(newExtractorLink("Filemoon", "Filemoon", m.value) { this.referer = "https://filemoon.to/"; this.quality = 1080 }) }
                 return
             }
-
-            Log.d("RetrotveProvider", "Filemoon: SPA page, using loadExtractor")
-            val cleanUrl = url.substringBeforeLast("/")
-            loadExtractor(cleanUrl, referer, subtitleCallback, callback)
+            loadExtractor(url.substringBeforeLast("/"), referer, subtitleCallback, callback)
         } catch (e: Exception) {
-            Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
             loadExtractor(url, referer, subtitleCallback, callback)
         }
     }
@@ -381,251 +399,85 @@ class RetrotveProvider : MainAPI() {
     private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
             val fixedUrl = url.replace("vkvideo.ru", "vk.com")
-            if (fixedUrl != url) Log.d("RetrotveProvider", "VKVideo: rewritten $url -> $fixedUrl")
-            val resp = app.get(fixedUrl, referer = referer, timeout = 60L)
-            val page = resp.text
-            Log.d("RetrotveProvider", "VKVideo: code=${resp.code}, page len=${page.length}")
-
-            val mp4Match = Regex(""""mp4_720"\s*:\s*"([^"]+)"""").find(page)
-            if (mp4Match != null) {
-                val videoUrl = mp4Match.groupValues[1].replace("\\/", "/")
-                Log.d("RetrotveProvider", "VKVideo: mp4_720=$videoUrl")
-                callback(newExtractorLink("VKVideo", "VKVideo 720p", videoUrl) {
-                    this.referer = "https://vk.com/"
-                    this.quality = 720
-                })
-            }
-
-            val hlsMatch = Regex(""""hls_ondemand"\s*:\s*"([^"]+)"""").find(page)
-            if (hlsMatch != null) {
-                val hlsUrl = hlsMatch.groupValues[1].replace("\\/", "/")
-                Log.d("RetrotveProvider", "VKVideo: hls=$hlsUrl")
-                callback(newExtractorLink("VKVideo", "VKVideo HLS", hlsUrl) {
-                    this.referer = "https://vk.com/"
-                    this.quality = 1080
-                })
-            }
-
-            val dashMatch = Regex(""""dash_ondemand"\s*:\s*"([^"]+)"""").find(page)
-            if (dashMatch != null) {
-                val dashUrl = dashMatch.groupValues[1].replace("\\/", "/")
-                Log.d("RetrotveProvider", "VKVideo: dash=$dashUrl")
-                callback(newExtractorLink("VKVideo", "VKVideo DASH", dashUrl) {
-                    this.referer = "https://vk.com/"
-                    this.quality = 1080
-                    this.type = ExtractorLinkType.DASH
-                })
-            }
-
-            if (mp4Match == null && hlsMatch == null) {
-                Log.d("RetrotveProvider", "VKVideo: no URL found")
-            }
-        } catch (e: Exception) {
-            Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
-        }
+            val page = app.get(fixedUrl, referer = referer, timeout = 60L).text
+            val mp4 = Regex(""""mp4_720"\s*:\s*"([^"]+)"""").find(page)
+            if (mp4 != null) callback(newExtractorLink("VKVideo", "VKVideo 720p", mp4.groupValues[1].replace("\\/", "/")) { this.referer = "https://vk.com/"; this.quality = 720 })
+            val hls = Regex(""""hls_ondemand"\s*:\s*"([^"]+)"""").find(page)
+            if (hls != null) callback(newExtractorLink("VKVideo", "VKVideo HLS", hls.groupValues[1].replace("\\/", "/")) { this.referer = "https://vk.com/"; this.quality = 1080 })
+            val dash = Regex(""""dash_ondemand"\s*:\s*"([^"]+)"""").find(page)
+            if (dash != null) callback(newExtractorLink("VKVideo", "VKVideo DASH", dash.groupValues[1].replace("\\/", "/")) { this.referer = "https://vk.com/"; this.quality = 1080; this.type = ExtractorLinkType.DASH })
+        } catch (e: Exception) { Log.e("RetrotveProvider", "VKVideo error: ${e.message}") }
     }
 
     private suspend fun processPlayerPage(
-        playerUrl: String,
-        referer: String,
-        serverName: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        playerUrl: String, referer: String, serverName: String,
+        subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("RetrotveProvider", "processPlayerPage: $playerUrl (server: $serverName)")
-        
         try {
-            val playerResponse = app.get(playerUrl, referer = referer, headers = baseHeaders)
-            Log.d("RetrotveProvider", "processPlayerPage: code=${playerResponse.code}, url=${playerResponse.url}")
-            val playerDoc = playerResponse.document
-            Log.d("RetrotveProvider", "processPlayerPage: page title=${playerDoc.title()}, html len=${playerDoc.html().length}")
-            
-            val iframeCount = playerDoc.select("iframe[src]").size
-            Log.d("RetrotveProvider", "Found $iframeCount iframes in player page")
-            
-            if (iframeCount == 0) {
-                Log.d("RetrotveProvider", "No iframes found - checking for alternative content")
-                val pageText = playerDoc.html()
-                // Check for any video-related content
-                val videoSrc = Regex("""https?://[^"'\s]+\.(mp4|m3u8)[^"'\s]*""").findAll(pageText).toList()
-                Log.d("RetrotveProvider", "Direct video URLs in page: ${videoSrc.map { it.value }}")
-                playerDoc.select("script").forEach { script ->
-                    val content = script.html()
-                    if (content.contains("player") || content.contains("video") || content.contains("source")) {
-                        Log.d("RetrotveProvider", "Relevant script: ${content.take(300)}")
-                    }
-                }
-            }
-            
+            val playerDoc = app.get(playerUrl, referer = referer, headers = baseHeaders).document
             playerDoc.select("iframe[src]").forEach { iframe ->
-                val src = iframe.attr("src") ?: return@forEach
-                if (src.isBlank()) return@forEach
-                
-                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                Log.d("RetrotveProvider", "Found iframe: $fixedSrc")
-                
+                val src = iframe.attr("src").let { if (it.startsWith("//")) "https:$it" else it }
                 when {
-                    fixedSrc.contains("sendvid.com") -> {
-                        extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        Log.d("RetrotveProvider", "-> Filemoon: using custom extractor for: $fixedSrc")
-                        extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
-                        Log.d("RetrotveProvider", "-> OK.RU: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("vk.com") || fixedSrc.contains("vkvideo") -> {
-                        Log.d("RetrotveProvider", "-> VKVideo: using custom extractor for: $fixedSrc")
-                        extractVKVideo(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("tokyvideo.com") -> {
-                        Log.d("RetrotveProvider", "-> TokyoVideo: using custom extractor for: $fixedSrc")
-                        extractTokyoVideo(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
-                        Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
-                    }
-                    fixedSrc.contains("yourupload.com") || fixedSrc.contains("yourupload.") -> {
-                        Log.d("RetrotveProvider", "-> YourUpload: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("uqload.") -> {
-                        Log.d("RetrotveProvider", "-> Uqload: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("gdriveplayer") -> {
-                        Log.d("RetrotveProvider", "-> GDrivePlayer: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    fixedSrc.contains("mediafire") -> {
-                        Log.d("RetrotveProvider", "-> MediaFire: using loadExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
-                    else -> {
-                        Log.d("RetrotveProvider", "-> Using generic extractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
-                    }
+                    src.contains("sendvid.com") -> extractSendvid(src, playerUrl, subtitleCallback, callback)
+                    src.contains("filemoon.") -> extractFilemoon(src, playerUrl, subtitleCallback, callback)
+                    src.contains("ok.ru") || src.contains("odnoklassniki") -> loadExtractor(src, playerUrl, subtitleCallback, callback)
+                    src.contains("vk.com") || src.contains("vkvideo") -> extractVKVideo(src, playerUrl, subtitleCallback, callback)
+                    src.contains("tokyvideo.com") -> extractTokyoVideo(src, playerUrl, subtitleCallback, callback)
+                    src.contains("yourupload.") -> loadExtractor(src, playerUrl, subtitleCallback, callback)
+                    src.contains("uqload.") -> loadExtractor(src, playerUrl, subtitleCallback, callback)
+                    src.contains("gdriveplayer") -> loadExtractor(src, playerUrl, subtitleCallback, callback)
+                    src.contains("mediafire") -> loadExtractor(src, playerUrl, subtitleCallback, callback)
+                    else -> loadExtractor(src, playerUrl, subtitleCallback, callback)
                 }
             }
-        } catch (e: Exception) {
-            Log.e("RetrotveProvider", "processPlayerPage error: ${e.message}")
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { Log.e("RetrotveProvider", "processPlayerPage: ${e.message}") }
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        data: String, isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("RetrotveProvider", "loadLinks: data = $data")
-        
-        val document = safeGet(data)
-        if (document == null) {
-            Log.e("RetrotveProvider", "loadLinks: safeGet returned null for $data")
-            return false
-        }
+        val document = safeGet(data) ?: return false
         logDocumentDebug("loadLinks", document)
         
         val trtype = if (data.contains("/pelicula/")) "1" else "2"
-        
-        Log.d("RetrotveProvider", "Searching for player URLs in episode page")
-        
         val allEmbeds = mutableListOf<Pair<String, String>>()
         var correctTrid: String? = null
         
         document.select("iframe[src*='trembed']").forEach { iframe ->
-            val src = iframe.attr("src")
-            if (src.contains("trembed") && src.contains("trid")) {
-                val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                val tridMatch = Regex("""trid=(\d+)""").find(fixedSrc)
-                tridMatch?.groupValues?.get(1)?.let { trid ->
-                    if (correctTrid == null) {
-                        correctTrid = trid
-                        Log.d("RetrotveProvider", "Found correct trid from iframe: $trid")
-                    }
-                }
-                allEmbeds.add(fixedSrc to "Iframe")
-                Log.d("RetrotveProvider", "Found trembed iframe: $fixedSrc")
-            }
+            val src = iframe.attr("src").let { if (it.startsWith("//")) "https:$it" else it }
+            val tridMatch = Regex("""trid=(\d+)""").find(src)
+            tridMatch?.groupValues?.get(1)?.let { if (correctTrid == null) correctTrid = it }
+            allEmbeds.add(src to "Iframe")
         }
         
         document.select(".TPlayerTb[id], .TPlayer[id]").forEach { tab ->
-            val tabId = tab.attr("id")
-            Log.d("RetrotveProvider", "Checking tab: $tabId, html=${tab.html().take(200)}")
-            
             tab.select("iframe[src]").forEach { iframe ->
-                val src = iframe.attr("src")
+                val src = iframe.attr("src").let { if (it.startsWith("//")) "https:$it" else it }
                 if (src.contains("retrotve.com") && src.contains("trembed") && src.contains("trid")) {
-                    val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                    val tridMatch = Regex("""trid=(\d+)""").find(fixedSrc)
-                    tridMatch?.groupValues?.get(1)?.let { trid ->
-                        if (correctTrid == null) {
-                            correctTrid = trid
-                            Log.d("RetrotveProvider", "Found correct trid from tab $tabId: $trid")
-                        }
-                    }
-                    if (!allEmbeds.any { it.first == fixedSrc }) {
-                        allEmbeds.add(fixedSrc to tabId)
-                        Log.d("RetrotveProvider", "Found trembed iframe in $tabId: $fixedSrc")
-                    }
+                    val tridMatch = Regex("""trid=(\d+)""").find(src)
+                    tridMatch?.groupValues?.get(1)?.let { if (correctTrid == null) correctTrid = it }
+                    if (!allEmbeds.any { it.first == src }) allEmbeds.add(src to tab.attr("id"))
                 }
             }
-            
             tab.select("div[data-src*='trembed']").forEach { div ->
-                val src = div.attr("data-src")
-                if (src.contains("trembed") && src.contains("trid")) {
-                    val fixedSrc = if (src.startsWith("//")) "https:$src" else src
-                    val tridMatch = Regex("""trid=(\d+)""").find(fixedSrc)
-                    tridMatch?.groupValues?.get(1)?.let { trid ->
-                        if (correctTrid == null) {
-                            correctTrid = trid
-                            Log.d("RetrotveProvider", "Found correct trid from data-src: $trid")
-                        }
-                    }
-                    if (!allEmbeds.any { it.first == fixedSrc }) {
-                        allEmbeds.add(fixedSrc to tabId)
-                        Log.d("RetrotveProvider", "Found trembed data-src in $tabId: $fixedSrc")
-                    }
-                }
+                val src = div.attr("data-src").let { if (it.startsWith("//")) "https:$it" else it }
+                val tridMatch = Regex("""trid=(\d+)""").find(src)
+                tridMatch?.groupValues?.get(1)?.let { if (correctTrid == null) correctTrid = it }
+                if (!allEmbeds.any { it.first == src }) allEmbeds.add(src to tab.attr("id"))
             }
         }
         
-        Log.d("RetrotveProvider", "loadLinks: found ${allEmbeds.size} embeds, correctTrid=$correctTrid")
-        if (allEmbeds.isEmpty()) {
-            Log.w("RetrotveProvider", "loadLinks: NO embeds found! Check selectors. Trying alternative: iframe[src]: ${document.select("iframe[src]").size}, div[data-src]: ${document.select("div[data-src]").size}, video[src]: ${document.select("video[src]").size}")
-        }
-        if (correctTrid != null) {
-            Log.d("RetrotveProvider", "Using correct trid: $correctTrid, trying all trembed options")
-            
-            for (trembed in 0..5) {
-                val playerUrl = "$mainUrl/?trembed=$trembed&trid=$correctTrid&trtype=$trtype"
-                if (!allEmbeds.any { it.first.contains("trembed=$trembed&") && it.first.contains("trid=$correctTrid") }) {
-                    allEmbeds.add(playerUrl to "Opt${trembed + 1}")
-                    Log.d("RetrotveProvider", "Generated trembed $trembed: $playerUrl")
-                }
-            }
-        } else {
-            Log.d("RetrotveProvider", "No trid found! Checking page for alternative embeds...")
-            document.select("iframe[src]").forEach {
-                Log.d("RetrotveProvider", "Page iframe: ${it.attr("src")}")
-            }
-            document.select("video[src], source[src]").forEach {
-                Log.d("RetrotveProvider", "Direct video: ${it.attr("src")}")
+        correctTrid?.let { trid ->
+            for (t in 0..5) {
+                val url = "$mainUrl/?trembed=$t&trid=$trid&trtype=$trtype"
+                if (!allEmbeds.any { it.first == url }) allEmbeds.add(url to "Opt${t + 1}")
             }
         }
         
-        val uniqueEmbeds = allEmbeds.distinctBy { it.first }
-        Log.d("RetrotveProvider", "Found ${uniqueEmbeds.size} unique embed URLs to process")
-        
-        uniqueEmbeds.forEach { (playerUrl, serverName) ->
-            processPlayerPage(playerUrl, data, serverName, subtitleCallback, callback)
+        allEmbeds.distinctBy { it.first }.forEach { (url, name) ->
+            processPlayerPage(url, data, name, subtitleCallback, callback)
         }
-        
-        Log.d("RetrotveProvider", "loadLinks completed, extractors should be processing")
         return true
     }
 }

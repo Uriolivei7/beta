@@ -4,10 +4,12 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 
+var retrotveAppContext: Context? = null
+
 @CloudstreamPlugin
 class RetrotvePlugin: Plugin() {
     override fun load(context: Context) {
-        // All providers should be added in this manner. Please don't edit the providers list directly.
+        retrotveAppContext = context
         registerMainAPI(RetrotveProvider())
     }
 }
