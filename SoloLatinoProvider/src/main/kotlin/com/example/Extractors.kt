@@ -19,7 +19,7 @@ open class VoeExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit,
     ) {
         Log.d("SoloLatino", "[Voe] URL: $url")
-        val redirectRegex = Regex("""window\.location\.href\s*=\s*'([^']+)';""")
+        val redirectRegex = Regex("""(?:window\.)?location(?:\.href)?\s*=\s*'([^']+)'""")
         var currentUrl = url
         var res = app.get(currentUrl, referer = referer)
         var maxRedirects = 5
@@ -32,10 +32,22 @@ open class VoeExtractor : ExtractorApi() {
             redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
         }
 
-        val encodedString = res.document.selectFirst("script[type=application/json]")
+        var encodedString: String? = null
+
+        // Method 1: script[type=application/json]
+        encodedString = res.document.selectFirst("script[type=application/json]")
             ?.data()?.trim()
             ?.substringAfter("[\"")
             ?.substringBeforeLast("\"]")
+
+        // Method 2: search for the encoded blob in any script by decryptF7 pattern
+        if (encodedString == null) {
+            encodedString = res.document.select("script").mapNotNull { script ->
+                val html = script.html()
+                // The encoded string is rot13'd, so it looks like gibberish with A-Za-z
+                Regex("""["']([A-Za-z0-9+/=]{100,})["']""").find(html)?.groupValues?.get(1)
+            }.firstOrNull()
+        }
 
         if (encodedString == null) {
             Log.e("SoloLatino", "[Voe] encoded string not found after ${5 - maxRedirects} redirect(s)")
