@@ -19,6 +19,7 @@ class RetrotveProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
+    override val usesWebView = true
     override val supportedTypes = setOf(
         TvType.TvSeries,
         TvType.Movie,
@@ -49,7 +50,7 @@ class RetrotveProvider : MainAPI() {
                 val title = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1) ?: "no-title"
                 val urlFinal = resp.url
                 Log.d("RetrotveProvider", "safeGet attempt ${i+1}: url=$url, finalUrl=$urlFinal, code=${resp.code}, title=$title, len=${text.length}, cookies=${resp.cookies}")
-                if (text.contains("Please wait") || text.contains("One moment, please") || text.contains("challenge-platform") || text.contains("__cf_chl_frm") || text.contains("pamelachangemission")) {
+                if (text.contains("Please wait") || text.contains("One moment") || text.contains("Un momento") || text.contains("challenge-platform") || text.contains("__cf_chl_frm") || text.contains("pamelachangemission") || text.contains("spinner") || text.contains("just a moment") || text.contains("window.location.reload")) {
                     Log.w("RetrotveProvider", "Challenge page detected on attempt ${i+1}. First 300 chars: ${text.take(300)}")
                     kotlinx.coroutines.delay(3000L)
                     continue
