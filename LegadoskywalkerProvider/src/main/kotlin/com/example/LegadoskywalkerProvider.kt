@@ -81,8 +81,8 @@ class LegadoskywalkerProvider : MainAPI() {
     private fun allSeries(): List<SeriesDef> = animadas + liveaction
     private fun allMovies(): List<SeriesDef> = peliculas + otros
 
-    private suspend fun loadPoster(slug: String): String? {
-        val url = if (slug.startsWith("http")) slug else "$mainUrl/search/label/${java.net.URLEncoder.encode(slug, "UTF-8")}"
+    private suspend fun loadPoster(slug: String, isSeriesPage: Boolean = true): String? {
+        val url = if (isSeriesPage) "$mainUrl/p/$slug.html" else "$mainUrl/search/label/${java.net.URLEncoder.encode(slug, "UTF-8")}"
         return try {
             val doc = app.get(url, timeout = 30L).document
             doc.select("div.post img, .post-body img").firstOrNull()?.attr("abs:src")
@@ -92,7 +92,7 @@ class LegadoskywalkerProvider : MainAPI() {
 
     private suspend fun ensureSeriesPoster(s: SeriesDef) {
         if (s.posterLoaded) return
-        s.poster = loadPoster(s.slug) ?: ""
+        s.poster = loadPoster(s.slug, isSeriesPage = true) ?: loadPoster(s.slug, isSeriesPage = false) ?: ""
         Log.d("LegadoSkywalker", "Poster ${s.name}: ${s.poster}")
         s.posterLoaded = true
     }
@@ -158,13 +158,15 @@ class LegadoskywalkerProvider : MainAPI() {
         }
         return results
     }
-
+ 
     override suspend fun load(url: String): LoadResponse {
         Log.d("LegadoSkywalker", "load: $url")
+        val u = url.removePrefix(mainUrl).removePrefix("/")
+        Log.d("LegadoSkywalker", "load clean: $u")
         when {
-            url.startsWith("SERIES:") -> return loadSeries(url.removePrefix("SERIES:"))
-            url.startsWith("MOVIE:") -> return loadMovieByLabel(url.removePrefix("MOVIE:"))
-            url.contains("/p/") && url.contains("temporada") -> return loadSeasonPage(url)
+            u.startsWith("SERIES:") -> return loadSeries(u.removePrefix("SERIES:"))
+            u.startsWith("MOVIE:") -> return loadMovieByLabel(u.removePrefix("MOVIE:"))
+            u.contains("/p/") && u.contains("temporada") -> return loadSeasonPage(url)
             else -> return loadEpisodePage(url)
         }
     }
