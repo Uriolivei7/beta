@@ -43,9 +43,12 @@ open class VoeExtractor : ExtractorApi() {
             Log.e("SoloLatino", "[Voe] Too many redirects, giving up")
         }
 
-        // Debug: log HTML snippet if encoded string not found
+        // Detect CAPTCHA page (Altcha) and exit gracefully
         val pageText = res.text
-        val htmlSnippet = pageText.take(2000)
+        if (pageText.contains("altcha-widget") || pageText.contains("Confirm you&#039;re human")) {
+            Log.w("SoloLatino", "[Voe] CAPTCHA page detected, skipping voe.sx mirror")
+            return
+        }
 
         var encodedString: String? = null
 
@@ -64,8 +67,7 @@ open class VoeExtractor : ExtractorApi() {
         }
 
         if (encodedString == null) {
-            Log.e("SoloLatino", "[Voe] encoded string not found after ${5 - maxRedirects} redirect(s)")
-            Log.w("SoloLatino", "[Voe] HTML snippet (first 2000 chars): $htmlSnippet")
+            Log.w("SoloLatino", "[Voe] encoded string not found after ${5 - maxRedirects} redirect(s)")
             return
         }
 
