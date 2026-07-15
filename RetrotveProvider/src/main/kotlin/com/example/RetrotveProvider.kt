@@ -71,12 +71,33 @@ class RetrotveProvider : MainAPI() {
                         settings.domStorageEnabled = true
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         settings.cacheMode = WebSettings.LOAD_DEFAULT
+                        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
                     }
                     var pageFinishedCount = 0
+                    var lastTitle = ""
                     view.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView, url: String) {
                             pageFinishedCount++
                             Log.d("RetrotveProvider", "resolveChallenge: onPageFinished #$pageFinishedCount url=${url.take(80)}")
+                            view.evaluateJavascript("(function(){ return document.title; })()") { titleRaw ->
+                                if (resumed || titleRaw == null) return@evaluateJavascript
+                                val t = titleRaw.trim('"').trim('\'')
+                                lastTitle = t
+                                Log.d("RetrotveProvider", "resolveChallenge: title=$t, pageFinished=$pageFinishedCount")
+                                if (t.isNotEmpty() && !t.contains("momento") && !t.contains("just a moment") && !t.contains("Please wait") && pageFinishedCount >= 2 && t != "null") {
+                                    Log.d("RetrotveProvider", "resolveChallenge: REAL PAGE LOADED! Title=$t")
+                                    val cookies = CookieManager.getInstance().getCookie(mainUrl) ?: ""
+                                    sessionCookies = if (cookies.isNotEmpty()) {
+                                        cookies.split(";").mapNotNull { kv ->
+                                            val parts = kv.trim().split("=", limit = 2)
+                                            if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
+                                        }.toMap()
+                                    } else emptyMap()
+                                    wvResolved = true
+                                    view.destroy()
+                                    done(true)
+                                }
+                            }
                         }
                     }
                     val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -84,26 +105,14 @@ class RetrotveProvider : MainAPI() {
                         var attempts = 0
                         override fun run() {
                             if (resumed) return
-                            if (attempts++ > 60) {
-                                Log.e("RetrotveProvider", "resolveChallenge: timeout (30s) after $pageFinishedCount page loads")
+                            if (attempts++ > 120) {
+                                Log.e("RetrotveProvider", "resolveChallenge: timeout (60s) after $pageFinishedCount page loads. Last title=$lastTitle")
                                 view.destroy()
                                 done(false)
                                 return
                             }
                             val cookies = CookieManager.getInstance().getCookie(mainUrl)
-                            Log.d("RetrotveProvider", "resolveChallenge: attempt $attempts, pageFinished=$pageFinishedCount, cookies=$cookies")
-                            if (pageFinishedCount >= 2 && cookies != null && cookies.isNotEmpty()) {
-                                val map = cookies.split(";").mapNotNull { kv ->
-                                    val parts = kv.trim().split("=", limit = 2)
-                                    if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
-                                }.toMap()
-                                sessionCookies = map
-                                wvResolved = true
-                                Log.d("RetrotveProvider", "resolveChallenge: solved. Page loads=$pageFinishedCount, cookies=${map.keys}")
-                                view.destroy()
-                                done(true)
-                                return
-                            }
+                            Log.d("RetrotveProvider", "resolveChallenge: attempt $attempts, pageFinished=$pageFinishedCount, cookies=$cookies, lastTitle=$lastTitle")
                             handler.postDelayed(this, 500)
                         }
                     }
