@@ -1,6 +1,7 @@
 package com.example
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -31,6 +32,34 @@ class RetrotveProvider : MainAPI() {
         "/peliculas/" to "Películas"
     )
 
+    private val cfKiller = CloudflareKiller()
+
+    private val baseHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+        "Referer" to mainUrl
+    )
+
+    private suspend fun safeGet(url: String, retries: Int = 3): org.jsoup.nodes.Document? {
+        for (i in 0 until retries) {
+            try {
+                val resp = app.get(url, headers = baseHeaders, timeout = 30000L, interceptor = cfKiller)
+                val text = resp.text
+                if (text.contains("Please wait while your request is being verified") || text.contains("One moment, please") || text.contains("challenge-platform")) {
+                    Log.w("RetrotveProvider", "Challenge page detected on attempt ${i+1}, retrying...")
+                    kotlinx.coroutines.delay(3000L)
+                    continue
+                }
+                return resp.document
+            } catch (e: Exception) {
+                Log.e("RetrotveProvider", "safeGet error attempt ${i+1}: ${e.message}")
+                if (i < retries - 1) kotlinx.coroutines.delay(2000L)
+            }
+        }
+        return null
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) {
             "$mainUrl${request.data}"
@@ -39,7 +68,7 @@ class RetrotveProvider : MainAPI() {
         }
         Log.d("RetrotveProvider", "getMainPage: URL = $url")
         
-        val document = app.get(url).document
+        val document = safeGet(url) ?: return newHomePageResponse(emptyList(), false)
         val home = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
@@ -77,7 +106,7 @@ class RetrotveProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("RetrotveProvider", "search: query = $query")
-        val document = app.get("$mainUrl/?s=$query").document
+        val document = safeGet("$mainUrl/?s=$query") ?: return emptyList()
         val results = ArrayList<SearchResponse>()
         val seenLinks = mutableSetOf<String>()
         
@@ -134,7 +163,7 @@ class RetrotveProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         Log.d("RetrotveProvider", "load: url = $url")
-        val document = app.get(url).document
+        val document = safeGet(url) ?: return null
         
         val title = document.selectFirst("h1.Title, h1")?.text() ?: return null
         val poster = fixPosterUrl(document.selectFirst(".TPost.Single .Image img")?.attr("src")
@@ -363,7 +392,7 @@ class RetrotveProvider : MainAPI() {
         Log.d("RetrotveProvider", "processPlayerPage: $playerUrl (server: $serverName)")
         
         try {
-            val playerResponse = app.get(playerUrl, referer = referer)
+            val playerResponse = app.get(playerUrl, referer = referer, headers = baseHeaders)
             Log.d("RetrotveProvider", "processPlayerPage: code=${playerResponse.code}, url=${playerResponse.url}")
             val playerDoc = playerResponse.document
             Log.d("RetrotveProvider", "processPlayerPage: page title=${playerDoc.title()}, html len=${playerDoc.html().length}")
@@ -451,7 +480,7 @@ class RetrotveProvider : MainAPI() {
     ): Boolean {
         Log.d("RetrotveProvider", "loadLinks: data = $data")
         
-        val document = app.get(data).document
+        val document = safeGet(data) ?: return false
         Log.d("RetrotveProvider", "loadLinks: page title = ${document.title()}")
         
         val trtype = if (data.contains("/pelicula/")) "1" else "2"
