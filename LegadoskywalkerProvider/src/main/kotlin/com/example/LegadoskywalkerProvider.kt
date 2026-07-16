@@ -152,10 +152,9 @@ class LegadoskywalkerProvider : MainAPI() {
             val doc = getMainPageCached()
             val sn = seriesName.lowercase()
             val items = doc.select(".movie-item")
-            // Exact match by data-tooltip (full name), then by p text (short name)
-            items.firstOrNull { item -> item.select("p").attr("data-tooltip").lowercase() == sn }
+            val match = items.firstOrNull { item -> item.select("p").attr("data-tooltip").lowercase() == sn }
                 ?: items.firstOrNull { item -> item.select("p").text().trim().lowercase() == sn }
-                ?.select("img")?.firstOrNull()?.attr("abs:src")
+            match?.select("img")?.firstOrNull()?.attr("abs:src")
                 ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
         } catch (e: Exception) { null }
     }
