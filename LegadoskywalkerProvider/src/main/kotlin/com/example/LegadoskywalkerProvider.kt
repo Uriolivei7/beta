@@ -236,7 +236,8 @@ class LegadoskywalkerProvider : MainAPI() {
             val seasonNum = Regex("""temporada[-\s]*(\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
             try {
                 // If this is a post URL (contains /20XX/), treat as direct episode
-                if (seasonUrl.contains("/20") && !seasonUrl.contains("/p/")) {
+                // Skip if URL contains "temporada" — those are season listing pages
+                if (seasonUrl.contains("/20") && !seasonUrl.contains("/p/") && !seasonUrl.contains("temporada")) {
                     Log.d("LegadoSkywalker", "  season $seasonNum: direct episode post $seasonUrl")
                     val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
                     val epTitle = seasonDoc.select("h1, h2").firstOrNull()?.text()?.trim()
@@ -281,7 +282,7 @@ class LegadoskywalkerProvider : MainAPI() {
                         || text.contains("Temporada", true) || text.contains("atrás", true)
                         || text.contains("regresar", true) || text.contains("volver", true)
                         || href.contains("temporada") || href.contains("label")) return@forEachIndexed
-                    if (!href.startsWith(mainUrl)) return@forEachIndexed
+                    if (!href.replace("http://", "https://").startsWith(mainUrl)) return@forEachIndexed
                     val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
                     allEpisodes.add(newEpisode(href) {
                         this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
