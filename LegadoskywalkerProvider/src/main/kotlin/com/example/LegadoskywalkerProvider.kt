@@ -151,15 +151,12 @@ class LegadoskywalkerProvider : MainAPI() {
         return try {
             val doc = getMainPageCached()
             val sn = seriesName.lowercase()
-            doc.select(".movie-item").mapNotNull { item ->
-                val pText = item.select("p").text().trim().lowercase()
-                val tooltip = item.select("p").attr("data-tooltip").lowercase()
-                if (pText == sn || sn.contains(pText) || pText.contains(sn)
-                    || tooltip == sn || sn.contains(tooltip) || tooltip.contains(sn)) {
-                    item.select("img").firstOrNull()?.attr("abs:src")
-                        ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
-                } else null
-            }.firstOrNull()
+            val items = doc.select(".movie-item")
+            // Exact match by data-tooltip (full name), then by p text (short name)
+            items.firstOrNull { item -> item.select("p").attr("data-tooltip").lowercase() == sn }
+                ?: items.firstOrNull { item -> item.select("p").text().trim().lowercase() == sn }
+                ?.select("img")?.firstOrNull()?.attr("abs:src")
+                ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
         } catch (e: Exception) { null }
     }
 
@@ -579,10 +576,49 @@ class LegadoskywalkerProvider : MainAPI() {
         Log.d("LegadoSkywalker", "loadMovieByLabel: $slug")
         val movie = allMovies().firstOrNull { it.slug == slug }
         val name = movie?.name ?: slug
+        val sn = name.lowercase()
 
-        // Blog search using the movie's full name (labels like "Episodio I" don't exist)
-        val searchQ = encodeLabel(name)
+        // Use feed API filtered by "Peliculas" label (more reliable than blog search)
         try {
+            val feedUrl = "$mainUrl/feeds/posts/default/-/Peliculas?alt=json&max-results=50"
+            val raw = app.get(feedUrl, timeout = 30L).text
+            val json = org.json.JSONObject(raw)
+            val entries = json.getJSONObject("feed").optJSONArray("entry") ?: throw Exception("no entries")
+            for (i in 0 until entries.length()) {
+                try {
+                    val entry = entries.getJSONObject(i)
+                    val title = entry.getJSONObject("title").getString("\$t")
+                    val links = entry.getJSONArray("link")
+                    var url: String? = null
+                    var poster: String? = null
+                    for (j in 0 until links.length()) {
+                        val link = links.getJSONObject(j)
+                        if (link.optString("rel") == "alternate") {
+                            url = link.getString("href")
+                            break
+                        }
+                    }
+                    if (url == null) continue
+                    val thumb = entry.optJSONObject("media\$thumbnail")?.optString("url")
+                        ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                    // Exact title match first, then starts-with for compound titles
+                    val tn = title.lowercase()
+                    if (tn == sn || tn.startsWith(sn) || sn.startsWith(tn)) {
+                        poster = thumb
+                        return newMovieLoadResponse(name, url, TvType.Movie, url) {
+                            this.posterUrl = poster
+                        }
+                    }
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.e("LegadoSkywalker", "loadMovieByLabel: feed API error: ${e.message}")
+        }
+
+        // Fallback: blog search
+        Log.w("LegadoSkywalker", "loadMovieByLabel: feed API failed for $slug, trying blog search")
+        try {
+            val searchQ = encodeLabel(name)
             val doc = app.get("$mainUrl/search?q=$searchQ&max-results=5", timeout = 30L).document
             val posts = doc.select("div.post")
             for (post in posts) {
@@ -590,7 +626,10 @@ class LegadoskywalkerProvider : MainAPI() {
                     val link = post.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
                         ?: post.select("a[href*='/20']").firstOrNull()?.attr("abs:href") ?: continue
                     val title = post.select("h1, h2").text().trim()
-                    if (name.lowercase() in title.lowercase() || title.lowercase() in name.lowercase()) {
+                    val tn = title.lowercase()
+                    // Avoid documentary/BTS posts
+                    if (tn.contains("detrás") || tn.contains("detras") || tn.contains("escenas eliminadas") || tn.contains("documental")) continue
+                    if (tn == sn || tn.startsWith(sn) || sn.startsWith(tn)) {
                         val poster = post.select("img").firstOrNull()?.attr("abs:src")
                             ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
                         return newMovieLoadResponse(name, link, TvType.Movie, link) {
@@ -599,7 +638,6 @@ class LegadoskywalkerProvider : MainAPI() {
                     }
                 } catch (e: Exception) {}
             }
-            // No match found; use first result
             val first = posts.firstOrNull()
             if (first != null) {
                 val link = first.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
@@ -617,7 +655,7 @@ class LegadoskywalkerProvider : MainAPI() {
         }
 
         Log.e("LegadoSkywalker", "loadMovieByLabel: no results for $slug")
-        return newMovieLoadResponse(name, "$mainUrl/search?q=$searchQ", TvType.Movie, "$mainUrl/search?q=$searchQ") {
+        return newMovieLoadResponse(name, "$mainUrl/search?q=${encodeLabel(name)}", TvType.Movie, "$mainUrl/search?q=${encodeLabel(name)}") {
             this.plot = name
         }
     }
