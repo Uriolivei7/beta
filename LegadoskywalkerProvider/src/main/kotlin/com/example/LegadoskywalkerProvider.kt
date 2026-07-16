@@ -86,7 +86,7 @@ class LegadoskywalkerProvider : MainAPI() {
         val url = if (isSeriesPage) "$mainUrl/p/$slug.html" else "$mainUrl/search/label/${java.net.URLEncoder.encode(slug, "UTF-8")}"
         return try {
             val doc = app.get(url, timeout = 30L).document
-            doc.select("div.post img, .post-body img").firstOrNull()?.attr("abs:src")
+            doc.select("div.post img, .post-body img, .separator img, .entry-content img").firstOrNull()?.attr("abs:src")
                 ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
         } catch (e: Exception) { null }
     }
@@ -225,6 +225,38 @@ class LegadoskywalkerProvider : MainAPI() {
         }
 
         if (seasonUrls.isEmpty()) {
+            Log.w("LegadoSkywalker", "loadSeries: no temporada links for $slug, trying inline episode links")
+            val episodeLinks = (body ?: doc).select("a[href*='/20']").filter { a ->
+                val href = a.attr("abs:href").ifBlank { a.attr("href") }
+                val text = a.text().trim()
+                href.replace("http://", "https://").startsWith(mainUrl) && text.isNotBlank()
+                    && !href.contains("temporada") && !href.contains("label")
+                    && !href.contains("search") && !href.contains("comment")
+            }
+            if (episodeLinks.isNotEmpty()) {
+                val epList = mutableListOf<Episode>()
+                val seen = mutableSetOf<String>()
+                var epCounter = 1
+                episodeLinks.forEach { a ->
+                    val href = a.attr("abs:href").ifBlank { a.attr("href") }.replace("http://", "https://")
+                    val text = a.text().trim()
+                    if (!seen.add(href)) return@forEach
+                    val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                    val seasonFromUrl = Regex("""[tT](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                    epList.add(newEpisode(href) {
+                        this.name = text
+                        this.season = seasonFromUrl ?: 1
+                        this.episode = epFromUrl ?: epCounter
+                    })
+                    epCounter++
+                }
+                if (epList.isNotEmpty()) {
+                    Log.d("LegadoSkywalker", "loadSeries: ${epList.size} inline episodes for $slug")
+                    return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, epList) {
+                        this.plot = "Todos los capítulos de $seriesName"
+                    }
+                }
+            }
             Log.e("LegadoSkywalker", "loadSeries: no temporada links for $slug")
             return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
                 this.plot = "No se encontraron temporadas"
@@ -241,24 +273,26 @@ class LegadoskywalkerProvider : MainAPI() {
                 val seasonBody = seasonDoc.select(".post-body.entry-content, .post-body, #post-body, .entry-content").firstOrNull()
                 val foundEpisodes = mutableListOf<Episode>()
 
+                var epCounter = 1
                 if (seasonBody != null) {
-                    seasonBody.select("a[href]").forEachIndexed { idx, a ->
+                    seasonBody.select("a[href]").forEach { a ->
                         val href = a.attr("abs:href")
                         val text = a.text().trim()
                         if (href.isBlank() || !href.contains("/20")
                             || text.contains("Anterior", true) || text.contains("Siguiente", true)
                             || text.contains("Temporada", true) || text.contains("atrás", true)
                             || text.contains("regresar", true) || text.contains("volver", true)
-                            || href.contains("temporada") || href.contains("label")) return@forEachIndexed
-                        if (!href.replace("http://", "https://").startsWith(mainUrl)) return@forEachIndexed
+                            || href.contains("temporada") || href.contains("label")) return@forEach
+                        if (!href.replace("http://", "https://").startsWith(mainUrl)) return@forEach
                         val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
                         foundEpisodes.add(newEpisode(href) {
-                            this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
+                            this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: epCounter
                         })
+                        epCounter++
                     }
                 } else {
                     Log.w("LegadoSkywalker", "  season $seasonNum: no post-body, trying doc links")
-                    seasonDoc.select("a[href]").forEachIndexed { idx, a ->
+                    seasonDoc.select("a[href]").forEach { a ->
                         val href = a.attr("abs:href")
                         val text = a.text().trim()
                         if (href.contains("/20") && text.isNotBlank()
@@ -266,8 +300,9 @@ class LegadoskywalkerProvider : MainAPI() {
                             && !text.contains("Temporada", true) && !href.contains("temporada")) {
                             val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
                             foundEpisodes.add(newEpisode(href) {
-                                this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
+                                this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: epCounter
                             })
+                            epCounter++
                         }
                     }
                 }
