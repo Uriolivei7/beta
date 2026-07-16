@@ -13,7 +13,9 @@ data class SeriesDef(
     val slug: String,
     val type: TvType,
     var poster: String = "",
-    var posterLoaded: Boolean = false
+    var posterLoaded: Boolean = false,
+    val labelName: String? = null,  // if set, use label search instead of /p/ page
+    val postUrl: String? = null,    // if set, direct blog post URL (for movies)
 )
 
 class LegadoskywalkerProvider : MainAPI() {
@@ -36,26 +38,26 @@ class LegadoskywalkerProvider : MainAPI() {
     private val animadas = mutableListOf(
         SeriesDef("The Clone Wars", "the-clone-wars", TvType.Cartoon),
         SeriesDef("Rebels", "rebels", TvType.Cartoon),
-        SeriesDef("The Bad Batch", "the-bad-batch", TvType.Cartoon),
+        SeriesDef("The Bad Batch", "the-bad-batch", TvType.Cartoon, labelName = "The Bad Batch"),
         SeriesDef("Star Wars Visions", "star-wars-visions", TvType.Cartoon),
-        SeriesDef("Tales of the Jedi", "tales-of-the-jedi", TvType.Cartoon),
-        SeriesDef("Tales of the Empire", "tales-of-the-empire", TvType.Cartoon),
+        SeriesDef("Tales of the Jedi", "tales-of-the-jedi", TvType.Cartoon, labelName = "Tales of the Jedi"),
+        SeriesDef("Tales of the Empire", "tales-of-the-empire", TvType.Cartoon, labelName = "Tales of the Empire"),
         SeriesDef("Clone Wars (2003)", "clone-wars", TvType.Cartoon),
-        SeriesDef("Resistance", "resistance", TvType.Cartoon),
-        SeriesDef("Star Wars Droids", "star-wars-droids", TvType.Cartoon),
-        SeriesDef("Star Wars Ewoks", "star-wars-ewoks", TvType.Cartoon),
-        SeriesDef("Lego Star Wars", "lego-star-wars", TvType.Cartoon),
-        SeriesDef("Maul: Shadow Lord", "maul-shadow-lord", TvType.Cartoon),
+        SeriesDef("Resistance", "resistance", TvType.Cartoon, labelName = "Resistance"),
+        SeriesDef("Star Wars Droids", "star-wars-droids", TvType.Cartoon, labelName = "Star Wars Droids"),
+        SeriesDef("Star Wars Ewoks", "star-wars-ewoks", TvType.Cartoon, labelName = "Star Wars Ewoks"),
+        SeriesDef("Lego Star Wars", "lego-star-wars", TvType.Cartoon, labelName = "Lego Star Wars"),
+        SeriesDef("Maul: Shadow Lord", "maul-shadow-lord", TvType.Cartoon, labelName = "Maul : Shadow Lord"),
     )
 
     private val liveaction = mutableListOf(
-        SeriesDef("The Mandalorian", "the-mandalorian", TvType.TvSeries),
-        SeriesDef("Ahsoka", "ahsoka", TvType.TvSeries),
-        SeriesDef("Andor", "andor", TvType.TvSeries),
-        SeriesDef("Obi-Wan Kenobi", "obi-wan-kenobi", TvType.TvSeries),
-        SeriesDef("The Book of Boba Fett", "the-book-of-boba-fett", TvType.TvSeries),
-        SeriesDef("The Acolyte", "the-acolyte", TvType.TvSeries),
-        SeriesDef("Skeleton Crew", "skeleton-crew", TvType.TvSeries),
+        SeriesDef("The Mandalorian", "the-mandalorian", TvType.TvSeries, labelName = "The Mandalorian"),
+        SeriesDef("Ahsoka", "ahsoka", TvType.TvSeries, labelName = "Ahsoka"),
+        SeriesDef("Andor", "andor", TvType.TvSeries, labelName = "Andor"),
+        SeriesDef("Obi-Wan Kenobi", "obi-wan-kenobi", TvType.TvSeries, labelName = "Obi-Wan Kenobi"),
+        SeriesDef("The Book of Boba Fett", "the-book-of-boba-fett", TvType.TvSeries, labelName = "The Book of Boba Fett"),
+        SeriesDef("The Acolyte", "the-acolyte", TvType.TvSeries, labelName = "The Acolyte"),
+        SeriesDef("Skeleton Crew", "skeleton-crew", TvType.TvSeries, labelName = "Skeleton Crew"),
     )
 
     private val peliculas = mutableListOf(
@@ -91,9 +93,25 @@ class LegadoskywalkerProvider : MainAPI() {
         } catch (e: Exception) { null }
     }
 
+    private suspend fun loadPosterFromMainPage(seriesName: String): String? {
+        return try {
+            val doc = app.get(mainUrl, timeout = 30L).document
+            doc.select(".movie-item").mapNotNull { item ->
+                val name = item.select("p").text().trim().lowercase()
+                if (name == seriesName.lowercase() || seriesName.lowercase().contains(name) || name.contains(seriesName.lowercase())) {
+                    item.select("img").firstOrNull()?.attr("abs:src")
+                        ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                } else null
+            }.firstOrNull()
+        } catch (e: Exception) { null }
+    }
+
     private suspend fun ensureSeriesPoster(s: SeriesDef) {
         if (s.posterLoaded) return
-        s.poster = loadPoster(s.slug, isSeriesPage = true) ?: loadPoster(s.slug, isSeriesPage = false) ?: ""
+        s.poster = loadPoster(s.slug, isSeriesPage = true)
+            ?: loadPoster(s.slug, isSeriesPage = false)
+            ?: loadPosterFromMainPage(s.name)
+            ?: ""
         Log.d("LegadoSkywalker", "Poster ${s.name}: ${s.poster}")
         s.posterLoaded = true
     }
@@ -109,7 +127,8 @@ class LegadoskywalkerProvider : MainAPI() {
         }
         series.forEach { ensureSeriesPoster(it) }
         val items = series.map { s ->
-            newMovieSearchResponse(s.name, "SERIES:${s.slug}", s.type) {
+            val link = if (s.type == TvType.Movie) "MOVIE:${s.slug}" else "SERIES:${s.slug}"
+            newMovieSearchResponse(s.name, link, s.type) {
                 this.posterUrl = s.poster.ifBlank { null }
             }
         }
@@ -175,6 +194,58 @@ class LegadoskywalkerProvider : MainAPI() {
     private suspend fun loadSeries(slug: String): LoadResponse {
         Log.d("LegadoSkywalker", "loadSeries: slug=$slug")
         val seriesName = allSeries().firstOrNull { it.slug == slug }?.name ?: slug
+        val def = allSeries().firstOrNull { it.slug == slug }
+
+        // Label-based series fetch label search page instead of /p/ page
+        if (def?.labelName != null) {
+            val labelEnc = java.net.URLEncoder.encode(def.labelName, "UTF-8")
+            val labelUrl = "$mainUrl/search/label/$labelEnc?max-results=50"
+            Log.d("LegadoSkywalker", "loadSeries: label series, fetching $labelUrl")
+            return try {
+                val doc = app.get(labelUrl, referer = mainUrl, timeout = 30L).document
+                val episodes = mutableListOf<Episode>()
+                val seen = mutableSetOf<String>()
+                val postElements = doc.select("div.post")
+                Log.d("LegadoSkywalker", "loadSeries: ${postElements.size} posts from label page")
+                postElements.forEach { post ->
+                    try {
+                        val link = post.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
+                            ?: post.select("a[href*='/20']").firstOrNull()?.attr("abs:href") ?: return@forEach
+                        if (!seen.add(link)) return@forEach
+                        val title = post.select("h1, h2").text().trim()
+                        val poster = post.select("img").firstOrNull()?.attr("abs:src")
+                            ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                        val epMatch = Regex("""[Tt](\d+)[-\s]*[Cc](\d+)""").find(link)
+                            ?: Regex("""[Tt](\d+)[-\s]*[Cc](\d+)""").find(title)
+                        val seasonNum = epMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                        val epNum = epMatch?.groupValues?.get(2)?.toIntOrNull() ?: (episodes.size + 1)
+                        val epName = title.replace(Regex("""\s*\[T\d+[-\s]*C\d+\]\s*"""), "").trim()
+                        episodes.add(newEpisode(link) {
+                            this.name = epName.ifBlank { title }
+                            this.season = seasonNum
+                            this.episode = epNum
+                            this.posterUrl = poster
+                        })
+                    } catch (e: Exception) {}
+                }
+                if (episodes.isEmpty()) {
+                    Log.e("LegadoSkywalker", "loadSeries: no episodes on label page for $slug")
+                    return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList())
+                }
+                episodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
+                Log.d("LegadoSkywalker", "loadSeries: ${episodes.size} label episodes for $slug")
+                newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, episodes) {
+                    this.plot = "Todos los capítulos de $seriesName"
+                }
+            } catch (e: Exception) {
+                Log.e("LegadoSkywalker", "loadSeries: label fetch error: ${e.message}")
+                return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
+                    this.plot = "Error al cargar la serie"
+                }
+            }
+        }
+
+        // /p/ page series
         val seriesUrl = "$mainUrl/p/$slug.html"
         val doc = try {
             app.get(seriesUrl, referer = mainUrl, timeout = 30L).document
@@ -189,7 +260,6 @@ class LegadoskywalkerProvider : MainAPI() {
             ?: doc.select(".post-body").firstOrNull()
         Log.d("LegadoSkywalker", "loadSeries: body=${body != null}")
 
-        // Collect season URLs specific to this series
         val linkPool = (body ?: doc).select("a[href*='temporada']")
         Log.d("LegadoSkywalker", "loadSeries: ${linkPool.size} raw 'temporada' links")
 
@@ -225,36 +295,75 @@ class LegadoskywalkerProvider : MainAPI() {
         }
 
         if (seasonUrls.isEmpty()) {
-            Log.w("LegadoSkywalker", "loadSeries: no temporada links for $slug, trying inline episode links")
-            val episodeLinks = (body ?: doc).select("a[href*='/20']").filter { a ->
-                val href = a.attr("abs:href").ifBlank { a.attr("href") }
-                val text = a.text().trim()
-                href.replace("http://", "https://").startsWith(mainUrl) && text.isNotBlank()
-                    && !href.contains("temporada") && !href.contains("label")
-                    && !href.contains("search") && !href.contains("comment")
-            }
-            if (episodeLinks.isNotEmpty()) {
-                val epList = mutableListOf<Episode>()
-                val seen = mutableSetOf<String>()
-                var epCounter = 1
-                episodeLinks.forEach { a ->
-                    val href = a.attr("abs:href").ifBlank { a.attr("href") }.replace("http://", "https://")
+            if (body != null) {
+                Log.w("LegadoSkywalker", "loadSeries: no temporada links for $slug, trying inline episode links")
+                val episodeLinks = body.select("a[href*='/20']").filter { a ->
+                    val href = a.attr("abs:href").ifBlank { a.attr("href") }
                     val text = a.text().trim()
-                    if (!seen.add(href)) return@forEach
-                    val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                    val seasonFromUrl = Regex("""[tT](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                    epList.add(newEpisode(href) {
-                        this.name = text
-                        this.season = seasonFromUrl ?: 1
-                        this.episode = epFromUrl ?: epCounter
-                    })
-                    epCounter++
+                    href.replace("http://", "https://").startsWith(mainUrl) && text.isNotBlank()
+                        && !href.contains("temporada") && !href.contains("label")
+                        && !href.contains("search") && !href.contains("comment")
                 }
-                if (epList.isNotEmpty()) {
-                    Log.d("LegadoSkywalker", "loadSeries: ${epList.size} inline episodes for $slug")
-                    return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, epList) {
-                        this.plot = "Todos los capítulos de $seriesName"
+                if (episodeLinks.isNotEmpty()) {
+                    val epList = mutableListOf<Episode>()
+                    val seen = mutableSetOf<String>()
+                    var epCounter = 1
+                    episodeLinks.forEach { a ->
+                        val href = a.attr("abs:href").ifBlank { a.attr("href") }.replace("http://", "https://")
+                        val text = a.text().trim()
+                        if (!seen.add(href)) return@forEach
+                        val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        val seasonFromUrl = Regex("""[tT](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        epList.add(newEpisode(href) {
+                            this.name = text
+                            this.season = seasonFromUrl ?: 1
+                            this.episode = epFromUrl ?: epCounter
+                        })
+                        epCounter++
                     }
+                    if (epList.isNotEmpty()) {
+                        Log.d("LegadoSkywalker", "loadSeries: ${epList.size} inline episodes for $slug")
+                        return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, epList) {
+                            this.plot = "Todos los capítulos de $seriesName"
+                        }
+                    }
+                }
+            } else {
+                // body == null: /p/ page doesn't exist, try label fallback with series name
+                Log.w("LegadoSkywalker", "loadSeries: body=null for $slug, trying label fallback")
+                val fallbackLabel = java.net.URLEncoder.encode(seriesName, "UTF-8")
+                try {
+                    val labelDoc = app.get("$mainUrl/search/label/$fallbackLabel?max-results=50", referer = mainUrl, timeout = 30L).document
+                    val posts = labelDoc.select("div.post")
+                    if (posts.isNotEmpty()) {
+                        val epList = mutableListOf<Episode>()
+                        val seen = mutableSetOf<String>()
+                        posts.forEach { post ->
+                            try {
+                                val link = post.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
+                                    ?: post.select("a[href*='/20']").firstOrNull()?.attr("abs:href") ?: return@forEach
+                                if (!seen.add(link)) return@forEach
+                                val title = post.select("h1, h2").text().trim()
+                                val poster = post.select("img").firstOrNull()?.attr("abs:src")?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                                val epMatch = Regex("""[Tt](\d+)[-\s]*[Cc](\d+)""").find(link) ?: Regex("""[Tt](\d+)[-\s]*[Cc](\d+)""").find(title)
+                                epList.add(newEpisode(link) {
+                                    this.name = title.replace(Regex("""\s*\[T\d+[-\s]*C\d+\]\s*"""), "").trim().ifBlank { title }
+                                    this.season = epMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                                    this.episode = epMatch?.groupValues?.get(2)?.toIntOrNull() ?: (epList.size + 1)
+                                    this.posterUrl = poster
+                                })
+                            } catch (e: Exception) {}
+                        }
+                        if (epList.isNotEmpty()) {
+                            epList.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
+                            Log.d("LegadoSkywalker", "loadSeries: ${epList.size} label fallback episodes for $slug")
+                            return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, epList) {
+                                this.plot = "Todos los capítulos de $seriesName"
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("LegadoSkywalker", "loadSeries: label fallback error: ${e.message}")
                 }
             }
             Log.e("LegadoSkywalker", "loadSeries: no temporada links for $slug")
@@ -268,7 +377,6 @@ class LegadoskywalkerProvider : MainAPI() {
             val seasonNum = Regex("""temporada[-\s]*(\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
             val isPostUrl = seasonUrl.contains("/20") && !seasonUrl.contains("/p/")
             try {
-                // Parse the season page
                 val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
                 val seasonBody = seasonDoc.select(".post-body.entry-content, .post-body, #post-body, .entry-content").firstOrNull()
                 val foundEpisodes = mutableListOf<Episode>()
@@ -310,7 +418,6 @@ class LegadoskywalkerProvider : MainAPI() {
                 if (foundEpisodes.isNotEmpty()) {
                     allEpisodes.addAll(foundEpisodes)
                 } else if (isPostUrl) {
-                    // Post URL with no episode links → single-episode season (e.g. Clone Wars 2003)
                     Log.d("LegadoSkywalker", "  season $seasonNum: direct episode post (fallback) $seasonUrl")
                     val epTitle = seasonDoc.select("h1, h2").firstOrNull()?.text()?.trim()
                         ?: seasonDoc.select("title").text().trim().substringBefore("|").trim()
