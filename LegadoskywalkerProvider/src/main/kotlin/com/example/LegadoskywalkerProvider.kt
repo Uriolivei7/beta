@@ -28,7 +28,16 @@ class LegadoskywalkerProvider : MainAPI() {
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Cartoon)
 
+    private var mainPageCache: org.jsoup.nodes.Document? = null
+
     private fun encodeLabel(label: String) = java.net.URLEncoder.encode(label, "UTF-8").replace("+", "%20")
+
+    private suspend fun getMainPageCached(): org.jsoup.nodes.Document {
+        if (mainPageCache == null) {
+            mainPageCache = app.get(mainUrl, timeout = 30L).document
+        }
+        return mainPageCache!!
+    }
 
     private suspend fun fetchFeedEpisodes(labelName: String): MutableList<Episode> {
         val episodes = mutableListOf<Episode>()
@@ -130,7 +139,7 @@ class LegadoskywalkerProvider : MainAPI() {
     private fun allMovies(): List<SeriesDef> = peliculas + otros
 
     private suspend fun loadPoster(slug: String, isSeriesPage: Boolean = true): String? {
-        val url = if (isSeriesPage) "$mainUrl/p/$slug.html" else "$mainUrl/search/label/${encodeLabel(slug)}"
+        val url = if (isSeriesPage) "$mainUrl/p/${encodeLabel(slug)}.html" else "$mainUrl/search/label/${encodeLabel(slug)}"
         return try {
             val doc = app.get(url, timeout = 30L).document
             doc.select("div.post img, .post-body img, .separator img, .entry-content img").firstOrNull()?.attr("abs:src")
@@ -140,10 +149,13 @@ class LegadoskywalkerProvider : MainAPI() {
 
     private suspend fun loadPosterFromMainPage(seriesName: String): String? {
         return try {
-            val doc = app.get(mainUrl, timeout = 30L).document
+            val doc = getMainPageCached()
+            val sn = seriesName.lowercase()
             doc.select(".movie-item").mapNotNull { item ->
-                val name = item.select("p").text().trim().lowercase()
-                if (name == seriesName.lowercase() || seriesName.lowercase().contains(name) || name.contains(seriesName.lowercase())) {
+                val pText = item.select("p").text().trim().lowercase()
+                val tooltip = item.select("p").attr("data-tooltip").lowercase()
+                if (pText == sn || sn.contains(pText) || pText.contains(sn)
+                    || tooltip == sn || sn.contains(tooltip) || tooltip.contains(sn)) {
                     item.select("img").firstOrNull()?.attr("abs:src")
                         ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
                 } else null
@@ -279,7 +291,7 @@ class LegadoskywalkerProvider : MainAPI() {
                         feedEpisodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
                         Log.d("LegadoSkywalker", "loadSeries: ${feedEpisodes.size} feed API episodes for $slug")
                         return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, feedEpisodes) {
-                            this.plot = "Todos los capítulos de $seriesName"
+                            this.plot = "Todos los capítulos de $seriesName"; this.posterUrl = def?.poster?.ifBlank { null }
                         }
                     }
                     return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList())
@@ -287,24 +299,24 @@ class LegadoskywalkerProvider : MainAPI() {
                 episodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
                 Log.d("LegadoSkywalker", "loadSeries: ${episodes.size} label episodes for $slug")
                 newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, episodes) {
-                    this.plot = "Todos los capítulos de $seriesName"
+                    this.plot = "Todos los capítulos de $seriesName"; this.posterUrl = def?.poster?.ifBlank { null }
                 }
             } catch (e: Exception) {
                 Log.e("LegadoSkywalker", "loadSeries: label fetch error: ${e.message}")
                 return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
-                    this.plot = "Error al cargar la serie"
+                    this.plot = "Error al cargar la serie"; this.posterUrl = def?.poster?.ifBlank { null }
                 }
             }
         }
 
         // /p/ page series
-        val seriesUrl = "$mainUrl/p/$slug.html"
+        val seriesUrl = "$mainUrl/p/${encodeLabel(slug)}.html"
         val doc = try {
             app.get(seriesUrl, referer = mainUrl, timeout = 30L).document
         } catch (e: Exception) {
             Log.e("LegadoSkywalker", "loadSeries: cannot fetch $seriesUrl: ${e.message}")
             return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
-                this.plot = "Error al cargar la serie"
+                this.plot = "Error al cargar la serie"; this.posterUrl = def?.poster?.ifBlank { null }
             }
         }
 
@@ -376,7 +388,7 @@ class LegadoskywalkerProvider : MainAPI() {
                     if (epList.isNotEmpty()) {
                         Log.d("LegadoSkywalker", "loadSeries: ${epList.size} inline episodes for $slug")
                         return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, epList) {
-                            this.plot = "Todos los capítulos de $seriesName"
+                            this.plot = "Todos los capítulos de $seriesName"; this.posterUrl = def?.poster?.ifBlank { null }
                         }
                     }
                 }
@@ -409,7 +421,7 @@ class LegadoskywalkerProvider : MainAPI() {
                             epList.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
                             Log.d("LegadoSkywalker", "loadSeries: ${epList.size} label fallback episodes for $slug")
                             return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, epList) {
-                                this.plot = "Todos los capítulos de $seriesName"
+                                this.plot = "Todos los capítulos de $seriesName"; this.posterUrl = def?.poster?.ifBlank { null }
                             }
                         }
                     }
@@ -423,13 +435,13 @@ class LegadoskywalkerProvider : MainAPI() {
                     feedEpisodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
                     Log.d("LegadoSkywalker", "loadSeries: ${feedEpisodes.size} feed API episodes for $slug")
                     return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, feedEpisodes) {
-                        this.plot = "Todos los capítulos de $seriesName"
+                        this.plot = "Todos los capítulos de $seriesName"; this.posterUrl = def?.poster?.ifBlank { null }
                     }
                 }
             }
             Log.e("LegadoSkywalker", "loadSeries: no temporada links for $slug")
             return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
-                this.plot = "No se encontraron temporadas"
+                this.plot = "No se encontraron temporadas"; this.posterUrl = def?.poster?.ifBlank { null }
             }
         }
 
@@ -497,13 +509,15 @@ class LegadoskywalkerProvider : MainAPI() {
 
         if (allEpisodes.isEmpty()) {
             Log.e("LegadoSkywalker", "loadSeries: NO episodes found for $slug")
-            return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList())
+            return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList()) {
+                this.posterUrl = def?.poster?.ifBlank { null }
+            }
         }
 
         allEpisodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
         Log.d("LegadoSkywalker", "loadSeries: ${allEpisodes.size} total episodes")
         return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, allEpisodes) {
-            this.plot = "Todos los capítulos de $seriesName"
+            this.plot = "Todos los capítulos de $seriesName"; this.posterUrl = def?.poster?.ifBlank { null }
         }
     }
 
