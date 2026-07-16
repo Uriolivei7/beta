@@ -28,6 +28,51 @@ class LegadoskywalkerProvider : MainAPI() {
     override val usesWebView = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Cartoon)
 
+    private fun encodeLabel(label: String) = java.net.URLEncoder.encode(label, "UTF-8").replace("+", "%20")
+
+    private suspend fun fetchFeedEpisodes(labelName: String): MutableList<Episode> {
+        val episodes = mutableListOf<Episode>()
+        try {
+            val feedUrl = "$mainUrl/feeds/posts/default/-/${encodeLabel(labelName)}?alt=json&max-results=50"
+            Log.d("LegadoSkywalker", "feed API: $feedUrl")
+            val raw = app.get(feedUrl, timeout = 30L).text
+            val json = org.json.JSONObject(raw)
+            val entries = json.getJSONObject("feed").optJSONArray("entry") ?: return episodes
+            for (i in 0 until entries.length()) {
+                try {
+                    val entry = entries.getJSONObject(i)
+                    val title = entry.getJSONObject("title").getString("\$t")
+                    val links = entry.getJSONArray("link")
+                    var url: String? = null
+                    for (j in 0 until links.length()) {
+                        val link = links.getJSONObject(j)
+                        if (link.optString("rel") == "alternate") {
+                            url = link.getString("href")
+                            break
+                        }
+                    }
+                    if (url == null) continue
+                    val thumbnail = entry.optJSONObject("media\$thumbnail")?.optString("url")
+                        ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                    val epMatch = Regex("""[Tt](\d+)[-\s]*[Cc](\d+)""").find(url)
+                        ?: Regex("""[Tt](\d+)[-\s]*[Cc](\d+)""").find(title)
+                    val seasonNum = epMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                    val epNum = epMatch?.groupValues?.get(2)?.toIntOrNull() ?: (episodes.size + 1)
+                    val epName = title.replace(Regex("""\s*\[T\d+[-\s]*C\d+\]\s*"""), "").trim()
+                    episodes.add(newEpisode(url) {
+                        this.name = epName.ifBlank { title }
+                        this.season = seasonNum
+                        this.episode = epNum
+                        this.posterUrl = thumbnail
+                    })
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.e("LegadoSkywalker", "feed API error: ${e.message}")
+        }
+        return episodes
+    }
+
     override val mainPage = mainPageOf(
         "CAT:animadas" to "Series Animadas",
         "CAT:liveaction" to "Series Live Action",
@@ -85,7 +130,7 @@ class LegadoskywalkerProvider : MainAPI() {
     private fun allMovies(): List<SeriesDef> = peliculas + otros
 
     private suspend fun loadPoster(slug: String, isSeriesPage: Boolean = true): String? {
-        val url = if (isSeriesPage) "$mainUrl/p/$slug.html" else "$mainUrl/search/label/${java.net.URLEncoder.encode(slug, "UTF-8")}"
+        val url = if (isSeriesPage) "$mainUrl/p/$slug.html" else "$mainUrl/search/label/${encodeLabel(slug)}"
         return try {
             val doc = app.get(url, timeout = 30L).document
             doc.select("div.post img, .post-body img, .separator img, .entry-content img").firstOrNull()?.attr("abs:src")
@@ -109,7 +154,7 @@ class LegadoskywalkerProvider : MainAPI() {
     private suspend fun ensureSeriesPoster(s: SeriesDef) {
         if (s.posterLoaded) return
         s.poster = loadPoster(s.slug, isSeriesPage = true)
-            ?: loadPoster(s.slug, isSeriesPage = false)
+            ?: loadPoster(s.labelName ?: s.slug, isSeriesPage = false)
             ?: loadPosterFromMainPage(s.name)
             ?: ""
         Log.d("LegadoSkywalker", "Poster ${s.name}: ${s.poster}")
@@ -198,8 +243,7 @@ class LegadoskywalkerProvider : MainAPI() {
 
         // Label-based series fetch label search page instead of /p/ page
         if (def?.labelName != null) {
-            val labelEnc = java.net.URLEncoder.encode(def.labelName, "UTF-8")
-            val labelUrl = "$mainUrl/search/label/$labelEnc?max-results=50"
+            val labelUrl = "$mainUrl/search/label/${encodeLabel(def.labelName)}?max-results=50"
             Log.d("LegadoSkywalker", "loadSeries: label series, fetching $labelUrl")
             return try {
                 val doc = app.get(labelUrl, referer = mainUrl, timeout = 30L).document
@@ -229,7 +273,15 @@ class LegadoskywalkerProvider : MainAPI() {
                     } catch (e: Exception) {}
                 }
                 if (episodes.isEmpty()) {
-                    Log.e("LegadoSkywalker", "loadSeries: no episodes on label page for $slug")
+                    Log.e("LegadoSkywalker", "loadSeries: no episodes on label page for $slug, trying feed API")
+                    val feedEpisodes = fetchFeedEpisodes(def.labelName)
+                    if (feedEpisodes.isNotEmpty()) {
+                        feedEpisodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
+                        Log.d("LegadoSkywalker", "loadSeries: ${feedEpisodes.size} feed API episodes for $slug")
+                        return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, feedEpisodes) {
+                            this.plot = "Todos los capítulos de $seriesName"
+                        }
+                    }
                     return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, emptyList())
                 }
                 episodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
@@ -331,9 +383,8 @@ class LegadoskywalkerProvider : MainAPI() {
             } else {
                 // body == null: /p/ page doesn't exist, try label fallback with series name
                 Log.w("LegadoSkywalker", "loadSeries: body=null for $slug, trying label fallback")
-                val fallbackLabel = java.net.URLEncoder.encode(seriesName, "UTF-8")
                 try {
-                    val labelDoc = app.get("$mainUrl/search/label/$fallbackLabel?max-results=50", referer = mainUrl, timeout = 30L).document
+                    val labelDoc = app.get("$mainUrl/search/label/${encodeLabel(seriesName)}?max-results=50", referer = mainUrl, timeout = 30L).document
                     val posts = labelDoc.select("div.post")
                     if (posts.isNotEmpty()) {
                         val epList = mutableListOf<Episode>()
@@ -364,6 +415,16 @@ class LegadoskywalkerProvider : MainAPI() {
                     }
                 } catch (e: Exception) {
                     Log.e("LegadoSkywalker", "loadSeries: label fallback error: ${e.message}")
+                }
+                // Try feed API as last resort
+                Log.w("LegadoSkywalker", "loadSeries: label fallback empty, trying feed API for $slug")
+                val feedEpisodes = fetchFeedEpisodes(seriesName)
+                if (feedEpisodes.isNotEmpty()) {
+                    feedEpisodes.sortBy { (it.season ?: 1) * 1000 + (it.episode ?: 1) }
+                    Log.d("LegadoSkywalker", "loadSeries: ${feedEpisodes.size} feed API episodes for $slug")
+                    return newTvSeriesLoadResponse(seriesName, "SERIES:$slug", TvType.TvSeries, feedEpisodes) {
+                        this.plot = "Todos los capítulos de $seriesName"
+                    }
                 }
             }
             Log.e("LegadoSkywalker", "loadSeries: no temporada links for $slug")
@@ -500,33 +561,50 @@ class LegadoskywalkerProvider : MainAPI() {
         }
     }
 
-    private suspend fun loadMovieByLabel(label: String): LoadResponse {
-        Log.d("LegadoSkywalker", "loadMovieByLabel: $label")
-        val encoded = java.net.URLEncoder.encode(label, "UTF-8")
-        val doc = app.get("$mainUrl/search/label/$encoded", timeout = 30L).document
-        val posts = doc.select("div.post")
-        val episodes = mutableListOf<Episode>()
-        posts.forEachIndexed { idx, post ->
-            try {
-                val link = post.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
-                    ?: post.select("a[href*='/20']").firstOrNull()?.attr("abs:href") ?: return@forEachIndexed
-                val title = post.select("h1, h2").text().trim()
-                val poster = post.select("img").firstOrNull()?.attr("abs:src")
-                    ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
-                episodes.add(newEpisode(link) {
-                    this.name = title; this.season = 1; this.episode = idx + 1; this.posterUrl = poster
-                })
-            } catch (e: Exception) {}
-        }
-        val name = allMovies().firstOrNull { it.slug == label }?.name ?: label
-        val poster = episodes.firstOrNull()?.posterUrl
-        if (episodes.size == 1) {
-            return newMovieLoadResponse(name, episodes[0].data, TvType.Movie, episodes[0].data) {
-                this.posterUrl = poster
+    private suspend fun loadMovieByLabel(slug: String): LoadResponse {
+        Log.d("LegadoSkywalker", "loadMovieByLabel: $slug")
+        val movie = allMovies().firstOrNull { it.slug == slug }
+        val name = movie?.name ?: slug
+
+        // Blog search using the movie's full name (labels like "Episodio I" don't exist)
+        val searchQ = encodeLabel(name)
+        try {
+            val doc = app.get("$mainUrl/search?q=$searchQ&max-results=5", timeout = 30L).document
+            val posts = doc.select("div.post")
+            for (post in posts) {
+                try {
+                    val link = post.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
+                        ?: post.select("a[href*='/20']").firstOrNull()?.attr("abs:href") ?: continue
+                    val title = post.select("h1, h2").text().trim()
+                    if (name.lowercase() in title.lowercase() || title.lowercase() in name.lowercase()) {
+                        val poster = post.select("img").firstOrNull()?.attr("abs:src")
+                            ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                        return newMovieLoadResponse(name, link, TvType.Movie, link) {
+                            this.posterUrl = poster
+                        }
+                    }
+                } catch (e: Exception) {}
             }
+            // No match found; use first result
+            val first = posts.firstOrNull()
+            if (first != null) {
+                val link = first.select("h1 a, h2 a").firstOrNull()?.attr("abs:href")
+                    ?: first.select("a[href*='/20']").firstOrNull()?.attr("abs:href") ?: ""
+                if (link.isNotBlank()) {
+                    val poster = first.select("img").firstOrNull()?.attr("abs:src")
+                        ?.replace(Regex("""/s\d+(-c)?/"""), "/s400/")
+                    return newMovieLoadResponse(name, link, TvType.Movie, link) {
+                        this.posterUrl = poster
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("LegadoSkywalker", "loadMovieByLabel: search error: ${e.message}")
         }
-        return newTvSeriesLoadResponse(name, "MOVIE:$label", TvType.Movie, episodes) {
-            this.posterUrl = poster; this.plot = name
+
+        Log.e("LegadoSkywalker", "loadMovieByLabel: no results for $slug")
+        return newMovieLoadResponse(name, "$mainUrl/search?q=$searchQ", TvType.Movie, "$mainUrl/search?q=$searchQ") {
+            this.plot = name
         }
     }
 
