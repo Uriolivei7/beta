@@ -234,28 +234,29 @@ class LegadoskywalkerProvider : MainAPI() {
         val allEpisodes = mutableListOf<Episode>()
         seasonUrls.forEach { seasonUrl ->
             val seasonNum = Regex("""temporada[-\s]*(\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
+            val isPostUrl = seasonUrl.contains("/20") && !seasonUrl.contains("/p/")
             try {
-                // If this is a post URL (contains /20XX/), treat as direct episode
-                // Skip if URL contains "temporada" — those are season listing pages
-                if (seasonUrl.contains("/20") && !seasonUrl.contains("/p/") && !seasonUrl.contains("temporada")) {
-                    Log.d("LegadoSkywalker", "  season $seasonNum: direct episode post $seasonUrl")
-                    val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
-                    val epTitle = seasonDoc.select("h1, h2").firstOrNull()?.text()?.trim()
-                        ?: seasonDoc.select("title").text().trim().substringBefore("|").trim()
-                    val epName = epTitle.replace(Regex("""\s*\[T\d+[-\s]*C\d+\]\s*"""), "").trim()
-                    val epFromUrl = Regex("""[cC](\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
-                    allEpisodes.add(newEpisode(seasonUrl) {
-                        this.name = epName.ifBlank { "Episodio ${seasonNum ?: (allEpisodes.size + 1)}" }
-                        this.season = seasonNum ?: 1
-                        this.episode = epFromUrl ?: (seasonNum ?: (allEpisodes.size + 1))
-                    })
-                    return@forEach
-                }
-
-                // Static page: /p/...temporada-N.html → parse episode list
+                // Parse the season page
                 val seasonDoc = app.get(seasonUrl, referer = mainUrl, timeout = 30L).document
                 val seasonBody = seasonDoc.select(".post-body.entry-content, .post-body, #post-body, .entry-content").firstOrNull()
-                if (seasonBody == null) {
+                val foundEpisodes = mutableListOf<Episode>()
+
+                if (seasonBody != null) {
+                    seasonBody.select("a[href]").forEachIndexed { idx, a ->
+                        val href = a.attr("abs:href")
+                        val text = a.text().trim()
+                        if (href.isBlank() || !href.contains("/20")
+                            || text.contains("Anterior", true) || text.contains("Siguiente", true)
+                            || text.contains("Temporada", true) || text.contains("atrás", true)
+                            || text.contains("regresar", true) || text.contains("volver", true)
+                            || href.contains("temporada") || href.contains("label")) return@forEachIndexed
+                        if (!href.replace("http://", "https://").startsWith(mainUrl)) return@forEachIndexed
+                        val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        foundEpisodes.add(newEpisode(href) {
+                            this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
+                        })
+                    }
+                } else {
                     Log.w("LegadoSkywalker", "  season $seasonNum: no post-body, trying doc links")
                     seasonDoc.select("a[href]").forEachIndexed { idx, a ->
                         val href = a.attr("abs:href")
@@ -264,28 +265,26 @@ class LegadoskywalkerProvider : MainAPI() {
                             && !text.contains("Anterior", true) && !text.contains("Siguiente", true)
                             && !text.contains("Temporada", true) && !href.contains("temporada")) {
                             val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                            allEpisodes.add(newEpisode(href) {
+                            foundEpisodes.add(newEpisode(href) {
                                 this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
                             })
                         }
                     }
-                    return@forEach
                 }
 
-                // Parse episode links from static season page
-                seasonBody.select("a[href]").forEachIndexed { idx, a ->
-                    val href = a.attr("abs:href")
-                    val text = a.text().trim()
-                    // Skip nav links and season/index links
-                    if (href.isBlank() || !href.contains("/20")
-                        || text.contains("Anterior", true) || text.contains("Siguiente", true)
-                        || text.contains("Temporada", true) || text.contains("atrás", true)
-                        || text.contains("regresar", true) || text.contains("volver", true)
-                        || href.contains("temporada") || href.contains("label")) return@forEachIndexed
-                    if (!href.replace("http://", "https://").startsWith(mainUrl)) return@forEachIndexed
-                    val epFromUrl = Regex("""[cC](\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                    allEpisodes.add(newEpisode(href) {
-                        this.name = text; this.season = seasonNum ?: 1; this.episode = epFromUrl ?: (idx + 1)
+                if (foundEpisodes.isNotEmpty()) {
+                    allEpisodes.addAll(foundEpisodes)
+                } else if (isPostUrl) {
+                    // Post URL with no episode links → single-episode season (e.g. Clone Wars 2003)
+                    Log.d("LegadoSkywalker", "  season $seasonNum: direct episode post (fallback) $seasonUrl")
+                    val epTitle = seasonDoc.select("h1, h2").firstOrNull()?.text()?.trim()
+                        ?: seasonDoc.select("title").text().trim().substringBefore("|").trim()
+                    val epName = epTitle.replace(Regex("""\s*\[T\d+[-\s]*C\d+\]\s*"""), "").trim()
+                    val epFromUrl = Regex("""[cC](\d+)""").find(seasonUrl)?.groupValues?.get(1)?.toIntOrNull()
+                    allEpisodes.add(newEpisode(seasonUrl) {
+                        this.name = epName.ifBlank { "Episodio ${seasonNum ?: (allEpisodes.size + 1)}" }
+                        this.season = seasonNum ?: 1
+                        this.episode = epFromUrl ?: (seasonNum ?: (allEpisodes.size + 1))
                     })
                 }
             } catch (e: Exception) {
