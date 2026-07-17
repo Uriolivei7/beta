@@ -223,43 +223,7 @@ class PlushdProvider : MainAPI() {
         return urls
     }
 
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val tag = "Plushd-VideoInterceptor"
-        return Interceptor { chain ->
-            val req = chain.request()
-            val url = req.url.toString()
-            val isSegment = url.contains(".ts") || url.contains(".m4s") || url.contains(".mp4")
-            val isM3u8 = url.contains(".m3u8")
-            if (isSegment || isM3u8) {
-                Log.d(tag, ">>> ${if (isSegment) "SEGMENT" else "M3U8"}: ${url.take(150)}")
-            }
-
-            val start = System.currentTimeMillis()
-            var builder = req.newBuilder()
-                .header("Referer", "$mainUrl/")
-            if (isSegment) {
-                builder = builder
-                    .header("Cache-Control", "no-cache")
-                    .header("Pragma", "no-cache")
-            }
-            val response = try {
-                chain.proceed(builder.build())
-            } catch (e: Exception) {
-                Log.e(tag, "NETWORK ERROR ${url.take(100)}: ${e.message}")
-                throw e
-            }
-            val elapsed = System.currentTimeMillis() - start
-            if (isSegment || isM3u8 || elapsed > 5000) {
-                val ct = response.body?.contentType().toString()
-                val len = response.body?.contentLength() ?: -1L
-                Log.d(tag, "<<< status=${response.code} len=$len ct=$ct elapsed=${elapsed}ms url=${url.take(100)}")
-                if (response.code != 200 && isSegment) {
-                    Log.w(tag, "SEGMENTO FALLIDO! status=${response.code} url=${url.take(120)}")
-                }
-            }
-            response
-        }
-    }
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = null
 
     override suspend fun loadLinks(
         data: String,
