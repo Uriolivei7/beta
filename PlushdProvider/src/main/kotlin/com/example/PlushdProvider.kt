@@ -223,7 +223,18 @@ class PlushdProvider : MainAPI() {
         return urls
     }
 
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = null
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val pageReferer = extractorLink.referer.ifEmpty { "$mainUrl/" }
+        val tag = "Plushd-VideoInterceptor"
+        return Interceptor { chain ->
+            val req = chain.request()
+            val builder = req.newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Referer", pageReferer)
+                .header("Accept", "*/*")
+            chain.proceed(builder.build())
+        }
+    }
 
     override suspend fun loadLinks(
         data: String,
@@ -313,7 +324,6 @@ class PlushdProvider : MainAPI() {
 
                         val extraHeaders = mapOf(
                             "Referer" to data,
-                            "Origin" to "$mainUrl",
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                             "Accept" to "*/*"
                         )
