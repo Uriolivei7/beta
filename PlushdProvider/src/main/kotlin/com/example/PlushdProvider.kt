@@ -228,11 +228,24 @@ class PlushdProvider : MainAPI() {
         val tag = "Plushd-VideoInterceptor"
         return Interceptor { chain ->
             val req = chain.request()
+            val url = req.url.toString()
+            val isSegment = url.contains(".ts") || url.contains(".m4s") || url.contains(".mp4")
             val builder = req.newBuilder()
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .header("Referer", pageReferer)
                 .header("Accept", "*/*")
-            chain.proceed(builder.build())
+            val start = System.currentTimeMillis()
+            val response = try {
+                chain.proceed(builder.build())
+            } catch (e: Exception) {
+                if (isSegment) Log.e(tag, "SEGMENT ERROR: ${url.take(100)} - ${e.message}")
+                throw e
+            }
+            val elapsed = System.currentTimeMillis() - start
+            if (isSegment || response.code != 200 || elapsed > 2000) {
+                Log.d(tag, "${if (isSegment) "SEG" else "REQ"} status=${response.code} elapsed=${elapsed}ms ref=${pageReferer.take(40)} url=${url.take(80)}")
+            }
+            response
         }
     }
 
@@ -323,7 +336,6 @@ class PlushdProvider : MainAPI() {
                         hasValidServer = true
 
                         val extraHeaders = mapOf(
-                            "Referer" to data,
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                             "Accept" to "*/*"
                         )
@@ -340,7 +352,7 @@ class PlushdProvider : MainAPI() {
                         }
                         foundLinks.forEach { link ->
                             callback(newExtractorLink(link.source, link.name, link.url) {
-                                this.referer = data
+                                this.referer = link.referer
                                 this.quality = link.quality
                                 this.headers = link.headers + extraHeaders
                             })
