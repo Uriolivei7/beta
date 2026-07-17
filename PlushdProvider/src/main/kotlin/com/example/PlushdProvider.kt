@@ -5,10 +5,11 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
-import okhttp3.Interceptor
 import org.jsoup.nodes.Element
 import java.net.URL
 import java.util.regex.Pattern
@@ -223,33 +224,6 @@ class PlushdProvider : MainAPI() {
         return urls
     }
 
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val pageReferer = extractorLink.referer.ifEmpty { "$mainUrl/" }
-        val tag = "Plushd-VideoInterceptor"
-        Log.d(tag, "CREATED - ref=$pageReferer url=${extractorLink.url.take(80)}")
-        return Interceptor { chain ->
-            val req = chain.request()
-            val url = req.url.toString()
-            val isSegment = url.contains(".ts") || url.contains(".m4s") || url.contains(".mp4")
-            val builder = req.newBuilder()
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .header("Referer", pageReferer)
-                .header("Accept", "*/*")
-            val start = System.currentTimeMillis()
-            val response = try {
-                chain.proceed(builder.build())
-            } catch (e: Exception) {
-                if (isSegment) Log.e(tag, "SEGMENT ERROR: ${url.take(100)} - ${e.message}")
-                throw e
-            }
-            val elapsed = System.currentTimeMillis() - start
-            if (isSegment || response.code != 200 || elapsed > 2000) {
-                Log.d(tag, "${if (isSegment) "SEG" else "REQ"} status=${response.code} elapsed=${elapsed}ms ref=${pageReferer.take(40)} url=${url.take(80)}")
-            }
-            response
-        }
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -272,6 +246,22 @@ class PlushdProvider : MainAPI() {
         val loggingSubtitleCallback: (SubtitleFile) -> Unit = { file ->
             Log.d("PlushdProvider", "Subtítulo encontrado. URL: ${file.url}")
             subtitleCallback.invoke(file)
+        }
+
+        val wrappedCallback: (ExtractorLink) -> Unit = { link ->
+            val extraHeaders = mapOf(
+                "Referer" to data,
+                "Origin" to "$mainUrl",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept" to "*/*"
+            )
+            CoroutineScope(Dispatchers.IO).launch {
+                callback(newExtractorLink(link.source, link.name, link.url) {
+                    this.referer = data
+                    this.quality = link.quality
+                    this.headers = link.headers + extraHeaders
+                })
+            }
         }
 
         var hasValidServer = false
@@ -324,39 +314,27 @@ class PlushdProvider : MainAPI() {
                             return@launch
                         }
                         if (fixedLink.contains("#") && (
-                                fixedLink.contains("upns.pro") ||
-                                fixedLink.contains("rpmstream.live") ||
-                                fixedLink.contains("strp2p.com") ||
-                                fixedLink.contains("4meplayer.pro") ||
-                                fixedLink.contains("pelisplusto")
-                            )) {
+                                    fixedLink.contains("upns.pro") ||
+                                            fixedLink.contains("rpmstream.live") ||
+                                            fixedLink.contains("strp2p.com") ||
+                                            fixedLink.contains("4meplayer.pro") ||
+                                            fixedLink.contains("pelisplusto")
+                                    )) {
                             Log.w(tag, "SPA hash (error 2001), saltando")
                             return@launch
                         }
 
                         hasValidServer = true
 
-                        val extraHeaders = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Accept" to "*/*"
-                        )
-                        val foundLinks = mutableListOf<ExtractorLink>()
                         withTimeout(7000) {
                             Log.d(tag, "llamando loadExtractor...")
                             loadExtractor(
                                 url = fixedLink,
                                 referer = data,
                                 subtitleCallback = loggingSubtitleCallback,
-                                callback = { link -> foundLinks.add(link) }
+                                callback = wrappedCallback
                             )
-                            Log.d(tag, "OK (loadExtractor) - ${foundLinks.size} links")
-                        }
-                        foundLinks.forEach { link ->
-                            callback(newExtractorLink(link.source, link.name, link.url) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers + extraHeaders
-                            })
+                            Log.d(tag, "OK (loadExtractor)")
                         }
                     } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                         Log.w(tag, "loadExtractor timed out (>7s)")
