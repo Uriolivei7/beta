@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.jsoup.nodes.Element
 import java.net.URL
 import java.util.regex.Pattern
@@ -222,6 +224,38 @@ class PlushdProvider : MainAPI() {
         val regex = Regex("""(https?://[^\s"']+)""")
         regex.findAll(text).forEach { urls.add(it.value) }
         return urls
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val tag = "Plushd-VideoInterceptor"
+        return Interceptor { chain ->
+            val req = chain.request()
+            val url = req.url.toString()
+            val isSegment = url.contains(".ts") || url.contains(".m4s") || url.contains(".mp4")
+            val isM3u8 = url.contains(".m3u8")
+            Log.d(tag, ">>> ${if (isSegment) "SEGMENT" else if (isM3u8) "M3U8" else "OTHER"}: ${url.take(150)}")
+
+            val start = System.currentTimeMillis()
+            val response = try {
+                chain.proceed(req.newBuilder()
+                    .header("Connection", "close")
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
+                    .header("Referer", "$mainUrl/")
+                    .header("Origin", "$mainUrl")
+                    .build())
+            } catch (e: Exception) {
+                Log.e(tag, "NETWORK ERROR para ${url.take(100)}: ${e.message}")
+                throw e
+            }
+            val elapsed = System.currentTimeMillis() - start
+            val ct = response.body?.contentType().toString()
+            val len = response.body?.contentLength() ?: -1L
+            if (isSegment || isM3u8 || elapsed > 3000) {
+                Log.d(tag, "<<< ${if (isSegment) "SEGMENT" else if (isM3u8) "M3U8" else "REQUEST"} status=${response.code} len=$len ct=$ct elapsed=${elapsed}ms url=${url.take(100)}")
+            }
+            response
+        }
     }
 
     override suspend fun loadLinks(
