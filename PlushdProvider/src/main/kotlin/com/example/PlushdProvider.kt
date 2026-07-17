@@ -226,6 +226,7 @@ class PlushdProvider : MainAPI() {
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val pageReferer = extractorLink.referer.ifEmpty { "$mainUrl/" }
         val tag = "Plushd-VideoInterceptor"
+        Log.d(tag, "CREATED - ref=$pageReferer url=${extractorLink.url.take(80)}")
         return Interceptor { chain ->
             val req = chain.request()
             val url = req.url.toString()
