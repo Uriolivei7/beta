@@ -5,13 +5,10 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.nodes.Element
 import java.net.URL
 import java.util.regex.Pattern
@@ -288,22 +285,6 @@ class PlushdProvider : MainAPI() {
             subtitleCallback.invoke(file)
         }
 
-        val wrappedCallback: (ExtractorLink) -> Unit = { link ->
-            val extraHeaders = mapOf(
-                "Referer" to data,
-                "Origin" to "$mainUrl",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept" to "*/*"
-            )
-            CoroutineScope(Dispatchers.IO).launch {
-                callback(newExtractorLink(link.source, link.name, link.url) {
-                    this.referer = data
-                    this.quality = link.quality
-                    this.headers = link.headers + extraHeaders
-                })
-            }
-        }
-
         var hasValidServer = false
         coroutineScope {
             serverItems.toList().forEach { serverLi ->
@@ -366,15 +347,29 @@ class PlushdProvider : MainAPI() {
 
                         hasValidServer = true
 
+                        val extraHeaders = mapOf(
+                            "Referer" to data,
+                            "Origin" to "$mainUrl",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Accept" to "*/*"
+                        )
+                        val foundLinks = mutableListOf<ExtractorLink>()
                         withTimeout(7000) {
                             Log.d(tag, "llamando loadExtractor...")
                             loadExtractor(
                                 url = fixedLink,
                                 referer = data,
                                 subtitleCallback = loggingSubtitleCallback,
-                                callback = wrappedCallback
+                                callback = { link -> foundLinks.add(link) }
                             )
-                            Log.d(tag, "OK (loadExtractor)")
+                            Log.d(tag, "OK (loadExtractor) - ${foundLinks.size} links")
+                        }
+                        foundLinks.forEach { link ->
+                            callback(newExtractorLink(link.source, link.name, link.url) {
+                                this.referer = data
+                                this.quality = link.quality
+                                this.headers = link.headers + extraHeaders
+                            })
                         }
                     } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                         Log.w(tag, "loadExtractor timed out (>7s)")
