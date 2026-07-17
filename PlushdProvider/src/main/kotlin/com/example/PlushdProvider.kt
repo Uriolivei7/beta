@@ -233,26 +233,32 @@ class PlushdProvider : MainAPI() {
             val url = req.url.toString()
             val isSegment = url.contains(".ts") || url.contains(".m4s") || url.contains(".mp4")
             val isM3u8 = url.contains(".m3u8")
-            Log.d(tag, ">>> ${if (isSegment) "SEGMENT" else if (isM3u8) "M3U8" else "OTHER"}: ${url.take(150)}")
+            if (isSegment || isM3u8) {
+                Log.d(tag, ">>> ${if (isSegment) "SEGMENT" else "M3U8"}: ${url.take(150)}")
+            }
 
             val start = System.currentTimeMillis()
-            val response = try {
-                chain.proceed(req.newBuilder()
-                    .header("Connection", "close")
-                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+            var builder = req.newBuilder()
+                .header("Referer", "$mainUrl/")
+            if (isSegment) {
+                builder = builder
+                    .header("Cache-Control", "no-cache")
                     .header("Pragma", "no-cache")
-                    .header("Referer", "$mainUrl/")
-                    .header("Origin", "$mainUrl")
-                    .build())
+            }
+            val response = try {
+                chain.proceed(builder.build())
             } catch (e: Exception) {
-                Log.e(tag, "NETWORK ERROR para ${url.take(100)}: ${e.message}")
+                Log.e(tag, "NETWORK ERROR ${url.take(100)}: ${e.message}")
                 throw e
             }
             val elapsed = System.currentTimeMillis() - start
-            val ct = response.body?.contentType().toString()
-            val len = response.body?.contentLength() ?: -1L
-            if (isSegment || isM3u8 || elapsed > 3000) {
-                Log.d(tag, "<<< ${if (isSegment) "SEGMENT" else if (isM3u8) "M3U8" else "REQUEST"} status=${response.code} len=$len ct=$ct elapsed=${elapsed}ms url=${url.take(100)}")
+            if (isSegment || isM3u8 || elapsed > 5000) {
+                val ct = response.body?.contentType().toString()
+                val len = response.body?.contentLength() ?: -1L
+                Log.d(tag, "<<< status=${response.code} len=$len ct=$ct elapsed=${elapsed}ms url=${url.take(100)}")
+                if (response.code != 200 && isSegment) {
+                    Log.w(tag, "SEGMENTO FALLIDO! status=${response.code} url=${url.take(120)}")
+                }
             }
             response
         }
