@@ -154,10 +154,35 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - **Subtítulos**: `current_video.captions[]` con url, name, language
 - **No usa API** (`/api/*` retorna 401) — todo se obtiene del JSON embedido en HTML
 
-## Next Steps
+## Next Steps (Netmirror)
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
 2. ⏸️ **PROBAR cambios del 10 Jul v2** (customMasters + __cm=1 + M3U8 body logging)
 3. ⏸️ Revisar los logs del M3U8 body — comparar contenido de EP1 vs EP2
 4. ⏸️ Si el M3U8 es IDÉNTICO pero preview persiste: el problema es en los segmentos CDN, no en el M3U8
 5. ⏸️ Si el M3U8 es DIFERENTE (EP2 tiene segmentos preview): el servidor limita EP2 cuando EP1 sigue activo
 6. ⏸️ Próximo paso si es CDN: probar `Connection: close` en segment requests (ya implementado) o crear OkHttpClient propio para segmentos
+
+## TudoramaProvider — Estado (17 Jul 2026)
+### ✅ Implementado
+- `getMainPage()` — 7 secciones (recientes, tendencias, géneros, películas)
+- `search()` — búsqueda por query string
+- `load()` — detalle con episodios DOM + AJAX (`corvus_get_episodes`)
+- `loadLinks()` — download table → `/d/` URLs → `resolveServerUrl()` → `extractFromEmbed()`
+- Posters en episodios (DOM y AJAX)
+
+### ✅ Arreglado (17 Jul)
+- `/d/` → `/e/` path conversion en `extractFromEmbed` (VidStack espera `/e/` embed, no `/d/` download)
+- Fallback via AJAX `corvus_get_servers` + stream URL → iframe src
+- Also prueba `/f/` → `/e/` conversion para hgcloud.to
+
+### ⏸️ Pendiente (BUG)
+- `loadExtractor()` retorna 0 links para TODOS los servidores
+- Hipótesis: VidStack (WebView) no puede extraer video del SPA React en `/e/ID`
+- El SPA carga video dinámicamente vía JS bundle (`/assets/index-DocunfmE.js`)
+- Próximo paso: si VidStack sigue sin funcionar, implementar extractor HTTP directo que busque API endpoint en JS bundle
+
+### Next Steps (Tudorama)
+1. ✅ Build APK exitoso con cambios
+2. ⏸️ **Probar APK en dispositivo** — verificar si `/d/` → `/e/` fix resuelve la extracción
+3. ⏸️ Si no funciona: implementar extractor manual (fetch JS bundle → buscar API de video → llamar endpoint)
+4. ⏸️ Si funciona: probar con múltiples episodios y servers

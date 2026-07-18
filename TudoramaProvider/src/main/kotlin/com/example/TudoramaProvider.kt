@@ -44,6 +44,18 @@ class TudoramaProvider : MainAPI() {
         @JsonProperty("hasMore") val hasMore: Boolean = false
     )
 
+    data class ServerResult(
+        @JsonProperty("title") val title: String = "",
+        @JsonProperty("type") val type: String = "",
+        @JsonProperty("url") val url: String = "",
+        @JsonProperty("status") val status: String = ""
+    )
+
+    data class ServersResponse(
+        @JsonProperty("success") val success: Boolean = false,
+        @JsonProperty("data") val data: List<ServerResult>? = null
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "=== getMainPage: name=${request.name}, page=$page ===")
 
@@ -129,6 +141,7 @@ class TudoramaProvider : MainAPI() {
                 this.name = epName
                 this.episode = epNum
                 this.season = seasonNum
+                this.posterUrl = poster
             }
         }
         Log.d(TAG, "load: episodes from DOM=${episodeList.size}")
@@ -144,7 +157,7 @@ class TudoramaProvider : MainAPI() {
             val order = epsContainer?.attr("data-order") ?: "DESC"
             val ajaxUrl = epsContainer?.attr("data-ajaxurl") ?: ""
 
-            val moreEpisodes = fetchMoreEpisodes(ajaxUrl, nonce, postId, seasonNum, results, results, order)
+            val moreEpisodes = fetchMoreEpisodes(ajaxUrl, nonce, postId, seasonNum, results, results, order, poster)
             Log.d(TAG, "load: more episodes from AJAX=${moreEpisodes.size}")
             val seenEps = episodeList.mapNotNull { it.episode }.toSet()
             val all = episodeList.toMutableList()
@@ -166,7 +179,8 @@ class TudoramaProvider : MainAPI() {
 
     private suspend fun fetchMoreEpisodes(
         ajaxUrl: String, nonce: String, postId: String, season: String,
-        results: Int, offset: Int, order: String
+        results: Int, offset: Int, order: String,
+        posterUrl: String? = null
     ): List<Episode> {
         if (ajaxUrl.isBlank() || nonce.isBlank() || postId.isBlank()) return emptyList()
         return try {
@@ -194,6 +208,7 @@ class TudoramaProvider : MainAPI() {
                     this.name = epName
                     this.episode = epNum
                     this.season = season.toIntOrNull() ?: 1
+                    this.posterUrl = posterUrl
                 }
             } ?: emptyList()
         } catch (e: Exception) {
@@ -210,10 +225,16 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "=== loadLinks: data=${data.take(80)} ===")
         val doc = app.get(data).document
-        val rows = doc.select("div.downloads table tbody tr")
-        Log.d(TAG, "loadLinks: ${rows.size} servidores encontrados")
         val foundLinks = mutableListOf<Pair<String, ExtractorLink>>()
 
+        // Parse nonce for AJAX fallback
+        val epDropdown = doc.selectFirst(".ep__dropdown, .servers")
+        val nonce = epDropdown?.attr("data-nonce") ?: ""
+        val postId = epDropdown?.attr("data-id") ?: ""
+
+        // Try download table first
+        val rows = doc.select("div.downloads table tbody tr")
+        Log.d(TAG, "loadLinks: ${rows.size} servidores (download)")
         for (row in rows) {
             val serverName = row.selectFirst("td:first-child")?.text()?.trim() ?: continue
             val downloadUrl = row.selectFirst("a[href]")?.attr("href") ?: continue
@@ -226,6 +247,14 @@ class TudoramaProvider : MainAPI() {
             Log.d(TAG, "loadLinks: embedUrl=${embedUrl.take(80)}")
             extractFromEmbed(embedUrl, serverName, subtitleCallback) { link ->
                 foundLinks.add(serverName to link)
+            }
+        }
+
+        // Fallback: AJAX stream servers
+        if (foundLinks.isEmpty() && nonce.isNotBlank() && postId.isNotBlank()) {
+            Log.d(TAG, "loadLinks: trying AJAX stream servers (nonce=$nonce postId=$postId)")
+            fetchStreamServers(nonce, postId, subtitleCallback) { name, link ->
+                foundLinks.add(name to link)
             }
         }
 
@@ -253,16 +282,27 @@ class TudoramaProvider : MainAPI() {
         Log.d(TAG, "extractFromEmbed: server=$serverName url=$embedUrl")
         var found = false
 
-        loadExtractor(
-            url = embedUrl,
-            referer = mainUrl,
-            subtitleCallback = subtitleCallback,
-            callback = { link ->
-                found = true
-                Log.d(TAG, "extractFromEmbed: loadExtractor OK for $serverName -> ${link.url.take(60)}")
-                callback(link)
-            }
-        )
+        val candidates = buildList {
+            // Primary: /e/ path (embed player)
+            add(embedUrl.replace("/d/", "/e/").replace("/f/", "/e/"))
+            // Fallback: original URL
+            if (last() != embedUrl) add(embedUrl)
+        }.distinct()
+
+        for (candidate in candidates) {
+            if (found) break
+            Log.d(TAG, "extractFromEmbed: trying candidate=$candidate")
+            loadExtractor(
+                url = candidate,
+                referer = mainUrl,
+                subtitleCallback = subtitleCallback,
+                callback = { link ->
+                    found = true
+                    Log.d(TAG, "extractFromEmbed: loadExtractor OK for $serverName -> ${link.url.take(60)}")
+                    callback(link)
+                }
+            )
+        }
 
         if (!found) {
             Log.w(TAG, "extractFromEmbed: no links found for $serverName ($embedUrl)")
@@ -281,6 +321,53 @@ class TudoramaProvider : MainAPI() {
             result
         } catch (e: Exception) {
             Log.e(TAG, "resolveServerUrl error: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun fetchStreamServers(
+        nonce: String,
+        postId: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (name: String, link: ExtractorLink) -> Unit
+    ) {
+        try {
+            val resp = app.post(
+                url = "$mainUrl/wp-admin/admin-ajax.php",
+                referer = mainUrl,
+                data = mapOf(
+                    "action" to "corvus_get_servers",
+                    "nonce" to nonce,
+                    "post_id" to postId
+                )
+            )
+            val parsed = resp.parsedSafe<ServersResponse>()
+            if (parsed == null || !parsed.success || parsed.data == null) {
+                Log.w(TAG, "fetchStreamServers: invalid response")
+                return
+            }
+            for (server in parsed.data) {
+                if (server.status != "ok" || server.type != "stream") continue
+                val streamUrl = server.url
+                Log.d(TAG, "fetchStreamServers: server=${server.title} url=$streamUrl")
+                val iframeUrl = resolveStreamUrl(streamUrl) ?: continue
+                Log.d(TAG, "fetchStreamServers: iframe=$iframeUrl")
+                extractFromEmbed(iframeUrl, server.title, subtitleCallback) { link ->
+                    callback(server.title, link)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchStreamServers error: ${e.message}")
+        }
+    }
+
+    private suspend fun resolveStreamUrl(streamUrl: String): String? {
+        return try {
+            val doc = app.get(streamUrl, referer = mainUrl).document
+            val iframeSrc = doc.selectFirst("#myIframe")?.attr("src")
+            if (iframeSrc.isNullOrBlank()) null else iframeSrc
+        } catch (e: Exception) {
+            Log.e(TAG, "resolveStreamUrl error: ${e.message}")
             null
         }
     }
