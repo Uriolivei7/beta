@@ -17,9 +17,20 @@ class TudoramaProvider : MainAPI() {
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.AsianDrama, TvType.Movie)
 
+    override val mainPage = mainPageOf(
+        "/" to "Episodios Recientes",
+        "/genero/emision/" to "En Emisión",
+        "/genero/series/" to "K-Dramas",
+        "/genero/cdrama/" to "C-Dramas",
+        "/genero/jdrama/" to "J-Dramas",
+        "/genero/espanol-latino/" to "Español Latino",
+        "/genero/sub-espanol/" to "Sub Español",
+        "/genero/peliculas/" to "Películas",
+    )
+
     data class EpisodeResult(
-        @JsonProperty("url") val url: String = "",
-        @JsonProperty("episode") val episode: Int = 0,
+        @JsonProperty("permalink") val url: String = "",
+        @JsonProperty("episode_number") val episode: Int = 0,
         @JsonProperty("title") val title: String? = null
     )
 
@@ -34,23 +45,41 @@ class TudoramaProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        Log.d(TAG, "=== getMainPage: page=$page ===")
-        val doc = app.get(mainUrl).document
-        val homeList = mutableListOf<HomePageList>()
+        Log.d(TAG, "=== getMainPage: name=${request.name}, page=$page ===")
 
-        val recentEpisodes = doc.select("section.section--episode article.ieps").mapNotNull { it.toSearchResult() }
-        Log.d(TAG, "getMainPage: recentEpisodes=${recentEpisodes.size}")
-        if (recentEpisodes.isNotEmpty())
-            homeList.add(HomePageList("Episodios Recientes", recentEpisodes))
+        if (request.data == "/") {
+            val doc = app.get(mainUrl).document
+            val homeList = mutableListOf<HomePageList>()
 
-        val trending = doc.select("div.items > article.ipst").mapNotNull { it.toSearchResult() }
-        Log.d(TAG, "getMainPage: trending=${trending.size}")
-        if (trending.isNotEmpty())
-            homeList.add(HomePageList("Tendencias", trending))
+            val recentEpisodes = doc.select("section.section--episode article.ieps").mapNotNull { it.toSearchResult() }
+            Log.d(TAG, "getMainPage: recentEpisodes=${recentEpisodes.size}")
+            if (recentEpisodes.isNotEmpty())
+                homeList.add(HomePageList("Episodios Recientes", recentEpisodes))
 
-        Log.d(TAG, "getMainPage: total lists=${homeList.size}")
-        if (homeList.isEmpty()) return null
-        return newHomePageResponse(homeList, hasNext = false)
+            val trending = doc.select("div.items > article.ipst").mapNotNull { it.toSearchResult() }
+            Log.d(TAG, "getMainPage: trending=${trending.size}")
+            if (trending.isNotEmpty())
+                homeList.add(HomePageList("Tendencias", trending))
+
+            Log.d(TAG, "getMainPage: total lists=${homeList.size}")
+            if (homeList.isEmpty()) return null
+            return newHomePageResponse(homeList, hasNext = false)
+        }
+
+        val url = if (page <= 1) {
+            "${mainUrl}${request.data}"
+        } else {
+            "${mainUrl}${request.data.removeSuffix("/")}/page/$page/"
+        }
+        Log.d(TAG, "getMainPage: fetching url=$url")
+        val doc = app.get(url).document
+        val items = doc.select("div.items > article.ipst").mapNotNull { it.toSearchResult() }
+        Log.d(TAG, "getMainPage: items=${items.size}")
+        if (items.isEmpty()) return null
+        return newHomePageResponse(
+            list = HomePageList(request.name, items),
+            hasNext = items.size >= 20
+        )
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
@@ -224,89 +253,13 @@ class TudoramaProvider : MainAPI() {
         Log.d(TAG, "extractFromEmbed: server=$serverName url=$embedUrl")
         var found = false
 
-        try {
-            val resp = app.get(embedUrl, referer = mainUrl)
-            val page = resp.text
-            Log.d(TAG, "extractFromEmbed: HTTP ${resp.code}, len=${page.length}")
-
-            val m3u8Match = Regex("""https?://[^"'\s<>]+\.(m3u8)[^"'\s<>]*""").find(page)
-            if (m3u8Match != null) {
-                val videoUrl = m3u8Match.value
-                Log.d(TAG, "extractFromEmbed: found m3u8 -> $videoUrl")
-                callback(newExtractorLink(serverName, serverName, videoUrl) {
-                    this.referer = embedUrl
-                    this.quality = 1080
-                })
-                found = true
-                return
-            }
-
-            val sourcesMatch = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").find(page)
-            if (sourcesMatch != null) {
-                val videoUrl = sourcesMatch.groupValues[1].replace("\\/", "/")
-                Log.d(TAG, "extractFromEmbed: found sources file -> $videoUrl")
-                callback(newExtractorLink(serverName, serverName, videoUrl) {
-                    this.referer = embedUrl
-                    this.quality = 1080
-                })
-                found = true
-                return
-            }
-
-            val sourcesMatch2 = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*'([^']+)'\s*\}?\s*\]?""").find(page)
-            if (sourcesMatch2 != null) {
-                val videoUrl = sourcesMatch2.groupValues[1].replace("\\/", "/")
-                Log.d(TAG, "extractFromEmbed: found sources file (quote) -> $videoUrl")
-                callback(newExtractorLink(serverName, serverName, videoUrl) {
-                    this.referer = embedUrl
-                    this.quality = 1080
-                })
-                found = true
-                return
-            }
-
-            val mp4Match = Regex("""https?://[^"'\s<>]+\.(mp4)[^"'\s<>]*""").find(page)
-            if (mp4Match != null) {
-                val videoUrl = mp4Match.value
-                Log.d(TAG, "extractFromEmbed: found mp4 -> $videoUrl")
-                callback(newExtractorLink(serverName, serverName, videoUrl) {
-                    this.referer = embedUrl
-                    this.quality = 1080
-                })
-                found = true
-                return
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "extractFromEmbed: manual fetch error: ${e.message}")
-        }
-
-        val subUrl = embedUrl
-            .replace("bysesukior.com", "filemoon.sx")
-            .replace("minochinos.com", "filemoon.sx")
-            .replace("tudorama.4meplayer.pro", "filemoon.sx")
-        if (subUrl != embedUrl) {
-            Log.d(TAG, "extractFromEmbed: trying loadExtractor with substituted URL: ${subUrl.take(60)}")
-            loadExtractor(
-                url = subUrl,
-                referer = mainUrl,
-                subtitleCallback = subtitleCallback,
-                callback = { link ->
-                    found = true
-                    Log.d(TAG, "extractFromEmbed: loadExtractor(domSub) OK for $serverName")
-                    callback(link)
-                }
-            )
-            if (found) return
-        }
-
-        Log.d(TAG, "extractFromEmbed: trying loadExtractor with original URL")
         loadExtractor(
             url = embedUrl,
             referer = mainUrl,
             subtitleCallback = subtitleCallback,
             callback = { link ->
                 found = true
-                Log.d(TAG, "extractFromEmbed: loadExtractor(orig) OK for $serverName")
+                Log.d(TAG, "extractFromEmbed: loadExtractor OK for $serverName -> ${link.url.take(60)}")
                 callback(link)
             }
         )
