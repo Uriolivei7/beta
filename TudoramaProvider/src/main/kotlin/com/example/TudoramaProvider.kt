@@ -1,6 +1,7 @@
 package com.example
 
 import android.util.Log
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -16,12 +17,28 @@ class TudoramaProvider : MainAPI() {
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.AsianDrama, TvType.Movie)
 
+    data class EpisodeResult(
+        @JsonProperty("url") val url: String = "",
+        @JsonProperty("episode") val episode: Int = 0,
+        @JsonProperty("title") val title: String? = null
+    )
+
+    data class EpisodesResponse(
+        @JsonProperty("success") val success: Boolean = false,
+        @JsonProperty("data") val data: EpisodesData? = null
+    )
+
+    data class EpisodesData(
+        @JsonProperty("results") val results: List<EpisodeResult>? = null,
+        @JsonProperty("hasMore") val hasMore: Boolean = false
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "=== getMainPage: page=$page ===")
         val doc = app.get(mainUrl).document
         val homeList = mutableListOf<HomePageList>()
 
-        val recentEpisodes = doc.select("ul.eps-list > li.lep").mapNotNull { it.toSearchResult() }
+        val recentEpisodes = doc.select("section.section--episode article.ieps").mapNotNull { it.toSearchResult() }
         Log.d(TAG, "getMainPage: recentEpisodes=${recentEpisodes.size}")
         if (recentEpisodes.isNotEmpty())
             homeList.add(HomePageList("Episodios Recientes", recentEpisodes))
@@ -49,14 +66,17 @@ class TudoramaProvider : MainAPI() {
         val doc = app.get(url).document
         val isMovie = url.contains("/pelicula/")
 
-        val title = doc.selectFirst(".hero__header h2")?.text()
-            ?: doc.selectFirst("h2")?.text()
+        val title = if (isMovie) {
+            doc.selectFirst("h1.hero__title")?.text()
+        } else {
+            doc.selectFirst("section#hero .hero--serie .hero__header h2")?.text()
+        }
         Log.d(TAG, "load: title=$title isMovie=$isMovie")
         if (title == null) { Log.w(TAG, "load: title not found"); return null }
 
         val poster = doc.selectFirst(".hero__poster img")?.attr("src")?.let { fixUrl(it) }
         val backdrop = doc.selectFirst(".hero__backdrop img")?.attr("src")?.let { fixUrl(it) }
-        val year = doc.selectFirst(".details__row:contains(Año) .details__col:last-child")?.text()?.trim()?.toIntOrNull()
+        val year = doc.selectFirst(".details__row:contains(A\u00f1o) .details__col:last-child")?.text()?.trim()?.toIntOrNull()
         val description = doc.selectFirst(".hero__overview, .synopsis p")?.text()?.trim()
         val tags = doc.select(".hero__genres a").mapNotNull { it.text().trim().takeIf { t -> t.isNotEmpty() } }
 
@@ -82,14 +102,74 @@ class TudoramaProvider : MainAPI() {
                 this.season = seasonNum
             }
         }
-        Log.d(TAG, "load: episodes=${episodeList.size}")
+        Log.d(TAG, "load: episodes from DOM=${episodeList.size}")
 
-        return newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodeList) {
+        val hasLoadMore = doc.selectFirst("#load-eps") != null
+        val allEpisodes = if (hasLoadMore) {
+            Log.d(TAG, "load: load-more button found, fetching more episodes via AJAX")
+            val epsContainer = doc.selectFirst("div.eps")
+            val nonce = epsContainer?.attr("data-nonce") ?: ""
+            val postId = epsContainer?.attr("data-tmdb-id") ?: ""
+            val seasonNum = epsContainer?.attr("data-season-number") ?: "1"
+            val results = epsContainer?.attr("data-results")?.toIntOrNull() ?: episodeList.size
+            val order = epsContainer?.attr("data-order") ?: "DESC"
+            val ajaxUrl = epsContainer?.attr("data-ajaxurl") ?: ""
+
+            val moreEpisodes = fetchMoreEpisodes(ajaxUrl, nonce, postId, seasonNum, results, results, order)
+            Log.d(TAG, "load: more episodes from AJAX=${moreEpisodes.size}")
+            val seenEps = episodeList.mapNotNull { it.episode }.toSet()
+            val all = episodeList.toMutableList()
+            all.addAll(moreEpisodes.filter { it.episode != null && it.episode !in seenEps })
+            all.sortedWith(compareBy({ it.season ?: 1 }, { it.episode ?: 0 }))
+        } else {
+            episodeList
+        }
+        Log.d(TAG, "load: total episodes=${allEpisodes.size}")
+
+        return newTvSeriesLoadResponse(title, url, TvType.AsianDrama, allEpisodes) {
             this.posterUrl = poster
             this.backgroundPosterUrl = backdrop
             this.plot = description
             this.tags = tags
             this.year = year
+        }
+    }
+
+    private suspend fun fetchMoreEpisodes(
+        ajaxUrl: String, nonce: String, postId: String, season: String,
+        results: Int, offset: Int, order: String
+    ): List<Episode> {
+        if (ajaxUrl.isBlank() || nonce.isBlank() || postId.isBlank()) return emptyList()
+        return try {
+            val resp = app.post(
+                url = "${ajaxUrl}admin-ajax.php",
+                referer = mainUrl,
+                data = mapOf(
+                    "action" to "corvus_get_episodes",
+                    "nonce" to nonce,
+                    "post_id" to postId,
+                    "season" to season,
+                    "results" to results.toString(),
+                    "offset" to offset.toString(),
+                    "order" to order
+                )
+            )
+            val parsed = resp.parsedSafe<EpisodesResponse>()
+            if (parsed == null || !parsed.success) return emptyList()
+            parsed.data?.results?.mapNotNull { item ->
+                val epUrl = item.url
+                if (epUrl.isBlank()) return@mapNotNull null
+                val epNum = item.episode
+                val epName = item.title ?: "Episodio $epNum"
+                newEpisode(epUrl) {
+                    this.name = epName
+                    this.episode = epNum
+                    this.season = season.toIntOrNull() ?: 1
+                }
+            } ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchMoreEpisodes error: ${e.message}")
+            emptyList()
         }
     }
 
@@ -115,19 +195,12 @@ class TudoramaProvider : MainAPI() {
                 continue
             }
             Log.d(TAG, "loadLinks: embedUrl=${embedUrl.take(80)}")
-
-            loadExtractor(
-                url = embedUrl,
-                referer = mainUrl,
-                subtitleCallback = subtitleCallback,
-                callback = { link ->
-                    foundLinks.add(serverName to link)
-                    Log.d(TAG, "loadLinks: extractor OK para $serverName -> ${link.url.take(60)}")
-                }
-            )
+            extractFromEmbed(embedUrl, serverName, subtitleCallback) { link ->
+                foundLinks.add(serverName to link)
+            }
         }
 
-        Log.d(TAG, "loadLinks: ${foundLinks.size} total links extraídos")
+        Log.d(TAG, "loadLinks: ${foundLinks.size} total links extra\u00eddos")
         foundLinks.forEach { (serverName, link) ->
             callback(newExtractorLink(link.source, "$serverName - ${link.name}", link.url) {
                 this.referer = link.referer
@@ -140,6 +213,107 @@ class TudoramaProvider : MainAPI() {
         }
         Log.d(TAG, "=== loadLinks FIN: ${foundLinks.isNotEmpty()} ===")
         return foundLinks.isNotEmpty()
+    }
+
+    private suspend fun extractFromEmbed(
+        embedUrl: String,
+        serverName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        Log.d(TAG, "extractFromEmbed: server=$serverName url=$embedUrl")
+        var found = false
+
+        try {
+            val resp = app.get(embedUrl, referer = mainUrl)
+            val page = resp.text
+            Log.d(TAG, "extractFromEmbed: HTTP ${resp.code}, len=${page.length}")
+
+            val m3u8Match = Regex("""https?://[^"'\s<>]+\.(m3u8)[^"'\s<>]*""").find(page)
+            if (m3u8Match != null) {
+                val videoUrl = m3u8Match.value
+                Log.d(TAG, "extractFromEmbed: found m3u8 -> $videoUrl")
+                callback(newExtractorLink(serverName, serverName, videoUrl) {
+                    this.referer = embedUrl
+                    this.quality = 1080
+                })
+                found = true
+                return
+            }
+
+            val sourcesMatch = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*\]?""").find(page)
+            if (sourcesMatch != null) {
+                val videoUrl = sourcesMatch.groupValues[1].replace("\\/", "/")
+                Log.d(TAG, "extractFromEmbed: found sources file -> $videoUrl")
+                callback(newExtractorLink(serverName, serverName, videoUrl) {
+                    this.referer = embedUrl
+                    this.quality = 1080
+                })
+                found = true
+                return
+            }
+
+            val sourcesMatch2 = Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*'([^']+)'\s*\}?\s*\]?""").find(page)
+            if (sourcesMatch2 != null) {
+                val videoUrl = sourcesMatch2.groupValues[1].replace("\\/", "/")
+                Log.d(TAG, "extractFromEmbed: found sources file (quote) -> $videoUrl")
+                callback(newExtractorLink(serverName, serverName, videoUrl) {
+                    this.referer = embedUrl
+                    this.quality = 1080
+                })
+                found = true
+                return
+            }
+
+            val mp4Match = Regex("""https?://[^"'\s<>]+\.(mp4)[^"'\s<>]*""").find(page)
+            if (mp4Match != null) {
+                val videoUrl = mp4Match.value
+                Log.d(TAG, "extractFromEmbed: found mp4 -> $videoUrl")
+                callback(newExtractorLink(serverName, serverName, videoUrl) {
+                    this.referer = embedUrl
+                    this.quality = 1080
+                })
+                found = true
+                return
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "extractFromEmbed: manual fetch error: ${e.message}")
+        }
+
+        val subUrl = embedUrl
+            .replace("bysesukior.com", "filemoon.sx")
+            .replace("minochinos.com", "filemoon.sx")
+            .replace("tudorama.4meplayer.pro", "filemoon.sx")
+        if (subUrl != embedUrl) {
+            Log.d(TAG, "extractFromEmbed: trying loadExtractor with substituted URL: ${subUrl.take(60)}")
+            loadExtractor(
+                url = subUrl,
+                referer = mainUrl,
+                subtitleCallback = subtitleCallback,
+                callback = { link ->
+                    found = true
+                    Log.d(TAG, "extractFromEmbed: loadExtractor(domSub) OK for $serverName")
+                    callback(link)
+                }
+            )
+            if (found) return
+        }
+
+        Log.d(TAG, "extractFromEmbed: trying loadExtractor with original URL")
+        loadExtractor(
+            url = embedUrl,
+            referer = mainUrl,
+            subtitleCallback = subtitleCallback,
+            callback = { link ->
+                found = true
+                Log.d(TAG, "extractFromEmbed: loadExtractor(orig) OK for $serverName")
+                callback(link)
+            }
+        )
+
+        if (!found) {
+            Log.w(TAG, "extractFromEmbed: no links found for $serverName ($embedUrl)")
+        }
     }
 
     private suspend fun resolveServerUrl(downloadUrl: String): String? {
