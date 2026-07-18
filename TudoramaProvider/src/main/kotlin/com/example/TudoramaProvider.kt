@@ -459,15 +459,20 @@ class TudoramaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val host = try { Uri.parse(embedUrl).host } catch (e: Exception) { return false }
-        val path = try { Uri.parse(embedUrl).path ?: "" } catch (e: Exception) { "" }
-        val code = path.split("/").lastOrNull { it.length in 3..20 } ?: return false
+        val uri = try { Uri.parse(embedUrl) } catch (e: Exception) { return false }
+        val path = uri.path ?: ""
+        val fragment = uri.fragment ?: ""
+        val code = path.split("/").lastOrNull { it.length in 3..20 }
+            ?: fragment.takeIf { it.length in 3..20 }
+            ?: return false
 
         Log.d(TAG, "tryApiExtraction: host=$host code=$code")
 
         return when {
             host?.contains("hgcloud.to") == true -> tryHgcloudApi(embedUrl, code, serverName, callback)
-            host?.contains("bysesukior.com") == true -> tryBysesukiorApi(embedUrl, code, serverName, callback)
-            host?.contains("4meplayer.pro") == true -> try4meplayerApi(embedUrl, code, serverName, callback)
+            host?.contains("bysesukior") == true -> tryBysesukiorApi(embedUrl, code, serverName, callback)
+            host?.contains("minochinos") == true -> tryMinochinosApi(embedUrl, code, serverName, callback)
+            host?.contains("4meplayer") == true -> try4meplayerApi(embedUrl, code, serverName, callback)
             else -> false
         }
     }
@@ -537,15 +542,39 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         try {
             val base = embedUrl.substringBefore("/e/").substringBefore("/d/")
-            // Try source API
-            val resp = app.post(
+            // Pattern 1: POST /api/source/{code} (common earnvids pattern)
+            val resp1 = app.post(
+                url = "$base/api/source/$code",
+                referer = embedUrl,
+                data = mapOf("r" to "", "d" to base)
+            )
+            val text1 = resp1.text
+            Log.d(TAG, "tryBysesukiorApi: resp1=${text1.take(200)}")
+            var parsed = try { mapper.readValue<Map<String, Any>>(text1) } catch (e: Exception) { null }
+            if (parsed?.get("success") == true) {
+                val data = parsed["data"]
+                if (data is List<*>) {
+                    for (item in data) {
+                        if (item is Map<*, *>) {
+                            val file = item["file"]?.toString() ?: continue
+                            val label = item["label"]?.toString() ?: "auto"
+                            callback(newExtractorLink(serverName, "$serverName - $label", file) {
+                                this.referer = embedUrl
+                            })
+                            return true
+                        }
+                    }
+                }
+            }
+            // Pattern 2: POST /api/source with code in body
+            val resp2 = app.post(
                 url = "$base/api/source",
                 referer = embedUrl,
                 data = mapOf("code" to code)
             )
-            val text = resp.text
-            Log.d(TAG, "tryBysesukiorApi: resp=${text.take(200)}")
-            val parsed = try { mapper.readValue<Map<String, Any>>(text) } catch (e: Exception) { null }
+            val text2 = resp2.text
+            Log.d(TAG, "tryBysesukiorApi: resp2=${text2.take(200)}")
+            parsed = try { mapper.readValue<Map<String, Any>>(text2) } catch (e: Exception) { null }
             if (parsed?.get("success") == true) {
                 val data = parsed["data"]
                 if (data is List<*>) {
@@ -563,6 +592,63 @@ class TudoramaProvider : MainAPI() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "tryBysesukiorApi error: ${e.message}")
+        }
+        return false
+    }
+
+    private suspend fun tryMinochinosApi(
+        embedUrl: String, code: String, serverName: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            val base = embedUrl.substringBefore("/e/").substringBefore("/d/")
+            // Pattern 1: POST /api/source/{code} (earnvids/filemoon clone)
+            val resp1 = app.post(
+                url = "$base/api/source/$code",
+                referer = embedUrl,
+                data = mapOf("r" to "", "d" to base)
+            )
+            val text1 = resp1.text
+            Log.d(TAG, "tryMinochinosApi: resp1=${text1.take(200)}")
+            val parsed1 = try { mapper.readValue<Map<String, Any>>(text1) } catch (e: Exception) { null }
+            if (parsed1?.get("success") == true) {
+                val data = parsed1["data"]
+                if (data is List<*>) {
+                    for (item in data) {
+                        if (item is Map<*, *>) {
+                            val file = item["file"]?.toString() ?: continue
+                            val label = item["label"]?.toString() ?: "auto"
+                            callback(newExtractorLink(serverName, "$serverName - $label", file) {
+                                this.referer = embedUrl
+                            })
+                            return true
+                        }
+                    }
+                }
+            }
+            // Pattern 2: GET embed page and regex-extract video URL
+            val resp2 = app.get(embedUrl, referer = base)
+            val html = resp2.text
+            Log.d(TAG, "tryMinochinosApi: html=${html.take(500)}")
+            // Look for m3u8/mp4 in script content
+            val scriptVars = Regex("""(?:file|src|url)\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""",
+                RegexOption.IGNORE_CASE).findAll(html)
+            for (match in scriptVars) {
+                callback(newExtractorLink(serverName, serverName, match.value) {
+                    this.referer = embedUrl
+                })
+                return true
+            }
+            // Look for any m3u8/mp4 URL in the page
+            val videoUrl = Regex("""https?://[^"'<>]+\.(?:m3u8|mp4)[^"'<>]*""").find(html)?.value
+            if (videoUrl != null) {
+                callback(newExtractorLink(serverName, serverName, videoUrl) {
+                    this.referer = embedUrl
+                })
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "tryMinochinosApi error: ${e.message}")
         }
         return false
     }
