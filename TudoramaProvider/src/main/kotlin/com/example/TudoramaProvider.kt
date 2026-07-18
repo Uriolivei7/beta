@@ -1,5 +1,6 @@
 package com.example
 
+import android.net.Uri
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -33,7 +34,8 @@ class TudoramaProvider : MainAPI() {
     data class EpisodeResult(
         @JsonProperty("permalink") val url: String = "",
         @JsonProperty("episode_number") val episode: Int = 0,
-        @JsonProperty("title") val title: String? = null
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("episode_image") val image: String? = null
     )
 
     data class EpisodesResponse(
@@ -206,11 +208,12 @@ class TudoramaProvider : MainAPI() {
                 if (epUrl.isBlank()) return@mapNotNull null
                 val epNum = item.episode
                 val epName = item.title ?: "Episodio $epNum"
+                val epImage = item.image?.let { fixUrl(it) }
                 newEpisode(epUrl) {
                     this.name = epName
                     this.episode = epNum
                     this.season = season.toIntOrNull() ?: 1
-                    this.posterUrl = posterUrl
+                    this.posterUrl = epImage ?: posterUrl
                 }
             } ?: emptyList()
         } catch (e: Exception) {
@@ -287,8 +290,11 @@ class TudoramaProvider : MainAPI() {
         var found = false
 
         val candidates = buildList {
-            // Primary: /e/ path (embed player)
-            add(embedUrl.replace("/d/", "/e/").replace("/f/", "/e/").replace("/download/", "/e/"))
+            // Primary: /e/ path (embed player), but preserve /f/ for hgcloud.to
+            val ePath = embedUrl
+                .replace("/d/", "/e/")
+                .replace("/download/", "/e/")
+            add(ePath)
             // Fallback: original URL
             if (last() != embedUrl) add(embedUrl)
         }.distinct()
@@ -354,6 +360,15 @@ class TudoramaProvider : MainAPI() {
                 } catch (e: Exception) {
                     Log.e(TAG, "extractFromEmbed: manual extraction error: ${e.message}")
                 }
+            }
+        }
+
+        // Fallback: try direct API calls for known hosts
+        if (!found) {
+            for (candidate in candidates) {
+                if (found) break
+                Log.d(TAG, "extractFromEmbed: trying API extraction for $candidate")
+                found = tryApiExtraction(candidate, serverName, subtitleCallback, callback)
             }
         }
 
@@ -435,6 +450,159 @@ class TudoramaProvider : MainAPI() {
             Log.e(TAG, "resolveStreamUrl error: ${e.message}")
             null
         }
+    }
+
+    private suspend fun tryApiExtraction(
+        embedUrl: String,
+        serverName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val host = try { Uri.parse(embedUrl).host } catch (e: Exception) { return false }
+        val path = try { Uri.parse(embedUrl).path ?: "" } catch (e: Exception) { "" }
+        val code = path.split("/").lastOrNull { it.length in 3..20 } ?: return false
+
+        Log.d(TAG, "tryApiExtraction: host=$host code=$code")
+
+        return when {
+            host?.contains("hgcloud.to") == true -> tryHgcloudApi(embedUrl, code, serverName, callback)
+            host?.contains("bysesukior.com") == true -> tryBysesukiorApi(embedUrl, code, serverName, callback)
+            host?.contains("4meplayer.pro") == true -> try4meplayerApi(embedUrl, code, serverName, callback)
+            else -> false
+        }
+    }
+
+    private suspend fun tryHgcloudApi(
+        embedUrl: String, code: String, serverName: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            val base = embedUrl.substringBefore("/f/").substringBefore("/e/").substringBefore("/d/")
+            // Pattern 1: POST /api/source/{code}
+            val resp1 = app.post(
+                url = "$base/api/source/$code",
+                referer = base,
+                data = mapOf("r" to "", "d" to base)
+            )
+            val text1 = resp1.text
+            Log.d(TAG, "tryHgcloudApi: resp1=${text1.take(200)}")
+            val parsed1 = try { mapper.readValue<Map<String, Any>>(text1) } catch (e: Exception) { null }
+            if (parsed1?.get("success") == true) {
+                val data = parsed1["data"]
+                if (data is List<*>) {
+                    for (item in data) {
+                        if (item is Map<*, *>) {
+                            val file = item["file"]?.toString() ?: continue
+                            val label = item["label"]?.toString() ?: "auto"
+                            callback(newExtractorLink(serverName, "$serverName - $label", file) {
+                                this.referer = base
+                            })
+                            return true
+                        }
+                    }
+                }
+            }
+            // Pattern 2: POST /ajax.php
+            val resp2 = app.post(
+                url = "$base/ajax.php",
+                referer = base,
+                data = mapOf("a" to "getSources", "id" to code)
+            )
+            val text2 = resp2.text
+            Log.d(TAG, "tryHgcloudApi: resp2=${text2.take(200)}")
+            val parsed2 = try { mapper.readValue<Map<String, Any>>(text2) } catch (e: Exception) { null }
+            if (parsed2 != null) {
+                val sources = parsed2["sources"] ?: parsed2["data"]
+                if (sources is List<*>) {
+                    for (item in sources) {
+                        if (item is Map<*, *>) {
+                            val file = item["file"]?.toString() ?: continue
+                            callback(newExtractorLink(serverName, serverName, file) {
+                                this.referer = base
+                            })
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "tryHgcloudApi error: ${e.message}")
+        }
+        return false
+    }
+
+    private suspend fun tryBysesukiorApi(
+        embedUrl: String, code: String, serverName: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            val base = embedUrl.substringBefore("/e/").substringBefore("/d/")
+            // Try source API
+            val resp = app.post(
+                url = "$base/api/source",
+                referer = embedUrl,
+                data = mapOf("code" to code)
+            )
+            val text = resp.text
+            Log.d(TAG, "tryBysesukiorApi: resp=${text.take(200)}")
+            val parsed = try { mapper.readValue<Map<String, Any>>(text) } catch (e: Exception) { null }
+            if (parsed?.get("success") == true) {
+                val data = parsed["data"]
+                if (data is List<*>) {
+                    for (item in data) {
+                        if (item is Map<*, *>) {
+                            val file = item["file"]?.toString() ?: continue
+                            val label = item["label"]?.toString() ?: "auto"
+                            callback(newExtractorLink(serverName, "$serverName - $label", file) {
+                                this.referer = embedUrl
+                            })
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "tryBysesukiorApi error: ${e.message}")
+        }
+        return false
+    }
+
+    private suspend fun try4meplayerApi(
+        embedUrl: String, code: String, serverName: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            val base = embedUrl.substringBefore("#")
+            val resp = app.post(
+                url = "$base/master.php",
+                referer = base,
+                data = mapOf("id" to code, "type" to "direct")
+            )
+            val text = resp.text
+            Log.d(TAG, "try4meplayerApi: resp=${text.take(200)}")
+            // Try to find m3u8/mp4 in response
+            val videoUrl = Regex("""https?://[^"'<>]+\.(?:m3u8|mp4)[^"'<>]*""").find(text)?.value
+            if (videoUrl != null) {
+                callback(newExtractorLink(serverName, serverName, videoUrl) {
+                    this.referer = base
+                })
+                return true
+            }
+            // Try JSON parse
+            val parsed = try { mapper.readValue<Map<String, Any>>(text) } catch (e: Exception) { null }
+            if (parsed != null) {
+                val file = parsed["file"]?.toString() ?: parsed["url"]?.toString() ?: parsed["src"]?.toString()
+                if (file != null) {
+                    callback(newExtractorLink(serverName, serverName, file) {
+                        this.referer = base
+                    })
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "try4meplayerApi error: ${e.message}")
+        }
+        return false
     }
 
     companion object {

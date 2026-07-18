@@ -168,21 +168,27 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - `search()` — búsqueda por query string
 - `load()` — detalle con episodios DOM + AJAX (`corvus_get_episodes`)
 - `loadLinks()` — download table → `/d/` URLs → `resolveServerUrl()` → `extractFromEmbed()`
-- Posters en episodios (DOM y AJAX)
+- Posters en episodios (DOM y AJAX con `episode_image` del API)
 
 ### ✅ Arreglado (17 Jul)
 - `/d/` → `/e/` path conversion en `extractFromEmbed` (VidStack espera `/e/` embed, no `/d/` download)
-- Fallback via AJAX `corvus_get_servers` + stream URL → iframe src
-- Also prueba `/f/` → `/e/` conversion para hgcloud.to
+- Fallback AJAX `corvus_get_servers` + stream URL → iframe src (pero requiere login WP)
+- Manual HTTP extraction con regex (m3u8/mp4 en HTML)
+- **NEW: Direct API extraction** — `tryApiExtraction()` para hgcloud.to, bysesukior.com, 4meplayer.pro
+- `/f/` → `/e/` **removido** (preserva `/f/` para hgcloud.to)
+- `Uri.parse()` import para parsing de URLs
 
 ### ⏸️ Pendiente (BUG)
 - `loadExtractor()` retorna 0 links para TODOS los servidores
-- Hipótesis: VidStack (WebView) no puede extraer video del SPA React en `/e/ID`
-- El SPA carga video dinámicamente vía JS bundle (`/assets/index-DocunfmE.js`)
-- Próximo paso: si VidStack sigue sin funcionar, implementar extractor HTTP directo que busque API endpoint en JS bundle
+- Causa raíz: Extractors registrados vía plugin (VidStack subclases) NO son auto-descubiertos por CS3
+- `tryApiExtraction()` intenta llamadas API directas como fallback (requiere probar)
+- `corvus_get_servers` requiere autenticación WordPress (no usable)
 
 ### Next Steps (Tudorama)
-1. ✅ Build APK exitoso con cambios
-2. ⏸️ **Probar APK en dispositivo** — verificar si `/d/` → `/e/` fix resuelve la extracción
-3. ⏸️ Si no funciona: implementar extractor manual (fetch JS bundle → buscar API de video → llamar endpoint)
+1. ✅ Build APK exitoso con API extraction directa
+2. ⏸️ **Probar APK en dispositivo** — verificar si API extraction encuentra links:
+   - hgcloud.to: `/api/source/{code}` POST
+   - bysesukior.com: `/api/source` POST
+   - 4meplayer.pro: `master.php` POST
+3. ⏸️ Si API extraction falla: implementar extractor VidStack manual (WebView JS injection)
 4. ⏸️ Si funciona: probar con múltiples episodios y servers
