@@ -8,5 +8,9 @@ import android.content.Context
 class TudoramaPlugin: Plugin() {
     override fun load(context: Context) {
         registerMainAPI(TudoramaProvider())
+        registerExtractorAPI(TudoramaBysesukior())
+        registerExtractorAPI(TudoramaMinochinos())
+        registerExtractorAPI(TudoramaHgcloud())
+        registerExtractorAPI(Tudorama4meplayer())
     }
 }
