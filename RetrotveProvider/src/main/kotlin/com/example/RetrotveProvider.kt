@@ -282,7 +282,7 @@ class RetrotveProvider : MainAPI() {
                 }
             }
 
-            // SPA: try API source endpoint (Byse/earnvids pattern)
+            // SPA: try extracting JS bundle for API endpoints
             val embedId = url.substringAfter("/e/").substringBefore("/")
             if (embedId.length in 3..20) {
                 val apiBase = url.substringBefore("/e/")
@@ -329,6 +329,82 @@ class RetrotveProvider : MainAPI() {
                                 })
                                 return
                             }
+                        }
+                    }
+                }
+                // Try extracting JS bundle to find API patterns
+                Log.d("RetrotveProvider", "Filemoon: trying JS bundle extraction")
+                val jsUrl = try {
+                    val scriptSrc = Regex("""<script\s+[^>]*src\s*=\s*"([^"]*index-[^"]+\.js)""").find(page)?.groupValues?.get(1)
+                    if (scriptSrc != null) "$apiBase$scriptSrc" else null
+                } catch (e: Exception) { null }
+                if (jsUrl != null) {
+                    Log.d("RetrotveProvider", "Filemoon: fetching JS bundle $jsUrl")
+                    val js = app.get(jsUrl, referer = url).text
+                    Log.d("RetrotveProvider", "Filemoon: JS bundle len=${js.length}")
+
+                    // Search for embedId in JS to find nearby API patterns
+                    val idIndex = js.indexOf(embedId)
+                    if (idIndex >= 0) {
+                        val context = js.substring(maxOf(0, idIndex - 200), minOf(js.length, idIndex + 300))
+                        Log.d("RetrotveProvider", "Filemoon: JS context around ID: $context")
+                    }
+
+                    // Search for API endpoint patterns
+                    val apiPatterns = listOf(
+                        Regex("""["']/(?:api|v1|v2|v3)/([^"']+)["']"""),
+                        Regex("""["'](?:get|source|video|file|media|stream|play|hls|watch)/([^"']+)["']"""),
+                        Regex("""fetch\s*\(\s*["']([^"']+)["']"""),
+                        Regex("""axios\s*[.(][^)]*["']([^"']+)["']"""),
+                        Regex("""XMLHttpRequest[^;]*["']([^"']+)["']"""),
+                    )
+                    val foundEndpoints = mutableSetOf<String>()
+                    for (apiPattern in apiPatterns) {
+                        for (match in apiPattern.findAll(js)) {
+                            val endpoint = match.groupValues[1]
+                            if (endpoint.length in 5..80 && !endpoint.contains("{") && !endpoint.contains("}")) {
+                                foundEndpoints.add(if (endpoint.startsWith("/")) endpoint else "/$endpoint")
+                            }
+                        }
+                    }
+                    Log.d("RetrotveProvider", "Filemoon: found ${foundEndpoints.size} potential API endpoints")
+                    // Try each found endpoint with the embed ID
+                    for (endpoint in foundEndpoints.take(10)) {
+                        val tryUrl = "$apiBase$endpoint/${embedId}"
+                        Log.d("RetrotveProvider", "Filemoon: trying endpoint $tryUrl")
+                        try {
+                            val apiResp3 = app.get(tryUrl, referer = url)
+                            val text3 = apiResp3.text
+                            if (text3.contains("success") || text3.contains("file") || text3.contains(".m3u8") || text3.contains(".mp4")) {
+                                Log.d("RetrotveProvider", "Filemoon: promising response from $tryUrl: ${text3.take(200)}")
+                                val parsed3 = try { mapper.readValue<Map<String, Any>>(text3) } catch (e: Exception) { null }
+                                if (parsed3 != null) {
+                                    val files = parsed3["data"] ?: parsed3["sources"] ?: parsed3["file"] ?: parsed3["url"]
+                                    if (files is List<*>) {
+                                        for (item in files) {
+                                            if (item is Map<*, *>) {
+                                                val file = item["file"]?.toString()?.replace("\\/", "/") ?: continue
+                                                callback(newExtractorLink("Filemoon", "Filemoon", file) { this.referer = apiBase })
+                                                return
+                                            } else if (item is String) {
+                                                callback(newExtractorLink("Filemoon", "Filemoon", item) { this.referer = apiBase })
+                                                return
+                                            }
+                                        }
+                                    } else if (files is String) {
+                                        callback(newExtractorLink("Filemoon", "Filemoon", files) { this.referer = apiBase })
+                                        return
+                                    }
+                                }
+                                // Even if not JSON, check for direct video URL
+                                val videoUrl = Regex("""https?://[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*""").find(text3)?.value
+                                if (videoUrl != null) {
+                                    callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) { this.referer = apiBase })
+                                    return
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.d("RetrotveProvider", "Filemoon: endpoint error: ${e.message?.take(100)}")
                         }
                     }
                 }
