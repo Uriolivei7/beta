@@ -72,18 +72,19 @@ class CinehdplusProvider : MainAPI() {
         val tags = doc.selectFirst(".details__list li")?.text()?.substringAfter(":")?.split(",")
         val trailer = doc.selectFirst("#OptYt iframe")?.attr("data-src")?.replaceFirst("https://www.youtube.com/embed/","https://www.youtube.com/watch?v=")
         val recommendations = doc.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
-        val episodes = doc.select("div.tab-content div.episodios-todos").flatMap { tab: org.jsoup.nodes.Element ->
+        val episodes = mutableListOf<Episode>()
+        doc.select("div.tab-content div.episodios-todos").forEach { tab ->
             val season = tab.attr("id").replaceFirst("season-", "").toIntOrNull()
-            tab.select(".episodios_list li").mapIndexed { idx: Int, ep: org.jsoup.nodes.Element ->
+            tab.select(".episodios_list li").forEachIndexed { idx, ep ->
                 val url = ep.selectFirst("a")?.attr("href")
                 val title = ep.selectFirst("figure img")?.attr("alt")
                 val img = ep.selectFirst("figure img")?.attr("src")
-                newEpisode(data = url) {
+                episodes.add(newEpisode(data = url) {
                     this.name = title
                     this.season = season
                     this.episode = idx + 1
                     this.posterUrl = img
-                }
+                })
             }
         }
         return when (tvType) {
