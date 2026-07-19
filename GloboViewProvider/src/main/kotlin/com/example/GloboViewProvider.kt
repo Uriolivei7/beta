@@ -47,9 +47,11 @@ class GloboViewProvider : MainAPI() {
                 if (paginationLinks.isNotEmpty()) {
                     Log.d("GloboView", "getMainPage: $name -> paginacion detectada: $paginationLinks")
                 }
-                val navs = doc.select("nav").map { n -> n.text().take(200) }
-                if (navs.isNotEmpty()) {
-                    Log.d("GloboView", "getMainPage: $name -> nav elements: $navs")
+                val navHtml = doc.select("nav").map { n -> n.html().take(1000) }
+                if (navHtml.isNotEmpty()) {
+                    Log.d("GloboView", "getMainPage: $name -> nav HTML: $navHtml")
+                    val pageLinks = doc.select("nav a[href]").map { a -> "${a.text()}: ${a.attr("href")}" }
+                    Log.d("GloboView", "getMainPage: $name -> page links: $pageLinks")
                 }
                 val tail = html.takeLast(1500)
                 Log.d("GloboView", "getMainPage: $name -> tail HTML: $tail")
