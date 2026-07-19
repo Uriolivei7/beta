@@ -154,6 +154,15 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - **Subtítulos**: `current_video.captions[]` con url, name, language
 - **No usa API** (`/api/*` retorna 401) — todo se obtiene del JSON embedido en HTML
 
+## GloboViewProvider — Estado (19 Jul 2026)
+### ✅ Implementado
+- `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.
+- `search`: escanea los mismos 16 países (5 antes) = ~384 canales vs 120 antes
+- Todos los `app.get()` pasan `timeout = 60L`
+
+### ⏸️ Pendiente
+- Cada país puede tener paginación. Solo se ve página 1 (~24 canales). Para ver más canales por país, necesitaríamos detectar paginación.
+
 ## Next Steps (Netmirror)
 1. ✅ Instalar APK compilado en dispositivo y probar reproducción real
 2. ⏸️ **PROBAR cambios del 10 Jul v2** (customMasters + __cm=1 + M3U8 body logging)

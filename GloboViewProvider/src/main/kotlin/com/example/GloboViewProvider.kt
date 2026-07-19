@@ -15,25 +15,44 @@ class GloboViewProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
 
-    private val categories = listOf(
-        "Deportes" to "/categorias/Deportes/",
-        "Noticias" to "/categorias/Noticias/",
-        "Películas" to "/categorias/Películas/",
-        "Series" to "/categorias/Series/",
-        "Entretenimiento" to "/categorias/Entretenimiento/",
-        "Música" to "/categorias/Música/",
-        "Infantil" to "/categorias/Infantil/",
-        "Documentales" to "/categorias/Documentales/",
+    private val sections = listOf(
+        "España" to "/directorio/espana/",
+        "México" to "/directorio/mexico/",
+        "Argentina" to "/directorio/argentina/",
+        "Colombia" to "/directorio/colombia/",
+        "EEUU" to "/directorio/estados-unidos/",
+        "Venezuela" to "/directorio/venezuela/",
+        "Perú" to "/directorio/peru/",
+        "Chile" to "/directorio/chile/",
+        "Ecuador" to "/directorio/ecuador/",
+        "Rep. Dominicana" to "/directorio/republica-dominicana/",
+        "Puerto Rico" to "/directorio/puerto-rico/",
+        "Brasil" to "/directorio/brasil/",
+        "Alemania" to "/directorio/alemania/",
+        "Reino Unido" to "/directorio/united-kingdom/",
+        "Francia" to "/directorio/francia/",
+        "Italia" to "/directorio/italia/",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("GloboView", "getMainPage: page=$page, request=${request.name}")
         val home = mutableListOf<HomePageList>()
-        for ((name, path) in categories) {
+        for ((name, path) in sections) {
             try {
                 val url = "$mainUrl$path"
                 Log.d("GloboView", "getMainPage: fetching $url")
-                val doc = app.get(url).document
+                val doc = app.get(url, timeout = 60L).document
+                val html = doc.html()
+                val paginationLinks = doc.select("a[href*=/pagina], a[href*=/page], a:matches((?i)siguiente|next|anterior|prev)").map { "${it.text()}: ${it.attr("href")}" }
+                if (paginationLinks.isNotEmpty()) {
+                    Log.d("GloboView", "getMainPage: $name -> paginacion detectada: $paginationLinks")
+                }
+                val navs = doc.select("nav").map { n -> n.text().take(200) }
+                if (navs.isNotEmpty()) {
+                    Log.d("GloboView", "getMainPage: $name -> nav elements: $navs")
+                }
+                val tail = html.takeLast(1500)
+                Log.d("GloboView", "getMainPage: $name -> tail HTML: $tail")
                 val channels = doc.select("a.card[href*=/directorio/]").mapNotNull { a ->
                     val link = a.attr("href")
                     val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@mapNotNull null
@@ -61,20 +80,13 @@ class GloboViewProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("GloboView", "search: query=$query")
         val results = mutableListOf<SearchResponse>()
-        val majorCountries = listOf(
-            "/directorio/espana/",
-            "/directorio/mexico/",
-            "/directorio/argentina/",
-            "/directorio/colombia/",
-            "/directorio/estados-unidos/",
-        )
-        for (countryPath in majorCountries) {
+        for ((_, path) in sections) {
             try {
-                val url = "$mainUrl$countryPath"
+                val url = "$mainUrl$path"
                 Log.d("GloboView", "search: scanning $url")
-                val doc = app.get(url).document
+                val doc = app.get(url, timeout = 60L).document
                 val channelCount = doc.select("a.card[href*=/directorio/]").size
-                Log.d("GloboView", "search: $countryPath -> $channelCount canales en pagina")
+                Log.d("GloboView", "search: $path -> $channelCount canales en pagina")
                 doc.select("a.card[href*=/directorio/]").forEach { a ->
                     val link = a.attr("href")
                     val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@forEach
@@ -87,7 +99,7 @@ class GloboViewProvider : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                Log.e("GloboView", "search error for $countryPath: ${e.message}")
+                Log.e("GloboView", "search error for $path: ${e.message}")
             }
         }
         Log.d("GloboView", "search: ${results.size} resultados para query=$query")
@@ -97,7 +109,7 @@ class GloboViewProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         Log.d("GloboView", "load: url=$url")
         try {
-            val resp = app.get(url)
+            val resp = app.get(url, timeout = 60L)
             val html = resp.text
             Log.d("GloboView", "load: code=${resp.code}, html len=${html.length}")
             val doc = Jsoup.parse(html)
@@ -137,7 +149,7 @@ class GloboViewProvider : MainAPI() {
     ): Boolean {
         Log.d("GloboView", "loadLinks: data=$data")
         try {
-            val resp = app.get(data)
+            val resp = app.get(data, timeout = 60L)
             val html = resp.text
             Log.d("GloboView", "loadLinks: code=${resp.code}, html len=${html.length}")
 
