@@ -568,8 +568,8 @@ class RetrotveProvider : MainAPI() {
                         extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        Log.d("RetrotveProvider", "-> Filemoon: using custom extractor for: $fixedSrc")
-                        extractFilemoon(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Filemoon: using registered FilemoonExtractor for: $fixedSrc")
+                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
                         Log.d("RetrotveProvider", "-> OK.RU: using loadExtractor for: $fixedSrc")
