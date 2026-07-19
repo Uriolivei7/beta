@@ -361,53 +361,55 @@ class RetrotveProvider : MainAPI() {
 
             var foundAny = false
 
-            // VK video URL patterns (comprehensive)
-            val vkPatterns = listOf(
-                // Standard qualities: "mp4_720": "url", "hls_ondemand": "url"
-                Regex(""""mp4_(\d+)"\s*:\s*"([^"]+)""""),
-                Regex(""""hls_(\w+)"\s*:\s*"([^"]+)""""),
-                Regex(""""dash_(\w+)"\s*:\s*"([^"]+)""""),
-                // Without quality suffix
-                Regex(""""hls"\s*:\s*"([^"]+)""""),
-                Regex(""""dash"\s*:\s*"([^"]+)""""),
-                Regex(""""live"\s*:\s*"([^"]+)""""),
-                Regex(""""video_url"\s*:\s*"([^"]+)""""),
-                // Direct m3u8/mp4 URLs in page
-                Regex("""https?://[^"'\s]+\.m3u8[^"'\s]*"""),
-                Regex("""https?://[^"'\s]+\.mp4[^"'\s]*"""),
-                // VK video URL in data attribute
-                Regex("""data-video-url\s*=\s*"([^"]+)""""),
-                Regex("""data-hls\s*=\s*"([^"]+)"""")
-            )
-
-            for (pattern in vkPatterns) {
-                for (match in pattern.findAll(page)) {
-                    val videoUrl = match.groupValues.getOrNull(2)?.replace("\\/", "/")
-                        ?: match.groupValues.getOrNull(1)?.replace("\\/", "/")
-                        ?: match.value.replace("\\/", "/")
-                    if (videoUrl.startsWith("http")) {
-                        val quality = match.groupValues.getOrNull(1)?.toIntOrNull()
-                        foundAny = true
-                        Log.d("RetrotveProvider", "VKVideo: found ${quality ?: "?"}p -> ${videoUrl.take(80)}")
-                        if (videoUrl.contains(".m3u8")) {
-                            callback(newExtractorLink("VKVideo", "VKVideo HLS", videoUrl) {
-                                this.referer = "https://vk.com/"
-                                this.quality = quality ?: 1080
-                            })
-                        } else if (videoUrl.contains(".mp4")) {
-                            callback(newExtractorLink("VKVideo", "VKVideo ${quality ?: ""}p", videoUrl) {
-                                this.referer = "https://vk.com/"
-                                this.quality = quality ?: 720
-                            })
-                        } else {
-                            callback(newExtractorLink("VKVideo", "VKVideo HLS", videoUrl) {
-                                this.referer = "https://vk.com/"
-                                this.quality = 1080
-                            })
-                        }
-                    }
-                }
+            val hls1 = createVkLink("VKVideo HLS", page, Regex(""""hls_(\w+)"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                val url2 = match.groupValues[2].replace("\\/", "/")
+                Pair(url2, 1080)
             }
+
+            val mp4 = createVkLink("VKVideo %dp", page, Regex(""""mp4_(\d+)"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                val url2 = match.groupValues[2].replace("\\/", "/")
+                val q = match.groupValues[1].toIntOrNull() ?: 720
+                Pair(url2, q)
+            }
+
+            val dash1 = createVkLink("VKVideo DASH", page, Regex(""""dash_(\w+)"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                val url2 = match.groupValues[2].replace("\\/", "/")
+                Pair(url2, 1080)
+            }
+
+            val hls2 = createVkLink("VKVideo HLS", page, Regex(""""hls"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                Pair(match.groupValues[1].replace("\\/", "/"), 1080)
+            }
+
+            val dash2 = createVkLink("VKVideo DASH", page, Regex(""""dash"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                Pair(match.groupValues[1].replace("\\/", "/"), 1080)
+            }
+
+            val live = createVkLink("VKVideo Live", page, Regex(""""live"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                Pair(match.groupValues[1].replace("\\/", "/"), 1080)
+            }
+
+            val videoUrl = createVkLink("VKVideo", page, Regex(""""video_url"\s*:\s*"([^"]+)""""), referer, callback) { match ->
+                Pair(match.groupValues[1].replace("\\/", "/"), 720)
+            }
+
+            val directHls = createVkLink("VKVideo HLS", page, Regex("""https?://[^"'\s]+\.m3u8[^"'\s]*"""), referer, callback) { match ->
+                Pair(match.value.replace("\\/", "/"), 1080)
+            }
+
+            val directMp4 = createVkLink("VKVideo", page, Regex("""https?://[^"'\s]+\.mp4[^"'\s]*"""), referer, callback) { match ->
+                Pair(match.value.replace("\\/", "/"), 720)
+            }
+
+            val dataVideo = createVkLink("VKVideo", page, Regex("""data-video-url\s*=\s*"([^"]+)""""), referer, callback) { match ->
+                Pair(match.groupValues[1].replace("\\/", "/"), 720)
+            }
+
+            val dataHls = createVkLink("VKVideo HLS", page, Regex("""data-hls\s*=\s*"([^"]+)""""), referer, callback) { match ->
+                Pair(match.groupValues[1].replace("\\/", "/"), 1080)
+            }
+
+            foundAny = hls1 || mp4 || dash1 || hls2 || dash2 || live || videoUrl || directHls || directMp4 || dataVideo || dataHls
 
             if (!foundAny) {
                 Log.d("RetrotveProvider", "VKVideo: no URL found, trying loadExtractor")
@@ -417,6 +419,33 @@ class RetrotveProvider : MainAPI() {
             Log.e("RetrotveProvider", "VKVideo error: ${e.message}")
             loadExtractor(url.replace("vkvideo.ru", "vk.com"), referer, subtitleCallback, callback)
         }
+    }
+
+    private suspend fun createVkLink(
+        labelFormat: String,
+        page: String,
+        pattern: Regex,
+        referer: String,
+        callback: (ExtractorLink) -> Unit,
+        extract: (MatchResult) -> Pair<String, Int>
+    ): Boolean {
+        var found = false
+        for (match in pattern.findAll(page)) {
+            val (videoUrl, quality) = extract(match)
+            if (!videoUrl.startsWith("http")) continue
+            val label = if (labelFormat.contains("%d")) {
+                labelFormat.replace("%d", quality.toString())
+            } else {
+                labelFormat
+            }
+            Log.d("RetrotveProvider", "VKVideo: found $label -> ${videoUrl.take(80)}")
+            callback(newExtractorLink("VKVideo", label, videoUrl) {
+                this.referer = referer
+                this.quality = quality
+            })
+            found = true
+        }
+        return found
     }
 
     private suspend fun processPlayerPage(
