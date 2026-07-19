@@ -8,6 +8,5 @@ import android.content.Context
 class RetrotvePlugin: Plugin() {
     override fun load(context: Context) {
         registerMainAPI(RetrotveProvider())
-        registerExtractorAPI(FilemoonExtractor())
     }
 }

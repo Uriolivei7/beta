@@ -7,11 +7,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import android.util.Log
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
 
 class RetrotveProvider : MainAPI() {
     override var mainUrl = "https://retrotve.com"
@@ -254,178 +250,6 @@ class RetrotveProvider : MainAPI() {
         }
     }
 
-    private suspend fun extractFilemoon(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        try {
-            val resp = app.get(url, referer = referer)
-            val page = resp.text
-            Log.d("RetrotveProvider", "Filemoon: code=${resp.code}, url=${resp.url}, page len=${page.length}")
-            if (page.length < 10000) Log.d("RetrotveProvider", "Filemoon: HTML=$page")
-
-            // Try regex patterns in the HTML
-            val regexPatterns = listOf(
-                Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*"([^"]+)"\s*\}?\s*]?"""),
-                Regex("""sources\s*:\s*\[?\s*\{?\s*file\s*:\s*'([^']+)'\s*\}?\s*]?"""),
-                Regex("""https?://[^"'\s<>]+\.(?:mp4|m3u8)[^"'\s<>]*"""),
-                Regex("""(?:file|src|url)\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""")
-            )
-            for (pattern in regexPatterns) {
-                for (match in pattern.findAll(page)) {
-                    val videoUrl = match.groupValues.getOrNull(1)?.replace("\\/", "/") ?: match.value
-                    if (videoUrl.startsWith("http")) {
-                        Log.d("RetrotveProvider", "Filemoon: found $videoUrl")
-                        callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) {
-                            this.referer = "https://filemoon.sx/"
-                            this.quality = 1080
-                        })
-                        return
-                    }
-                }
-            }
-
-            // SPA: try extracting JS bundle for API endpoints
-            val embedId = url.substringAfter("/e/").substringBefore("/")
-            if (embedId.length in 3..20) {
-                val apiBase = url.substringBefore("/e/")
-                // POST /api/source/{id}
-                Log.d("RetrotveProvider", "Filemoon: trying API $apiBase/api/source/$embedId")
-                val apiResp1 = app.post(
-                    url = "$apiBase/api/source/$embedId",
-                    referer = url,
-                    data = mapOf("r" to "", "d" to apiBase)
-                )
-                Log.d("RetrotveProvider", "Filemoon: API1=${apiResp1.text.take(200)}")
-                val parsed1 = try { mapper.readValue<Map<String, Any>>(apiResp1.text) } catch (e: Exception) { null }
-                if (parsed1?.get("success") == true) {
-                    val data = parsed1["data"]
-                    if (data is List<*>) {
-                        for (item in data) {
-                            if (item is Map<*, *>) {
-                                val file = item["file"]?.toString()?.replace("\\/", "/") ?: continue
-                                val label = item["label"]?.toString() ?: "auto"
-                                callback(newExtractorLink("Filemoon", "Filemoon - $label", file) {
-                                    this.referer = apiBase
-                                })
-                                return
-                            }
-                        }
-                    }
-                }
-                // GET /api/source/{id}
-                val apiResp2 = app.get(
-                    url = "$apiBase/api/source/$embedId",
-                    referer = url
-                )
-                Log.d("RetrotveProvider", "Filemoon: API2=${apiResp2.text.take(200)}")
-                val parsed2 = try { mapper.readValue<Map<String, Any>>(apiResp2.text) } catch (e: Exception) { null }
-                if (parsed2?.get("success") == true) {
-                    val data = parsed2["data"]
-                    if (data is List<*>) {
-                        for (item in data) {
-                            if (item is Map<*, *>) {
-                                val file = item["file"]?.toString()?.replace("\\/", "/") ?: continue
-                                val label = item["label"]?.toString() ?: "auto"
-                                callback(newExtractorLink("Filemoon", "Filemoon - $label", file) {
-                                    this.referer = apiBase
-                                })
-                                return
-                            }
-                        }
-                    }
-                }
-                // Try extracting JS bundle to find API patterns
-                Log.d("RetrotveProvider", "Filemoon: trying JS bundle extraction")
-                val jsUrl = try {
-                    val scriptSrc = Regex("""<script\s+[^>]*src\s*=\s*"([^"]*index-[^"]+\.js)""").find(page)?.groupValues?.get(1)
-                    if (scriptSrc != null) "$apiBase$scriptSrc" else null
-                } catch (e: Exception) { null }
-                if (jsUrl != null) {
-                    Log.d("RetrotveProvider", "Filemoon: fetching JS bundle $jsUrl")
-                    val js = app.get(jsUrl, referer = url).text
-                    Log.d("RetrotveProvider", "Filemoon: JS bundle len=${js.length}")
-
-                    // Search for embedId in JS to find nearby API patterns
-                    val idIndex = js.indexOf(embedId)
-                    if (idIndex >= 0) {
-                        val context = js.substring(maxOf(0, idIndex - 200), minOf(js.length, idIndex + 300))
-                        Log.d("RetrotveProvider", "Filemoon: JS context around ID: $context")
-                    }
-
-                    // Search for API endpoint patterns
-                    val apiPatterns = listOf(
-                        Regex("""["']/(?:api|v1|v2|v3)/([^"']+)["']"""),
-                        Regex("""["'](?:get|source|video|file|media|stream|play|hls|watch)/([^"']+)["']"""),
-                        Regex("""fetch\s*\(\s*["']([^"']+)["']"""),
-                        Regex("""axios\s*[.(][^)]*["']([^"']+)["']"""),
-                        Regex("""XMLHttpRequest[^;]*["']([^"']+)["']"""),
-                    )
-                    val foundEndpoints = mutableSetOf<String>()
-                    for (apiPattern in apiPatterns) {
-                        for (match in apiPattern.findAll(js)) {
-                            val endpoint = match.groupValues[1]
-                            if (endpoint.length in 5..80 && !endpoint.contains("{") && !endpoint.contains("}")) {
-                                foundEndpoints.add(if (endpoint.startsWith("/")) endpoint else "/$endpoint")
-                            }
-                        }
-                    }
-                    Log.d("RetrotveProvider", "Filemoon: found ${foundEndpoints.size} potential API endpoints")
-                    // Try each found endpoint with the embed ID
-                    for (endpoint in foundEndpoints.take(10)) {
-                        val tryUrl = "$apiBase$endpoint/${embedId}"
-                        Log.d("RetrotveProvider", "Filemoon: trying endpoint $tryUrl")
-                        try {
-                            val apiResp3 = app.get(tryUrl, referer = url)
-                            val text3 = apiResp3.text
-                            if (text3.contains("success") || text3.contains("file") || text3.contains(".m3u8") || text3.contains(".mp4")) {
-                                Log.d("RetrotveProvider", "Filemoon: promising response from $tryUrl: ${text3.take(200)}")
-                                val parsed3 = try { mapper.readValue<Map<String, Any>>(text3) } catch (e: Exception) { null }
-                                if (parsed3 != null) {
-                                    val files = parsed3["data"] ?: parsed3["sources"] ?: parsed3["file"] ?: parsed3["url"]
-                                    if (files is List<*>) {
-                                        for (item in files) {
-                                            if (item is Map<*, *>) {
-                                                val file = item["file"]?.toString()?.replace("\\/", "/") ?: continue
-                                                callback(newExtractorLink("Filemoon", "Filemoon", file) { this.referer = apiBase })
-                                                return
-                                            } else if (item is String) {
-                                                callback(newExtractorLink("Filemoon", "Filemoon", item) { this.referer = apiBase })
-                                                return
-                                            }
-                                        }
-                                    } else if (files is String) {
-                                        callback(newExtractorLink("Filemoon", "Filemoon", files) { this.referer = apiBase })
-                                        return
-                                    }
-                                }
-                                // Even if not JSON, check for direct video URL
-                                val videoUrl = Regex("""https?://[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*""").find(text3)?.value
-                                if (videoUrl != null) {
-                                    callback(newExtractorLink("Filemoon", "Filemoon", videoUrl) { this.referer = apiBase })
-                                    return
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.d("RetrotveProvider", "Filemoon: endpoint error: ${e.message?.take(100)}")
-                        }
-                    }
-                }
-            }
-
-            // Fallback: loadExtractor with clean URL (no slug) + also try filemoon.to
-            val cleanUrl = url.substringBeforeLast("/")
-            Log.d("RetrotveProvider", "Filemoon: trying loadExtractor with cleanUrl=$cleanUrl")
-            loadExtractor(cleanUrl, referer, subtitleCallback, callback)
-
-            val altUrl = cleanUrl.replace("filemoon.sx", "filemoon.to")
-            if (altUrl != cleanUrl) {
-                Log.d("RetrotveProvider", "Filemoon: trying loadExtractor with alt=$altUrl")
-                loadExtractor(altUrl, referer, subtitleCallback, callback)
-            }
-        } catch (e: Exception) {
-            Log.e("RetrotveProvider", "Filemoon error: ${e.message}")
-            loadExtractor(url.replace("filemoon.sx", "filemoon.to"), referer, subtitleCallback, callback)
-        }
-    }
-
     private suspend fun extractVKVideo(url: String, referer: String, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         try {
             val fixedUrl = url.replace("vkvideo.ru", "vk.com")
@@ -568,8 +392,7 @@ class RetrotveProvider : MainAPI() {
                         extractSendvid(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("filemoon.") || fixedSrc.contains("filemoon.to") -> {
-                        Log.d("RetrotveProvider", "-> Filemoon: using registered FilemoonExtractor for: $fixedSrc")
-                        loadExtractor(fixedSrc, playerUrl, subtitleCallback, callback)
+                        Log.d("RetrotveProvider", "-> Filemoon: skipping (Byse SPA not extractable)")
                     }
                     fixedSrc.contains("ok.ru") || fixedSrc.contains("odnoklassniki") -> {
                         Log.d("RetrotveProvider", "-> OK.RU: using loadExtractor for: $fixedSrc")
@@ -720,9 +543,6 @@ class RetrotveProvider : MainAPI() {
         return true
     }
 
-    companion object {
-        private val mapper = ObjectMapper()
-    }
 }
 
 fun getBaseName(url: String): String {
