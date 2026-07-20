@@ -114,16 +114,20 @@ class GloboViewProvider : MainAPI() {
                                 val urlM = Regex(""""url":\[0,"([^"]+)"""").find(chunk)
                                 val logoM = Regex(""""logo":\[0,"([^"]+)"""").find(chunk)
                                 if (urlM != null && logoM != null) {
-                                    val u = urlM.groupValues[1].replace("\\/", "/")
+                                    var u = urlM.groupValues[1].replace("\\/", "/")
                                     val l = logoM.groupValues[1].replace("\\/", "/")
+                                    if (!u.startsWith("http")) u = "$mainUrl$u"
                                     if (u.startsWith("http") && l.startsWith("http")) {
-                                        posterMap[u] = l
+                                        posterMap[u.trimEnd('/')] = l
                                         parsed++
                                     }
                                 }
                             } catch (_: Exception) {}
                         }
                         Log.d("GloboView", "search: astro-island parsed $parsed posters")
+                        if (parsed > 0) {
+                            Log.d("GloboView", "search: sample astro URL = ${posterMap.keys.first()}")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.d("GloboView", "search: astro-island error: ${e.message}")
@@ -154,7 +158,7 @@ class GloboViewProvider : MainAPI() {
                             val name = item.getString("name")
                             val chUrl = item.getString("url")
                             if (name.contains(query, ignoreCase = true)) {
-                                var posterUrl = posterMap[chUrl] ?: posterMap[chUrl.trimEnd('/')] ?: posterMap["${chUrl.trimEnd('/')}/"]
+                                var posterUrl = posterMap[chUrl.trimEnd('/')] ?: posterMap[chUrl] ?: posterMap["${chUrl.trimEnd('/')}/"]
                                 Log.d("GloboView", "search: match found: $name -> $chUrl, poster=$posterUrl")
                                 results.add(newLiveSearchResponse(name, chUrl, TvType.Live) {
                                     this.posterUrl = posterUrl
@@ -209,7 +213,7 @@ class GloboViewProvider : MainAPI() {
                 ?: ""
             val countrySlug = url.split("/directorio/").lastOrNull()?.split("/")?.firstOrNull()
             val countryName = countrySlug?.let { countryMap[it] }
-            val fullDesc = if (countryName != null) "País: $countryName\n$desc" else desc
+            val fullDesc = if (countryName != null) "País: $countryName\n$desc -- " else desc
             Log.d("GloboView", "load: desc=${fullDesc.take(100)}")
 
             val episodes = listOf(newEpisode(url) {
