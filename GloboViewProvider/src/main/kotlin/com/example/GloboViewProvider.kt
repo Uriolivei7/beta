@@ -118,19 +118,20 @@ class GloboViewProvider : MainAPI() {
                                     val l = logoM.groupValues[1].replace("\\/", "/")
                                     if (n.isNotEmpty() && l.startsWith("http")) {
                                         var logoUrl = l
-                                        // Cleanup Wikimedia URLs para que CloudStream las renderice
-                                        if (logoUrl.contains("upload.wikimedia.org")) {
-                                            // .svg.png → .png
-                                            if (logoUrl.endsWith(".svg.png")) logoUrl = logoUrl.removeSuffix(".svg.png") + ".png"
-                                            // SVG directo → thumb PNG
-                                            if (logoUrl.endsWith(".svg")) {
-                                                val prefix = logoUrl.substringBeforeLast("/")
+                                        // Enrutar SVGs por wsrv.nl proxy (CloudStream no renderiza SVG)
+                                        if (logoUrl.endsWith(".svg")) {
+                                            // Wikimedia SVG: convertir a thumb PNG primero
+                                            if (logoUrl.contains("upload.wikimedia.org")) {
                                                 val dir = logoUrl.substringAfter("commons/").substringBeforeLast("/")
                                                 val svgName = logoUrl.substringAfterLast("/")
                                                 val pngName = svgName.replace(".svg", ".png")
                                                 logoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/$dir/$svgName/960px-$pngName"
                                             }
-                                            // Usar wsrv.nl como proxy (funciona en CloudStream)
+                                            logoUrl = "https://wsrv.nl/?url=${java.net.URLEncoder.encode(logoUrl, "UTF-8")}&w=128&h=128&output=png"
+                                        }
+                                        // .svg.png de wikimedia: limpiar y proxy
+                                        if (logoUrl.endsWith(".svg.png") && logoUrl.contains("upload.wikimedia.org")) {
+                                            logoUrl = logoUrl.removeSuffix(".svg.png") + ".png"
                                             logoUrl = "https://wsrv.nl/?url=${java.net.URLEncoder.encode(logoUrl, "UTF-8")}&w=128&h=128&output=png"
                                         }
                                         posterMap[n.lowercase()] = logoUrl
