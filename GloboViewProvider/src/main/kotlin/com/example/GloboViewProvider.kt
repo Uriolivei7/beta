@@ -117,7 +117,16 @@ class GloboViewProvider : MainAPI() {
                                     val n = nameM.groupValues[1]
                                     val l = logoM.groupValues[1].replace("\\/", "/")
                                     if (n.isNotEmpty() && l.startsWith("http")) {
-                                        posterMap[n.lowercase()] = l
+                                        var logoUrl = l
+                                        // SVG no se renderiza en CloudStream; convertir wikimedia a PNG thumb
+                                        if (logoUrl.endsWith(".svg") && logoUrl.contains("upload.wikimedia.org")) {
+                                            val prefix = logoUrl.substringBeforeLast("/")
+                                            val dir = prefix.substringAfter("commons/")
+                                            val svgName = logoUrl.substringAfterLast("/")
+                                            val pngName = svgName.replace(".svg", ".png")
+                                            logoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/$dir/$svgName/960px-$pngName"
+                                        }
+                                        posterMap[n.lowercase()] = logoUrl
                                         parsed++
                                     }
                                 }
@@ -131,12 +140,16 @@ class GloboViewProvider : MainAPI() {
                 } catch (e: Exception) {
                     Log.d("GloboView", "search: astro-island error: ${e.message}")
                 }
-                // DOM cards: tambien por nombre, complementa astro-island
+                // DOM cards: reemplazar SVG con PNG si esta disponible
                 doc.select("a.card[href*=/directorio/]").forEach { a ->
                     val title = a.selectFirst("h3.card-title")?.text()?.trim()
                     val poster = a.selectFirst("img")?.attr("src")
                     if (title != null && poster != null && poster.startsWith("http")) {
-                        if (!posterMap.containsKey(title.lowercase())) posterMap[title.lowercase()] = poster
+                        val key = title.lowercase()
+                        val existente = posterMap[key]
+                        if (!poster.endsWith(".svg") || existente == null || existente.endsWith(".svg")) {
+                            posterMap[key] = poster
+                        }
                     }
                 }
                 Log.d("GloboView", "search: posters totales por nombre=${posterMap.size}")
