@@ -97,6 +97,16 @@ class GloboViewProvider : MainAPI() {
                 Log.d("GloboView", "search: scanning $url")
                 val doc = app.get(url, timeout = 60L).document
 
+                // Construir mapa nombre->poster desde cards visibles en DOM
+                val posterMap = mutableMapOf<String, String>()
+                doc.select("a.card[href*=/directorio/]").forEach { a ->
+                    val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@forEach
+                    val poster = a.selectFirst("img")?.attr("src")
+                    if (poster != null && poster.startsWith("http")) {
+                        posterMap[title] = poster
+                    }
+                }
+
                 // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
                 var jsonOk = false
                 val jsonLd = doc.select("script[type='application/ld+json']").firstOrNull { it.data().contains("ItemList") }
@@ -112,7 +122,9 @@ class GloboViewProvider : MainAPI() {
                             val chUrl = item.getString("url")
                             if (name.contains(query, ignoreCase = true)) {
                                 Log.d("GloboView", "search: match found: $name -> $chUrl")
-                                results.add(newLiveSearchResponse(name, chUrl, TvType.Live))
+                                results.add(newLiveSearchResponse(name, chUrl, TvType.Live) {
+                                    this.posterUrl = posterMap[name]
+                                })
                             }
                         }
                         Log.d("GloboView", "search: $path -> ${items.length()} canales totales en JSON-LD")
@@ -186,25 +198,27 @@ class GloboViewProvider : MainAPI() {
             val html = resp.text
             Log.d("GloboView", "loadLinks: code=${resp.code}, html len=${html.length}")
 
-            val jsonLdPattern = Regex(""""contentUrl"\s*:\s*"([^"]+\.m3u8[^"]*)"""")
+            val jsonLdPattern = Regex(""""contentUrl"\s*:\s*"([^"]+)"""")
             val jsonLdMatch = jsonLdPattern.find(html)
             if (jsonLdMatch != null) {
-                val m3u8Url = jsonLdMatch.groupValues[1].replace("\\/", "/")
-                Log.d("GloboView", "loadLinks: found via JSON-LD: $m3u8Url")
-                callback(newExtractorLink(name, "En Vivo", m3u8Url, ExtractorLinkType.M3U8) {
+                val rawUrl = jsonLdMatch.groupValues[1].replace("\\/", "/")
+                Log.d("GloboView", "loadLinks: found via JSON-LD: $rawUrl")
+                callback(newExtractorLink(name, "En Vivo", rawUrl, ExtractorLinkType.M3U8) {
                     this.referer = data
+                    this.headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept" to "*/*")
                 })
                 return true
             }
             Log.d("GloboView", "loadLinks: JSON-LD pattern not found")
 
-            val astroPattern = Regex(""""url"\s*:\s*\[0,\s*"([^"]+\.m3u8[^"]*)"""")
+            val astroPattern = Regex(""""url"\s*:\s*\[0,\s*"([^"]+)"""")
             val astroMatch = astroPattern.find(html)
             if (astroMatch != null) {
-                val m3u8Url = astroMatch.groupValues[1].replace("\\/", "/")
-                Log.d("GloboView", "loadLinks: found via astro-island: $m3u8Url")
-                callback(newExtractorLink(name, "En Vivo", m3u8Url, ExtractorLinkType.M3U8) {
+                val rawUrl = astroMatch.groupValues[1].replace("\\/", "/")
+                Log.d("GloboView", "loadLinks: found via astro-island: $rawUrl")
+                callback(newExtractorLink(name, "En Vivo", rawUrl, ExtractorLinkType.M3U8) {
                     this.referer = data
+                    this.headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept" to "*/*")
                 })
                 return true
             }
@@ -216,6 +230,7 @@ class GloboViewProvider : MainAPI() {
                 Log.d("GloboView", "loadLinks: found via generic regex: ${m3u8Match.value}")
                 callback(newExtractorLink(name, "En Vivo", m3u8Match.value, ExtractorLinkType.M3U8) {
                     this.referer = data
+                    this.headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept" to "*/*")
                 })
                 return true
             }
