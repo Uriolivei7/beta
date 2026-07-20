@@ -100,10 +100,9 @@ class GloboViewProvider : MainAPI() {
                 Log.d("GloboView", "search: scanning $url")
                 val doc = app.get(url, timeout = 60L).document
 
-                // Construir mapa url->poster desde astro-island props + DOM cards
+                // Mapa nombre->poster desde astro-island (todos) + DOM cards (~24)
                 val posterMap = mutableMapOf<String, String>()
-                // Astro-island: extraer id + logo para construir URL de pagina del canal
-                val countrySlug = path.removePrefix("/directorio/").removeSuffix("/")
+                // Astro-island: extraer name + logo
                 try {
                     doc.select("astro-island").forEach { island ->
                         val raw = island.attr("props")
@@ -112,14 +111,13 @@ class GloboViewProvider : MainAPI() {
                         var parsed = 0
                         for (chunk in chunks.drop(1)) {
                             try {
-                                val idM = Regex("""^\[0,"([^"]+)"""").find(chunk)
+                                val nameM = Regex(""""name":\[0,"([^"]+)"""").find(chunk)
                                 val logoM = Regex(""""logo":\[0,"([^"]+)"""").find(chunk)
-                                if (idM != null && logoM != null) {
-                                    val id = idM.groupValues[1]
+                                if (nameM != null && logoM != null) {
+                                    val n = nameM.groupValues[1]
                                     val l = logoM.groupValues[1].replace("\\/", "/")
-                                    val chPageUrl = "$mainUrl/directorio/$countrySlug/$id/"
-                                    if (l.startsWith("http")) {
-                                        posterMap[chPageUrl.trimEnd('/')] = l
+                                    if (n.isNotEmpty() && l.startsWith("http")) {
+                                        posterMap[n.lowercase()] = l
                                         parsed++
                                     }
                                 }
@@ -127,23 +125,21 @@ class GloboViewProvider : MainAPI() {
                         }
                         Log.d("GloboView", "search: astro-island parsed $parsed posters")
                         if (parsed > 0) {
-                            Log.d("GloboView", "search: sample chPageUrl = ${posterMap.keys.first()}")
+                            Log.d("GloboView", "search: sample astro name = ${posterMap.keys.first()}")
                         }
                     }
                 } catch (e: Exception) {
                     Log.d("GloboView", "search: astro-island error: ${e.message}")
                 }
-                // Fallback: cards DOM ~24 primeros
-                if (posterMap.isEmpty()) {
-                    doc.select("a.card[href*=/directorio/]").forEach { a ->
-                        val link = fixUrl(a.attr("href"))
-                        val poster = a.selectFirst("img")?.attr("src")
-                        if (poster != null && poster.startsWith("http")) {
-                            posterMap[link] = poster
-                        }
+                // DOM cards: tambien por nombre, complementa astro-island
+                doc.select("a.card[href*=/directorio/]").forEach { a ->
+                    val title = a.selectFirst("h3.card-title")?.text()?.trim()
+                    val poster = a.selectFirst("img")?.attr("src")
+                    if (title != null && poster != null && poster.startsWith("http")) {
+                        if (!posterMap.containsKey(title.lowercase())) posterMap[title.lowercase()] = poster
                     }
-                    Log.d("GloboView", "search: DOM cards fallback ${posterMap.size} posters")
                 }
+                Log.d("GloboView", "search: posters totales por nombre=${posterMap.size}")
 
                 // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
                 var jsonOk = false
@@ -159,8 +155,11 @@ class GloboViewProvider : MainAPI() {
                             val name = item.getString("name")
                             val chUrl = item.getString("url")
                             if (name.contains(query, ignoreCase = true)) {
-                                var posterUrl = posterMap[chUrl.trimEnd('/')] ?: posterMap[chUrl] ?: posterMap["${chUrl.trimEnd('/')}/"]
-                                Log.d("GloboView", "search: match found: $name -> $chUrl, poster=$posterUrl")
+                                var posterUrl = posterMap[name.lowercase()]
+                                if (posterUrl == null) {
+                                    posterUrl = posterMap.entries.firstOrNull { name.lowercase().contains(it.key) || it.key.contains(name.lowercase()) }?.value
+                                }
+                                Log.d("GloboView", "search: match=$name -> ${chUrl.split("/directorio/").lastOrNull()}, poster=$posterUrl")
                                 results.add(newLiveSearchResponse(name, chUrl, TvType.Live) {
                                     this.posterUrl = posterUrl
                                 })
@@ -179,7 +178,7 @@ class GloboViewProvider : MainAPI() {
                         val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@forEach
                         if (title.contains(query, ignoreCase = true)) {
                             results.add(newLiveSearchResponse(title, link, TvType.Live) {
-                                this.posterUrl = posterMap[link]
+                                this.posterUrl = posterMap[title.lowercase()]
                             })
                         }
                     }
