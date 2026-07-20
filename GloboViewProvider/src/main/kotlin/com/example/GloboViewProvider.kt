@@ -35,6 +35,9 @@ class GloboViewProvider : MainAPI() {
         "Francia" to "/directorio/francia/",
         "Italia" to "/directorio/italia/",
     )
+    private val countryMap = sections.associate { (name, path) ->
+        path.removePrefix("/directorio/").removeSuffix("/") to name
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("GloboView", "getMainPage: page=$page, request=${request.name}")
@@ -97,16 +100,45 @@ class GloboViewProvider : MainAPI() {
                 Log.d("GloboView", "search: scanning $url")
                 val doc = app.get(url, timeout = 60L).document
 
-                // Construir mapa url->poster desde cards DOM
+                // Construir mapa url->poster desde astro-island props + DOM cards
                 val posterMap = mutableMapOf<String, String>()
-                doc.select("a.card[href*=/directorio/]").forEach { a ->
-                    val link = fixUrl(a.attr("href"))
-                    val poster = a.selectFirst("img")?.attr("src")
-                    if (poster != null && poster.startsWith("http")) {
-                        posterMap[link] = poster
+                // Astro-island: parsear canales individuales por split en {"id"
+                try {
+                    doc.select("astro-island").forEach { island ->
+                        val raw = island.attr("props")
+                        if (!raw.contains("logo", ignoreCase = true)) return@forEach
+                        val chunks = raw.split("""{"id":""")
+                        var parsed = 0
+                        for (chunk in chunks.drop(1)) {
+                            try {
+                                val urlM = Regex(""""url":\[0,"([^"]+)"""").find(chunk)
+                                val logoM = Regex(""""logo":\[0,"([^"]+)"""").find(chunk)
+                                if (urlM != null && logoM != null) {
+                                    val u = urlM.groupValues[1].replace("\\/", "/")
+                                    val l = logoM.groupValues[1].replace("\\/", "/")
+                                    if (u.startsWith("http") && l.startsWith("http")) {
+                                        posterMap[u] = l
+                                        parsed++
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        Log.d("GloboView", "search: astro-island parsed $parsed posters")
                     }
+                } catch (e: Exception) {
+                    Log.d("GloboView", "search: astro-island error: ${e.message}")
                 }
-                Log.d("GloboView", "search: DOM cards found ${posterMap.size} posters")
+                // Fallback: cards DOM ~24 primeros
+                if (posterMap.isEmpty()) {
+                    doc.select("a.card[href*=/directorio/]").forEach { a ->
+                        val link = fixUrl(a.attr("href"))
+                        val poster = a.selectFirst("img")?.attr("src")
+                        if (poster != null && poster.startsWith("http")) {
+                            posterMap[link] = poster
+                        }
+                    }
+                    Log.d("GloboView", "search: DOM cards fallback ${posterMap.size} posters")
+                }
 
                 // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
                 var jsonOk = false
@@ -175,7 +207,10 @@ class GloboViewProvider : MainAPI() {
             val desc = doc.selectFirst("meta[property='og:description']")?.attr("content")
                 ?: doc.selectFirst("meta[name=description]")?.attr("content")
                 ?: ""
-            Log.d("GloboView", "load: desc=${desc.take(100)}")
+            val countrySlug = url.split("/directorio/").lastOrNull()?.split("/")?.firstOrNull()
+            val countryName = countrySlug?.let { countryMap[it] }
+            val fullDesc = if (countryName != null) "País: $countryName\n$desc" else desc
+            Log.d("GloboView", "load: desc=${fullDesc.take(100)}")
 
             val episodes = listOf(newEpisode(url) {
                 this.name = "En Vivo"
@@ -183,7 +218,7 @@ class GloboViewProvider : MainAPI() {
             })
             return newTvSeriesLoadResponse(title, url, TvType.Live, episodes) {
                 this.posterUrl = poster
-                this.plot = desc
+                this.plot = fullDesc
             }
         } catch (e: Exception) {
             Log.e("GloboView", "load error: ${e.message}")
