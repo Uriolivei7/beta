@@ -118,13 +118,20 @@ class GloboViewProvider : MainAPI() {
                                     val l = logoM.groupValues[1].replace("\\/", "/")
                                     if (n.isNotEmpty() && l.startsWith("http")) {
                                         var logoUrl = l
-                                        // SVG no se renderiza en CloudStream; convertir wikimedia a PNG thumb
-                                        if (logoUrl.endsWith(".svg") && logoUrl.contains("upload.wikimedia.org")) {
-                                            val prefix = logoUrl.substringBeforeLast("/")
-                                            val dir = prefix.substringAfter("commons/")
-                                            val svgName = logoUrl.substringAfterLast("/")
-                                            val pngName = svgName.replace(".svg", ".png")
-                                            logoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/$dir/$svgName/960px-$pngName"
+                                        // Cleanup Wikimedia URLs para que CloudStream las renderice
+                                        if (logoUrl.contains("upload.wikimedia.org")) {
+                                            // .svg.png → .png
+                                            if (logoUrl.endsWith(".svg.png")) logoUrl = logoUrl.removeSuffix(".svg.png") + ".png"
+                                            // SVG directo → thumb PNG
+                                            if (logoUrl.endsWith(".svg")) {
+                                                val prefix = logoUrl.substringBeforeLast("/")
+                                                val dir = logoUrl.substringAfter("commons/").substringBeforeLast("/")
+                                                val svgName = logoUrl.substringAfterLast("/")
+                                                val pngName = svgName.replace(".svg", ".png")
+                                                logoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/$dir/$svgName/960px-$pngName"
+                                            }
+                                            // Usar wsrv.nl como proxy (funciona en CloudStream)
+                                            logoUrl = "https://wsrv.nl/?url=${java.net.URLEncoder.encode(logoUrl, "UTF-8")}&w=128&h=128&output=png"
                                         }
                                         posterMap[n.lowercase()] = logoUrl
                                         parsed++
