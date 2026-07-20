@@ -102,7 +102,8 @@ class GloboViewProvider : MainAPI() {
 
                 // Construir mapa url->poster desde astro-island props + DOM cards
                 val posterMap = mutableMapOf<String, String>()
-                // Astro-island: parsear canales individuales por split en {"id"
+                // Astro-island: extraer id + logo para construir URL de pagina del canal
+                val countrySlug = path.removePrefix("/directorio/").removeSuffix("/")
                 try {
                     doc.select("astro-island").forEach { island ->
                         val raw = island.attr("props")
@@ -111,14 +112,14 @@ class GloboViewProvider : MainAPI() {
                         var parsed = 0
                         for (chunk in chunks.drop(1)) {
                             try {
-                                val urlM = Regex(""""url":\[0,"([^"]+)"""").find(chunk)
+                                val idM = Regex("""^\[0,"([^"]+)"""").find(chunk)
                                 val logoM = Regex(""""logo":\[0,"([^"]+)"""").find(chunk)
-                                if (urlM != null && logoM != null) {
-                                    var u = urlM.groupValues[1].replace("\\/", "/")
+                                if (idM != null && logoM != null) {
+                                    val id = idM.groupValues[1]
                                     val l = logoM.groupValues[1].replace("\\/", "/")
-                                    if (!u.startsWith("http")) u = "$mainUrl$u"
-                                    if (u.startsWith("http") && l.startsWith("http")) {
-                                        posterMap[u.trimEnd('/')] = l
+                                    val chPageUrl = "$mainUrl/directorio/$countrySlug/$id/"
+                                    if (l.startsWith("http")) {
+                                        posterMap[chPageUrl.trimEnd('/')] = l
                                         parsed++
                                     }
                                 }
@@ -126,7 +127,7 @@ class GloboViewProvider : MainAPI() {
                         }
                         Log.d("GloboView", "search: astro-island parsed $parsed posters")
                         if (parsed > 0) {
-                            Log.d("GloboView", "search: sample astro URL = ${posterMap.keys.first()}")
+                            Log.d("GloboView", "search: sample chPageUrl = ${posterMap.keys.first()}")
                         }
                     }
                 } catch (e: Exception) {
@@ -213,7 +214,7 @@ class GloboViewProvider : MainAPI() {
                 ?: ""
             val countrySlug = url.split("/directorio/").lastOrNull()?.split("/")?.firstOrNull()
             val countryName = countrySlug?.let { countryMap[it] }
-            val fullDesc = if (countryName != null) "País: $countryName\n$desc -- " else desc
+            val fullDesc = if (countryName != null) "País: $countryName -- \n$desc" else desc
             Log.d("GloboView", "load: desc=${fullDesc.take(100)}")
 
             val episodes = listOf(newEpisode(url) {
