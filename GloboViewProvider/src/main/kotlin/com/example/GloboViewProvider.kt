@@ -98,24 +98,31 @@ class GloboViewProvider : MainAPI() {
                 val doc = app.get(url, timeout = 60L).document
 
                 // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
-                val jsonLd = doc.select("script[type='application/ld+json']").firstOrNull { it.html().contains("ItemList") }
+                var jsonOk = false
+                val jsonLd = doc.select("script[type='application/ld+json']").firstOrNull { it.data().contains("ItemList") }
                 if (jsonLd != null) {
-                    val raw = jsonLd.html()
-                    val json = JSONObject(raw)
-                    val items = json.getJSONArray("itemListElement")
-                    for (i in 0 until items.length()) {
-                        val item = items.getJSONObject(i)
-                        val name = item.getString("name")
-                        val chUrl = item.getString("url")
-                        if (name.contains(query, ignoreCase = true)) {
-                            Log.d("GloboView", "search: match found: $name -> $chUrl")
-                            results.add(newLiveSearchResponse(name, chUrl, TvType.Live))
+                    try {
+                        val raw = jsonLd.data()
+                        val json = JSONObject(raw)
+                        val mainEntity = json.optJSONObject("mainEntity") ?: json
+                        val items = mainEntity.getJSONArray("itemListElement")
+                        for (i in 0 until items.length()) {
+                            val item = items.getJSONObject(i)
+                            val name = item.getString("name")
+                            val chUrl = item.getString("url")
+                            if (name.contains(query, ignoreCase = true)) {
+                                Log.d("GloboView", "search: match found: $name -> $chUrl")
+                                results.add(newLiveSearchResponse(name, chUrl, TvType.Live))
+                            }
                         }
+                        Log.d("GloboView", "search: $path -> ${items.length()} canales totales en JSON-LD")
+                        jsonOk = true
+                    } catch (e: Exception) {
+                        Log.e("GloboView", "search: JSON-LD error for $path: ${e.message}")
                     }
-                    Log.d("GloboView", "search: $path -> ${items.length()} canales totales en JSON-LD")
-                } else {
-                    // Fallback: parsear cards del DOM (sin paginacion)
-                    Log.d("GloboView", "search: $path -> sin JSON-LD, usando cards visibles")
+                }
+                if (!jsonOk) {
+                    Log.d("GloboView", "search: $path -> usando cards visibles")
                     doc.select("a.card[href*=/directorio/]").forEach { a ->
                         val link = a.attr("href")
                         val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@forEach
