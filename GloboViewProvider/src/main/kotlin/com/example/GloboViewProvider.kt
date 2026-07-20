@@ -103,8 +103,9 @@ class GloboViewProvider : MainAPI() {
                     doc.select("astro-island").forEach { island ->
                         val raw = island.attr("props")
                         if (!raw.contains("logo", ignoreCase = true)) return@forEach
-                        Log.d("GloboView", "search: astro-island props len=${raw.length}")
+                        Log.d("GloboView", "search: astro-island props len=${raw.length}, first 300 chars=${raw.take(300)}")
                         val props = JSONObject(raw)
+                        Log.d("GloboView", "search: astro-island keys=${props.keys().asSequence().toList()}")
                         val channelsArr = findChannelsArray(props)
                         if (channelsArr != null) {
                             var parsed = 0
@@ -124,6 +125,25 @@ class GloboViewProvider : MainAPI() {
                                 } catch (_: Exception) {}
                             }
                             Log.d("GloboView", "search: astro-island parsed $parsed logos")
+                        }
+                        if (channelsArr == null) {
+                            // Fallback: regex directo sobre props
+                            Log.d("GloboView", "search: astro-island findChannelsArray null, trying regex fallback")
+                            val urlPattern = Regex(""""url"\s*:\s*\[0,\s*"([^"]+)"\s*\]""")
+                            val logoPattern = Regex(""""logo"\s*:\s*\[0,\s*"([^"]+)"\s*\]""")
+                            val urls = urlPattern.findAll(raw).map { it.groupValues[1] }.toList()
+                            val logos = logoPattern.findAll(raw).map { it.groupValues[1] }.toList()
+                            Log.d("GloboView", "search: regex found ${urls.size} urls, ${logos.size} logos")
+                            if (urls.size == logos.size && urls.isNotEmpty()) {
+                                for (i in urls.indices) {
+                                    val u = urls[i]
+                                    val l = logos[i]
+                                    if (u.startsWith("http") && l.startsWith("http")) {
+                                        posterMap[u] = l
+                                    }
+                                }
+                                Log.d("GloboView", "search: regex fallback parsed ${posterMap.size}")
+                            }
                         }
                     }
                 } catch (e: Exception) {
