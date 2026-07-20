@@ -5,6 +5,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.json.JSONObject
+import org.json.JSONArray
 
 class GloboViewProvider : MainAPI() {
     override var mainUrl = "https://globoview.cam"
@@ -99,17 +101,18 @@ class GloboViewProvider : MainAPI() {
                 val jsonLd = doc.select("script[type='application/ld+json']").firstOrNull { it.html().contains("ItemList") }
                 if (jsonLd != null) {
                     val raw = jsonLd.html()
-                    val namePattern = Regex(""""name"\s*:\s*"([^"]+)"""")
-                    val urlPattern = Regex(""""url"\s*:\s*"([^"]+)"""")
-                    val names = namePattern.findAll(raw).map { it.groupValues[1] }.toList()
-                    val urls = urlPattern.findAll(raw).map { it.groupValues[1] }.toList()
-                    for (i in names.indices) {
-                        if (names[i].contains(query, ignoreCase = true)) {
-                            Log.d("GloboView", "search: match found: ${names[i]}")
-                            results.add(newLiveSearchResponse(names[i], urls[i], TvType.Live))
+                    val json = JSONObject(raw)
+                    val items = json.getJSONArray("itemListElement")
+                    for (i in 0 until items.length()) {
+                        val item = items.getJSONObject(i)
+                        val name = item.getString("name")
+                        val chUrl = item.getString("url")
+                        if (name.contains(query, ignoreCase = true)) {
+                            Log.d("GloboView", "search: match found: $name -> $chUrl")
+                            results.add(newLiveSearchResponse(name, chUrl, TvType.Live))
                         }
                     }
-                    Log.d("GloboView", "search: $path -> ${names.size} canales totales en JSON-LD")
+                    Log.d("GloboView", "search: $path -> ${items.length()} canales totales en JSON-LD")
                 } else {
                     // Fallback: parsear cards del DOM (sin paginacion)
                     Log.d("GloboView", "search: $path -> sin JSON-LD, usando cards visibles")
