@@ -97,69 +97,16 @@ class GloboViewProvider : MainAPI() {
                 Log.d("GloboView", "search: scanning $url")
                 val doc = app.get(url, timeout = 60L).document
 
-                // Construir mapa url->poster desde astro-island props (todos los canales con logo)
+                // Construir mapa url->poster desde cards DOM
                 val posterMap = mutableMapOf<String, String>()
-                try {
-                    doc.select("astro-island").forEach { island ->
-                        val raw = island.attr("props")
-                        if (!raw.contains("logo", ignoreCase = true)) return@forEach
-                        Log.d("GloboView", "search: astro-island props len=${raw.length}, first 300 chars=${raw.take(300)}")
-                        val props = JSONObject(raw)
-                        Log.d("GloboView", "search: astro-island keys=${props.keys().asSequence().toList()}")
-                        val channelsArr = findChannelsArray(props)
-                        if (channelsArr != null) {
-                            var parsed = 0
-                            for (i in 0 until channelsArr.length()) {
-                                try {
-                                    val entry = channelsArr.getJSONArray(i)
-                                    val ch = entry.getJSONObject(1)
-                                    val chUrl = ch.getJSONArray("url").getString(1)
-                                    val logoArr = ch.optJSONArray("logo")
-                                    if (logoArr != null && logoArr.length() >= 2) {
-                                        val logo = logoArr.optString(1, "")
-                                        if (logo.startsWith("http")) {
-                                            posterMap[chUrl] = logo
-                                            parsed++
-                                        }
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                            Log.d("GloboView", "search: astro-island parsed $parsed logos")
-                        }
-                        if (channelsArr == null) {
-                            // Fallback: regex directo sobre props
-                            Log.d("GloboView", "search: astro-island findChannelsArray null, trying regex fallback")
-                            val urlPattern = Regex(""""url"\s*:\s*\[0,\s*"([^"]+)"\s*\]""")
-                            val logoPattern = Regex(""""logo"\s*:\s*\[0,\s*"([^"]+)"\s*\]""")
-                            val urls = urlPattern.findAll(raw).map { it.groupValues[1] }.toList()
-                            val logos = logoPattern.findAll(raw).map { it.groupValues[1] }.toList()
-                            Log.d("GloboView", "search: regex found ${urls.size} urls, ${logos.size} logos")
-                            if (urls.size == logos.size && urls.isNotEmpty()) {
-                                for (i in urls.indices) {
-                                    val u = urls[i]
-                                    val l = logos[i]
-                                    if (u.startsWith("http") && l.startsWith("http")) {
-                                        posterMap[u] = l
-                                    }
-                                }
-                                Log.d("GloboView", "search: regex fallback parsed ${posterMap.size}")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.d("GloboView", "search: astro-island logo error: ${e.message}")
-                }
-
-                // Fallback: cards visibles en DOM (primeros ~24)
-                if (posterMap.isEmpty()) {
-                    doc.select("a.card[href*=/directorio/]").forEach { a ->
-                        val link = fixUrl(a.attr("href"))
-                        val poster = a.selectFirst("img")?.attr("src")
-                        if (poster != null && poster.startsWith("http")) {
-                            posterMap[link] = poster
-                        }
+                doc.select("a.card[href*=/directorio/]").forEach { a ->
+                    val link = fixUrl(a.attr("href"))
+                    val poster = a.selectFirst("img")?.attr("src")
+                    if (poster != null && poster.startsWith("http")) {
+                        posterMap[link] = poster
                     }
                 }
+                Log.d("GloboView", "search: DOM cards found ${posterMap.size} posters")
 
                 // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
                 var jsonOk = false
@@ -175,9 +122,10 @@ class GloboViewProvider : MainAPI() {
                             val name = item.getString("name")
                             val chUrl = item.getString("url")
                             if (name.contains(query, ignoreCase = true)) {
-                                Log.d("GloboView", "search: match found: $name -> $chUrl")
+                                var posterUrl = posterMap[chUrl] ?: posterMap[chUrl.trimEnd('/')] ?: posterMap["${chUrl.trimEnd('/')}/"]
+                                Log.d("GloboView", "search: match found: $name -> $chUrl, poster=$posterUrl")
                                 results.add(newLiveSearchResponse(name, chUrl, TvType.Live) {
-                                    this.posterUrl = posterMap[chUrl] ?: posterMap[fixUrl(chUrl)]
+                                    this.posterUrl = posterUrl
                                 })
                             }
                         }
@@ -190,10 +138,12 @@ class GloboViewProvider : MainAPI() {
                 if (!jsonOk) {
                     Log.d("GloboView", "search: $path -> usando cards visibles")
                     doc.select("a.card[href*=/directorio/]").forEach { a ->
-                        val link = a.attr("href")
+                        val link = fixUrl(a.attr("href"))
                         val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@forEach
                         if (title.contains(query, ignoreCase = true)) {
-                            results.add(newLiveSearchResponse(title, fixUrl(link), TvType.Live))
+                            results.add(newLiveSearchResponse(title, link, TvType.Live) {
+                                this.posterUrl = posterMap[link]
+                            })
                         }
                     }
                 }
@@ -299,68 +249,4 @@ class GloboViewProvider : MainAPI() {
         return if (url.startsWith("http")) url else "$mainUrl$url"
     }
 
-    private fun findChannelsArray(obj: JSONObject): JSONArray? {
-        for (key in obj.keys()) {
-            val value = obj.opt(key) ?: continue
-            when (value) {
-                is JSONArray -> {
-                    if (value.length() > 0) {
-                        val first = value.optJSONArray(0)
-                        if (first != null && first.length() >= 2) {
-                            val inner = first.optJSONObject(1)
-                            if (inner != null && inner.has("id") && inner.has("url") && inner.has("logo")) {
-                                return value
-                            }
-                        }
-                    }
-                    for (i in 0 until value.length()) {
-                        val el = value.opt(i)
-                        when (el) {
-                            is JSONObject -> {
-                                val found = findChannelsArray(el)
-                                if (found != null) return found
-                            }
-                            is JSONArray -> {
-                                // Astro wrapper [0, {...}]
-                                if (el.length() >= 2) {
-                                    val inner = el.optJSONObject(1)
-                                    if (inner != null && inner.has("id") && inner.has("url") && inner.has("logo")) {
-                                        // This is a single channel, not a channels array
-                                        continue
-                                    }
-                                    val innerArr = el.optJSONArray(1)
-                                    if (innerArr != null) {
-                                        val found = findChannelsArrayInArray(innerArr)
-                                        if (found != null) return found
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                is JSONObject -> {
-                    val found = findChannelsArray(value)
-                    if (found != null) return found
-                }
-            }
-        }
-        return null
-    }
-
-    private fun findChannelsArrayInArray(arr: JSONArray): JSONArray? {
-        for (i in 0 until arr.length()) {
-            val el = arr.opt(i)
-            if (el is JSONArray && el.length() >= 2) {
-                val inner = el.optJSONObject(1)
-                if (inner != null && inner.has("id") && inner.has("url") && inner.has("logo")) {
-                    return arr
-                }
-            }
-            if (el is JSONObject) {
-                val found = findChannelsArray(el)
-                if (found != null) return found
-            }
-        }
-        return null
-    }
 }
