@@ -18,18 +18,18 @@ class GloboViewProvider : MainAPI() {
     override val hasDownloadSupport = true
 
     private val sections = listOf(
-        "España" to "/directorio/espana/",
-        "México" to "/directorio/mexico/",
+        "Perú" to "/directorio/peru/",
         "Argentina" to "/directorio/argentina/",
         "Colombia" to "/directorio/colombia/",
+        "México" to "/directorio/mexico/",
         "EEUU" to "/directorio/estados-unidos/",
         "Venezuela" to "/directorio/venezuela/",
-        "Perú" to "/directorio/peru/",
         "Chile" to "/directorio/chile/",
         "Ecuador" to "/directorio/ecuador/",
         "Rep. Dominicana" to "/directorio/republica-dominicana/",
         "Puerto Rico" to "/directorio/puerto-rico/",
         "Brasil" to "/directorio/brasil/",
+        "España" to "/directorio/espana/",
         "Alemania" to "/directorio/alemania/",
         "Reino Unido" to "/directorio/united-kingdom/",
         "Francia" to "/directorio/francia/",
@@ -100,9 +100,7 @@ class GloboViewProvider : MainAPI() {
                 Log.d("GloboView", "search: scanning $url")
                 val doc = app.get(url, timeout = 60L).document
 
-                // Mapa nombre->poster desde astro-island (todos) + DOM cards (~24)
                 val posterMap = mutableMapOf<String, String>()
-                // Astro-island: extraer name + logo
                 try {
                     doc.select("astro-island").forEach { island ->
                         val raw = island.attr("props")
@@ -118,20 +116,16 @@ class GloboViewProvider : MainAPI() {
                                     val l = logoM.groupValues[1].replace("\\/", "/")
                                     if (n.isNotEmpty() && l.startsWith("http")) {
                                         var logoUrl = l
-                                        // Enrutar SVGs por wsrv.nl proxy (CloudStream no renderiza SVG)
-                                        if (logoUrl.endsWith(".svg")) {
-                                            // Wikimedia SVG: convertir a thumb PNG primero
-                                            if (logoUrl.contains("upload.wikimedia.org")) {
+                                        if (logoUrl.contains("upload.wikimedia.org")) {
+                                            if (logoUrl.endsWith(".svg")) {
                                                 val dir = logoUrl.substringAfter("commons/").substringBeforeLast("/")
                                                 val svgName = logoUrl.substringAfterLast("/")
                                                 val pngName = svgName.replace(".svg", ".png")
                                                 logoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/$dir/$svgName/960px-$pngName"
                                             }
+                                            if (logoUrl.endsWith(".svg.png")) logoUrl = logoUrl.removeSuffix(".svg.png") + ".png"
                                             logoUrl = "https://wsrv.nl/?url=${java.net.URLEncoder.encode(logoUrl, "UTF-8")}&w=128&h=128&output=png"
-                                        }
-                                        // .svg.png de wikimedia: limpiar y proxy
-                                        if (logoUrl.endsWith(".svg.png") && logoUrl.contains("upload.wikimedia.org")) {
-                                            logoUrl = logoUrl.removeSuffix(".svg.png") + ".png"
+                                        } else if (logoUrl.endsWith(".svg")) {
                                             logoUrl = "https://wsrv.nl/?url=${java.net.URLEncoder.encode(logoUrl, "UTF-8")}&w=128&h=128&output=png"
                                         }
                                         posterMap[n.lowercase()] = logoUrl
@@ -148,7 +142,6 @@ class GloboViewProvider : MainAPI() {
                 } catch (e: Exception) {
                     Log.d("GloboView", "search: astro-island error: ${e.message}")
                 }
-                // DOM cards: reemplazar SVG con PNG si esta disponible
                 doc.select("a.card[href*=/directorio/]").forEach { a ->
                     val title = a.selectFirst("h3.card-title")?.text()?.trim()
                     val poster = a.selectFirst("img")?.attr("src")
@@ -162,7 +155,6 @@ class GloboViewProvider : MainAPI() {
                 }
                 Log.d("GloboView", "search: posters totales por nombre=${posterMap.size}")
 
-                // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
                 var jsonOk = false
                 val jsonLd = doc.select("script[type='application/ld+json']").firstOrNull { it.data().contains("ItemList") }
                 if (jsonLd != null) {
@@ -308,5 +300,4 @@ class GloboViewProvider : MainAPI() {
     private fun fixUrl(url: String): String {
         return if (url.startsWith("http")) url else "$mainUrl$url"
     }
-
 }
