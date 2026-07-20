@@ -96,7 +96,7 @@ class GloboViewProvider : MainAPI() {
                 val doc = app.get(url, timeout = 60L).document
 
                 // Todos los canales estan en JSON-LD ItemList (no hay paginacion real)
-                val jsonLd = doc.selectFirst("script[type='application/ld+json']:matches((?s)ItemList)")
+                val jsonLd = doc.select("script[type='application/ld+json']").firstOrNull { it.html().contains("ItemList") }
                 if (jsonLd != null) {
                     val raw = jsonLd.html()
                     val namePattern = Regex(""""name"\s*:\s*"([^"]+)"""")
