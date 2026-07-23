@@ -625,6 +625,7 @@ fun fixHostsLinks(url: String): String {
         .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
         .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
         .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+        .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
         .replaceFirst("https://filemoon.link", "https://filemoon.sx")
         .replaceFirst("https://sblona.com", "https://watchsb.com")
         .replaceFirst("https://lulu.st", "https://lulustream.com")
