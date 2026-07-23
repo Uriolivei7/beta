@@ -5,7 +5,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import okhttp3.FormBody
 
 open class VoeExtractor : ExtractorApi() {
     override val name = "Voe"
@@ -178,47 +177,87 @@ data class VoeDecrypted(
     @JsonProperty("direct_access_url") val directAccessUrl: String? = null,
 )
 
-class ByseExtractor : ExtractorApi() {
-    override var mainUrl = "https://bysedikamoum.com"
-    override var name = "Byse"
+class SoloStreamWish : ExtractorApi() {
+    override var mainUrl = "https://streamwish.to"
+    override var name = "SoloStreamWish"
     override val requiresReferer = false
 
     override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        Log.d("SoloLatino", "[Byse] URL: $url")
-
-        val videoId = Regex("""/e/(\w+)""").find(url)?.groupValues?.get(1) ?: return
-
+        Log.d("SoloLatino", "[SW] URL: $url")
         try {
-            val apiRes = app.post(
-                "$mainUrl/api/source",
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to url,
-                    "Origin" to mainUrl,
-                ),
-                referer = url,
-                requestBody = FormBody.Builder()
-                    .add("r", "")
-                    .add("s", videoId)
-                    .build()
-            )
-            Log.d("SoloLatino", "[Byse] API response: ${apiRes.text}")
-
-            val fileUrl = Regex("""file["']\s*:\s*["']([^"']+)["']""")
-                .find(apiRes.text)?.groupValues?.get(1)
-                ?: Regex("""url["']\s*:\s*["']([^"']+)["']""")
-                .find(apiRes.text)?.groupValues?.get(1)
-                ?: return
-
-            callback.invoke(
-                newExtractorLink(name, name, fileUrl) {
-                    this.referer = mainUrl
-                    this.quality = Qualities.Unknown.value
-                    this.type = if (fileUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            val resp = app.get(url, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to url,
+            ), timeout = 20000L)
+            val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+            var found = false
+            for (m in m3u8Regex.findAll(resp.text)) {
+                Log.d("SoloLatino", "[SW] M3U8: ${m.value.take(100)}")
+                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                found = true
+            }
+            if (!found) {
+                val evalRegex = Regex("""eval\s*\(([^)]+)\)""")
+                for (em in evalRegex.findAll(resp.text)) {
+                    val params = em.groupValues[1].split(",")
+                    if (params.size >= 6) {
+                        try {
+                            val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
+                            val a = params[1].trim().toIntOrNull() ?: 36
+                            val c = params[2].trim().toIntOrNull() ?: 0
+                            val kList = params.drop(3).map { it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"") }.take(c)
+                            var decoded = p
+                            for (i in kList.indices.reversed()) {
+                                if (kList[i].isBlank()) continue
+                                decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), kList[i])
+                            }
+                            for (m in m3u8Regex.findAll(decoded)) {
+                                Log.d("SoloLatino", "[SW] M3U8 (eval): ${m.value.take(100)}")
+                                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                                found = true
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
-            )
+            }
+            if (!found) Log.w("SoloLatino", "[SW] No M3U8 found in page")
         } catch (e: Exception) {
-            Log.e("SoloLatino", "[Byse] Error: ${e.message}")
+            Log.e("SoloLatino", "[SW] Error: ${e.message}")
+        }
+    }
+}
+
+class SoloFileMoon : ExtractorApi() {
+    override var mainUrl = "https://filemoon.sx"
+    override var name = "SoloFileMoon"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        Log.d("SoloLatino", "[FM] URL: $url")
+        try {
+            val resp = app.get(url, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to url,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ), timeout = 20000L)
+            val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+            val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|ts)[^"'\s<>]*)""")
+            var found = false
+            for (m in m3u8Regex.findAll(resp.text)) {
+                Log.d("SoloLatino", "[FM] M3U8: ${m.value.take(100)}")
+                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                found = true
+            }
+            if (!found) {
+                for (m in mp4Regex.findAll(resp.text)) {
+                    Log.d("SoloLatino", "[FM] MP4: ${m.value.take(100)}")
+                    callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                    found = true
+                }
+            }
+            if (!found) Log.w("SoloLatino", "[FM] No video found in page")
+        } catch (e: Exception) {
+            Log.e("SoloLatino", "[FM] Error: ${e.message}")
         }
     }
 }

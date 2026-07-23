@@ -4,16 +4,13 @@ import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.MainAPI
-import com.lagradost.cloudstream3.extractors.FileMoon
-import com.lagradost.cloudstream3.extractors.StreamWishExtractor
 
 @CloudstreamPlugin
 class SoloLatinoPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(SoloLatinoProvider())
-        registerExtractorAPI(ByseExtractor())
-        registerExtractorAPI(StreamWishExtractor())
-        registerExtractorAPI(FileMoon())
+        registerExtractorAPI(SoloStreamWish())
+        registerExtractorAPI(SoloFileMoon())
         registerExtractorAPI(VoeExtractor())
         registerExtractorAPI(VoeYipsu())
         registerExtractorAPI(VoeDonaldlineelse())
