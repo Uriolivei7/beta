@@ -494,7 +494,47 @@ class SoloLatinoProvider : MainAPI() {
                     if (foundLinks.isNotEmpty()) {
                         Log.d("SoloLatino", "xupalace - ${foundLinks.size} links por go_to_playerVast")
                         foundLinks.amap { link ->
-                            loadExtractor(fixHostsLinks(fixUrl(link)), fixedSrc, subtitleCallback, callback)
+                            val embedUrl = fixHostsLinks(fixUrl(link))
+                            try {
+                                val resp = app.get(embedUrl, headers = baseHeaders, timeout = 20000L)
+                                val embedHtml = resp.text
+                                var found = false
+                                val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+                                for (m in m3u8Regex.findAll(embedHtml)) {
+                                    callback.invoke(newExtractorLink("xupalace", "xupalace", m.value) {
+                                        this.referer = embedUrl
+                                    })
+                                    found = true
+                                }
+                                if (!found) {
+                                    val evalRegex = Regex("""eval\(([^)]+)\)""")
+                                    for (em in evalRegex.findAll(embedHtml)) {
+                                        val params = em.groupValues[1].split(",")
+                                        if (params.size >= 6) {
+                                            try {
+                                                val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
+                                                val a = params[1].trim().toIntOrNull() ?: 36
+                                                val c = params[2].trim().toIntOrNull() ?: 0
+                                                val kList = params.drop(3).map { it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"") }.take(c)
+                                                var decoded = p
+                                                for (i in kList.indices.reversed()) {
+                                                    if (kList[i].isBlank()) continue
+                                                    decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), kList[i])
+                                                }
+                                                for (m in m3u8Regex.findAll(decoded)) {
+                                                    callback.invoke(newExtractorLink("xupalace", "xupalace", m.value) {
+                                                        this.referer = embedUrl
+                                                    })
+                                                    found = true
+                                                }
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                                if (!found) loadExtractor(embedUrl, fixedSrc, subtitleCallback, callback)
+                            } catch (_: Exception) {
+                                loadExtractor(embedUrl, fixedSrc, subtitleCallback, callback)
+                            }
                         }
                     } else {
                         val docX = Jsoup.parse(xupalaceHtml)
