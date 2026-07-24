@@ -74,45 +74,48 @@ class MhdflixVidHide : ExtractorApi() {
             "Accept-Language" to "es"
         )
 
-        val doc = app.get(url, headers = headers).document
-        val scripts = doc.select("script")
+        val html = app.get(url, headers = headers).text
+        val m3u8Regex = Regex("""(https?://[^"'<>]+\.m3u8[^"'<>]*)""")
 
-        val m3u8Regex = Regex("""(https?://[^"']+\.m3u8[^"']*)""")
-
-
-        val evalScript = scripts.find { it.data().contains("eval(function(p,a,c,k,e,d)") }?.data()
-        Log.d("MhdflixVidHide", "evalScript found: ${evalScript != null}, length=${evalScript?.length}")
-
-        val script = scripts.find { it.data().contains(".m3u8") }?.data()
-            ?: scripts.find { it.data().contains("jwplayer") }?.data()
-            ?: evalScript ?: run {
-                Log.d("MhdflixVidHide", "No matching script found, scripts count=${scripts.size}")
-                return
-            }
-
-        m3u8Regex.find(script)?.let {
-            Log.d("MhdflixVidHide", "M3U8 found directly in script: ${it.value.take(100)}")
-            callback.invoke(newExtractorLink("VidHide", "VidHide", it.value, ExtractorLinkType.M3U8) {
+        val directM3u8 = m3u8Regex.find(html)
+        if (directM3u8 != null) {
+            Log.d("MhdflixVidHide", "M3U8 found directly in HTML: ${directM3u8.value.take(100)}")
+            callback.invoke(newExtractorLink("VidHide", "VidHide", directM3u8.value, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
             })
             return
         }
 
-        val evalMatch = Regex("""eval\(function\(p,a,c,k,e,d\)\{.*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'(.*?)'""").find(script)
-        if (evalMatch == null) {
-            Log.d("MhdflixVidHide", "eval regex did not match")
+        val evalStart = html.indexOf("eval(function(p,a,c,k,e,d)")
+        if (evalStart == -1) {
+            Log.d("MhdflixVidHide", "No eval(function(p,a,c,k,e,d) found in HTML")
             return
         }
 
-        val p = evalMatch.groupValues[1]
-        val a = evalMatch.groupValues[2].toIntOrNull() ?: 36
-        val c = evalMatch.groupValues[3].toIntOrNull() ?: 0
-        val kRaw = evalMatch.groupValues[4]
-        val k = kRaw.split("|")
+        val afterFnDecl = html.substring(evalStart + "eval(function(p,a,c,k,e,d)".length)
+        val fnBodyEnd = afterFnDecl.indexOf("}(")
+        if (fnBodyEnd == -1) {
+            Log.d("MhdflixVidHide", "Function body end not found")
+            return
+        }
+
+        val callArgs = afterFnDecl.substring(fnBodyEnd + 2)
+        val args = parsePackedJsArgs(callArgs)
+        if (args.size < 4) {
+            Log.d("MhdflixVidHide", "Not enough args parsed, got ${args.size}: $args")
+            return
+        }
+
+        val p = args[0]
+        val a = args[1].toIntOrNull() ?: 36
+        val c = args[2].toIntOrNull() ?: 0
+        val tokensRaw = args[3]
+        val k = tokensRaw.split("|")
+
         Log.d("MhdflixVidHide", "Decoding: a=$a c=$c k.size=${k.size} p.length=${p.length}")
 
         val decoded = decodePackedJs(p, a, c, k)
-        Log.d("MhdflixVidHide", "Decoded length=${decoded.length}, first 200: ${decoded.take(200)}")
+        Log.d("MhdflixVidHide", "Decoded length=${decoded.length}, first 300: ${decoded.take(300)}")
 
         val m3u8Match = m3u8Regex.find(decoded)
         if (m3u8Match != null) {
@@ -124,7 +127,33 @@ class MhdflixVidHide : ExtractorApi() {
             val anyUrl = Regex("""https?://[^"'\s,;<>]+""").findAll(decoded)
             val urls = anyUrl.take(5).map { it.value }.toList()
             Log.d("MhdflixVidHide", "No M3U8 in decoded. Found URLs: $urls")
+            Log.d("MhdflixVidHide", "k[0]..k[5]: ${k.take(6)} | k.last(): ${k.lastOrNull()}")
         }
+    }
+
+    private fun parsePackedJsArgs(s: String): List<String> {
+        val args = mutableListOf<String>()
+        var i = 0
+        while (i < s.length && args.size < 6) {
+            when (s[i]) {
+                '\'', '"' -> {
+                    val quote = s[i]
+                    val start = i + 1
+                    val end = s.indexOf(quote, start)
+                    if (end == -1) break
+                    args.add(s.substring(start, end))
+                    i = end + 1
+                }
+                in '0'..'9', '-' -> {
+                    val start = i
+                    while (i < s.length && (s[i].isDigit() || s[i] == '-')) i++
+                    args.add(s.substring(start, i))
+                }
+                else -> i++
+            }
+            while (i < s.length && (s[i] == ',' || s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) i++
+        }
+        return args
     }
 
     private fun decodePackedJs(p: String, a: Int, c: Int, k: List<String>): String {
