@@ -85,29 +85,49 @@ class MhdflixStreamWish : ExtractorApi() {
             return
         }
 
-        val evalRegex = Regex("""eval\(([^)]+)\)""")
-        val evalMatch = evalRegex.find(html)
-        if (evalMatch != null) {
-            try {
-                val params = evalMatch.groupValues[1].split(",")
-                if (params.size >= 6) {
-                    val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
-                    val a = params[1].trim().toIntOrNull() ?: 36
-                    val c = params[2].trim().toIntOrNull() ?: 0
-                    val k = params.drop(3).map { it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"") }.take(c)
-                    var decoded = p
-                    for (i in k.indices.reversed()) {
-                        if (k[i].isBlank()) continue
-                        decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), k[i])
-                    }
-                    val decodedM3u8 = m3u8Regex.find(decoded)?.value
-                    if (decodedM3u8 != null) {
-                        callback.invoke(newExtractorLink("StreamWish", "StreamWish", decodedM3u8, ExtractorLinkType.M3U8) {
-                            this.referer = mainUrl
-                        })
+        // Try balanced eval parsing (like Playhub)
+        val evalMarker = "eval(function(p,a,c,k,e,d){"
+        val evalStart = html.indexOf(evalMarker)
+        if (evalStart >= 0) {
+            var braceDepth = 0
+            var fnBodyEnd = -1
+            var i = evalStart + evalMarker.length
+            while (i < html.length) {
+                when (html[i]) {
+                    '{' -> braceDepth++
+                    '}' -> {
+                        braceDepth--
+                        if (braceDepth == 0) { fnBodyEnd = i; break }
                     }
                 }
-            } catch (_: Exception) { }
+                i++
+            }
+            if (fnBodyEnd >= 0) {
+                for (pattern in listOf(
+                    Regex("""\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)"""),
+                    Regex("""\}\('([^']*)',(\d+),(\d+),'(.+?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL),
+                )) {
+                    val argMatch = pattern.find(html, evalStart)
+                    if (argMatch != null) {
+                        val p = argMatch.groupValues[1]
+                        val a = argMatch.groupValues[2].toIntOrNull() ?: 36
+                        val c = argMatch.groupValues[3].toIntOrNull() ?: 0
+                        val k = argMatch.groupValues[4].split("|")
+                        var decoded = p
+                        for (idx in k.indices.reversed()) {
+                            if (k[idx].isBlank()) continue
+                            decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
+                        }
+                        val decodedM3u8 = m3u8Regex.find(decoded)?.value
+                        if (decodedM3u8 != null) {
+                            callback.invoke(newExtractorLink("StreamWish", "StreamWish", decodedM3u8, ExtractorLinkType.M3U8) {
+                                this.referer = mainUrl
+                            })
+                            return
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -136,42 +156,66 @@ class MhdflixVidHide : ExtractorApi() {
             return
         }
 
-        val evalPattern = Regex("""eval\(([^)]+)\)""")
-        val evalMatch = evalPattern.find(html)
-        if (evalMatch != null) {
-            val evalContent = evalMatch.groupValues[1]
-            val params = evalContent.split(",")
-            if (params.size >= 6) {
-                try {
-                    val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
-                    val a = params[1].trim().toIntOrNull() ?: 36
-                    val c = params[2].trim().toIntOrNull() ?: 0
-                    val kList = params.drop(3).map {
-                        it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
-                    }.take(c)
-                    val decoded = decodeEval(p, a, c, kList)
-                    val decodedM3u8 = m3u8Regex.find(decoded)?.value
-                    if (decodedM3u8 != null) {
-                        callback.invoke(newExtractorLink("VidHide", "VidHide", decodedM3u8, ExtractorLinkType.M3U8) {
-                            this.referer = mainUrl
-                        })
-                        return
+        val evalMarker = "eval(function(p,a,c,k,e,d){"
+        val evalStart = html.indexOf(evalMarker)
+        if (evalStart < 0) return
+
+        // Find the end of the function body by balanced braces
+        var braceDepth = 0
+        var fnBodyEnd = -1
+        var i = evalStart + evalMarker.length
+        while (i < html.length) {
+            when (html[i]) {
+                '{' -> braceDepth++
+                '}' -> {
+                    braceDepth--
+                    if (braceDepth == 0) {
+                        fnBodyEnd = i
+                        break
                     }
-                    Log.d("MhdflixVidHide", "No M3U8 after eval decode. decoded length=${decoded.length}")
-                } catch (e: Exception) {
-                    Log.d("MhdflixVidHide", "Eval parse error: ${e.message}")
                 }
             }
+            i++
         }
-    }
+        if (fnBodyEnd < 0) return
 
-    private fun decodeEval(p: String, a: Int, c: Int, k: List<String>): String {
-        var decoded = p
-        for (i in k.indices.reversed()) {
-            if (k[i].isBlank()) continue
-            decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), k[i])
+        // Extract args from the call portion after the function body
+        val callPart = html.substring(fnBodyEnd + 1).trimStart()
+        if (!callPart.startsWith('(')) return
+
+        // Use the Playhub approach: regex patterns for }('...',36,36,'...'.split('|'))
+        val argPatterns = listOf(
+            Regex("""\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)"""),
+            Regex("""\}\('([^']*)',(\d+),(\d+),'(.+?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL),
+        )
+        for (pattern in argPatterns) {
+            val argMatch = pattern.find(html, evalStart)
+            if (argMatch != null) {
+                val p = argMatch.groupValues[1]
+                val a = argMatch.groupValues[2].toIntOrNull() ?: 36
+                val c = argMatch.groupValues[3].toIntOrNull() ?: 0
+                val kRaw = argMatch.groupValues[4]
+                val k = kRaw.split("|")
+
+                var decoded = p
+                for (idx in k.indices.reversed()) {
+                    if (k[idx].isBlank()) continue
+                    decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
+                }
+
+                val decodedM3u8 = m3u8Regex.find(decoded)?.value
+                if (decodedM3u8 != null) {
+                    callback.invoke(newExtractorLink("VidHide", "VidHide", decodedM3u8, ExtractorLinkType.M3U8) {
+                        this.referer = mainUrl
+                    })
+                    return
+                }
+                Log.d("MhdflixVidHide", "No M3U8 after decode. decoded length=${decoded.length}")
+                if (decoded.length < 100) Log.d("MhdflixVidHide", "Decoded: $decoded")
+                return
+            }
         }
-        return decoded
+        Log.d("MhdflixVidHide", "Could not match eval arg pattern")
     }
 }
 
