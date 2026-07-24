@@ -124,85 +124,47 @@ class TokianimeProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
-        val searchUrl = "$mainUrl/buscar?q=${query.replace(" ", "%20")}"
-        Log.i("Tokianime", "search: query='$query' url='$searchUrl'")
-        try {
-            val html = app.get(searchUrl, headers = headers).text
-            Log.i("Tokianime", "search: HTML length=${html.length} contiene_IA=${html.contains("Búsqueda IA")} contiene_0_titulos=${html.contains("0 títulos disponibles")}")
-            Log.i("Tokianime", "search: primeros_300=${html.take(300)}")
-            if (html.contains("0 títulos disponibles") || html.contains("Búsqueda IA")) {
-                Log.i("Tokianime", "search: página de búsqueda IA o vacía, usando fallback por género")
-                return searchViaGenre(query)
-            }
-            val doc = Jsoup.parse(html)
-            val links = doc.select("a[href^='/anime/']")
-            Log.i("Tokianime", "search: encontré ${links.size} links a[href^=/anime/] en página de búsqueda")
-            val results = links.mapNotNull { link ->
-                val href = link.attr("href")
-                if (href.isBlank()) return@mapNotNull null
-                val img = link.selectFirst("img")
-                val title = img?.attr("alt") ?: link.text().ifBlank { return@mapNotNull null }
-                val poster = img?.attr("src") ?: ""
-                newMovieSearchResponse(title, "$mainUrl$href", TvType.Anime) {
-                    this.posterUrl = fixPoster(poster)
-                }
-            }
-            Log.i("Tokianime", "search: resultados parseados=${results.size}")
-            if (results.isNotEmpty()) return results
-
-            Log.i("Tokianime", "search: 0 resultados en página directa, usando fallback por género")
-            return searchViaGenre(query)
-        } catch (e: Exception) {
-            Log.e("Tokianime", "search: error=${e.message}, usando fallback por género")
-            return searchViaGenre(query)
-        }
-    }
-
-    private suspend fun searchViaGenre(query: String): List<SearchResponse> {
-        val genres = listOf("accion", "comedia", "fantasia", "drama", "romance", "sci-fi", "sobrenatural", "misterio", "terror", "psicologico")
-        val seen = mutableSetOf<String>()
         val results = mutableListOf<SearchResponse>()
-        val qLower = query.lowercase()
-        val maxResults = 50
-        Log.i("Tokianime", "searchViaGenre: buscando '$query' en ${genres.size} géneros (max=$maxResults)")
+        val seen = mutableSetOf<String>()
+        var page = 0
+        val pageSize = 20
+        var hasMore = true
 
-        for (genre in genres) {
-            if (results.size >= maxResults) break
-            var page = 1
-            var hasNext = true
-            while (hasNext && results.size < maxResults) {
-                try {
-                    val genreUrl = "$mainUrl/genero/$genre${if (page > 1) "?page=$page" else ""}"
-                    val html = app.get(genreUrl, headers = headers).text
-                    val doc = Jsoup.parse(html)
-                    val links = doc.select("a[href^='/anime/']")
-                    Log.i("Tokianime", "searchViaGenre: género=$genre página=$page tiene ${links.size} títulos")
-                    var matchesInPage = 0
-                    links.forEach { link ->
-                        if (results.size >= maxResults) return@forEach
-                        val href = link.attr("href")
-                        if (href.isBlank() || seen.contains(href)) return@forEach
-                        val img = link.selectFirst("img")
-                        val title = img?.attr("alt") ?: link.text().ifBlank { return@forEach }
-                        if (title.lowercase().contains(qLower)) {
-                            val poster = img?.attr("src") ?: ""
-                            seen.add(href)
-                            matchesInPage++
-                            results.add(newMovieSearchResponse(title, "$mainUrl$href", TvType.Anime) {
-                                this.posterUrl = fixPoster(poster)
-                            })
-                        }
+        while (hasMore && results.size < 50) {
+            try {
+                val apiUrl = "$mainUrl/api/catalog?adult=0&q=${query.replace(" ", "%20")}&page=$page&pageSize=$pageSize"
+                Log.i("Tokianime", "search: API query='$query' page=$page url=$apiUrl")
+                val resp = app.get(apiUrl, headers = headers).text
+                Log.i("Tokianime", "search: API respuesta (primeros 300)=${resp.take(300)}")
+
+                val items = Regex(""""items":\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL).find(resp)
+                if (items != null) {
+                    val slugs = Regex(""""slug":"([^"]+)"[^}]*?"title":"([^"]+)"[^}]*?"coverImage":"([^"]+)""")
+                        .findAll(items.groupValues[1]).toList()
+                    for (match in slugs) {
+                        val slug = match.groupValues[1]
+                        val title = match.groupValues[2]
+                        val poster = match.groupValues[3].replace("\\/", "/")
+                        if (seen.contains(slug)) continue
+                        seen.add(slug)
+                        results.add(newMovieSearchResponse(title, "$mainUrl/anime/$slug", TvType.Anime) {
+                            this.posterUrl = poster
+                        })
                     }
-                    if (matchesInPage > 0) Log.i("Tokianime", "searchViaGenre: género=$genre p=$page matches=$matchesInPage (acum=${results.size})")
-                    hasNext = doc.select("a:contains(Siguiente)").isNotEmpty() && page < 3
-                    page++
-                } catch (e: Exception) {
-                    Log.w("Tokianime", "searchViaGenre: género=$genre página=$page error=${e.message}")
-                    hasNext = false
                 }
+
+                // Verificar si hay más páginas
+                val totalMatch = Regex(""""total":(\d+)""").find(resp)
+                val total = totalMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                hasMore = results.size < total && results.size < 50
+                page++
+            } catch (e: Exception) {
+                Log.e("Tokianime", "search: API error=${e.message}")
+                hasMore = false
             }
         }
-        Log.i("Tokianime", "searchViaGenre: total resultados=${results.size}")
+
+        Log.i("Tokianime", "search: total resultados=${results.size}")
         return results
     }
 
