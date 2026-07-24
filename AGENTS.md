@@ -226,3 +226,29 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 
 ### 🔬 Próximo
 - Probar en dispositivo: search API, load multi-season, episodios con posters/descripción, reproducción de video.
+
+---
+
+## TMDBProvider — Estado (24 Jul 2026)
+
+### ✅ Estructura creada
+Plugin completo que usa:
+- **TMDB API v3** para catálogo/búsqueda/detalles (necesita API key gratuita)
+- **TMDB Embed API** autohosteada para streams (Docker: `inside4ndroid/tmdb-embed-api`)
+
+### Soporte
+- Películas y Series
+- Episodios con posters (`still_path`) y descripción (`overview`)
+- Recomendaciones desde TMDB
+- Multi-temporada (carga episodio por episodio desde TMDB)
+- Score desde TMDB (escala 0-10 convertida a Score CS3)
+
+### ⏸️ Pendiente
+- Usuario debe registrar API key en https://www.themoviedb.org/settings/api
+- Usuario debe deployar TMDB Embed API vía Docker
+- Probar en dispositivo
+
+### Archivos
+- `TMDBProvider/build.gradle.kts`
+- `TMDBProvider/src/main/kotlin/com/example/TMDBPlugin.kt`
+- `TMDBProvider/src/main/kotlin/com/example/TMDBProvider.kt`

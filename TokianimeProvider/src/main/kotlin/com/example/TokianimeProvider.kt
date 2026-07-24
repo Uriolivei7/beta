@@ -239,7 +239,7 @@ class TokianimeProvider : MainAPI() {
                                 this.episode = epNum
                                 this.season = seasonNum
                                 this.description = epOverview
-                                this.posterUrl = epThumbnail
+                                if (!epThumbnail.isNullOrBlank()) this.posterUrl = epThumbnail
                             })
                         }
                     }
@@ -421,9 +421,16 @@ class TokianimeProvider : MainAPI() {
                             Log.i("Tokianime", "loadLinks: intentando API (RSC fallback): $apiUrl")
                             val m3u8Resp = app.get(apiUrl, headers = headers).text
                             Log.i("Tokianime", "loadLinks: respuesta API (primeros 500 chars)=${m3u8Resp.take(500)}")
+                            if (m3u8Resp.trimStart().startsWith("#EXTM3U")) {
+                                Log.i("Tokianime", "loadLinks: M3U8 válido via RSC fallback! url='$apiUrl'")
+                                callback.invoke(newExtractorLink("Tokianime", "Tokianime", apiUrl, ExtractorLinkType.M3U8) {
+                                    this.referer = mainUrl
+                                })
+                                return true
+                            }
                             val masterUrl = Regex("""(https?://[^\s]+\.m3u8[^\s]*)""").find(m3u8Resp)?.value
                             if (masterUrl != null) {
-                                Log.i("Tokianime", "loadLinks: M3U8 encontrado via RSC fallback! url='$masterUrl'")
+                                Log.i("Tokianime", "loadLinks: M3U8 encontrado por regex via RSC fallback! url='$masterUrl'")
                                 callback.invoke(newExtractorLink("Tokianime", "Tokianime", masterUrl, ExtractorLinkType.M3U8) {
                                     this.referer = mainUrl
                                 })
@@ -452,16 +459,25 @@ class TokianimeProvider : MainAPI() {
                     val m3u8Resp = app.get(apiUrl, headers = headers).text
                     Log.i("Tokianime", "loadLinks: respuesta API (primeros 500 chars)=${m3u8Resp.take(500)}")
 
-                    val masterUrl = Regex("""(https?://[^\s]+\.m3u8[^\s]*)""").find(m3u8Resp)?.value
-                    if (masterUrl != null) {
-                        Log.i("Tokianime", "loadLinks: M3U8 encontrado! lang='$lang' q=$quality url='$masterUrl'")
-                        callback.invoke(newExtractorLink("Tokianime", "Tokianime [$lang]", masterUrl, ExtractorLinkType.M3U8) {
+                    if (m3u8Resp.trimStart().startsWith("#EXTM3U")) {
+                        Log.i("Tokianime", "loadLinks: M3U8 válido! lang='$lang' q=$quality url='$apiUrl'")
+                        callback.invoke(newExtractorLink("Tokianime", "Tokianime [$lang]", apiUrl, ExtractorLinkType.M3U8) {
                             this.referer = mainUrl
                             this.quality = quality
                         })
                         found = true
                     } else {
-                        Log.w("Tokianime", "loadLinks: no se encontró URL .m3u8 en respuesta de API para match[$idx]")
+                        val masterUrl = Regex("""(https?://[^\s]+\.m3u8[^\s]*)""").find(m3u8Resp)?.value
+                        if (masterUrl != null) {
+                            Log.i("Tokianime", "loadLinks: M3U8 encontrado por regex! lang='$lang' q=$quality url='$masterUrl'")
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$lang]", masterUrl, ExtractorLinkType.M3U8) {
+                                this.referer = mainUrl
+                                this.quality = quality
+                            })
+                            found = true
+                        } else {
+                            Log.w("Tokianime", "loadLinks: respuesta no es M3U8 para match[$idx] (primeros 200)=${m3u8Resp.take(200)}")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("Tokianime", "loadLinks: error al consultar API player source match[$idx]: ${e.message}")
