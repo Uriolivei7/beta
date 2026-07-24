@@ -140,24 +140,24 @@ class TokianimeProvider : MainAPI() {
                 if (resp.contains("\"items\":[]") || resp.contains("\"items\": []")) {
                     hasMore = false
                 } else {
-                    val slugs = Regex(""""slug":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
-                    val titles = Regex(""""title":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
+                    val itemMatches = Regex(""""slug":"([^"]+)"[^}]*?"title":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
                     val posters = Regex(""""coverImage":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
-                    Log.i("Tokianime", "search: page=$page slugs=${slugs.size} titles=${titles.size} posters=${posters.size}")
-                    val limit = minOf(slugs.size, titles.size)
-                    for (i in 0 until limit) {
-                        val slug = slugs[i].groupValues[1]
-                        val title = titles[i].groupValues[1]
+                    Log.i("Tokianime", "search: page=$page items=${itemMatches.size} posters=${posters.size}")
+                    var added = 0
+                    for ((idx, match) in itemMatches.withIndex()) {
+                        val slug = match.groupValues[1]
+                        val title = match.groupValues[2]
                         if (seen.contains(slug)) continue
                         seen.add(slug)
-                        val poster = if (i < posters.size) posters[i].groupValues[1].replace("\\/", "/") else ""
+                        val poster = if (idx < posters.size) posters[idx].groupValues[1].replace("\\/", "/") else ""
                         results.add(newMovieSearchResponse(title, "$mainUrl/anime/$slug", TvType.Anime) {
                             this.posterUrl = poster
                         })
+                        added++
                     }
                     val totalMatch = Regex(""""total":(\d+)""").find(resp)
                     val total = totalMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                    hasMore = results.size < total && results.size < 50 && limit > 0
+                    hasMore = results.size < total && results.size < 50 && added > 0
                 }
                 page++
             } catch (e: Exception) {

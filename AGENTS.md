@@ -217,6 +217,7 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - **Bug corregido**: regex `\[(.*?)\]` se detenía en primer `]` (tags array). Ahora extrae slugs/titles/posters con regex independientes (no confía en aislar items array).
 - **Loop infinito corregido**: el paginado se detiene cuando `"items":[]` o `results.size >= total`.
 - **Episodios con posters y descripción**: ahora extrae `thumbs.{ep} → posterUrl` y `meta.{ep}.overview → description` del API `api/anime/{slug}/episodes`.
+- **Bug search corregido**: `sources[].slug` se contaba como slug adicional, desalineando el pairing por índice. Ahora usa regex `"slug":"xxx"[^}]*?"title":"yyy"` que solo empareja slug+title del mismo item, ignorando sources.
 
 ### ✅ Confirmado
 - Search API ya busca en múltiples campos: `title`, `titleEnglish`, `titleNative`, `synonyms`. Buscar "One Punch Man" retorna resultado con `matchedBy:"title"`.
