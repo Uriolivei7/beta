@@ -236,7 +236,10 @@ class TokianimeProvider : MainAPI() {
             val scoreText = doc.select("div:contains(Puntuación)").firstOrNull()
                 ?.text()?.substringAfter("Puntuación")?.substringBefore("/")?.trim()
             val score = scoreText?.toFloatOrNull()
-            val year = Regex("""\b(\d{4})\b""").find(html)?.groupValues?.get(1)?.toIntOrNull()
+            // Extraer año del primer <span class="tabular-nums"> que sea un año válido (no URLs con 1920x...)
+            val yearRaw = doc.select("span.tabular-nums").firstOrNull()?.text()?.trim()?.toIntOrNull()
+                ?: Regex("""\b(19[0-9]{2}|20[0-9]{2})\b""").find(html)?.groupValues?.get(1)?.toIntOrNull()
+            val year = if (yearRaw != null && yearRaw in 1900..2050) yearRaw else null
 
             val tags = doc.select("a[href^='/genero/']").mapNotNull { it.text().ifBlank { null } }.distinct()
             Log.i("Tokianime", "load: tags=$tags year=$year score=$score")
