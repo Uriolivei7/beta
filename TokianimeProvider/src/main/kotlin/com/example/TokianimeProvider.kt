@@ -513,33 +513,16 @@ class TokianimeProvider : MainAPI() {
                             found = true
                             Log.i("Tokianime", "loadLinks: enlace M3U8 agregado [$langLabel] q=$quality")
                         } else if (headStr.contains("ftyp")) {
+                            // MP4 directo - puede no reproducirse bien. Primero probar iframe.
+                            tryFallbackIframe(apiUrl, langLabel, quality, callback, mainUrl)
+                            // Si el iframe no encontró nada, agregar MP4 como último recurso
                             callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, ExtractorLinkType.VIDEO) {
                                 this.referer = mainUrl; this.quality = quality
                             })
                             found = true
-                            Log.i("Tokianime", "loadLinks: enlace MP4 agregado [$langLabel] q=$quality")
+                            Log.i("Tokianime", "loadLinks: enlace MP4 agregado [$langLabel] q=$quality (fallback iframe=${found})")
                         } else if (headStr.contains("<!DOCTYPE html", ignoreCase = true) || headStr.contains("<html", ignoreCase = true)) {
-                            // Try mode=iframe as fallback
-                            val iframeUrl = apiUrl.replace("mode=play", "mode=iframe")
-                            Log.i("Tokianime", "loadLinks: probando iframe fallback: $iframeUrl")
-                            try {
-                                val iframeCall = app.get(iframeUrl, headers = headers)
-                                val iframeBuf = ByteArray(10240)
-                                val iframeRead = iframeCall.body.byteStream().use { s -> s.read(iframeBuf) }
-                                val iframeStr = if (iframeRead > 0) String(iframeBuf, 0, iframeRead) else ""
-                                val m3u8InIframe = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""").find(iframeStr)?.groupValues?.get(1)
-                                if (m3u8InIframe != null) {
-                                    callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", m3u8InIframe, ExtractorLinkType.M3U8) {
-                                        this.referer = mainUrl; this.quality = quality
-                                    })
-                                    found = true
-                                    Log.i("Tokianime", "loadLinks: M3U8 extraído de iframe [$langLabel]")
-                                } else {
-                                    Log.w("Tokianime", "loadLinks: iframe sin M3U8 para match[$idx]")
-                                }
-                            } catch (e: Exception) {
-                                Log.w("Tokianime", "loadLinks: error en iframe fallback: ${e.message}")
-                            }
+                            tryFallbackIframe(apiUrl, langLabel, quality, callback, mainUrl)
                         } else {
                             Log.w("Tokianime", "loadLinks: respuesta no reconocida para match[$idx]: '${headStr.take(100)}'")
                         }
@@ -552,6 +535,28 @@ class TokianimeProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e("Tokianime", "loadLinks error: ${e.message}")
             return false
+        }
+    }
+
+    private suspend fun tryFallbackIframe(apiUrl: String, langLabel: String, quality: Int, callback: (ExtractorLink) -> Unit, mainUrl: String) {
+        val iframeUrl = apiUrl.replace("mode=play", "mode=iframe")
+        Log.i("Tokianime", "loadLinks: probando iframe fallback: $iframeUrl")
+        try {
+            val iframeCall = app.get(iframeUrl)
+            val iframeBuf = ByteArray(10240)
+            val iframeRead = iframeCall.body.byteStream().use { s -> s.read(iframeBuf) }
+            val iframeStr = if (iframeRead > 0) String(iframeBuf, 0, iframeRead) else ""
+            val m3u8InIframe = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""").find(iframeStr)?.groupValues?.get(1)
+            if (m3u8InIframe != null) {
+                callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", m3u8InIframe, ExtractorLinkType.M3U8) {
+                    this.referer = mainUrl; this.quality = quality
+                })
+                Log.i("Tokianime", "loadLinks: M3U8 extraído de iframe [$langLabel]")
+            } else {
+                Log.w("Tokianime", "loadLinks: iframe sin M3U8 para $langLabel")
+            }
+        } catch (e: Exception) {
+            Log.w("Tokianime", "loadLinks: error en iframe fallback: ${e.message}")
         }
     }
 
