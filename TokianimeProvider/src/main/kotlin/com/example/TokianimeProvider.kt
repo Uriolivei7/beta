@@ -137,26 +137,28 @@ class TokianimeProvider : MainAPI() {
                 val resp = app.get(apiUrl, headers = headers).text
                 Log.i("Tokianime", "search: API respuesta (primeros 300)=${resp.take(300)}")
 
-                val items = Regex(""""items":\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL).find(resp)
-                if (items != null) {
-                    val slugs = Regex(""""slug":"([^"]+)"[^}]*?"title":"([^"]+)"[^}]*?"coverImage":"([^"]+)""")
-                        .findAll(items.groupValues[1]).toList()
-                    for (match in slugs) {
-                        val slug = match.groupValues[1]
-                        val title = match.groupValues[2]
-                        val poster = match.groupValues[3].replace("\\/", "/")
+                if (resp.contains("\"items\":[]") || resp.contains("\"items\": []")) {
+                    hasMore = false
+                } else {
+                    val slugs = Regex(""""slug":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
+                    val titles = Regex(""""title":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
+                    val posters = Regex(""""coverImage":"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).findAll(resp).toList()
+                    Log.i("Tokianime", "search: page=$page slugs=${slugs.size} titles=${titles.size} posters=${posters.size}")
+                    val limit = minOf(slugs.size, titles.size)
+                    for (i in 0 until limit) {
+                        val slug = slugs[i].groupValues[1]
+                        val title = titles[i].groupValues[1]
                         if (seen.contains(slug)) continue
                         seen.add(slug)
+                        val poster = if (i < posters.size) posters[i].groupValues[1].replace("\\/", "/") else ""
                         results.add(newMovieSearchResponse(title, "$mainUrl/anime/$slug", TvType.Anime) {
                             this.posterUrl = poster
                         })
                     }
+                    val totalMatch = Regex(""""total":(\d+)""").find(resp)
+                    val total = totalMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    hasMore = results.size < total && results.size < 50 && limit > 0
                 }
-
-                // Verificar si hay más páginas
-                val totalMatch = Regex(""""total":(\d+)""").find(resp)
-                val total = totalMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                hasMore = results.size < total && results.size < 50
                 page++
             } catch (e: Exception) {
                 Log.e("Tokianime", "search: API error=${e.message}")

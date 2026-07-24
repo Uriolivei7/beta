@@ -201,3 +201,21 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
    - 4meplayer.pro: `master.php` POST
 3. ⏸️ Si API extraction falla: implementar extractor VidStack manual (WebView JS injection)
 4. ⏸️ Si funciona: probar con múltiples episodios y servers
+
+---
+
+## TokianimeProvider — Estado (24 Jul 2026)
+
+### ✅ Funcionando
+- `getMainPage()`: home/últimos, tendencia, géneros (Acción, Comedia, Fantasía, Drama, Romance, Sci-Fi) — carga HTML, parsea links a[href^=/anime/] + posters de img[src].
+- `load()`: detalle del anime via DOM (og:title, description, year, tags, poster), episodios via API `api/anime/{slug}/episodes`. Soporta multi-season: parsea "Ver orden sugerido" accordion, llama API por cada entry, ordena Temporadas → OVA → Especial → Película.
+- `loadLinks()`: extrae SID del RSC payload (`self.__next_f.push`), llama `api/player/source?a=MAL_ID&ep=N&sid=SID&mode=play`, retorna M3U8 con q=720p/1080p/480p. Regex normaliza `\"` → `"` y `\u0026` → `&`.
+- `search()`: usa API `GET /api/catalog?adult=0&q={query}&page=0&pageSize=20` — extrae slugs/titles/posters via regex, limite 50 resultados, detiene en page vacía.
+
+### 🔧 Última fix (24 Jul)
+- **Search reescrito**: reemplazó fallback por género (30 pages × 10 genres × 3 pages cada uno = lento) con API de catálogo directa.
+- **Bug corregido**: regex `\[(.*?)\]` se detenía en primer `]` (tags array). Ahora extrae slugs/titles/posters independientemente del JSON completo.
+- **Loop infinito corregido**: el paginado se detiene cuando `"items":[]` o `results.size >= total`.
+
+### 🔬 Próximo
+- Probar en dispositivo: search API, load multi-season, reproducción de video.
