@@ -215,10 +215,11 @@ class TokianimeProvider : MainAPI() {
             Log.i("Tokianime", "load: HTML length=${html.length} primeros_300=${html.take(300)}")
             val doc = Jsoup.parse(html)
 
-            val title = doc.selectFirst("meta[property='og:title']")?.attr("content")
+            val titleRaw = doc.selectFirst("meta[property='og:title']")?.attr("content")
                 ?: doc.selectFirst("h1")?.text()
                 ?: slug.replace("-", " ").replaceFirstChar { it.uppercase() }
-            Log.i("Tokianime", "load: title='$title'")
+            val title = titleRaw.replace(Regex("""\s*(Sub Español Online HD|Sub Español|Online HD)\s*$"""), "").trim()
+            Log.i("Tokianime", "load: title='$title' (raw='$titleRaw')")
 
             val poster = doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
             val description = doc.selectFirst("meta[property='og:description']")?.attr("content")
@@ -233,38 +234,72 @@ class TokianimeProvider : MainAPI() {
             Log.i("Tokianime", "load: tags=$tags year=$year score=$score")
 
             val episodes = mutableListOf<Episode>()
+            val seenSlugs = mutableSetOf<String>()
 
-            // Intentar API de episodios primero
-            try {
-                val apiUrl = "$mainUrl/api/anime/$slug/episodes"
-                Log.i("Tokianime", "load: consultando API episodios: $apiUrl")
-                val apiResp = app.get(apiUrl, headers = headers).text
-                Log.i("Tokianime", "load: API respuesta (primeros 300 chars)=${apiResp.take(300)}")
-                val apiEpisodes = mutableListOf<Episode>()
-                // Extraer withVideo array para saber episodios disponibles
-                val withVideoMatch = Regex(""""withVideo":\[([^\]]+)\]""").find(apiResp)
-                if (withVideoMatch != null) {
-                    val epNums = Regex("""\d+""").findAll(withVideoMatch.groupValues[1]).map { it.value.toIntOrNull() }.filterNotNull().toList()
-                    Log.i("Tokianime", "load: API withVideo episodios=${epNums}")
+            // Función helper para obtener episodios de un slug via API
+            suspend fun fetchEpisodes(epSlug: String, seasonNum: Int): List<Episode> {
+                val result = mutableListOf<Episode>()
+                try {
+                    val apiUrl = "$mainUrl/api/anime/$epSlug/episodes"
+                    Log.i("Tokianime", "load: consultando API slug='$epSlug' season=$seasonNum: $apiUrl")
+                    val apiResp = app.get(apiUrl, headers = headers).text
+                    val withVideoMatch = Regex(""""withVideo":\[([^\]]+)\]""").find(apiResp)
+                    if (withVideoMatch != null) {
+                        val epNums = Regex("""\d+""").findAll(withVideoMatch.groupValues[1])
+                            .map { it.value.toIntOrNull() }.filterNotNull().toList()
+                        Log.i("Tokianime", "load: API slug='$epSlug' withVideo=${epNums}")
                         for (epNum in epNums) {
-                        val epTitleRegex = Regex(""""$epNum":\{"title":"([^"]+)""")
-                        val epTitle = epTitleRegex.find(apiResp)?.groupValues?.get(1)
-                        apiEpisodes.add(newEpisode("$mainUrl/watch/$slug/$epNum") {
-                            this.name = epTitle ?: "Episodio $epNum"
-                            this.episode = epNum
-                            this.season = 1
-                        })
+                            val epTitleRegex = Regex(""""$epNum":\{"title":"([^"]+)""")
+                            val epTitle = epTitleRegex.find(apiResp)?.groupValues?.get(1)
+                            result.add(newEpisode("$mainUrl/watch/$epSlug/$epNum") {
+                                this.name = epTitle ?: "Episodio $epNum"
+                                this.episode = epNum
+                                this.season = seasonNum
+                            })
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.w("Tokianime", "load: API falló para slug='$epSlug': ${e.message}")
                 }
-                if (apiEpisodes.isNotEmpty()) {
-                    episodes.addAll(apiEpisodes)
-                    Log.i("Tokianime", "load: episodios desde API=${episodes.size}")
-                }
-            } catch (e: Exception) {
-                Log.w("Tokianime", "load: API episodios falló: ${e.message}")
+                return result
             }
 
-            // Fallback: extraer episodios del DOM
+            // 1. Intentar parsear "Ver orden sugerido" para multi-temporada
+            try {
+                val suggestButton = doc.select("button:contains(Ver orden sugerido)").firstOrNull()
+                if (suggestButton != null) {
+                    val listId = suggestButton.attr("aria-controls")
+                    val listItems = doc.select("div#$listId li")
+                    Log.i("Tokianime", "load: 'Ver orden sugerido' encontrado con ${listItems.size} entradas")
+                    var seasonNum = 1
+                    for (item in listItems) {
+                        val aTag = item.selectFirst("a[href^='/anime/']") ?: continue
+                        val seasonSlug = aTag.attr("href").substringAfter("/anime/").substringBefore("?")
+                        if (seasonSlug.isBlank() || seenSlugs.contains(seasonSlug)) continue
+                        seenSlugs.add(seasonSlug)
+                        val seasonName = item.select("span.pointer-events-none span span").firstOrNull()?.text()
+                            ?: seasonSlug
+                        Log.i("Tokianime", "load: orden sugerido entrada #$seasonNum slug='$seasonSlug' name='$seasonName'")
+                        val seasonEps = fetchEpisodes(seasonSlug, seasonNum)
+                        episodes.addAll(seasonEps)
+                        seasonNum++
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("Tokianime", "load: error parseando 'Ver orden sugerido': ${e.message}")
+            }
+
+            // 2. Si no hay "orden sugerido" o no dio episodios, usar slug actual
+            if (episodes.isEmpty() || !seenSlugs.contains(slug)) {
+                if (!seenSlugs.contains(slug)) {
+                    seenSlugs.add(slug)
+                    val slugEps = fetchEpisodes(slug, 1)
+                    episodes.addAll(slugEps)
+                    Log.i("Tokianime", "load: episodios desde API slug actual=${slugEps.size}")
+                }
+            }
+
+            // 3. Fallback: DOM
             if (episodes.isEmpty()) {
                 val epItems = doc.select("a[href^='/watch/$slug/']")
                 Log.i("Tokianime", "load: episodios por DOM (a[href^=/watch/$slug/]) = ${epItems.size}")
@@ -284,6 +319,7 @@ class TokianimeProvider : MainAPI() {
                 }
             }
 
+            // 4. Fallback: regex de total
             if (episodes.isEmpty()) {
                 Log.i("Tokianime", "load: DOM no dio episodios, buscando regex de total de episodios")
                 val totalEps = Regex("""(\d+)\s*eps""", RegexOption.IGNORE_CASE).find(html)
@@ -304,7 +340,7 @@ class TokianimeProvider : MainAPI() {
             }
 
             episodes.sortBy { it.episode }
-            Log.i("Tokianime", "load: episodios finales=${episodes.size}")
+            Log.i("Tokianime", "load: episodios finales=${episodes.size} slugs_procesados=${seenSlugs}")
 
             if (episodes.isEmpty()) {
                 Log.w("Tokianime", "load: 0 episodios! Slug='$slug' no tiene episodios. Agregando ep1 por defecto")
@@ -417,7 +453,8 @@ class TokianimeProvider : MainAPI() {
                 Log.i("Tokianime", "loadLinks: match[$idx] lang='$lang' quality='$qualityStr' q=$quality src='$playSrc'")
 
                 try {
-                    val apiUrl = "$mainUrl$playSrc"
+                    val cleanSrc = playSrc.replace("""\u0026""", "&")
+                    val apiUrl = "$mainUrl$cleanSrc"
                     Log.i("Tokianime", "loadLinks: consultando API player source: $apiUrl")
                     val m3u8Resp = app.get(apiUrl, headers = headers).text
                     Log.i("Tokianime", "loadLinks: respuesta API (primeros 500 chars)=${m3u8Resp.take(500)}")
