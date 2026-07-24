@@ -79,30 +79,35 @@ class MhdflixVidHide : ExtractorApi() {
 
         val directM3u8 = m3u8Regex.find(html)
         if (directM3u8 != null) {
-            Log.d("MhdflixVidHide", "M3U8 found directly in HTML: ${directM3u8.value.take(100)}")
             callback.invoke(newExtractorLink("VidHide", "VidHide", directM3u8.value, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
             })
             return
         }
 
-        val evalStart = html.indexOf("eval(function(p,a,c,k,e,d)")
+        val evalFn = "eval(function(p,a,c,k,e,d)"
+        val evalStart = html.indexOf(evalFn)
         if (evalStart == -1) {
-            Log.d("MhdflixVidHide", "No eval(function(p,a,c,k,e,d) found in HTML")
+            Log.d("MhdflixVidHide", "No eval found")
             return
         }
 
-        val afterFnDecl = html.substring(evalStart + "eval(function(p,a,c,k,e,d)".length)
-        val fnBodyEnd = afterFnDecl.indexOf("}(")
-        if (fnBodyEnd == -1) {
-            Log.d("MhdflixVidHide", "Function body end not found")
+        val evalContent = extractBalanced(html, evalStart + "eval(".length)
+        val fnBodyStart = evalContent.indexOf('{')
+        val fnBodyEnd = findMatchingBrace(evalContent, fnBodyStart)
+        if (fnBodyEnd == -1) return
+
+        val afterFnBody = evalContent.substring(fnBodyEnd + 1).trimStart()
+        if (!afterFnBody.startsWith('(')) {
+            Log.d("MhdflixVidHide", "No call args after function body. afterFnBody starts with: ${afterFnBody.take(20)}")
             return
         }
 
-        val callArgs = afterFnDecl.substring(fnBodyEnd + 2)
-        val args = parsePackedJsArgs(callArgs)
+        val callContent = extractBalanced(afterFnBody, 0)
+        val args = parseEvalArgs(callContent)
+        Log.d("MhdflixVidHide", "Parsed ${args.size} args: ${args.mapIndexed { i, a -> "$i=${a.take(50)}" }}")
         if (args.size < 4) {
-            Log.d("MhdflixVidHide", "Not enough args parsed, got ${args.size}: $args")
+            Log.d("MhdflixVidHide", "Not enough args: ${args.size}")
             return
         }
 
@@ -115,7 +120,7 @@ class MhdflixVidHide : ExtractorApi() {
         Log.d("MhdflixVidHide", "Decoding: a=$a c=$c k.size=${k.size} p.length=${p.length}")
 
         val decoded = decodePackedJs(p, a, c, k)
-        Log.d("MhdflixVidHide", "Decoded length=${decoded.length}, first 300: ${decoded.take(300)}")
+        Log.d("MhdflixVidHide", "Decoded length=${decoded.length}, first 400: ${decoded.take(400)}")
 
         val m3u8Match = m3u8Regex.find(decoded)
         if (m3u8Match != null) {
@@ -126,32 +131,69 @@ class MhdflixVidHide : ExtractorApi() {
         } else {
             val anyUrl = Regex("""https?://[^"'\s,;<>]+""").findAll(decoded)
             val urls = anyUrl.take(5).map { it.value }.toList()
-            Log.d("MhdflixVidHide", "No M3U8 in decoded. Found URLs: $urls")
-            Log.d("MhdflixVidHide", "k[0]..k[5]: ${k.take(6)} | k.last(): ${k.lastOrNull()}")
+            Log.d("MhdflixVidHide", "No M3U8. URLs: $urls")
+            Log.d("MhdflixVidHide", "k[0]=${k.firstOrNull()?.take(30)} k.last=${k.lastOrNull()?.take(30)}")
         }
     }
 
-    private fun parsePackedJsArgs(s: String): List<String> {
+    private fun extractBalanced(s: String, openParenIdx: Int): String {
+        val openChar = s[openParenIdx]
+        val closeChar = when (openChar) { '(' -> ')'; '{' -> '}'; else -> return "" }
+        var depth = 0
+        var i = openParenIdx
+        while (i < s.length) {
+            when (s[i]) {
+                openChar -> depth++
+                closeChar -> { depth--; if (depth == 0) return s.substring(openParenIdx + 1, i) }
+                '\'', '"' -> {
+                    val q = s[i]; i++
+                    while (i < s.length && s[i] != q) i++
+                }
+            }
+            i++
+        }
+        return ""
+    }
+
+    private fun findMatchingBrace(s: String, openIdx: Int): Int {
+        var depth = 0; var i = openIdx
+        while (i < s.length) {
+            when (s[i]) {
+                '{' -> depth++
+                '}' -> { depth--; if (depth == 0) return i }
+                '\'', '"' -> { val q = s[i]; i++; while (i < s.length && s[i] != q) i++ }
+            }
+            i++
+        }
+        return -1
+    }
+
+    private fun parseEvalArgs(s: String): List<String> {
         val args = mutableListOf<String>()
         var i = 0
         while (i < s.length && args.size < 6) {
             when (s[i]) {
                 '\'', '"' -> {
-                    val quote = s[i]
-                    val start = i + 1
-                    val end = s.indexOf(quote, start)
-                    if (end == -1) break
-                    args.add(s.substring(start, end))
-                    i = end + 1
+                    val q = s[i]; val start = i + 1; i++
+                    while (i < s.length && s[i] != q) i++
+                    args.add(s.substring(start, i))
+                    if (i < s.length) i++
                 }
-                in '0'..'9', '-' -> {
+                in '0'..'9' -> {
                     val start = i
-                    while (i < s.length && (s[i].isDigit() || s[i] == '-')) i++
+                    while (i < s.length && s[i].isDigit()) i++
                     args.add(s.substring(start, i))
                 }
                 else -> i++
             }
-            while (i < s.length && (s[i] == ',' || s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) i++
+            while (i < s.length && (s[i] == ',' || s[i] == ' ')) i++
+            // skip .split('|') or .split("|")
+            if (i + 6 < s.length && s.substring(i, i + 6) == ".split") {
+                i += 6
+                while (i < s.length && s[i] != ')') i++
+                if (i < s.length) i++
+                while (i < s.length && (s[i] == ',' || s[i] == ' ')) i++
+            }
         }
         return args
     }
