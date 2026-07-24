@@ -21,11 +21,13 @@ class TokianimeProvider : MainAPI() {
     override val mainPage = mainPageOf(
         "#ultimos" to "Últimos Episodios",
         "/" to "Tendencia",
-        "/genero/accion" to "Acción",
         "/genero/comedia" to "Comedia",
+        "/genero/accion" to "Acción",
         "/genero/fantasia" to "Fantasía",
         "/genero/drama" to "Drama",
+        "/genero/aventura" to "Aventura",
         "/genero/romance" to "Romance",
+        "/genero/recuentos-de-la-vida" to "Recuentos de la Vida",
         "/genero/sci-fi" to "Sci-Fi",
     )
 
@@ -58,7 +60,7 @@ class TokianimeProvider : MainAPI() {
                 Log.i("Tokianime", "getMainPage(/): items después de parsear=${items.size}")
                 if (items.isEmpty()) {
                     Log.w("Tokianime", "getMainPage(/): 0 items, revisa el selector CSS 'section a[href^=/anime/]'")
-                    // intentar con selector más genérico
+
                     val fallbackLinks = doc.select("a[href^='/anime/']")
                     Log.i("Tokianime", "getMainPage(/): fallback genérico encontró ${fallbackLinks.size} links")
                     return null
@@ -79,9 +81,9 @@ class TokianimeProvider : MainAPI() {
                         ?: link.attr("title").takeIf { it.isNotBlank() }
                         ?: link.text().takeIf { it.isNotBlank() }
                         ?: return@forEach).trim()
-                    // Filtrar títulos genéricos que no son nombres de anime
+
                     if (title.equals("Ver ahora", ignoreCase = true) || title.equals("Watch now", ignoreCase = true)) return@forEach
-                    // Convertir URL de watch anime: /watch/slug/ep → /anime/slug
+
                     val slug = Regex("""/watch/([^/]+)""").find(href)?.groupValues?.get(1) ?: return@forEach
                     if (seenSlugs.contains(slug)) return@forEach
                     seenSlugs.add(slug)
@@ -176,7 +178,6 @@ class TokianimeProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            // Si la URL es de watch (/watch/slug/ep), extraer slug del anime
             val watchMatch = Regex("""/watch/([^/]+)""").find(url)
             val slug = watchMatch?.groupValues?.get(1)
                 ?: url.substringAfter("/anime/").substringBefore("?")
@@ -204,7 +205,7 @@ class TokianimeProvider : MainAPI() {
             val scoreText = doc.select("div:contains(Puntuación)").firstOrNull()
                 ?.text()?.substringAfter("Puntuación")?.substringBefore("/")?.trim()
             val score = scoreText?.toFloatOrNull()
-            // Extraer año del primer <span class="tabular-nums"> que sea un año válido (no URLs con 1920x...)
+
             val yearRaw = doc.select("span.tabular-nums").firstOrNull()?.text()?.trim()?.toIntOrNull()
                 ?: Regex("""\b(19[0-9]{2}|20[0-9]{2})\b""").find(html)?.groupValues?.get(1)?.toIntOrNull()
             val year = if (yearRaw != null && yearRaw in 1900..2050) yearRaw else null
@@ -215,7 +216,6 @@ class TokianimeProvider : MainAPI() {
             val episodes = mutableListOf<Episode>()
             val seenSlugs = mutableSetOf<String>()
 
-            // Función helper para obtener episodios de un slug via API
             suspend fun fetchEpisodes(epSlug: String, seasonNum: Int): List<Episode> {
                 val result = mutableListOf<Episode>()
                 try {
@@ -249,7 +249,6 @@ class TokianimeProvider : MainAPI() {
                 return result
             }
 
-            // 1. Intentar parsear "Ver orden sugerido" para multi-temporada
             try {
                 val suggestButton = doc.select("button:contains(Ver orden sugerido)").firstOrNull()
                 if (suggestButton != null) {
@@ -267,7 +266,7 @@ class TokianimeProvider : MainAPI() {
                             ?: seasonSlug
                         entries.add(SeasonEntry(seasonSlug, seasonName, idx))
                     }
-                    // Ordenar: Temporadas primero, luego OVA/Especial/Película
+
                     entries.sortWith(compareBy<SeasonEntry> {
                         when {
                             it.name.contains("Temporada", ignoreCase = true) -> 0
@@ -287,7 +286,6 @@ class TokianimeProvider : MainAPI() {
                 Log.w("Tokianime", "load: error parseando 'Ver orden sugerido': ${e.message}")
             }
 
-            // 2. Si no hay "orden sugerido" o no dio episodios, usar slug actual
             if (episodes.isEmpty() || !seenSlugs.contains(slug)) {
                 if (!seenSlugs.contains(slug)) {
                     seenSlugs.add(slug)
@@ -297,7 +295,6 @@ class TokianimeProvider : MainAPI() {
                 }
             }
 
-            // 3. Fallback: DOM
             if (episodes.isEmpty()) {
                 val epItems = doc.select("a[href^='/watch/$slug/']")
                 Log.i("Tokianime", "load: episodios por DOM (a[href^=/watch/$slug/]) = ${epItems.size}")
@@ -317,7 +314,6 @@ class TokianimeProvider : MainAPI() {
                 }
             }
 
-            // 4. Fallback: regex de total
             if (episodes.isEmpty()) {
                 Log.i("Tokianime", "load: DOM no dio episodios, buscando regex de total de episodios")
                 val totalEps = Regex("""(\d+)\s*eps""", RegexOption.IGNORE_CASE).find(html)
@@ -396,7 +392,6 @@ class TokianimeProvider : MainAPI() {
             val hasRankedServers = html.contains("rankedServers")
             Log.i("Tokianime", "loadLinks: contiene 'rankedServers'=$hasRankedServers")
 
-            // Normalizar RSC data: reemplazar \" con " para que el regex funcione
             val normalized = html.replace("\\\"", "\"")
             val playRegex = Regex(""""lang":"([^"]+)".*?"quality":"([^"]+)".*?"play":\{"src":"(/api/player/source[^"]+)""")
             val matches = playRegex.findAll(normalized).toList()
@@ -408,7 +403,7 @@ class TokianimeProvider : MainAPI() {
                 val normMatches = Regex("""/api/player/source[^"]*""").findAll(normalized).toList()
                 Log.i("Tokianime", "loadLinks: raw src matches=${rawMatches.map { it.value }}")
                 Log.i("Tokianime", "loadLinks: normalized src matches=${normMatches.map { it.value.take(100) }}")
-                // Fallback: extraer sid del RSC buscando directamente
+
                 val rscFull = rscChunks.joinToString("") { it.value }
                     .replace("\\\"", "\"")
                     .replace("\\n", "")
@@ -416,7 +411,7 @@ class TokianimeProvider : MainAPI() {
                 val rankedMatch = Regex(""""rankedServers""").find(rscFull)
                 Log.i("Tokianime", "loadLinks: rankedServers en RSC unido=${rankedMatch != null}")
                 if (rankedMatch != null) {
-                    // extraer src URLs del JSON
+
                     val srcRegex = Regex(""""src":"(/api/player/source[^"]+)""")
                     val srcs = srcRegex.findAll(rscFull).map { it.groupValues[1] }.toList()
                     Log.i("Tokianime", "loadLinks: srcs de RSC unido = ${srcs}")
