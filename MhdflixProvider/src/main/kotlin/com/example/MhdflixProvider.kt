@@ -487,6 +487,17 @@ class MhdflixProvider : MainAPI() {
         )
     }
 
+    private fun isDirectMediaUrl(url: String): Boolean {
+        val path = url.substringAfter("://").substringAfter("/")
+        return path.contains(".mp4", ignoreCase = true) ||
+               path.contains(".m3u8", ignoreCase = true) ||
+               path.contains(".mkv", ignoreCase = true) ||
+               path.contains(".webm", ignoreCase = true) ||
+               path.contains(".ts", ignoreCase = true) ||
+               path.contains(".avi", ignoreCase = true) ||
+               path.contains("streamtape", ignoreCase = true)
+    }
+
     @Suppress("DEPRECATION")
     private fun createSubtitleFile(lang: String, url: String): SubtitleFile {
         return SubtitleFile(
@@ -502,32 +513,21 @@ class MhdflixProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("Mhdflix-Links", "Processing ${links.size} links with referer: $referer")
-        
-        val extractorDomains = setOf(
-            "dood", "doodstream", "streamwish", "filelions", "streamhub",
-            "luluvdo", "netu", "uqload", "mixdrop", "netuplayer",
-            "bysejikuar", "vidhidepro", "voe", "streamvid",
-            "filemoon", "mp4upload", "gdriveplayer", "ok.ru", "vk",
-            "streamtape", "filemoon0", "gupload", "savefiles", "streamp2p",
-            "cubeembed", "rpmvid", "sendvid"
-        )
-        
+
         val directLinks = mutableListOf<ApiLink>()
         val extractorLinks = mutableListOf<Pair<ApiLink, String>>()
 
         for (item in links) {
             val videoUrl = item.url ?: item.embedUrl ?: item.iframeUrl
             if (videoUrl.isNullOrBlank() || videoUrl.contains("undefined")) continue
-            val hasExtractor = extractorDomains.any { domain -> videoUrl.contains(domain, ignoreCase = true) }
-            val isDirect = videoUrl.contains(".mp4", ignoreCase = true) || videoUrl.contains("streamtape", ignoreCase = true)
-            if ((isDirect && !hasExtractor) || !hasExtractor) {
+            if (isDirectMediaUrl(videoUrl)) {
                 directLinks.add(item)
             } else {
                 extractorLinks.add(item to videoUrl)
             }
         }
 
-        // Process direct links immediately (no blocking)
+        // Process direct media URLs immediately
         var found = false
         for (item in directLinks) {
             val videoUrl = item.url ?: item.embedUrl ?: item.iframeUrl ?: continue
@@ -551,7 +551,7 @@ class MhdflixProvider : MainAPI() {
             }
         }
 
-        // Process extractor links in parallel, emit as each completes
+        // Process embed URLs via extractors in parallel
         if (extractorLinks.isNotEmpty()) {
             coroutineScope {
                 extractorLinks.map { (item, videoUrl) ->

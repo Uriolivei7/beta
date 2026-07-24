@@ -10,6 +10,7 @@ class MhdflixPlugin : Plugin() {
         registerMainAPI(MhdflixProvider())
         registerExtractorAPI(ByseExtractor())
         registerExtractorAPI(MhdflixCubeembed())
+        registerExtractorAPI(MhdflixVidHide())
         registerExtractorAPI(Sendvid())
     }
 }
