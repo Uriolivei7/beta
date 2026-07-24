@@ -485,21 +485,37 @@ class TokianimeProvider : MainAPI() {
                     Log.i("Tokianime", "loadLinks: consultando API player source: $apiUrl")
                     try {
                         val respCall = app.get(apiUrl, headers = headers)
-                        val headBuf = ByteArray(100)
+                        val headBuf = ByteArray(10240)
                         val headRead = respCall.body.byteStream().use { s -> s.read(headBuf) }
                         val headStr = if (headRead > 0) String(headBuf, 0, headRead) else ""
-                        Log.i("Tokianime", "loadLinks: header='${headStr.take(50)}'")
-                        if (headStr.trimStart().startsWith("#EXTM3U") || headStr.contains("ftyp")) {
-                            val langLabel = if (lang.equals("es", ignoreCase = true)) "ES" else lang.uppercase()
-                            val linkType = if (headStr.trimStart().startsWith("#EXTM3U")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            Log.i("Tokianime", "loadLinks: enlace válido! lang='$lang' label='$langLabel' q=$quality type=$linkType url='$apiUrl'")
-                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, linkType) {
-                                this.referer = mainUrl
-                                this.quality = quality
+                        Log.i("Tokianime", "loadLinks: header='${headStr.take(100)}'")
+                        val langLabel = if (lang.equals("es", ignoreCase = true)) "ES" else lang.uppercase()
+
+                        if (headStr.trimStart().startsWith("#EXTM3U")) {
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, ExtractorLinkType.M3U8) {
+                                this.referer = mainUrl; this.quality = quality
                             })
                             found = true
+                            Log.i("Tokianime", "loadLinks: enlace M3U8 agregado [$langLabel] q=$quality")
+                        } else if (headStr.contains("ftyp")) {
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, ExtractorLinkType.VIDEO) {
+                                this.referer = mainUrl; this.quality = quality
+                            })
+                            found = true
+                            Log.i("Tokianime", "loadLinks: enlace MP4 agregado [$langLabel] q=$quality")
+                        } else if (headStr.contains("<!DOCTYPE html", ignoreCase = true) || headStr.contains("<html", ignoreCase = true)) {
+                            val m3u8InHtml = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""").find(headStr)?.groupValues?.get(1)
+                            if (m3u8InHtml != null) {
+                                callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", m3u8InHtml, ExtractorLinkType.M3U8) {
+                                    this.referer = mainUrl; this.quality = quality
+                                })
+                                found = true
+                                Log.i("Tokianime", "loadLinks: enlace M3U8 extraído de HTML [$langLabel]")
+                            } else {
+                                Log.w("Tokianime", "loadLinks: HTML sin M3U8 para match[$idx]")
+                            }
                         } else {
-                            Log.w("Tokianime", "loadLinks: respuesta no reconocida para match[$idx] (header='${headStr.take(100)}')")
+                            Log.w("Tokianime", "loadLinks: respuesta no reconocida para match[$idx]: '${headStr.take(100)}'")
                         }
                     } catch (e: Exception) {
                         Log.e("Tokianime", "loadLinks: error al consultar API player source match[$idx]: ${e.message}")
