@@ -490,9 +490,10 @@ class TokianimeProvider : MainAPI() {
                         val headStr = if (headRead > 0) String(headBuf, 0, headRead) else ""
                         Log.i("Tokianime", "loadLinks: header='${headStr.take(50)}'")
                         if (headStr.trimStart().startsWith("#EXTM3U") || headStr.contains("ftyp")) {
+                            val langLabel = if (lang.equals("es", ignoreCase = true)) "ES" else lang.uppercase()
                             val linkType = if (headStr.trimStart().startsWith("#EXTM3U")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            Log.i("Tokianime", "loadLinks: enlace válido! lang='$lang' q=$quality type=$linkType url='$apiUrl'")
-                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$lang]", apiUrl, linkType) {
+                            Log.i("Tokianime", "loadLinks: enlace válido! lang='$lang' label='$langLabel' q=$quality type=$linkType url='$apiUrl'")
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, linkType) {
                                 this.referer = mainUrl
                                 this.quality = quality
                             })
