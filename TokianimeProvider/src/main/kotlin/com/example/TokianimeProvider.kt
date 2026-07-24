@@ -452,7 +452,7 @@ class TokianimeProvider : MainAPI() {
                     try {
                         val apiUrl = "$mainUrl${src.replace("""\u0026""", "&")}"
                         Log.i("Tokianime", "loadLinks: intentando normMatch: $apiUrl")
-                        val m3u8Resp = app.get(apiUrl, headers = headers).text
+                        val m3u8Resp = app.get(apiUrl, headers = headers).body.string()
                         if (m3u8Resp.trimStart().startsWith("#EXTM3U")) {
                             Log.i("Tokianime", "loadLinks: M3U8 válido via normMatch! url='$apiUrl'")
                             callback.invoke(newExtractorLink("Tokianime", "Tokianime", apiUrl, ExtractorLinkType.M3U8) {
@@ -479,7 +479,7 @@ class TokianimeProvider : MainAPI() {
                     val cleanSrc = playSrc.replace("""\u0026""", "&")
                     val apiUrl = "$mainUrl$cleanSrc"
                     Log.i("Tokianime", "loadLinks: consultando API player source: $apiUrl")
-                    val m3u8Resp = app.get(apiUrl, headers = headers).text
+                    val m3u8Resp = app.get(apiUrl, headers = headers).body.string()
                     Log.i("Tokianime", "loadLinks: respuesta API (primeros 500 chars)=${m3u8Resp.take(500)}")
 
                     if (m3u8Resp.trimStart().startsWith("#EXTM3U")) {
