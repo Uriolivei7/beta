@@ -268,13 +268,7 @@ class TokianimeProvider : MainAPI() {
                     }
 
                     entries.sortWith(compareBy<SeasonEntry> {
-                        when {
-                            it.name.contains("Temporada", ignoreCase = true) -> 0
-                            it.name.contains("OVA", ignoreCase = true) -> 1
-                            it.name.contains("Especial", ignoreCase = true) || it.name.contains("Special", ignoreCase = true) -> 2
-                            it.name.contains("Película", ignoreCase = true) || it.name.contains("Movie", ignoreCase = true) -> 3
-                            else -> 4
-                        }
+                        if (it.name.contains("Temporada", ignoreCase = true)) 0 else 1
                     }.thenBy { it.order })
                     for ((seasonNum, entry) in entries.withIndex()) {
                         Log.i("Tokianime", "load: orden sugerido #${seasonNum+1} slug='${entry.slug}' name='${entry.name}'")
