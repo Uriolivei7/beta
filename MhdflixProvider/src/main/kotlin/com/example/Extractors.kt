@@ -85,28 +85,15 @@ class MhdflixStreamWish : ExtractorApi() {
             return
         }
 
-        // Try eval packed JS decoding with manual string parsing
+        // Try eval packed JS: find }('...' pattern instead of brace counting
         val evalFn = "eval(function(p,a,c,k,e,d){"
         val evalStart = html.indexOf(evalFn)
         if (evalStart >= 0) {
-            var braceDepth = 0
-            var fnBodyEnd = -1
-            var i = evalStart + evalFn.length
-            while (i < html.length) {
-                when (html[i]) {
-                    '{' -> braceDepth++
-                    '}' -> {
-                        braceDepth--
-                        if (braceDepth == 0) { fnBodyEnd = i; break }
-                    }
-                }
-                i++
-            }
-            if (fnBodyEnd >= 0) {
-                var argIdx = fnBodyEnd + 1
-                while (argIdx < html.length && html[argIdx] != '\'') argIdx++
-                if (argIdx >= html.length) return
-                argIdx++; val pStart = argIdx
+            val callStart = html.indexOf("}('", evalStart)
+            if (callStart >= 0) {
+                var argIdx = callStart + 3
+                if (argIdx < html.length && html[argIdx] == '\'') argIdx++ else return
+                val pStart = argIdx
                 while (argIdx < html.length && html[argIdx] != '\'') argIdx++
                 if (argIdx >= html.length) return
                 val p = html.substring(pStart, argIdx); argIdx++
@@ -171,98 +158,70 @@ class MhdflixVidHide : ExtractorApi() {
         val evalMarker = "eval(function(p,a,c,k,e,d){"
         val evalStart = html.indexOf(evalMarker)
         Log.d("MhdflixVidHide", "evalStart=$evalStart")
-        if (evalStart < 0) {
-            Log.d("MhdflixVidHide", "eval marker not found, html length=${html.length}, searching for 'eval(function'")
-            return
-        }
+        if (evalStart < 0) { Log.d("MhdflixVidHide", "marker not found"); return }
 
-        var braceDepth = 0
-        var fnBodyEnd = -1
-        var i = evalStart + evalMarker.length
-        while (i < html.length) {
-            when (html[i]) {
-                '{' -> braceDepth++
-                '}' -> {
-                    braceDepth--
-                    if (braceDepth == 0) { fnBodyEnd = i; break }
-                }
-            }
-            i++
-        }
-        Log.d("MhdflixVidHide", "fnBodyEnd=$fnBodyEnd braceDepth=$braceDepth i=$i")
-        if (fnBodyEnd < 0) return
+        // Instead of brace-counting, search for `}('` after the eval marker
+        val callStart = html.indexOf("}('", evalStart)
+        Log.d("MhdflixVidHide", "callStart='}' index=$callStart")
+        if (callStart < 0) { Log.d("MhdflixVidHide", "}(' not found"); return }
 
-        val callPart = html.substring(fnBodyEnd + 1).trimStart()
-        Log.d("MhdflixVidHide", "callPart starts with: '${callPart.take(50)}'")
-        if (!callPart.startsWith('(')) return
-
-        // Direct approach: manually parse the eval call args
-        // The structure after fnBodyEnd is: ('p_string',a,c,'k_string'.split('|'))
-        var argIdx = fnBodyEnd + 1
-        // skip past `(`
-        while (argIdx < html.length && html[argIdx] != '\'') argIdx++
-        if (argIdx >= html.length) return
-        argIdx++ // skip opening '
+        // Now parse the call: }('p_string',a,c,'k_string'.split('|'))
+        var argIdx = callStart + 3 // skip `}('`
+        // skip opening '
+        if (argIdx >= html.length || html[argIdx] != '\'') { Log.d("MhdflixVidHide", "no opening ' after }("); return }
+        argIdx++
         val pStart = argIdx
+        // Find closing ' of p string (it's the first ' after p)
         while (argIdx < html.length && html[argIdx] != '\'') argIdx++
         if (argIdx >= html.length) return
         val p = html.substring(pStart, argIdx)
-        Log.d("MhdflixVidHide", "p length=${p.length}, start='${p.take(50)}'")
-        argIdx++ // skip closing '
+        Log.d("MhdflixVidHide", "p len=${p.length} start='${p.take(50)}'")
+        argIdx++
 
-        // skip `,`
+        // skip comma
         if (argIdx < html.length && html[argIdx] == ',') argIdx++
         while (argIdx < html.length && html[argIdx] == ' ') argIdx++
 
-        // read a (digits)
+        // read a
         val aStart = argIdx
         while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
         val a = html.substring(aStart, argIdx).toIntOrNull() ?: 36
-        Log.d("MhdflixVidHide", "a=$a")
         if (argIdx < html.length && html[argIdx] == ',') argIdx++
         while (argIdx < html.length && html[argIdx] == ' ') argIdx++
 
-        // read c (digits)
+        // read c
         val cStart = argIdx
         while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
         val c = html.substring(cStart, argIdx).toIntOrNull() ?: 0
-        Log.d("MhdflixVidHide", "c=$c")
         if (argIdx < html.length && html[argIdx] == ',') argIdx++
         while (argIdx < html.length && html[argIdx] == ' ') argIdx++
 
-        // read k string: '...'.split('|')
-        if (argIdx >= html.length || html[argIdx] != '\'') {
-            Log.d("MhdflixVidHide", "k string start not found at idx=$argIdx")
-            return
-        }
-        argIdx++ // skip opening '
+        // read k string: '...'
+        if (argIdx >= html.length || html[argIdx] != '\'') { Log.d("MhdflixVidHide", "no opening ' for k"); return }
+        argIdx++
         val kStart = argIdx
         while (argIdx < html.length && html[argIdx] != '\'') argIdx++
         if (argIdx >= html.length) return
-        val kRaw = html.substring(kStart, argIdx)
-        val k = kRaw.split("|")
-        Log.d("MhdflixVidHide", "k size=${k.size}, first few=${k.take(5)}")
+        val k = html.substring(kStart, argIdx).split("|")
+        Log.d("MhdflixVidHide", "a=$a c=$c k size=${k.size} first5=${k.take(5)}")
 
         var decoded = p
         for (idx in k.indices.reversed()) {
             if (k[idx].isBlank()) continue
-            val token = idx.toString(a)
-            decoded = decoded.replace(Regex("\\b$token\\b"), k[idx])
+            decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
         }
+        Log.d("MhdflixVidHide", "decoded len=${decoded.length}")
 
         val decodedM3u8 = m3u8Regex.find(decoded)?.value
         if (decodedM3u8 != null) {
-            Log.d("MhdflixVidHide", "M3U8 found: ${decodedM3u8.take(100)}")
+            Log.d("MhdflixVidHide", "M3U8: ${decodedM3u8.take(100)}")
             callback.invoke(newExtractorLink("VidHide", "VidHide", decodedM3u8, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
             })
             return
         }
-        Log.d("MhdflixVidHide", "No M3U8 in decoded. decoded length=${decoded.length}")
-        // Search for any http URL in decoded
-        val anyUrl = Regex("""https?://[^"'\s,;<>]+""").findAll(decoded)
-        val urls = anyUrl.take(5).map { it.value }.toList()
-        Log.d("MhdflixVidHide", "URLs in decoded: $urls")
+        val anyUrl = Regex("""https?://[^"'\s,;<>]+""").findAll(decoded).take(3).map { it.value }.toList()
+        Log.d("MhdflixVidHide", "No M3U8. URLs in decoded: $anyUrl")
     }
 }
 
