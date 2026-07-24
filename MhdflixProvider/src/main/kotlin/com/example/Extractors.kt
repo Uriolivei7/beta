@@ -85,13 +85,13 @@ class MhdflixStreamWish : ExtractorApi() {
             return
         }
 
-        // Try eval packed JS: find }('...' pattern instead of brace counting
+        // Try eval packed JS: find }('...' pattern
         val evalFn = "eval(function(p,a,c,k,e,d){"
         val evalStart = html.indexOf(evalFn)
         if (evalStart >= 0) {
             val callStart = html.indexOf("}('", evalStart)
             if (callStart >= 0) {
-                var argIdx = callStart + 3
+                var argIdx = callStart + 2 // point to ' (opening quote of p-string)
                 if (argIdx < html.length && html[argIdx] == '\'') argIdx++ else return
                 val pStart = argIdx
                 while (argIdx < html.length && html[argIdx] != '\'') argIdx++
@@ -160,15 +160,13 @@ class MhdflixVidHide : ExtractorApi() {
         Log.d("MhdflixVidHide", "evalStart=$evalStart")
         if (evalStart < 0) { Log.d("MhdflixVidHide", "marker not found"); return }
 
-        // Instead of brace-counting, search for `}('` after the eval marker
         val callStart = html.indexOf("}('", evalStart)
         Log.d("MhdflixVidHide", "callStart='}' index=$callStart")
         if (callStart < 0) { Log.d("MhdflixVidHide", "}(' not found"); return }
 
-        // Now parse the call: }('p_string',a,c,'k_string'.split('|'))
-        var argIdx = callStart + 3 // skip `}('`
-        // skip opening '
-        if (argIdx >= html.length || html[argIdx] != '\'') { Log.d("MhdflixVidHide", "no opening ' after }("); return }
+        // Parse: }('p_string',a,c,'k_string'.split('|'))
+        var argIdx = callStart + 2 // point to ' (opening quote of p-string)
+        if (argIdx >= html.length || html[argIdx] != '\'') { Log.d("MhdflixVidHide", "no opening ' at argIdx=$argIdx"); return }
         argIdx++
         val pStart = argIdx
         // Find closing ' of p string (it's the first ' after p)

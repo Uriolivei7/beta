@@ -541,7 +541,7 @@ class MhdflixProvider : MainAPI() {
                 if (evalStart >= 0) {
                     val callStart = html.indexOf("}('", evalStart)
                     if (callStart >= 0) {
-                        var argIdx = callStart + 3
+                        var argIdx = callStart + 2
                         if (argIdx < html.length && html[argIdx] == '\'') argIdx++
                         if (argIdx < html.length) {
                             val pStart = argIdx
