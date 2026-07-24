@@ -498,6 +498,94 @@ class MhdflixProvider : MainAPI() {
                path.contains("streamtape", ignoreCase = true)
     }
 
+    private fun fixEmbedUrl(url: String): String {
+        return url
+            .replaceFirst("https://minochinos.com", "https://vidhidepro.com")
+            .replaceFirst("https://hglink.to", "https://streamwish.to")
+            .replaceFirst("https://swdyu.com", "https://streamwish.to")
+            .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+            .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+            .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+            .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
+            .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+    }
+
+    @Suppress("DEPRECATION")
+    private suspend fun inlineExtract(
+        url: String,
+        referer: String,
+        prefixName: String,
+        languageName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var found = false
+        try {
+            val resp = app.get(url, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to referer,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ), timeout = 15000L)
+            val html = resp.text
+
+            val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.(?:m3u8|mp4)[^"'<>\s]*)""")
+            val directMatch = m3u8Regex.find(html)
+            if (directMatch != null) {
+                callback.invoke(createExtractorLink(prefixName, "${prefixName} [$languageName]", directMatch.value, referer, Qualities.Unknown.value, INFER_TYPE))
+                return true
+            }
+
+            val evalRegex = Regex("""eval\(([^)]+)\)""")
+            val evalMatch = evalRegex.find(html)
+            if (evalMatch != null) {
+                try {
+                    val params = evalMatch.groupValues[1].split(",")
+                    if (params.size >= 6) {
+                        val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
+                        val a = params[1].trim().toIntOrNull() ?: 36
+                        val c = params[2].trim().toIntOrNull() ?: 0
+                        val k = params.drop(3).map { it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"") }.take(c)
+                        var decoded = p
+                        for (i in k.indices.reversed()) {
+                            if (k[i].isBlank()) continue
+                            decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), k[i])
+                        }
+                        val decodedM3u8 = m3u8Regex.find(decoded)
+                        if (decodedM3u8 != null) {
+                            callback.invoke(createExtractorLink(prefixName, "${prefixName} [$languageName]", decodedM3u8.value, referer, Qualities.Unknown.value, INFER_TYPE))
+                            return true
+                        }
+                    }
+                } catch (_: Exception) { }
+            }
+
+            val doc = resp.document
+            doc.select("iframe[src]").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank() && !src.contains("undefined")) {
+                    val iframeUrl = fixUrl(src)
+                    Log.d("Mhdflix-Links", "Fallback: following iframe to $iframeUrl")
+                    loadExtractor(iframeUrl, referer, subtitleCallback) { link ->
+                        if (link.url.isNotBlank()) {
+                            val videoLink = ExtractorLink(
+                                source = prefixName,
+                                name = "${link.name} [$languageName]",
+                                url = link.url,
+                                referer = link.referer.ifBlank { "" },
+                                quality = link.quality,
+                                type = link.type
+                            )
+                            videoLink.headers = link.headers
+                            callback.invoke(videoLink)
+                            found = true
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+        return found
+    }
+
     @Suppress("DEPRECATION")
     private fun createSubtitleFile(lang: String, url: String): SubtitleFile {
         return SubtitleFile(
@@ -551,7 +639,7 @@ class MhdflixProvider : MainAPI() {
             }
         }
 
-        // Process embed URLs via extractors in parallel
+        // Process embed URLs via extractors in parallel, with inline fallback
         if (extractorLinks.isNotEmpty()) {
             coroutineScope {
                 extractorLinks.map { (item, videoUrl) ->
@@ -559,10 +647,11 @@ class MhdflixProvider : MainAPI() {
                         val serverName = item.server?.name ?: item.serverName ?: "Server"
                         val languageName = item.language?.name ?: item.languageName ?: "Latino"
                         val linkName = "$serverName - $languageName"
+                        var foundByExtractor = false
                         try {
                             val ok = withTimeout(20000L) {
                                 loadExtractor(videoUrl, referer, subtitleCallback) { link ->
-                                    Log.d("Mhdflix-Links", "Extractor callback: url=${link.url.take(100)}, source=${link.source}, name=${link.name}")
+                                    Log.d("Mhdflix-Links", "Extractor callback: url=${link.url.take(100)}, source=${link.source}")
                                     if (link.url.isNotBlank()) {
                                         @Suppress("DEPRECATION")
                                         val videoLink = ExtractorLink(
@@ -576,6 +665,7 @@ class MhdflixProvider : MainAPI() {
                                         videoLink.headers = link.headers
                                         callback.invoke(videoLink)
                                         found = true
+                                        foundByExtractor = true
                                     }
                                 }
                             }
@@ -584,9 +674,22 @@ class MhdflixProvider : MainAPI() {
                             }
                             if (ok) Log.d("Mhdflix-Links", "Extractor OK: $serverName")
                         } catch (e: TimeoutCancellationException) {
-                            Log.w("Mhdflix-Links", "Extractor timed out (20s): $serverName - $videoUrl")
+                            Log.w("Mhdflix-Links", "Extractor timed out (20s): $serverName")
                         } catch (e: Exception) {
                             Log.e("Mhdflix-Links", "Extractor failed: $serverName - ${e.message}")
+                        }
+
+                        // Inline fallback: fetch embed page, try eval/M3U8/iframe
+                        if (!foundByExtractor) {
+                            Log.d("Mhdflix-Links", "Inline fallback for: $videoUrl")
+                            try {
+                                val fixedUrl = fixEmbedUrl(videoUrl)
+                                if (inlineExtract(fixedUrl, referer, linkName, languageName, subtitleCallback, callback)) {
+                                    found = true
+                                }
+                            } catch (e: Exception) {
+                                Log.e("Mhdflix-Links", "Inline fallback error: ${e.message}")
+                            }
                         }
                     }
                 }

@@ -64,18 +64,19 @@ class ByseExtractor : ExtractorApi() {
 
 class MhdflixVidHide : ExtractorApi() {
     override var name = "MhdflixVidHide"
-    override var mainUrl = "https://minochinos.com"
+    override var mainUrl = "https://vidhidepro.com"
     override val requiresReferer = false
 
     override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer" to "https://minochinos.com/",
-            "Accept-Language" to "es"
+            "Referer" to url,
+            "Accept-Language" to "es",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         )
 
         val html = app.get(url, headers = headers).text
-        val m3u8Regex = Regex("""(https?://[^"'<>]+\.m3u8[^"'<>]*)""")
+        val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""")
 
         val directM3u8 = m3u8Regex.find(html)
         if (directM3u8 != null) {
@@ -85,126 +86,40 @@ class MhdflixVidHide : ExtractorApi() {
             return
         }
 
-        val evalFn = "eval(function(p,a,c,k,e,d)"
-        val evalStart = html.indexOf(evalFn)
-        if (evalStart == -1) {
-            Log.d("MhdflixVidHide", "No eval found")
-            return
-        }
-
-        val evalContent = extractBalanced(html, evalStart + "eval(".length)
-        val fnBodyStart = evalContent.indexOf('{')
-        val fnBodyEnd = findMatchingBrace(evalContent, fnBodyStart)
-        if (fnBodyEnd == -1) return
-
-        val afterFnBody = evalContent.substring(fnBodyEnd + 1).trimStart()
-        if (!afterFnBody.startsWith('(')) {
-            Log.d("MhdflixVidHide", "No call args after function body. afterFnBody starts with: ${afterFnBody.take(20)}")
-            return
-        }
-
-        val callContent = extractBalanced(afterFnBody, 0)
-        val args = parseEvalArgs(callContent)
-        Log.d("MhdflixVidHide", "Parsed ${args.size} args: ${args.mapIndexed { i, a -> "$i=${a.take(50)}" }}")
-        if (args.size < 4) {
-            Log.d("MhdflixVidHide", "Not enough args: ${args.size}")
-            return
-        }
-
-        val p = args[0]
-        val a = args[1].toIntOrNull() ?: 36
-        val c = args[2].toIntOrNull() ?: 0
-        val tokensRaw = args[3]
-        val k = tokensRaw.split("|")
-
-        Log.d("MhdflixVidHide", "Decoding: a=$a c=$c k.size=${k.size} p.length=${p.length}")
-
-        val decoded = decodePackedJs(p, a, c, k)
-        Log.d("MhdflixVidHide", "Decoded length=${decoded.length}, first 400: ${decoded.take(400)}")
-
-        val m3u8Match = m3u8Regex.find(decoded)
-        if (m3u8Match != null) {
-            Log.d("MhdflixVidHide", "M3U8 found: ${m3u8Match.value.take(100)}")
-            callback.invoke(newExtractorLink("VidHide", "VidHide", m3u8Match.value, ExtractorLinkType.M3U8) {
-                this.referer = mainUrl
-            })
-        } else {
-            val anyUrl = Regex("""https?://[^"'\s,;<>]+""").findAll(decoded)
-            val urls = anyUrl.take(5).map { it.value }.toList()
-            Log.d("MhdflixVidHide", "No M3U8. URLs: $urls")
-            Log.d("MhdflixVidHide", "k[0]=${k.firstOrNull()?.take(30)} k.last=${k.lastOrNull()?.take(30)}")
-        }
-    }
-
-    private fun extractBalanced(s: String, openParenIdx: Int): String {
-        val openChar = s[openParenIdx]
-        val closeChar = when (openChar) { '(' -> ')'; '{' -> '}'; else -> return "" }
-        var depth = 0
-        var i = openParenIdx
-        while (i < s.length) {
-            when (s[i]) {
-                openChar -> depth++
-                closeChar -> { depth--; if (depth == 0) return s.substring(openParenIdx + 1, i) }
-                '\'', '"' -> {
-                    val q = s[i]; i++
-                    while (i < s.length && s[i] != q) i++
+        val evalPattern = Regex("""eval\(([^)]+)\)""")
+        val evalMatch = evalPattern.find(html)
+        if (evalMatch != null) {
+            val evalContent = evalMatch.groupValues[1]
+            val params = evalContent.split(",")
+            if (params.size >= 6) {
+                try {
+                    val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
+                    val a = params[1].trim().toIntOrNull() ?: 36
+                    val c = params[2].trim().toIntOrNull() ?: 0
+                    val kList = params.drop(3).map {
+                        it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
+                    }.take(c)
+                    val decoded = decodeEval(p, a, c, kList)
+                    val decodedM3u8 = m3u8Regex.find(decoded)?.value
+                    if (decodedM3u8 != null) {
+                        callback.invoke(newExtractorLink("VidHide", "VidHide", decodedM3u8, ExtractorLinkType.M3U8) {
+                            this.referer = mainUrl
+                        })
+                        return
+                    }
+                    Log.d("MhdflixVidHide", "No M3U8 after eval decode. decoded length=${decoded.length}")
+                } catch (e: Exception) {
+                    Log.d("MhdflixVidHide", "Eval parse error: ${e.message}")
                 }
             }
-            i++
         }
-        return ""
     }
 
-    private fun findMatchingBrace(s: String, openIdx: Int): Int {
-        var depth = 0; var i = openIdx
-        while (i < s.length) {
-            when (s[i]) {
-                '{' -> depth++
-                '}' -> { depth--; if (depth == 0) return i }
-                '\'', '"' -> { val q = s[i]; i++; while (i < s.length && s[i] != q) i++ }
-            }
-            i++
-        }
-        return -1
-    }
-
-    private fun parseEvalArgs(s: String): List<String> {
-        val args = mutableListOf<String>()
-        var i = 0
-        while (i < s.length && args.size < 6) {
-            when (s[i]) {
-                '\'', '"' -> {
-                    val q = s[i]; val start = i + 1; i++
-                    while (i < s.length && s[i] != q) i++
-                    args.add(s.substring(start, i))
-                    if (i < s.length) i++
-                }
-                in '0'..'9' -> {
-                    val start = i
-                    while (i < s.length && s[i].isDigit()) i++
-                    args.add(s.substring(start, i))
-                }
-                else -> i++
-            }
-            while (i < s.length && (s[i] == ',' || s[i] == ' ')) i++
-            // skip .split('|') or .split("|")
-            if (i + 6 < s.length && s.substring(i, i + 6) == ".split") {
-                i += 6
-                while (i < s.length && s[i] != ')') i++
-                if (i < s.length) i++
-                while (i < s.length && (s[i] == ',' || s[i] == ' ')) i++
-            }
-        }
-        return args
-    }
-
-    private fun decodePackedJs(p: String, a: Int, c: Int, k: List<String>): String {
+    private fun decodeEval(p: String, a: Int, c: Int, k: List<String>): String {
         var decoded = p
-        for (i in (0 until c).reversed()) {
-            if (i < k.size && k[i].isNotBlank()) {
-                val token = i.toString(a)
-                decoded = decoded.replace(Regex("\\b${token}\\b"), k[i])
-            }
+        for (i in k.indices.reversed()) {
+            if (k[i].isBlank()) continue
+            decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), k[i])
         }
         return decoded
     }
@@ -356,7 +271,7 @@ class Sendvid : ExtractorApi() {
     }
 }
 
-class MhdflixVoe : ExtractorApi() {
+open class MhdflixVoe : ExtractorApi() {
     override val name = "MhdflixVoe"
     override val mainUrl = "https://voe.sx"
     override val requiresReferer = true
@@ -467,6 +382,42 @@ class MhdflixVoe : ExtractorApi() {
     private fun charShift(input: String, shift: Int): String {
         return input.map { (it.code - shift).toChar() }.joinToString("")
     }
+}
+
+class MhdflixVoeYipsu : MhdflixVoe() {
+    override val mainUrl = "https://yip.su"
+}
+
+class MhdflixVoeDonald : MhdflixVoe() {
+    override val mainUrl = "https://donaldlineelse.com"
+}
+
+class MhdflixVoeCharles : MhdflixVoe() {
+    override val mainUrl = "https://charlestoughrace.com"
+}
+
+class MhdflixVoeTubeless : MhdflixVoe() {
+    override val mainUrl = "https://tubelessceliolymph.com"
+}
+
+class MhdflixVoeSimplum : MhdflixVoe() {
+    override val mainUrl = "https://simpulumlamerop.com"
+}
+
+class MhdflixVoeUroch : MhdflixVoe() {
+    override val mainUrl = "https://urochsunloath.com"
+}
+
+class MhdflixVoeNathan : MhdflixVoe() {
+    override val mainUrl = "https://nathanfromsubject.com"
+}
+
+class MhdflixVoeMetagnath : MhdflixVoe() {
+    override val mainUrl = "https://metagnathtuggers.com"
+}
+
+class MhdflixVoePamela : MhdflixVoe() {
+    override val mainUrl = "https://pamelachangemission.com"
 }
 
 data class VoeDecrypted(
