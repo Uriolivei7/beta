@@ -213,9 +213,14 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - `search()`: usa API `GET /api/catalog?adult=0&q={query}&page=0&pageSize=20` — extrae slugs/titles/posters via regex, limite 50 resultados, detiene en page vacía.
 
 ### 🔧 Última fix (24 Jul)
-- **Search reescrito**: reemplazó fallback por género (30 pages × 10 genres × 3 pages cada uno = lento) con API de catálogo directa.
-- **Bug corregido**: regex `\[(.*?)\]` se detenía en primer `]` (tags array). Ahora extrae slugs/titles/posters independientemente del JSON completo.
+- **Search reescrito**: reemplazó fallback por género (lento) con API `GET /api/catalog?q={query}` directa.
+- **Bug corregido**: regex `\[(.*?)\]` se detenía en primer `]` (tags array). Ahora extrae slugs/titles/posters con regex independientes (no confía en aislar items array).
 - **Loop infinito corregido**: el paginado se detiene cuando `"items":[]` o `results.size >= total`.
+- **Episodios con posters y descripción**: ahora extrae `thumbs.{ep} → posterUrl` y `meta.{ep}.overview → description` del API `api/anime/{slug}/episodes`.
+
+### ✅ Confirmado
+- Search API ya busca en múltiples campos: `title`, `titleEnglish`, `titleNative`, `synonyms`. Buscar "One Punch Man" retorna resultado con `matchedBy:"title"`.
+- Episodios API devuelve `thumbs.{n}` (poster 640.webp) y `meta.{n}.{title,overview}` por cada episodio.
 
 ### 🔬 Próximo
-- Probar en dispositivo: search API, load multi-season, reproducción de video.
+- Probar en dispositivo: search API, load multi-season, episodios con posters/descripción, reproducción de video.

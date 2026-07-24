@@ -224,12 +224,18 @@ class TokianimeProvider : MainAPI() {
                             .map { it.value.toIntOrNull() }.filterNotNull().toList()
                         Log.i("Tokianime", "load: API slug='$epSlug' withVideo=${epNums}")
                         for (epNum in epNums) {
-                            val epTitleRegex = Regex(""""$epNum":\{"title":"([^"]+)""")
-                            val epTitle = epTitleRegex.find(apiResp)?.groupValues?.get(1)
+                            val metaRegex = Regex(""""$epNum":\{"title":"([^"]*)","overview":"([^"]*)"""")
+                            val metaMatch = metaRegex.find(apiResp)
+                            val epTitle = metaMatch?.groupValues?.get(1)
+                            val epOverview = metaMatch?.groupValues?.get(2)
+                            val thumbRegex = Regex(""""$epNum":"([^"]+)"""")
+                            val epThumbnail = thumbRegex.find(apiResp)?.groupValues?.get(1)
                             result.add(newEpisode("$mainUrl/watch/$epSlug/$epNum") {
-                                this.name = epTitle ?: "Episodio $epNum"
+                                this.name = if (epTitle.isNullOrBlank()) "Episodio $epNum" else epTitle
                                 this.episode = epNum
                                 this.season = seasonNum
+                                this.description = epOverview
+                                this.posterUrl = epThumbnail
                             })
                         }
                     }
