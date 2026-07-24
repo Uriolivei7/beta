@@ -163,35 +163,43 @@ class TokianimeProvider : MainAPI() {
         val seen = mutableSetOf<String>()
         val results = mutableListOf<SearchResponse>()
         val qLower = query.lowercase()
-        Log.i("Tokianime", "searchViaGenre: buscando '$query' en ${genres.size} géneros")
+        val maxResults = 50
+        Log.i("Tokianime", "searchViaGenre: buscando '$query' en ${genres.size} géneros (max=$maxResults)")
 
         for (genre in genres) {
-            if (results.size >= 20) break
-            try {
-                val genreUrl = "$mainUrl/genero/$genre"
-                val html = app.get(genreUrl, headers = headers).text
-                val doc = Jsoup.parse(html)
-                val links = doc.select("a[href^='/anime/']")
-                Log.i("Tokianime", "searchViaGenre: género=$genre tiene ${links.size} títulos")
-                var matchesInGenre = 0
-                links.forEach { link ->
-                    if (results.size >= 20) return@forEach
-                    val href = link.attr("href")
-                    if (href.isBlank() || seen.contains(href)) return@forEach
-                    val img = link.selectFirst("img")
-                    val title = img?.attr("alt") ?: link.text().ifBlank { return@forEach }
-                    if (title.lowercase().contains(qLower)) {
-                        val poster = img?.attr("src") ?: ""
-                        seen.add(href)
-                        matchesInGenre++
-                        results.add(newMovieSearchResponse(title, "$mainUrl$href", TvType.Anime) {
-                            this.posterUrl = fixPoster(poster)
-                        })
+            if (results.size >= maxResults) break
+            var page = 1
+            var hasNext = true
+            while (hasNext && results.size < maxResults) {
+                try {
+                    val genreUrl = "$mainUrl/genero/$genre${if (page > 1) "?page=$page" else ""}"
+                    val html = app.get(genreUrl, headers = headers).text
+                    val doc = Jsoup.parse(html)
+                    val links = doc.select("a[href^='/anime/']")
+                    Log.i("Tokianime", "searchViaGenre: género=$genre página=$page tiene ${links.size} títulos")
+                    var matchesInPage = 0
+                    links.forEach { link ->
+                        if (results.size >= maxResults) return@forEach
+                        val href = link.attr("href")
+                        if (href.isBlank() || seen.contains(href)) return@forEach
+                        val img = link.selectFirst("img")
+                        val title = img?.attr("alt") ?: link.text().ifBlank { return@forEach }
+                        if (title.lowercase().contains(qLower)) {
+                            val poster = img?.attr("src") ?: ""
+                            seen.add(href)
+                            matchesInPage++
+                            results.add(newMovieSearchResponse(title, "$mainUrl$href", TvType.Anime) {
+                                this.posterUrl = fixPoster(poster)
+                            })
+                        }
                     }
+                    if (matchesInPage > 0) Log.i("Tokianime", "searchViaGenre: género=$genre p=$page matches=$matchesInPage (acum=${results.size})")
+                    hasNext = doc.select("a:contains(Siguiente)").isNotEmpty() && page < 3
+                    page++
+                } catch (e: Exception) {
+                    Log.w("Tokianime", "searchViaGenre: género=$genre página=$page error=${e.message}")
+                    hasNext = false
                 }
-                if (matchesInGenre > 0) Log.i("Tokianime", "searchViaGenre: género=$genre matches=$matchesInGenre (acumulado=${results.size})")
-            } catch (e: Exception) {
-                Log.w("Tokianime", "searchViaGenre: género=$genre error=${e.message}")
             }
         }
         Log.i("Tokianime", "searchViaGenre: total resultados=${results.size}")
@@ -271,18 +279,31 @@ class TokianimeProvider : MainAPI() {
                     val listId = suggestButton.attr("aria-controls")
                     val listItems = doc.select("div#$listId li")
                     Log.i("Tokianime", "load: 'Ver orden sugerido' encontrado con ${listItems.size} entradas")
-                    var seasonNum = 1
-                    for (item in listItems) {
+                    data class SeasonEntry(val slug: String, val name: String, val order: Int)
+                    val entries = mutableListOf<SeasonEntry>()
+                    for ((idx, item) in listItems.withIndex()) {
                         val aTag = item.selectFirst("a[href^='/anime/']") ?: continue
                         val seasonSlug = aTag.attr("href").substringAfter("/anime/").substringBefore("?")
                         if (seasonSlug.isBlank() || seenSlugs.contains(seasonSlug)) continue
                         seenSlugs.add(seasonSlug)
                         val seasonName = item.select("span.pointer-events-none span span").firstOrNull()?.text()
                             ?: seasonSlug
-                        Log.i("Tokianime", "load: orden sugerido entrada #$seasonNum slug='$seasonSlug' name='$seasonName'")
-                        val seasonEps = fetchEpisodes(seasonSlug, seasonNum)
+                        entries.add(SeasonEntry(seasonSlug, seasonName, idx))
+                    }
+                    // Ordenar: Temporadas primero, luego OVA/Especial/Película
+                    entries.sortWith(compareBy<SeasonEntry> {
+                        when {
+                            it.name.contains("Temporada", ignoreCase = true) -> 0
+                            it.name.contains("OVA", ignoreCase = true) -> 1
+                            it.name.contains("Especial", ignoreCase = true) || it.name.contains("Special", ignoreCase = true) -> 2
+                            it.name.contains("Película", ignoreCase = true) || it.name.contains("Movie", ignoreCase = true) -> 3
+                            else -> 4
+                        }
+                    }.thenBy { it.order })
+                    for ((seasonNum, entry) in entries.withIndex()) {
+                        Log.i("Tokianime", "load: orden sugerido #${seasonNum+1} slug='${entry.slug}' name='${entry.name}'")
+                        val seasonEps = fetchEpisodes(entry.slug, seasonNum + 1)
                         episodes.addAll(seasonEps)
-                        seasonNum++
                     }
                 }
             } catch (e: Exception) {
