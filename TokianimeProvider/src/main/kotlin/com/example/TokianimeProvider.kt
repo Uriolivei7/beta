@@ -232,8 +232,12 @@ class TokianimeProvider : MainAPI() {
                             val metaMatch = metaRegex.find(apiResp)
                             val epTitle = metaMatch?.groupValues?.get(1)
                             val epOverview = metaMatch?.groupValues?.get(2)
-                            val thumbRegex = Regex(""""$epNum":"([^"]+)"""")
-                            val epThumbnail = thumbRegex.find(apiResp)?.groupValues?.get(1)
+                            val thumbRegex = Regex(""""thumbs":\{"[^}]*?"$epNum":"([^"]+)"""")
+                            var epThumbnail = thumbRegex.find(apiResp)?.groupValues?.get(1)
+                            if (epThumbnail.isNullOrBlank()) {
+                                val fallbackThumb = Regex(""""$epNum":"(https?://[^"]+)"""").find(apiResp)?.groupValues?.get(1)
+                                if (fallbackThumb != null) epThumbnail = fallbackThumb
+                            }
                             result.add(newEpisode("$mainUrl/watch/$epSlug/$epNum") {
                                 this.name = if (epTitle.isNullOrBlank()) "Episodio $epNum" else epTitle
                                 this.episode = epNum
@@ -268,7 +272,11 @@ class TokianimeProvider : MainAPI() {
                     }
 
                     entries.sortWith(compareBy<SeasonEntry> {
-                        if (it.name.contains("Temporada", ignoreCase = true)) 0 else 1
+                        when {
+                            it.name.contains("Temporada", ignoreCase = true) -> 0
+                            it.name.contains("Especial", ignoreCase = true) || it.name.contains("Special", ignoreCase = true) || it.name.contains("OVA", ignoreCase = true) -> 2
+                            else -> 1
+                        }
                     }.thenBy { it.order })
                     for ((seasonNum, entry) in entries.withIndex()) {
                         Log.i("Tokianime", "load: orden sugerido #${seasonNum+1} slug='${entry.slug}' name='${entry.name}'")
@@ -433,6 +441,27 @@ class TokianimeProvider : MainAPI() {
                         } catch (e: Exception) {
                             Log.e("Tokianime", "loadLinks: RSC fallback error: ${e.message}")
                         }
+                    }
+                }
+
+                // Fallback: probar normMatches con mode=play directamente
+                Log.i("Tokianime", "loadLinks: probando normMatches como fallback final...")
+                val playUrls = normMatches.map { it.value }.distinct().filter { it.contains("mode=play") }
+                Log.i("Tokianime", "loadLinks: normMatches con mode=play = ${playUrls.size}")
+                for (src in playUrls) {
+                    try {
+                        val apiUrl = "$mainUrl${src.replace("""\u0026""", "&")}"
+                        Log.i("Tokianime", "loadLinks: intentando normMatch: $apiUrl")
+                        val m3u8Resp = app.get(apiUrl, headers = headers).text
+                        if (m3u8Resp.trimStart().startsWith("#EXTM3U")) {
+                            Log.i("Tokianime", "loadLinks: M3U8 válido via normMatch! url='$apiUrl'")
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime", apiUrl, ExtractorLinkType.M3U8) {
+                                this.referer = mainUrl
+                            })
+                            return true
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Tokianime", "loadLinks: normMatch error: ${e.message}")
                     }
                 }
                 return false
