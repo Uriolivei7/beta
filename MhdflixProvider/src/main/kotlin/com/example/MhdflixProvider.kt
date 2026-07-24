@@ -535,47 +535,58 @@ class MhdflixProvider : MainAPI() {
                 return true
             }
 
-            val evalMarker = "eval(function(p,a,c,k,e,d){"
-            val evalStart = html.indexOf(evalMarker)
-            if (evalStart >= 0) {
-                var braceDepth = 0
-                var fnBodyEnd = -1
-                var i = evalStart + evalMarker.length
-                while (i < html.length) {
-                    when (html[i]) {
-                        '{' -> braceDepth++
-                        '}' -> {
-                            braceDepth--
-                            if (braceDepth == 0) { fnBodyEnd = i; break }
+            try {
+                val evalFn = "eval(function(p,a,c,k,e,d){"
+                val evalStart = html.indexOf(evalFn)
+                if (evalStart >= 0) {
+                    var braceDepth = 0
+                    var fnBodyEnd = -1
+                    var i = evalStart + evalFn.length
+                    while (i < html.length) {
+                        when (html[i]) {
+                            '{' -> braceDepth++
+                            '}' -> { braceDepth--; if (braceDepth == 0) { fnBodyEnd = i; break } }
+                        }
+                        i++
+                    }
+                    if (fnBodyEnd >= 0) {
+                        var argIdx = fnBodyEnd + 1
+                        while (argIdx < html.length && html[argIdx] != '\'') argIdx++
+                        if (argIdx >= html.length) return found
+                        argIdx++; val pStart = argIdx
+                        while (argIdx < html.length && html[argIdx] != '\'') argIdx++
+                        if (argIdx >= html.length) return found
+                        val p = html.substring(pStart, argIdx); argIdx++
+                        if (argIdx < html.length && html[argIdx] == ',') argIdx++
+                        while (argIdx < html.length && html[argIdx] == ' ') argIdx++
+                        val aStart = argIdx
+                        while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
+                        val a = html.substring(aStart, argIdx).toIntOrNull() ?: 36
+                        if (argIdx < html.length && html[argIdx] == ',') argIdx++
+                        while (argIdx < html.length && html[argIdx] == ' ') argIdx++
+                        val cStart = argIdx
+                        while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
+                        val c = html.substring(cStart, argIdx).toIntOrNull() ?: 0
+                        if (argIdx < html.length && html[argIdx] == ',') argIdx++
+                        while (argIdx < html.length && html[argIdx] == ' ') argIdx++
+                        if (argIdx < html.length && html[argIdx] == '\'') argIdx++ else return found
+                        val kStart = argIdx
+                        while (argIdx < html.length && html[argIdx] != '\'') argIdx++
+                        if (argIdx >= html.length) return found
+                        val k = html.substring(kStart, argIdx).split("|")
+                        var decoded = p
+                        for (idx in k.indices.reversed()) {
+                            if (k[idx].isBlank()) continue
+                            decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
+                        }
+                        val decodedM3u8 = m3u8Regex.find(decoded)
+                        if (decodedM3u8 != null) {
+                            callback.invoke(createExtractorLink(prefixName, "${prefixName} [$languageName]", decodedM3u8.value, referer, Qualities.Unknown.value, INFER_TYPE))
+                            return true
                         }
                     }
-                    i++
                 }
-                if (fnBodyEnd >= 0) {
-                    for (pattern in listOf(
-                        Regex("""\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)"""),
-                        Regex("""\}\('([^']*)',(\d+),(\d+),'(.+?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL),
-                    )) {
-                        val argMatch = pattern.find(html, evalStart)
-                        if (argMatch != null) {
-                            val p = argMatch.groupValues[1]
-                            val a = argMatch.groupValues[2].toIntOrNull() ?: 36
-                            val c = argMatch.groupValues[3].toIntOrNull() ?: 0
-                            val k = argMatch.groupValues[4].split("|")
-                            var decoded = p
-                            for (idx in k.indices.reversed()) {
-                                if (k[idx].isBlank()) continue
-                                decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
-                            }
-                            val decodedM3u8 = m3u8Regex.find(decoded)
-                            if (decodedM3u8 != null) {
-                                callback.invoke(createExtractorLink(prefixName, "${prefixName} [$languageName]", decodedM3u8.value, referer, Qualities.Unknown.value, INFER_TYPE))
-                                return true
-                            }
-                        }
-                    }
-                }
-            }
+            } catch (_: Exception) { }
 
             val doc = resp.document
             doc.select("iframe[src]").forEach { iframe ->
