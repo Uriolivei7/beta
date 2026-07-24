@@ -73,10 +73,14 @@ class TokianimeProvider : MainAPI() {
                 val seenSlugs = mutableSetOf<String>()
                 links.forEach { link ->
                     val href = link.attr("href")
-                    val text = link.text().ifBlank { return@forEach }
                     val img = link.selectFirst("img")
                     val poster = img?.attr("src") ?: ""
-                    val title = text.trim()
+                    val title = (img?.attr("alt")?.takeIf { it.isNotBlank() }
+                        ?: link.attr("title").takeIf { it.isNotBlank() }
+                        ?: link.text().takeIf { it.isNotBlank() }
+                        ?: return@forEach).trim()
+                    // Filtrar títulos genéricos que no son nombres de anime
+                    if (title.equals("Ver ahora", ignoreCase = true) || title.equals("Watch now", ignoreCase = true)) return@forEach
                     // Convertir URL de watch anime: /watch/slug/ep → /anime/slug
                     val slug = Regex("""/watch/([^/]+)""").find(href)?.groupValues?.get(1) ?: return@forEach
                     if (seenSlugs.contains(slug)) return@forEach
