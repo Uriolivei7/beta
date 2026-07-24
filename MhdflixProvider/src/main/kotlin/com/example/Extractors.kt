@@ -79,36 +79,60 @@ class MhdflixVidHide : ExtractorApi() {
 
         val m3u8Regex = Regex("""(https?://[^"']+\.m3u8[^"']*)""")
 
+
+        val evalScript = scripts.find { it.data().contains("eval(function(p,a,c,k,e,d)") }?.data()
+        Log.d("MhdflixVidHide", "evalScript found: ${evalScript != null}, length=${evalScript?.length}")
+
         val script = scripts.find { it.data().contains(".m3u8") }?.data()
             ?: scripts.find { it.data().contains("jwplayer") }?.data()
-            ?: scripts.find { it.data().contains("eval(") }?.data() ?: return
+            ?: evalScript ?: run {
+                Log.d("MhdflixVidHide", "No matching script found, scripts count=${scripts.size}")
+                return
+            }
 
         m3u8Regex.find(script)?.let {
+            Log.d("MhdflixVidHide", "M3U8 found directly in script: ${it.value.take(100)}")
             callback.invoke(newExtractorLink("VidHide", "VidHide", it.value, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
             })
             return
         }
 
-        val evalMatch = Regex("""eval\(function\(p,a,c,k,e,d\)\{.*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'(.*?)'""").find(script) ?: return
+        val evalMatch = Regex("""eval\(function\(p,a,c,k,e,d\)\{.*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'(.*?)'""").find(script)
+        if (evalMatch == null) {
+            Log.d("MhdflixVidHide", "eval regex did not match")
+            return
+        }
+
         val p = evalMatch.groupValues[1]
         val a = evalMatch.groupValues[2].toIntOrNull() ?: 36
         val c = evalMatch.groupValues[3].toIntOrNull() ?: 0
         val kRaw = evalMatch.groupValues[4]
         val k = kRaw.split("|")
+        Log.d("MhdflixVidHide", "Decoding: a=$a c=$c k.size=${k.size} p.length=${p.length}")
+
         val decoded = decodePackedJs(p, a, c, k)
-        m3u8Regex.find(decoded)?.let {
-            callback.invoke(newExtractorLink("VidHide", "VidHide", it.value, ExtractorLinkType.M3U8) {
+        Log.d("MhdflixVidHide", "Decoded length=${decoded.length}, first 200: ${decoded.take(200)}")
+
+        val m3u8Match = m3u8Regex.find(decoded)
+        if (m3u8Match != null) {
+            Log.d("MhdflixVidHide", "M3U8 found: ${m3u8Match.value.take(100)}")
+            callback.invoke(newExtractorLink("VidHide", "VidHide", m3u8Match.value, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
             })
+        } else {
+            val anyUrl = Regex("""https?://[^"'\s,;<>]+""").findAll(decoded)
+            val urls = anyUrl.take(5).map { it.value }.toList()
+            Log.d("MhdflixVidHide", "No M3U8 in decoded. Found URLs: $urls")
         }
     }
 
     private fun decodePackedJs(p: String, a: Int, c: Int, k: List<String>): String {
         var decoded = p
-        for (i in 0 until c) {
+        for (i in (0 until c).reversed()) {
             if (i < k.size && k[i].isNotBlank()) {
-                decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), k[i])
+                val token = i.toString(a)
+                decoded = decoded.replace(Regex("\\b${token}\\b"), k[i])
             }
         }
         return decoded

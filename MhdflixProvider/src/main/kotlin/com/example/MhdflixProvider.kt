@@ -562,6 +562,7 @@ class MhdflixProvider : MainAPI() {
                         try {
                             val ok = withTimeout(20000L) {
                                 loadExtractor(videoUrl, referer, subtitleCallback) { link ->
+                                    Log.d("Mhdflix-Links", "Extractor callback: url=${link.url.take(100)}, source=${link.source}, name=${link.name}")
                                     if (link.url.isNotBlank()) {
                                         @Suppress("DEPRECATION")
                                         val videoLink = ExtractorLink(
