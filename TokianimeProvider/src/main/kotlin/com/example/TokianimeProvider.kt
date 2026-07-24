@@ -70,22 +70,28 @@ class TokianimeProvider : MainAPI() {
                 val items = mutableListOf<SearchResponse>()
                 val links = doc.select("a[href^='/watch/']")
                 Log.i("Tokianime", "getMainPage(#ultimos): encontré ${links.size} links a[href^=/watch/]")
+                val seenSlugs = mutableSetOf<String>()
                 links.forEach { link ->
                     val href = link.attr("href")
                     val text = link.text().ifBlank { return@forEach }
                     val img = link.selectFirst("img")
                     val poster = img?.attr("src") ?: ""
                     val title = text.trim()
-                    items.add(newMovieSearchResponse(title, "$mainUrl$href", TvType.Anime) {
+                    // Convertir URL de watch anime: /watch/slug/ep → /anime/slug
+                    val slug = Regex("""/watch/([^/]+)""").find(href)?.groupValues?.get(1) ?: return@forEach
+                    if (seenSlugs.contains(slug)) return@forEach
+                    seenSlugs.add(slug)
+                    val animeUrl = "$mainUrl/anime/$slug"
+                    items.add(newMovieSearchResponse(title, animeUrl, TvType.Anime) {
                         this.posterUrl = fixPoster(poster)
                     })
                 }
-                Log.i("Tokianime", "getMainPage(#ultimos): items=${items.size}")
+                Log.i("Tokianime", "getMainPage(#ultimos): items=${items.size} slugs_unicos=${seenSlugs.size}")
                 if (items.isEmpty()) {
                     Log.w("Tokianime", "getMainPage(#ultimos): 0 items, revisa selector 'a[href^=/watch/]'")
                     return null
                 }
-                return newHomePageResponse(listOf(HomePageList("Últimos Episodios", items.distinctBy { it.url }.take(50))), false)
+                return newHomePageResponse(listOf(HomePageList("Últimos Episodios", items.take(50))), false)
             }
 
             val items = mutableListOf<SearchResponse>()
@@ -194,7 +200,10 @@ class TokianimeProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val slug = url.substringAfter("/anime/").substringBefore("?")
+            // Si la URL es de watch (/watch/slug/ep), extraer slug del anime
+            val watchMatch = Regex("""/watch/([^/]+)""").find(url)
+            val slug = watchMatch?.groupValues?.get(1)
+                ?: url.substringAfter("/anime/").substringBefore("?")
             if (slug.isBlank()) {
                 Log.w("Tokianime", "load: slug vacío para url='$url'")
                 return null
@@ -224,16 +233,48 @@ class TokianimeProvider : MainAPI() {
             Log.i("Tokianime", "load: tags=$tags year=$year score=$score")
 
             val episodes = mutableListOf<Episode>()
-            val epItems = doc.select("a[href^='/watch/$slug/']")
-            Log.i("Tokianime", "load: episodios encontrados por DOM (a[href^=/watch/$slug/]) = ${epItems.size}")
-            if (epItems.isNotEmpty()) {
+
+            // Intentar API de episodios primero
+            try {
+                val apiUrl = "$mainUrl/api/anime/$slug/episodes"
+                Log.i("Tokianime", "load: consultando API episodios: $apiUrl")
+                val apiResp = app.get(apiUrl, headers = headers).text
+                Log.i("Tokianime", "load: API respuesta (primeros 300 chars)=${apiResp.take(300)}")
+                val apiEpisodes = mutableListOf<Episode>()
+                // Extraer withVideo array para saber episodios disponibles
+                val withVideoMatch = Regex(""""withVideo":\[([^\]]+)\]""").find(apiResp)
+                if (withVideoMatch != null) {
+                    val epNums = Regex("""\d+""").findAll(withVideoMatch.groupValues[1]).map { it.value.toIntOrNull() }.filterNotNull().toList()
+                    Log.i("Tokianime", "load: API withVideo episodios=${epNums}")
+                        for (epNum in epNums) {
+                        val epTitleRegex = Regex(""""$epNum":\{"title":"([^"]+)""")
+                        val epTitle = epTitleRegex.find(apiResp)?.groupValues?.get(1)
+                        apiEpisodes.add(newEpisode("$mainUrl/watch/$slug/$epNum") {
+                            this.name = epTitle ?: "Episodio $epNum"
+                            this.episode = epNum
+                            this.season = 1
+                        })
+                    }
+                }
+                if (apiEpisodes.isNotEmpty()) {
+                    episodes.addAll(apiEpisodes)
+                    Log.i("Tokianime", "load: episodios desde API=${episodes.size}")
+                }
+            } catch (e: Exception) {
+                Log.w("Tokianime", "load: API episodios falló: ${e.message}")
+            }
+
+            // Fallback: extraer episodios del DOM
+            if (episodes.isEmpty()) {
+                val epItems = doc.select("a[href^='/watch/$slug/']")
+                Log.i("Tokianime", "load: episodios por DOM (a[href^=/watch/$slug/]) = ${epItems.size}")
                 epItems.forEach { epLink ->
                     val epHref = epLink.attr("href")
                     val epText = epLink.text().trim()
                     val epNum = Regex("""(\d+)$""").find(epHref)?.groupValues?.get(1)?.toIntOrNull()
                     if (epNum != null) {
                         episodes.add(newEpisode("$mainUrl$epHref") {
-                            this.name = epText.ifBlank { "Episodio $epNum" }
+                            this.name = if (epText.isBlank() || epText.contains("Ver ahora", ignoreCase = true)) "Episodio $epNum" else epText
                             this.episode = epNum
                             this.season = 1
                         })
@@ -266,7 +307,7 @@ class TokianimeProvider : MainAPI() {
             Log.i("Tokianime", "load: episodios finales=${episodes.size}")
 
             if (episodes.isEmpty()) {
-                Log.w("Tokianime", "load: 0 episodios encontrados! Slug='$slug' no tiene episodios detectables. Agregando ep1 por defecto")
+                Log.w("Tokianime", "load: 0 episodios! Slug='$slug' no tiene episodios. Agregando ep1 por defecto")
                 episodes.add(newEpisode("$mainUrl/watch/$slug/1") {
                     this.name = title
                     this.episode = 1
@@ -315,21 +356,55 @@ class TokianimeProvider : MainAPI() {
             val html = app.get(watchUrl, headers = headers).text
             Log.i("Tokianime", "loadLinks: HTML length=${html.length} primeros_400=${html.take(400)}")
 
-            // Buscar en RSC payload (self.__next_f.push(...))
-            val rscMatches = Regex("""self\.__next_f\.push\(\[.*?""").findAll(html).toList()
-            Log.i("Tokianime", "loadLinks: chunks RSC (self.__next_f.push) = ${rscMatches.size}")
+            val rscChunks = Regex("""self\.__next_f\.push\(\[.*?""").findAll(html).toList()
+            Log.i("Tokianime", "loadLinks: chunks RSC = ${rscChunks.size}")
 
-            // Buscar rankedServers en el HTML completo
             val hasRankedServers = html.contains("rankedServers")
             Log.i("Tokianime", "loadLinks: contiene 'rankedServers'=$hasRankedServers")
 
+            // Normalizar RSC data: reemplazar \" con " para que el regex funcione
+            val normalized = html.replace("\\\"", "\"")
             val playRegex = Regex(""""lang":"([^"]+)".*?"quality":"([^"]+)".*?"play":\{"src":"(/api/player/source[^"]+)""")
-            val matches = playRegex.findAll(html).toList()
-            Log.i("Tokianime", "loadLinks: matches de regex playSrc = ${matches.size}")
+            val matches = playRegex.findAll(normalized).toList()
+            Log.i("Tokianime", "loadLinks: matches de regex playSrc (normalizado) = ${matches.size}")
+
             if (matches.isEmpty()) {
-                Log.w("Tokianime", "loadLinks: 0 matches de playSrc. Buscando '/api/player/source' en HTML...")
-                val srcMatches = Regex("""/api/player/source[^"\\]*""").findAll(html).toList()
-                Log.i("Tokianime", "loadLinks: ocurrencias de '/api/player/source' en HTML = ${srcMatches.map { it.value }}")
+                Log.w("Tokianime", "loadLinks: 0 matches incluso normalizado. Buscando '/api/player/source' en HTML crudo...")
+                val rawMatches = Regex("""/api/player/source[^"\\]*""").findAll(html).toList()
+                val normMatches = Regex("""/api/player/source[^"]*""").findAll(normalized).toList()
+                Log.i("Tokianime", "loadLinks: raw src matches=${rawMatches.map { it.value }}")
+                Log.i("Tokianime", "loadLinks: normalized src matches=${normMatches.map { it.value.take(100) }}")
+                // Fallback: extraer sid del RSC buscando directamente
+                val rscFull = rscChunks.joinToString("") { it.value }
+                    .replace("\\\"", "\"")
+                    .replace("\\n", "")
+                    .replace("\\t", "")
+                val rankedMatch = Regex(""""rankedServers""").find(rscFull)
+                Log.i("Tokianime", "loadLinks: rankedServers en RSC unido=${rankedMatch != null}")
+                if (rankedMatch != null) {
+                    // extraer src URLs del JSON
+                    val srcRegex = Regex(""""src":"(/api/player/source[^"]+)""")
+                    val srcs = srcRegex.findAll(rscFull).map { it.groupValues[1] }.toList()
+                    Log.i("Tokianime", "loadLinks: srcs de RSC unido = ${srcs}")
+                    for (src in srcs) {
+                        try {
+                            val apiUrl = "$mainUrl$src"
+                            Log.i("Tokianime", "loadLinks: intentando API (RSC fallback): $apiUrl")
+                            val m3u8Resp = app.get(apiUrl, headers = headers).text
+                            Log.i("Tokianime", "loadLinks: respuesta API (primeros 500 chars)=${m3u8Resp.take(500)}")
+                            val masterUrl = Regex("""(https?://[^\s]+\.m3u8[^\s]*)""").find(m3u8Resp)?.value
+                            if (masterUrl != null) {
+                                Log.i("Tokianime", "loadLinks: M3U8 encontrado via RSC fallback! url='$masterUrl'")
+                                callback.invoke(newExtractorLink("Tokianime", "Tokianime", masterUrl, ExtractorLinkType.M3U8) {
+                                    this.referer = mainUrl
+                                })
+                                return true
+                            }
+                        } catch (e: Exception) {
+                            Log.e("Tokianime", "loadLinks: RSC fallback error: ${e.message}")
+                        }
+                    }
+                }
                 return false
             }
 
@@ -342,11 +417,10 @@ class TokianimeProvider : MainAPI() {
                 Log.i("Tokianime", "loadLinks: match[$idx] lang='$lang' quality='$qualityStr' q=$quality src='$playSrc'")
 
                 try {
-                    val cleanSrc = playSrc.replace("\\u0026", "&")
-                    val apiUrl = "$mainUrl$cleanSrc"
+                    val apiUrl = "$mainUrl$playSrc"
                     Log.i("Tokianime", "loadLinks: consultando API player source: $apiUrl")
                     val m3u8Resp = app.get(apiUrl, headers = headers).text
-                    Log.i("Tokianime", "loadLinks: respuesta API player source (primeros 500 chars)=${m3u8Resp.take(500)}")
+                    Log.i("Tokianime", "loadLinks: respuesta API (primeros 500 chars)=${m3u8Resp.take(500)}")
 
                     val masterUrl = Regex("""(https?://[^\s]+\.m3u8[^\s]*)""").find(m3u8Resp)?.value
                     if (masterUrl != null) {
