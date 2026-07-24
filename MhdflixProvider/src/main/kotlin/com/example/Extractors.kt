@@ -62,6 +62,56 @@ class ByseExtractor : ExtractorApi() {
     }
 }
 
+class MhdflixStreamWish : ExtractorApi() {
+    override var name = "MhdflixStreamWish"
+    override var mainUrl = "https://streamwish.to"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer" to url,
+            "Accept-Language" to "es",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        val html = app.get(url, headers = headers).text
+        val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""")
+
+        val directM3u8 = m3u8Regex.find(html)
+        if (directM3u8 != null) {
+            callback.invoke(newExtractorLink("StreamWish", "StreamWish", directM3u8.value, ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+            })
+            return
+        }
+
+        val evalRegex = Regex("""eval\(([^)]+)\)""")
+        val evalMatch = evalRegex.find(html)
+        if (evalMatch != null) {
+            try {
+                val params = evalMatch.groupValues[1].split(",")
+                if (params.size >= 6) {
+                    val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
+                    val a = params[1].trim().toIntOrNull() ?: 36
+                    val c = params[2].trim().toIntOrNull() ?: 0
+                    val k = params.drop(3).map { it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"") }.take(c)
+                    var decoded = p
+                    for (i in k.indices.reversed()) {
+                        if (k[i].isBlank()) continue
+                        decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), k[i])
+                    }
+                    val decodedM3u8 = m3u8Regex.find(decoded)?.value
+                    if (decodedM3u8 != null) {
+                        callback.invoke(newExtractorLink("StreamWish", "StreamWish", decodedM3u8, ExtractorLinkType.M3U8) {
+                            this.referer = mainUrl
+                        })
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+    }
+}
+
 class MhdflixVidHide : ExtractorApi() {
     override var name = "MhdflixVidHide"
     override var mainUrl = "https://vidhidepro.com"

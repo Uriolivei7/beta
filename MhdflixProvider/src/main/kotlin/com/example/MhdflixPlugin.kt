@@ -11,6 +11,7 @@ class MhdflixPlugin : Plugin() {
         registerExtractorAPI(ByseExtractor())
         registerExtractorAPI(MhdflixCubeembed())
         registerExtractorAPI(MhdflixVidHide())
+        registerExtractorAPI(MhdflixStreamWish())
         registerExtractorAPI(MhdflixVoe())
         registerExtractorAPI(MhdflixVoeYipsu())
         registerExtractorAPI(MhdflixVoeDonald())

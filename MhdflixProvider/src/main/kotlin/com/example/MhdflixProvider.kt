@@ -563,7 +563,7 @@ class MhdflixProvider : MainAPI() {
             doc.select("iframe[src]").forEach { iframe ->
                 val src = iframe.attr("src")
                 if (src.isNotBlank() && !src.contains("undefined")) {
-                    val iframeUrl = fixUrl(src)
+                    val iframeUrl = fixEmbedUrl(fixUrl(src))
                     Log.d("Mhdflix-Links", "Fallback: following iframe to $iframeUrl")
                     loadExtractor(iframeUrl, referer, subtitleCallback) { link ->
                         if (link.url.isNotBlank()) {
@@ -647,10 +647,11 @@ class MhdflixProvider : MainAPI() {
                         val serverName = item.server?.name ?: item.serverName ?: "Server"
                         val languageName = item.language?.name ?: item.languageName ?: "Latino"
                         val linkName = "$serverName - $languageName"
+                        val fixedUrl = fixEmbedUrl(videoUrl)
                         var foundByExtractor = false
                         try {
                             val ok = withTimeout(20000L) {
-                                loadExtractor(videoUrl, referer, subtitleCallback) { link ->
+                                loadExtractor(fixedUrl, referer, subtitleCallback) { link ->
                                     Log.d("Mhdflix-Links", "Extractor callback: url=${link.url.take(100)}, source=${link.source}")
                                     if (link.url.isNotBlank()) {
                                         @Suppress("DEPRECATION")
@@ -681,9 +682,8 @@ class MhdflixProvider : MainAPI() {
 
                         // Inline fallback: fetch embed page, try eval/M3U8/iframe
                         if (!foundByExtractor) {
-                            Log.d("Mhdflix-Links", "Inline fallback for: $videoUrl")
+                            Log.d("Mhdflix-Links", "Inline fallback for: $fixedUrl")
                             try {
-                                val fixedUrl = fixEmbedUrl(videoUrl)
                                 if (inlineExtract(fixedUrl, referer, linkName, languageName, subtitleCallback, callback)) {
                                     found = true
                                 }
