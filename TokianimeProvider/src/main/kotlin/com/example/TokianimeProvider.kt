@@ -399,7 +399,6 @@ class TokianimeProvider : MainAPI() {
             val matches = playRegex.findAll(normalized).toList()
             Log.i("Tokianime", "loadLinks: matches de regex playSrc (normalizado) = ${matches.size}")
 
-            // Extract ALL /api/player/source URLs from normalized HTML (covers all servers)
             val allPlayUrls = Regex("""/api/player/source[^"]*""").findAll(normalized).toList()
                 .map { it.value.replace("""\u0026""", "&") }
                 .filter { it.contains("mode=play") }
@@ -447,7 +446,6 @@ class TokianimeProvider : MainAPI() {
                     }
                 }
 
-                // Fallback: probar normMatches con mode=play directamente
                 Log.i("Tokianime", "loadLinks: probando normMatches como fallback final...")
                 val playUrls = normMatches.map { it.value }.distinct().filter { it.contains("mode=play") }
                 Log.i("Tokianime", "loadLinks: normMatches con mode=play = ${playUrls.size}")
@@ -456,7 +454,7 @@ class TokianimeProvider : MainAPI() {
                         val apiUrl = "$mainUrl${src.replace("""\u0026""", "&")}"
                         Log.i("Tokianime", "loadLinks: intentando normMatch: $apiUrl")
                         try {
-                            // Check first 100 bytes to see if it's M3U8 (avoids download of large responses)
+
                             val call = app.get(apiUrl, headers = headers)
                             val headBuf = ByteArray(100)
                             val headRead = call.body.byteStream().use { s -> s.read(headBuf) }
@@ -481,17 +479,17 @@ class TokianimeProvider : MainAPI() {
 
             var found = false
 
-            // Determine language labels: if both 'es'/'ES' and 'LAT' exist, label accordingly
+
             val allLangs = matches.map { it.groupValues[1].uppercase() }.toSet()
             val hasEs = allLangs.any { it == "ES" }
             val hasLat = allLangs.contains("LAT")
             fun labelFor(raw: String): String {
                 val upper = raw.uppercase()
                 if (upper == "SUB") return "SUB"
+                
                 if (hasEs && hasLat && upper == "ES") return "ES"
                 if (hasEs && hasLat && upper == "LAT") return "LAT"
-                // If only one Spanish variant exists, label it LAT
-                return "LAT"
+                return upper
             }
             Log.i("Tokianime", "loadLinks: allLangs=$allLangs hasEs=$hasEs hasLat=$hasLat")
 
@@ -520,7 +518,7 @@ class TokianimeProvider : MainAPI() {
                             found = true
                             Log.i("Tokianime", "loadLinks: enlace M3U8 agregado [$langLabel] q=$quality")
                         } else if (headStr.contains("ftyp")) {
-                            // Probar iframe primero; si no hay M3U8, agregar MP4 como fallback
+
                             val iframeOk = tryFallbackIframe(apiUrl, langLabel, quality, callback, mainUrl)
                             if (!iframeOk) {
                                 callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, ExtractorLinkType.VIDEO) {
@@ -540,14 +538,14 @@ class TokianimeProvider : MainAPI() {
                         Log.e("Tokianime", "loadLinks: error al consultar API player source match[$idx]: ${e.message}")
                     }
             }
-            // Try additional URLs from allPlayUrls that weren't covered by the main regex
+
             val processedSids = matches.map { m ->
                 Regex("sid=([^&]+)").find(m.groupValues[3].replace("""\u0026""", "&"))?.groupValues?.get(1) ?: ""
             }.filter { it.isNotEmpty() }.toSet()
             for (extraSrc in allPlayUrls) {
                 val extraSid = Regex("sid=([^&]+)").find(extraSrc)?.groupValues?.get(1) ?: extraSrc
                 if (extraSid in processedSids) continue
-                // Search backwards in normalized HTML for lang and quality
+
                 var extraLang = "SRV"
                 var extraQuality = Qualities.Unknown.value
                 val sidIdx = normalized.indexOf(extraSid)
