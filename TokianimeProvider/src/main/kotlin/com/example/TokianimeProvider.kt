@@ -399,6 +399,13 @@ class TokianimeProvider : MainAPI() {
             val matches = playRegex.findAll(normalized).toList()
             Log.i("Tokianime", "loadLinks: matches de regex playSrc (normalizado) = ${matches.size}")
 
+            // Extract ALL /api/player/source URLs from normalized HTML (covers all servers)
+            val allPlayUrls = Regex("""/api/player/source[^"]*""").findAll(normalized).toList()
+                .map { it.value.replace("""\u0026""", "&") }
+                .filter { it.contains("mode=play") }
+                .distinct()
+            Log.i("Tokianime", "loadLinks: allPlayUrls total=${allPlayUrls.size}")
+
             if (matches.isEmpty()) {
                 Log.w("Tokianime", "loadLinks: 0 matches incluso normalizado. Buscando '/api/player/source' en HTML crudo...")
                 val rawMatches = Regex("""/api/player/source[^"\\]*""").findAll(html).toList()
@@ -532,6 +539,39 @@ class TokianimeProvider : MainAPI() {
                     } catch (e: Exception) {
                         Log.e("Tokianime", "loadLinks: error al consultar API player source match[$idx]: ${e.message}")
                     }
+            }
+            // Try additional URLs from allPlayUrls that weren't covered by the main regex
+            val processedSids = matches.map { m ->
+                Regex("sid=([^&]+)").find(m.groupValues[3].replace("""\u0026""", "&"))?.groupValues?.get(1) ?: ""
+            }.filter { it.isNotEmpty() }.toSet()
+            for (extraSrc in allPlayUrls) {
+                val extraSid = Regex("sid=([^&]+)").find(extraSrc)?.groupValues?.get(1) ?: extraSrc
+                if (extraSid in processedSids) continue
+                val extraUrl = "$mainUrl$extraSrc"
+                try {
+                    val extraCall = app.get(extraUrl, headers = headers)
+                    val extraBuf = ByteArray(10240)
+                    val extraRead = extraCall.body.byteStream().use { s -> s.read(extraBuf) }
+                    val extraHead = if (extraRead > 0) String(extraBuf, 0, extraRead) else ""
+                    if (extraHead.trimStart().startsWith("#EXTM3U")) {
+                        callback.invoke(newExtractorLink("Tokianime", "Tokianime [SRV]", extraUrl, ExtractorLinkType.M3U8) {
+                            this.referer = mainUrl
+                        })
+                        found = true
+                        Log.i("Tokianime", "loadLinks: extra server M3U8: $extraUrl")
+                    } else if (extraHead.contains("ftyp")) {
+                        val iframeOk = tryFallbackIframe(extraUrl, "SRV", Qualities.Unknown.value, callback, mainUrl)
+                        if (!iframeOk) {
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [SRV]", extraUrl, ExtractorLinkType.VIDEO) {
+                                this.referer = mainUrl
+                            })
+                            found = true
+                            Log.i("Tokianime", "loadLinks: extra server MP4: $extraUrl")
+                        } else { found = true }
+                    }
+                } catch (e: Exception) {
+                    Log.e("Tokianime", "loadLinks: extra server error: ${e.message}")
+                }
             }
             Log.i("Tokianime", "loadLinks: resultado final=${if (found) "OK" else "SIN_ENLACES"}")
             return found
