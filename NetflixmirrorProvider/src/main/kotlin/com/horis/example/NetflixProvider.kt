@@ -4,6 +4,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import java.net.URLDecoder
 import java.net.URLEncoder
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -30,15 +31,30 @@ class  NetflixProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
-                return if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
-                    chain.proceed(request.newBuilder()
+                if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
+                    return chain.proceed(request.newBuilder()
                         .header("Cookie", "hd=on")
                         .header("Connection", "close")
                         .header("Cache-Control", "no-cache")
                         .build())
-                } else {
-                    chain.proceed(request)
                 }
+                if (url.contains("net52") || url.contains("net22") || url.contains("net11")) {
+                    var cookie = lastBypassCookie
+                    if (cookie.isBlank()) {
+                        cookie = NetflixMirrorStorage.getCookie().first ?: ""
+                    }
+                    val rawCookie = try {
+                        java.net.URLDecoder.decode(cookie, "UTF-8")
+                    } catch (_: Exception) {
+                        cookie.replace("%3A%3A", "::")
+                    }
+                    return chain.proceed(request.newBuilder()
+                        .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=$ott")
+                        .header("Connection", "close")
+                        .header("Cache-Control", "no-cache")
+                        .build())
+                }
+                return chain.proceed(request)
             }
         }
     }
