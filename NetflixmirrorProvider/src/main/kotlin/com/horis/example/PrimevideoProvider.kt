@@ -240,13 +240,9 @@ class PrimevideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
+        lastLoadedId = id
 
-        if (id != lastLoadedId) {
-            NetflixMirrorStorage.clearCookie()
-            lastLoadedId = id
-        }
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
-        val userToken = try { getNewTvUserToken(mainUrl, ott) } catch (_: Exception) { "" }
         lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
@@ -258,10 +254,9 @@ class PrimevideoProvider : MainAPI() {
                 val items = tryParseJsonList<PlaylistItem>(text)
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
                 if (!src.isNullOrBlank()) {
-                    val inParam = userToken.ifBlank { cookie }
                     val fixedSrc = src
-                        .replace("in=unknown::ep", "in=$inParam")
-                        .replace("in=unknown%3A%3Aep", "in=$inParam")
+                        .replace("in=unknown::ep", "in=$cookie")
+                        .replace("in=unknown%3A%3Aep", "in=$cookie")
                         .replace("::ep::99", "::ep::m")
                         .replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
                         .replace("&hp=yes", "")
