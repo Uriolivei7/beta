@@ -17,6 +17,26 @@ class DanimadosProvider : MainAPI() {
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
         )
+
+        private fun unpackPackedJs(html: String): String? {
+            val packedRegex = Regex(
+                """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)\s*\{[\s\S]*?\}\s*\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'(.*?)'\s*\.split\s*\(\s*'\|'\s*\)"""
+            )
+            val match = packedRegex.find(html) ?: return null
+            val packed = match.groupValues[1]
+            val base = match.groupValues[2].toIntOrNull() ?: return null
+            val count = match.groupValues[3].toIntOrNull() ?: return null
+            val keywords = match.groupValues[4].split("|")
+            if (count != keywords.size) return null
+            var result = packed
+            for (i in 0 until count) {
+                val kw = keywords[i]
+                if (kw.isNotEmpty()) {
+                    result = result.replace(Regex("\\b${i.toString(base)}\\b"), kw)
+                }
+            }
+            return result
+        }
     }
 
     override var mainUrl = BASE_URL
@@ -228,8 +248,21 @@ class DanimadosProvider : MainAPI() {
                 Log.d("Danimados", "loadLinks: embed page code=${embedResp.code}, len=${embedResp.text.length}")
                 Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(1000)}")
 
+                // Try unpacking packed JS (e.g. VidHide eval() packs)
+                val unpacked = unpackPackedJs(embedResp.text)
+                var m3u8FromUnpack: String? = null
+                if (unpacked != null) {
+                    Log.d("Danimados", "loadLinks: unpacked JS, len=${unpacked.length}")
+                    val m3u8InUnpack = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(unpacked)
+                    if (m3u8InUnpack != null) {
+                        m3u8FromUnpack = m3u8InUnpack.value
+                        Log.d("Danimados", "loadLinks: found m3u8 from unpacked JS: $m3u8FromUnpack")
+                    }
+                }
+
                 val directSrc = Regex("""(?:src|file|source|url|link)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
+                    ?: m3u8FromUnpack
                 if (directSrc != null) {
                     Log.d("Danimados", "loadLinks: found direct source $directSrc")
                     callback.invoke(ExtractorLink(
@@ -370,4 +403,5 @@ class DanimadosProvider : MainAPI() {
         @JsonProperty("embed_url") val embedUrl: String? = null,
         @JsonProperty("type") val type: String? = null,
     )
+
 }

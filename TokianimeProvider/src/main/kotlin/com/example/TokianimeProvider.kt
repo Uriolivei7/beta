@@ -486,7 +486,7 @@ class TokianimeProvider : MainAPI() {
             fun labelFor(raw: String): String {
                 val upper = raw.uppercase()
                 if (upper == "SUB") return "SUB"
-                
+
                 if (hasEs && hasLat && upper == "ES") return "ES"
                 if (hasEs && hasLat && upper == "LAT") return "LAT"
                 return upper
