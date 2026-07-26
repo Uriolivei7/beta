@@ -256,10 +256,13 @@ class DanimadosProvider : MainAPI() {
             Log.d("Danimados", "loadLinks: trying videoUrl=$videoUrl")
 
             val embedLabel = when {
-                videoUrl.contains("callistanise.com") -> "VidHide"
+                videoUrl.contains("callistanise.com") || videoUrl.contains("minochinos.com") -> "VidHide"
                 videoUrl.contains("cubeembed") -> "CubeEmbed"
                 videoUrl.contains("turbovid") -> "TurboVid"
                 videoUrl.contains("waaw") -> "WaaW"
+                videoUrl.contains("bysedikamoum.com") || videoUrl.contains("4meplayer.pro") -> "Byse"
+                videoUrl.contains("hglink.to") || videoUrl.contains("hgglink") -> "HgLink"
+                videoUrl.contains("voe.sx") || videoUrl.contains("voe.") -> "VOE"
                 else -> "Server$nume"
             }
 
