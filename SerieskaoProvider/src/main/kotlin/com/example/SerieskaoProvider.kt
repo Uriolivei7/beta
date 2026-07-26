@@ -213,25 +213,81 @@ class SerieskaoProvider : MainAPI() {
                     this.recommendations = recommendations
                 }
             } else {
-                val epItems = doc.select("a.episode-item")
-                Log.d(TAG, "load episodios HTML=${epItems.size}")
-                val episodes = epItems.mapNotNull { element ->
-                    try {
-                        val epUrl = fixUrl(element.attr("href") ?: "")
-                        val epTitle = element.selectFirst("span.episode-item__title")?.text()?.trim() ?: ""
-                        val epNum = element.selectFirst("span.episode-item__number")?.text()?.toIntOrNull()
-                        if (epUrl.isBlank()) return@mapNotNull null
-                        newEpisode(epUrl) {
-                            this.name = epTitle
-                            this.episode = epNum
-                            this.season = 1
+                val episodes = mutableListOf<Episode>()
+
+                // Try multi-season containers
+                val seasonContainers = doc.select(
+                    "#seasons > .se-c, " +
+                    "div.season, section.season, " +
+                    "div.season-item, " +
+                    "details.season-item, " +
+                    "div[data-season], section[data-season], " +
+                    "ul.season-list > li, " +
+                    "div.temporada"
+                )
+                Log.d(TAG, "load seasonContainers=${seasonContainers.size}")
+
+                if (seasonContainers.isNotEmpty()) {
+                    for ((si, container) in seasonContainers.withIndex()) {
+                        val seasonNum = container.attr("data-season").toIntOrNull()
+                            ?: container.selectFirst(
+                                ".se-t, .season__title, .season-title, " +
+                                ".season-item__title, summary, h3, h4"
+                            )?.text()?.let {
+                                Regex("""(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull()
+                            } ?: (si + 1)
+
+                        val epItems = container.select(
+                            "a.episode-item, " +
+                            "ul.episodios > li a, " +
+                            ".episode-item, " +
+                            "li.episode"
+                        )
+                        Log.d(TAG, "load season $seasonNum episodios=${epItems.size}")
+
+                        for (epItem in epItems) {
+                            try {
+                                val epUrl = fixUrl(epItem.attr("href") ?: "")
+                                val epTitle = epItem.selectFirst(
+                                    "span.episode-item__title, " +
+                                    ".episode-title, .title"
+                                )?.text()?.trim() ?: ""
+                                val epNum = epItem.selectFirst(
+                                    "span.episode-item__number, " +
+                                    ".episode-number, .num"
+                                )?.text()?.toIntOrNull() ?: (epItems.indexOf(epItem) + 1)
+                                if (epUrl.isBlank()) continue
+                                episodes.add(newEpisode(epUrl) {
+                                    this.name = epTitle
+                                    this.episode = epNum
+                                    this.season = seasonNum
+                                })
+                            } catch (e: Exception) {
+                                Log.e(TAG, "load error episodio season $seasonNum: ${e.message}")
+                            }
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "load error episodio: ${e.message}")
-                        null
+                    }
+                } else {
+                    // Flat list (single season fallback)
+                    val epItems = doc.select("a.episode-item")
+                    Log.d(TAG, "load flat episodios HTML=${epItems.size}")
+                    for ((ei, element) in epItems.withIndex()) {
+                        try {
+                            val epUrl = fixUrl(element.attr("href") ?: "")
+                            val epTitle = element.selectFirst("span.episode-item__title")?.text()?.trim() ?: ""
+                            val epNum = element.selectFirst("span.episode-item__number")?.text()?.toIntOrNull() ?: (ei + 1)
+                            if (epUrl.isBlank()) continue
+                            episodes.add(newEpisode(epUrl) {
+                                this.name = epTitle
+                                this.episode = epNum
+                                this.season = 1
+                            })
+                        } catch (e: Exception) {
+                            Log.e(TAG, "load error episodio: ${e.message}")
+                        }
                     }
                 }
-                Log.d(TAG, "load -> TvSeries, episodios=${episodes.size}")
+                Log.d(TAG, "load -> TvSeries, episodios=${episodes.size} temporadas=${episodes.distinctBy { it.season }.size}")
                 newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = description

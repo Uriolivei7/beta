@@ -272,7 +272,6 @@ class DanimadosProvider : MainAPI() {
 
             Log.d("Danimados", "loadLinks: trying direct fetch of $videoUrl")
             try {
-                // --- CubeEmbed handler (Lacartoons version) ---
                 if (videoUrl.contains("cubeembed.rpmvid.com") || videoUrl.contains("cubeembed.")) {
                     val hash = videoUrl.substringAfterLast("#").substringAfter("/")
                     val baseUrl = "https://cubeembed.rpmvid.com"
@@ -291,7 +290,6 @@ class DanimadosProvider : MainAPI() {
                         if (decryptedText != null) {
                             Log.d("Danimados", "loadLinks: CubeEmbed decrypted OK")
                             val cubeLinkName = "Danimados ($embedLabel)"
-                            // Subtitles
                             val subtitleSection = Regex("\"subtitle\":\\{(.*?)\\}").find(decryptedText)?.groupValues?.get(1)
                             subtitleSection?.let { section ->
                                 Regex("\"([^\"]+)\":\\s*\"([^\"]+)\"").findAll(section).forEach { match ->
@@ -304,7 +302,6 @@ class DanimadosProvider : MainAPI() {
                                     }
                                 }
                             }
-                            // Source M3U8
                             val source = Regex("\"source\":\"(.*?)\"").find(decryptedText)
                                 ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
                             if (source.isNotEmpty()) {
@@ -318,7 +315,6 @@ class DanimadosProvider : MainAPI() {
                                 ))
                                 anySuccess = true
                             }
-                            // TikTok HLS
                             val hlsTiktok = Regex("\"hlsVideoTiktok\":\"(.*?)\"").find(decryptedText)
                                 ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
                             if (hlsTiktok.isNotEmpty()) {
@@ -334,7 +330,7 @@ class DanimadosProvider : MainAPI() {
                             }
                         }
                     }
-                    continue // CubeEmbed handled, skip generic extraction below
+                    continue
                 }
 
                 val embedResp = app.get(videoUrl, headers = browserHeaders + mapOf(
@@ -359,7 +355,6 @@ class DanimadosProvider : MainAPI() {
                     allVideoCandidates.addAll(fileUrls)
                     Log.d("Danimados", "loadLinks: video candidates from unpacked: $allVideoCandidates")
 
-                    // Follow acek-cdn urlset URLs
                     val urlsetUrls = Regex("""urlset\s*['=]\s*'(https?://[^']+)'""").findAll(unpacked)
                         .map { it.groupValues[1] }.distinct().toList()
                     for (urlsetUrl in urlsetUrls) {
