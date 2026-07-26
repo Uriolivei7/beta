@@ -250,25 +250,29 @@ class DanimadosProvider : MainAPI() {
 
                 // Try unpacking packed JS (e.g. VidHide eval() packs)
                 val unpacked = unpackPackedJs(embedResp.text)
-                var m3u8FromUnpack: String? = null
+                var m3u8Candidates = emptyList<String>()
                 if (unpacked != null) {
                     Log.d("Danimados", "loadLinks: unpacked JS, len=${unpacked.length}")
-                    val m3u8InUnpack = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(unpacked)
-                    if (m3u8InUnpack != null) {
-                        m3u8FromUnpack = m3u8InUnpack.value
-                        Log.d("Danimados", "loadLinks: found m3u8 from unpacked JS: $m3u8FromUnpack")
-                    }
+                    m3u8Candidates = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(unpacked)
+                        .map { it.value }.distinct().toList()
+                    Log.d("Danimados", "loadLinks: found ${m3u8Candidates.size} m3u8 from unpacked JS: $m3u8Candidates")
                 }
 
+                // Collect candidates: regex direct > unpack (non-urlset) > unpack (urlset)
                 val directSrc = Regex("""(?:src|file|source|url|link)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
-                    ?: m3u8FromUnpack
                 if (directSrc != null) {
-                    Log.d("Danimados", "loadLinks: found direct source $directSrc")
+                    m3u8Candidates = listOf(directSrc) + m3u8Candidates
+                }
+                // Prefer non-urlset URLs (direct quality playlists)
+                val sorted = m3u8Candidates.sortedBy { if (it.contains("urlset")) 1 else 0 }
+                for (candidate in sorted) {
+                    val fullUrl = if (candidate.startsWith("http")) candidate else "https:$candidate"
+                    Log.d("Danimados", "loadLinks: adding m3u8 candidate: $fullUrl")
                     callback.invoke(ExtractorLink(
                         source = name,
                         name = name,
-                        url = if (directSrc.startsWith("http")) directSrc else "https:$directSrc",
+                        url = fullUrl,
                         type = ExtractorLinkType.M3U8,
                         quality = 720,
                         referer = videoUrl,
