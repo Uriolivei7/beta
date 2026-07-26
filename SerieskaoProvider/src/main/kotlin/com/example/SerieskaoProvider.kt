@@ -215,47 +215,19 @@ class SerieskaoProvider : MainAPI() {
             } else {
                 val episodes = mutableListOf<Episode>()
 
-                // Try multi-season containers
-                val seasonContainers = doc.select(
-                    "#seasons > .se-c, " +
-                    "div.season, section.season, " +
-                    "div.season-item, " +
-                    "details.season-item, " +
-                    "div[data-season], section[data-season], " +
-                    "ul.season-list > li, " +
-                    "div.temporada"
-                )
-                Log.d(TAG, "load seasonContainers=${seasonContainers.size}")
-
-                if (seasonContainers.isNotEmpty()) {
-                    for ((si, container) in seasonContainers.withIndex()) {
-                        val seasonNum = container.attr("data-season").toIntOrNull()
-                            ?: container.selectFirst(
-                                ".se-t, .season__title, .season-title, " +
-                                ".season-item__title, summary, h3, h4"
-                            )?.text()?.let {
-                                Regex("""(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull()
-                            } ?: (si + 1)
-
-                        val epItems = container.select(
-                            "a.episode-item, " +
-                            "ul.episodios > li a, " +
-                            ".episode-item, " +
-                            "li.episode"
-                        )
+                val seasonSection = doc.selectFirst("section.seasons-section")
+                if (seasonSection != null) {
+                    val seasonContainers = seasonSection.select("div.episodes-list[id^='season-']")
+                    Log.d(TAG, "load seasonContainers=${seasonContainers.size}")
+                    for (container in seasonContainers) {
+                        val seasonNum = container.id().removePrefix("season-").toIntOrNull() ?: continue
+                        val epItems = container.select("a.episode-item")
                         Log.d(TAG, "load season $seasonNum episodios=${epItems.size}")
-
                         for (epItem in epItems) {
                             try {
                                 val epUrl = fixUrl(epItem.attr("href") ?: "")
-                                val epTitle = epItem.selectFirst(
-                                    "span.episode-item__title, " +
-                                    ".episode-title, .title"
-                                )?.text()?.trim() ?: ""
-                                val epNum = epItem.selectFirst(
-                                    "span.episode-item__number, " +
-                                    ".episode-number, .num"
-                                )?.text()?.toIntOrNull() ?: (epItems.indexOf(epItem) + 1)
+                                val epTitle = epItem.selectFirst("span.episode-item__title")?.text()?.trim() ?: ""
+                                val epNum = epItem.selectFirst("span.episode-item__number")?.text()?.toIntOrNull()
                                 if (epUrl.isBlank()) continue
                                 episodes.add(newEpisode(epUrl) {
                                     this.name = epTitle
