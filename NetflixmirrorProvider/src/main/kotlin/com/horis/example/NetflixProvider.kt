@@ -5,15 +5,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
-import okhttp3.FormBody
 import okhttp3.Interceptor
-import okhttp3.MediaType
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.Protocol
 import okhttp3.Response
-import okhttp3.ResponseBody
-import okhttp3.ResponseBody.Companion.toResponseBody
 
 class  NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -33,7 +26,21 @@ class  NetflixProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return createNetmirrorInterceptor()
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val url = request.url.toString()
+                return if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
+                    chain.proceed(request.newBuilder()
+                        .header("Cookie", "hd=on")
+                        .header("Connection", "close")
+                        .header("Cache-Control", "no-cache")
+                        .build())
+                } else {
+                    chain.proceed(request)
+                }
+            }
+        }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -237,7 +244,7 @@ class  NetflixProvider : MainAPI() {
 
                 if (!src.isNullOrBlank()) {
                     val inParam = userToken.ifBlank { cookie }
-                    val fixedSrc = src
+                    val m3u8 = (if (src.startsWith("http")) src else "$domain$src")
                         .replace("in=unknown::ep", "in=$inParam")
                         .replace("in=unknown%3A%3Aep", "in=$inParam")
                         .replace("::ep::99", "::ep::m")
@@ -245,11 +252,9 @@ class  NetflixProvider : MainAPI() {
                         .replace("&hp=yes", "")
                         .replace("hp=yes&", "")
                         .replace("?hp=yes", "?")
+                        .trimEnd('&') + "&_t=${System.currentTimeMillis()}"
+                    Log.e("Netmirror", "URL M3U8: $m3u8")
 
-                    val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
-                    Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
-
-                    // Parse subtitle tracks from JSON response
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (t.kind == "captions" && !t.file.isNullOrBlank()) {
                             val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
@@ -259,23 +264,7 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    try {
-                        val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
-                        val masterResp = app.get(m3u8, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
-                            "Referer" to "$domain/",
-                            "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
-                        ))
-                        val m3u8Body = masterResp.text
-                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
-                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
-                        setCustomMaster(id, m3u8Body)
-                    } catch (e: Exception) {
-                        Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
-                    }
-
-                    val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
-                    callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true
