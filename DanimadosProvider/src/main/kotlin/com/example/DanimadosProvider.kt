@@ -8,6 +8,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.nodes.Element
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class DanimadosProvider : MainAPI() {
     companion object {
@@ -36,6 +39,23 @@ class DanimadosProvider : MainAPI() {
                 }
             }
             return result
+        }
+
+        private fun hexToBytes(hex: String): ByteArray {
+            val bytes = ByteArray(hex.length / 2)
+            for (i in bytes.indices) {
+                bytes[i] = hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+            }
+            return bytes
+        }
+
+        private fun decryptAesCbc(hexInput: String, key: String, iv: String): String {
+            val keySpec = SecretKeySpec(key.encodeToByteArray(), "AES")
+            val ivSpec = IvParameterSpec(iv.encodeToByteArray())
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
+            val decrypted = cipher.doFinal(hexToBytes(hexInput))
+            return String(decrypted, Charsets.UTF_8)
         }
     }
 
@@ -241,6 +261,69 @@ class DanimadosProvider : MainAPI() {
 
             Log.d("Danimados", "loadLinks: trying direct fetch of $videoUrl")
             try {
+                // --- CubeEmbed handler (Lacartoons version) ---
+                if (videoUrl.contains("cubeembed.rpmvid.com") || videoUrl.contains("cubeembed.")) {
+                    val hash = videoUrl.substringAfterLast("#").substringAfter("/")
+                    val baseUrl = "https://cubeembed.rpmvid.com"
+                    Log.d("Danimados", "loadLinks: CubeEmbed detected, hash=$hash baseUrl=$baseUrl")
+                    val cubeHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
+                    val encrypted = try {
+                        app.get("$baseUrl/api/v1/video?id=$hash", headers = cubeHeaders).text.trim()
+                    } catch (_: Exception) { null }
+                    if (!encrypted.isNullOrEmpty()) {
+                        val key = "kiemtienmua911ca"
+                        val ivList = listOf("1234567890oiuytr", "0123456789abcdef")
+                        val decryptedText = ivList.firstNotNullOfOrNull { iv ->
+                            try { decryptAesCbc(encrypted, key, iv) }
+                            catch (_: Exception) { null }
+                        }
+                        if (decryptedText != null) {
+                            Log.d("Danimados", "loadLinks: CubeEmbed decrypted OK")
+                            // Subtitles
+                            val subtitleSection = Regex("\"subtitle\":\\{(.*?)\\}").find(decryptedText)?.groupValues?.get(1)
+                            subtitleSection?.let { section ->
+                                Regex("\"([^\"]+)\":\\s*\"([^\"]+)\"").findAll(section).forEach { match ->
+                                    val lang = match.groupValues[1]
+                                    val rawPath = match.groupValues[2].split("#")[0]
+                                    if (rawPath.isNotEmpty()) {
+                                        val path = rawPath.replace("\\/", "/")
+                                        val subUrl = "$baseUrl$path"
+                                        subtitleCallback(newSubtitleFile(lang, subUrl))
+                                    }
+                                }
+                            }
+                            // Source M3U8
+                            val source = Regex("\"source\":\"(.*?)\"").find(decryptedText)
+                                ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
+                            if (source.isNotEmpty()) {
+                                val sourceHttp = source.replaceFirst("https://", "http://")
+                                Log.d("Danimados", "loadLinks: CubeEmbed source M3U8: $sourceHttp")
+                                callback.invoke(ExtractorLink(
+                                    source = name, name = name,
+                                    url = sourceHttp,
+                                    type = ExtractorLinkType.M3U8, quality = 720,
+                                    referer = videoUrl,
+                                ))
+                                anySuccess = true
+                            }
+                            // TikTok HLS
+                            val hlsTiktok = Regex("\"hlsVideoTiktok\":\"(.*?)\"").find(decryptedText)
+                                ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
+                            if (hlsTiktok.isNotEmpty()) {
+                                val tiktokUrl = "$baseUrl$hlsTiktok"
+                                Log.d("Danimados", "loadLinks: CubeEmbed TikTok M3U8: $tiktokUrl")
+                                callback.invoke(ExtractorLink(
+                                    source = name, name = name,
+                                    url = tiktokUrl,
+                                    type = ExtractorLinkType.M3U8, quality = 720,
+                                    referer = videoUrl,
+                                ))
+                                anySuccess = true
+                            }
+                        }
+                    }
+                }
+
                 val embedResp = app.get(videoUrl, headers = browserHeaders + mapOf(
                     "Referer" to data,
                     "Accept" to "*/*",
@@ -248,31 +331,55 @@ class DanimadosProvider : MainAPI() {
                 Log.d("Danimados", "loadLinks: embed page code=${embedResp.code}, len=${embedResp.text.length}")
                 Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(1000)}")
 
-                // Try unpacking packed JS (e.g. VidHide eval() packs)
                 val unpacked = unpackPackedJs(embedResp.text)
                 val allVideoCandidates = mutableListOf<String>()
                 if (unpacked != null) {
                     Log.d("Danimados", "loadLinks: unpacked JS, len=${unpacked.length}")
-                    // All m3u8 URLs
+
                     allVideoCandidates.addAll(
                         Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(unpacked)
                             .map { it.value }.distinct()
                     )
-                    // Non-m3u8 URLs that look like video files (from "file":"..." keys)
+
                     val fileUrls = Regex(""""file"\s*:\s*"(https?://[^"]+)""").findAll(unpacked)
                         .map { it.groupValues[1] }.filter { !it.contains(".m3u8") && !it.contains(".mp4") }.toList()
                     allVideoCandidates.addAll(fileUrls)
                     Log.d("Danimados", "loadLinks: video candidates from unpacked: $allVideoCandidates")
+
+                    // Follow acek-cdn urlset URLs
+                    val urlsetUrls = Regex("""urlset\s*['=]\s*'(https?://[^']+)'""").findAll(unpacked)
+                        .map { it.groupValues[1] }.distinct().toList()
+                    for (urlsetUrl in urlsetUrls) {
+                        try {
+                            Log.d("Danimados", "loadLinks: following urlset: $urlsetUrl")
+                            val resolvedResp = app.get(urlsetUrl,
+                                headers = browserHeaders + mapOf("Referer" to videoUrl))
+                            // Check if the final URL (after redirects) is a M3U8
+                            val finalUrl = urlsetUrl // no direct access to redirect URL, check body
+                            val bodyText = resolvedResp.text
+                            Log.d("Danimados", "loadLinks: urlset response code=${resolvedResp.code} body=${bodyText.take(300)}")
+                            // urlset often redirects to a JSON with the actual M3U8 or directly to M3U8
+                            val m3u8FromRedirect = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(bodyText)?.value
+                            if (m3u8FromRedirect != null) {
+                                Log.d("Danimados", "loadLinks: found M3U8 from urlset: $m3u8FromRedirect")
+                                allVideoCandidates.add(0, m3u8FromRedirect)
+                            }
+                            // Also try body as if it were a M3U8 directly
+                            if (bodyText.trimStart().startsWith("#EXTM3U")) {
+                                allVideoCandidates.add(0, urlsetUrl)
+                            }
+                        } catch (e: Exception) {
+                            Log.d("Danimados", "loadLinks: urlset follow failed: ${e.message}")
+                        }
+                    }
                 }
 
-                // Also try direct regex on raw HTML
                 val directSrc = Regex("""(?:src|file|source|url|link)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
                 if (directSrc != null && directSrc !in allVideoCandidates) {
                     allVideoCandidates.add(0, directSrc)
                 }
 
-                // Try each candidate: fetch first bytes to validate
                 for (candidate in allVideoCandidates) {
                     val fullUrl = if (candidate.startsWith("http")) candidate else "https:$candidate"
                     try {
