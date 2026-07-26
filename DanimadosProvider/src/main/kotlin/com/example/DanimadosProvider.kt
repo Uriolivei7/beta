@@ -250,34 +250,58 @@ class DanimadosProvider : MainAPI() {
 
                 // Try unpacking packed JS (e.g. VidHide eval() packs)
                 val unpacked = unpackPackedJs(embedResp.text)
-                var m3u8Candidates = emptyList<String>()
+                val allVideoCandidates = mutableListOf<String>()
                 if (unpacked != null) {
                     Log.d("Danimados", "loadLinks: unpacked JS, len=${unpacked.length}")
-                    m3u8Candidates = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(unpacked)
-                        .map { it.value }.distinct().toList()
-                    Log.d("Danimados", "loadLinks: found ${m3u8Candidates.size} m3u8 from unpacked JS: $m3u8Candidates")
+                    // All m3u8 URLs
+                    allVideoCandidates.addAll(
+                        Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(unpacked)
+                            .map { it.value }.distinct()
+                    )
+                    // Non-m3u8 URLs that look like video files (from "file":"..." keys)
+                    val fileUrls = Regex(""""file"\s*:\s*"(https?://[^"]+)""").findAll(unpacked)
+                        .map { it.groupValues[1] }.filter { !it.contains(".m3u8") && !it.contains(".mp4") }.toList()
+                    allVideoCandidates.addAll(fileUrls)
+                    Log.d("Danimados", "loadLinks: video candidates from unpacked: $allVideoCandidates")
                 }
 
-                // Collect candidates: regex direct > unpack (non-urlset) > unpack (urlset)
+                // Also try direct regex on raw HTML
                 val directSrc = Regex("""(?:src|file|source|url|link)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4))["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)?.groupValues?.get(1)
-                if (directSrc != null) {
-                    m3u8Candidates = listOf(directSrc) + m3u8Candidates
+                if (directSrc != null && directSrc !in allVideoCandidates) {
+                    allVideoCandidates.add(0, directSrc)
                 }
-                // Prefer non-urlset URLs (direct quality playlists)
-                val sorted = m3u8Candidates.sortedBy { if (it.contains("urlset")) 1 else 0 }
-                for (candidate in sorted) {
+
+                // Try each candidate: fetch first bytes to validate
+                for (candidate in allVideoCandidates) {
                     val fullUrl = if (candidate.startsWith("http")) candidate else "https:$candidate"
-                    Log.d("Danimados", "loadLinks: adding m3u8 candidate: $fullUrl")
-                    callback.invoke(ExtractorLink(
-                        source = name,
-                        name = name,
-                        url = fullUrl,
-                        type = ExtractorLinkType.M3U8,
-                        quality = 720,
-                        referer = videoUrl,
-                    ))
-                    anySuccess = true
+                    try {
+                        val headCall = app.get(fullUrl, headers = browserHeaders + mapOf("Referer" to videoUrl))
+                        val headBuf = ByteArray(100)
+                        val headRead = headCall.body.byteStream().use { s -> s.read(headBuf) }
+                        val headStr = if (headRead > 0) String(headBuf, 0, headRead) else ""
+                        val linkType = when {
+                            headStr.trimStart().startsWith("#EXTM3U") -> ExtractorLinkType.M3U8
+                            headStr.contains("ftyp") -> ExtractorLinkType.VIDEO
+                            else -> null
+                        }
+                        if (linkType != null) {
+                            Log.d("Danimados", "loadLinks: validated video candidate: $fullUrl type=$linkType")
+                            callback.invoke(ExtractorLink(
+                                source = name,
+                                name = name,
+                                url = fullUrl,
+                                type = linkType,
+                                quality = 720,
+                                referer = videoUrl,
+                            ))
+                            anySuccess = true
+                        } else {
+                            Log.d("Danimados", "loadLinks: candidate not video: ${headStr.take(40)}")
+                        }
+                    } catch (e: Exception) {
+                        Log.d("Danimados", "loadLinks: candidate failed: $fullUrl - ${e.message}")
+                    }
                 }
                 val b64Match = Regex("""(?:src|file|source|url)\s*[=:]\s*["']([A-Za-z0-9+/=]{20,})["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)
