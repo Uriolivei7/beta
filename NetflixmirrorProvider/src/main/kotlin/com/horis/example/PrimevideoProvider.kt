@@ -207,8 +207,13 @@ class PrimevideoProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
+                if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
+                    return chain.proceed(request.newBuilder()
+                        .header("Cookie", "hd=on")
+                        .header("Connection", "close")
+                        .build())
+                }
                 val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
-
                 var cookie = lastBypassCookie
                 if (cookie.isBlank()) {
                     cookie = NetflixMirrorStorage.getCookie().first ?: ""
@@ -218,21 +223,14 @@ class PrimevideoProvider : MainAPI() {
                 } catch (_: Exception) {
                     cookie.replace("%3A%3A", "::")
                 }
-
-                val builder = request.newBuilder()
+                return chain.proceed(request.newBuilder()
                     .header("Cache-Control", "no-cache, no-store, must-revalidate")
                     .header("Pragma", "no-cache")
                     .header("Connection", "close")
-
-                if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
-                    builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                        .header("Referer", "https://net52.cc/")
-                        .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
-                } else {
-                    builder.header("Cookie", "hd=on")
-                }
-
-                return chain.proceed(builder.build())
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .header("Referer", "https://net52.cc/")
+                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
+                    .build())
             }
         }
     }
@@ -248,6 +246,7 @@ class PrimevideoProvider : MainAPI() {
             lastLoadedId = id
         }
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
+        val userToken = try { getNewTvUserToken(mainUrl, ott) } catch (_: Exception) { "" }
         lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
 
@@ -259,9 +258,10 @@ class PrimevideoProvider : MainAPI() {
                 val items = tryParseJsonList<PlaylistItem>(text)
                 val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
                 if (!src.isNullOrBlank()) {
+                    val inParam = userToken.ifBlank { cookie }
                     val fixedSrc = src
-                        .replace("in=unknown::ep", "in=$cookie")
-                        .replace("in=unknown%3A%3Aep", "in=$cookie")
+                        .replace("in=unknown::ep", "in=$inParam")
+                        .replace("in=unknown%3A%3Aep", "in=$inParam")
                         .replace("::ep::99", "::ep::m")
                         .replace("%3A%3Aep%3A%3A99", "%3A%3Aep%3A%3Am")
                         .replace("&hp=yes", "")
