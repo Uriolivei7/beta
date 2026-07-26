@@ -255,6 +255,14 @@ class DanimadosProvider : MainAPI() {
             if (videoUrl.isNullOrBlank()) continue
             Log.d("Danimados", "loadLinks: trying videoUrl=$videoUrl")
 
+            val embedLabel = when {
+                videoUrl.contains("callistanise.com") -> "VidHide"
+                videoUrl.contains("cubeembed") -> "CubeEmbed"
+                videoUrl.contains("turbovid") -> "TurboVid"
+                videoUrl.contains("waaw") -> "WaaW"
+                else -> "Server$nume"
+            }
+
             val extracted = loadExtractor(videoUrl, data, subtitleCallback, callback)
             Log.d("Danimados", "loadLinks: loadExtractor returned $extracted for nume=$nume")
             if (extracted) anySuccess = true
@@ -279,6 +287,7 @@ class DanimadosProvider : MainAPI() {
                         }
                         if (decryptedText != null) {
                             Log.d("Danimados", "loadLinks: CubeEmbed decrypted OK")
+                            val cubeLinkName = "Danimados ($embedLabel)"
                             // Subtitles
                             val subtitleSection = Regex("\"subtitle\":\\{(.*?)\\}").find(decryptedText)?.groupValues?.get(1)
                             subtitleSection?.let { section ->
@@ -299,10 +308,10 @@ class DanimadosProvider : MainAPI() {
                                 val sourceHttp = source.replaceFirst("https://", "http://")
                                 Log.d("Danimados", "loadLinks: CubeEmbed source M3U8: $sourceHttp")
                                 callback.invoke(ExtractorLink(
-                                    source = name, name = name,
+                                    source = cubeLinkName, name = cubeLinkName,
                                     url = sourceHttp,
                                     type = ExtractorLinkType.M3U8, quality = 720,
-                                    referer = videoUrl,
+                                    referer = data,
                                 ))
                                 anySuccess = true
                             }
@@ -313,15 +322,16 @@ class DanimadosProvider : MainAPI() {
                                 val tiktokUrl = "$baseUrl$hlsTiktok"
                                 Log.d("Danimados", "loadLinks: CubeEmbed TikTok M3U8: $tiktokUrl")
                                 callback.invoke(ExtractorLink(
-                                    source = name, name = name,
+                                    source = cubeLinkName, name = cubeLinkName,
                                     url = tiktokUrl,
                                     type = ExtractorLinkType.M3U8, quality = 720,
-                                    referer = videoUrl,
+                                    referer = data,
                                 ))
                                 anySuccess = true
                             }
                         }
                     }
+                    continue // CubeEmbed handled, skip generic extraction below
                 }
 
                 val embedResp = app.get(videoUrl, headers = browserHeaders + mapOf(
@@ -353,18 +363,14 @@ class DanimadosProvider : MainAPI() {
                         try {
                             Log.d("Danimados", "loadLinks: following urlset: $urlsetUrl")
                             val resolvedResp = app.get(urlsetUrl,
-                                headers = browserHeaders + mapOf("Referer" to videoUrl))
-                            // Check if the final URL (after redirects) is a M3U8
-                            val finalUrl = urlsetUrl // no direct access to redirect URL, check body
+                                headers = browserHeaders + mapOf("Referer" to data))
                             val bodyText = resolvedResp.text
                             Log.d("Danimados", "loadLinks: urlset response code=${resolvedResp.code} body=${bodyText.take(300)}")
-                            // urlset often redirects to a JSON with the actual M3U8 or directly to M3U8
                             val m3u8FromRedirect = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(bodyText)?.value
                             if (m3u8FromRedirect != null) {
                                 Log.d("Danimados", "loadLinks: found M3U8 from urlset: $m3u8FromRedirect")
                                 allVideoCandidates.add(0, m3u8FromRedirect)
                             }
-                            // Also try body as if it were a M3U8 directly
                             if (bodyText.trimStart().startsWith("#EXTM3U")) {
                                 allVideoCandidates.add(0, urlsetUrl)
                             }
@@ -380,10 +386,11 @@ class DanimadosProvider : MainAPI() {
                     allVideoCandidates.add(0, directSrc)
                 }
 
+                val linkLabel = "Danimados ($embedLabel)"
                 for (candidate in allVideoCandidates) {
                     val fullUrl = if (candidate.startsWith("http")) candidate else "https:$candidate"
                     try {
-                        val headCall = app.get(fullUrl, headers = browserHeaders + mapOf("Referer" to videoUrl))
+                        val headCall = app.get(fullUrl, headers = browserHeaders + mapOf("Referer" to data))
                         val headBuf = ByteArray(100)
                         val headRead = headCall.body.byteStream().use { s -> s.read(headBuf) }
                         val headStr = if (headRead > 0) String(headBuf, 0, headRead) else ""
@@ -395,12 +402,12 @@ class DanimadosProvider : MainAPI() {
                         if (linkType != null) {
                             Log.d("Danimados", "loadLinks: validated video candidate: $fullUrl type=$linkType")
                             callback.invoke(ExtractorLink(
-                                source = name,
-                                name = name,
+                                source = linkLabel,
+                                name = linkLabel,
                                 url = fullUrl,
                                 type = linkType,
                                 quality = 720,
-                                referer = videoUrl,
+                                referer = data,
                             ))
                             anySuccess = true
                         } else {
@@ -419,12 +426,12 @@ class DanimadosProvider : MainAPI() {
                     if (decoded?.contains("m3u8") == true || decoded?.contains("mp4") == true) {
                         Log.d("Danimados", "loadLinks: found base64 source $decoded")
                         callback.invoke(ExtractorLink(
-                            source = name,
-                            name = name,
+                            source = linkLabel,
+                            name = linkLabel,
                             url = decoded,
                             type = ExtractorLinkType.M3U8,
                             quality = 720,
-                            referer = videoUrl,
+                            referer = data,
                         ))
                         anySuccess = true
                     }
