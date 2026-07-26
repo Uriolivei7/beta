@@ -266,6 +266,26 @@ class  NetflixProvider : MainAPI() {
                         .trimEnd('&') + "&_t=${System.currentTimeMillis()}"
                     Log.e("Netmirror", "URL M3U8: $m3u8")
 
+                    // Log M3U8 body for debugging episode transition
+                    try {
+                        val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
+                        val m3u8Body = app.get(m3u8, headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
+                            "Referer" to "$domain/",
+                            "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
+                        )).text
+                        Log.e("Netmirror", "M3U8 BODY id=$id len=${m3u8Body.length}")
+                        Log.e("Netmirror", "M3U8 BODY first1000: ${m3u8Body.take(1000)}")
+                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("RESOLUTION") || it.contains("I-FRAME") || it.contains("thumbnails") || it.contains("cdn") || it.contains("nm-cdn") || it.contains("freecdn") }.forEach { Log.d("Netmirror", "M3U8 LINE: $it") }
+                        // Check if M3U8 contains I-frame-only playlist (seek thumbnails)
+                        val hasIFrames = m3u8Body.contains("I-FRAME")
+                        val hasThumbnails = m3u8Body.contains("thumbnails") || m3u8Body.contains(".vtt")
+                        val hasBrokenCDN = m3u8Body.contains("https:///files/")
+                        Log.e("Netmirror", "M3U8 PROPS id=$id hasIFrames=$hasIFrames hasThumbnails=$hasThumbnails hasBrokenCDN=$hasBrokenCDN segCount=${m3u8Body.lines().count { it.startsWith("https://") || (it.startsWith("/") && !it.startsWith("//")) }}")
+                    } catch (e: Exception) {
+                        Log.e("Netmirror", "M3U8 body fetch failed: ${e.message}")
+                    }
+
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (t.kind == "captions" && !t.file.isNullOrBlank()) {
                             val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
