@@ -332,6 +332,15 @@ class  NetflixProvider : MainAPI() {
                         val m3u8Body = masterResp.text
                         Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
                         m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
+                        // Extract in= from first CDN variant URL for segment injection
+                        val firstCdnUrl = m3u8Body.lines().firstOrNull { (it.contains("freecdn") || it.contains("nm-cdn")) && it.contains("in=") }
+                        if (firstCdnUrl != null) {
+                            val cdnIn = firstCdnUrl.substringAfter("in=", "").substringBefore("&", "")
+                            if (cdnIn.isNotBlank()) {
+                                lastInParam = cdnIn
+                                Log.d("Netmirror", "pre-armed lastInParam from M3U8: ${cdnIn.take(60)}...")
+                            }
+                        }
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
