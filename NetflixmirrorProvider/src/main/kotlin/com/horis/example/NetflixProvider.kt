@@ -77,20 +77,15 @@ class  NetflixProvider : MainAPI() {
                             val newUrl = request.url.newBuilder()
                                 .addEncodedQueryParameter("in", lastInParam)
                                 .build()
-                            // Log.d("Netmirror", "injected in= into: ${newUrl.toString().take(100)}")
+                            Log.d("Netmirror", "INJECT in= into: ${newUrl.toString().take(90)}")
                             return chain.proceed(builder.url(newUrl).build())
                         } else {
-                            Log.w("Netmirror", "CDN no in=, no lastInParam")
+                            Log.w("Netmirror", "NO in= to inject")
                         }
                     } else {
                         val inParam = url.substringAfter("in=", "").substringBefore("&", "").substringBefore("#", "")
-                        if (inParam.isNotBlank()) {
-                            lastInParam = inParam
-                            // Log.d("Netmirror", "saved inParam from CDN")
-                        }
+                        if (inParam.isNotBlank()) lastInParam = inParam
                     }
-
-                    // Log.d("Netmirror", "CDN req: ${url.take(80)} in=${url.contains("in=")} seg=$isSeg lastIn=${lastInParam.take(40)}")
                     return chain.proceed(builder.build())
                 }
                 if (url.contains("net52") || url.contains("net22") || url.contains("net11")) {
@@ -346,9 +341,9 @@ class  NetflixProvider : MainAPI() {
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
                         val m3u8Body = masterResp.text
-                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length}")
-                        // Log only STREAM-INF lines (essential)
-                        m3u8Body.lines().filter { it.contains("STREAM-INF") }.forEach { Log.d("Netmirror", "M3U8: $it") }
+                        // Backup: extract in= from CDN variant URL in M3U8 body
+                        val cdnIn = Regex("""in=([^&\s#"]+)""").find(m3u8Body)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
+                        if (cdnIn.isNotBlank() && cdnIn != lastInParam) lastInParam = cdnIn
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
