@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.arabseed" // أو com.cimatn حسب مشروعك
-    compileSdk = 34
+    compileSdk = 36
     defaultConfig {
         minSdk = 21
     }

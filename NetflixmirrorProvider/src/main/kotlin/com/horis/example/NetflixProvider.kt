@@ -68,7 +68,7 @@ class  NetflixProvider : MainAPI() {
                 }
                 if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
                     val builder = request.newBuilder()
-                        .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=$ott")
+                        .header("Cookie", "hd=on; ott=$ott")
                         .header("Connection", "close")
                         .header("Cache-Control", "no-cache")
 
@@ -311,15 +311,9 @@ class  NetflixProvider : MainAPI() {
                         .replace("hp=yes&", "")
                         .replace("?hp=yes", "?")
 
-                    // Extract in= from playlist source URL
-                    // Log.e("Netmirror", "fixedSrc=$fixedSrc")
+                    // Extract in= from playlist src as fallback
                     val srcIn = Regex("""in=([^&\s#]+)""").find(fixedSrc)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
-                    if (srcIn.isNotBlank()) {
-                        lastInParam = srcIn
-                        Log.d("Netmirror", "in= from src: ${srcIn.take(60)}...")
-                    } else {
-                        Log.e("Netmirror", "WARN: no in= in src: ${fixedSrc.take(100)}")
-                    }
+                    if (srcIn.isNotBlank()) lastInParam = srcIn
 
                     val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
 
@@ -332,21 +326,29 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    // Fetch M3U8 body, store as custom master, return __cm=1 URL
+                    // Fetch M3U8 body, extract CDN's in= (preferred), store as custom master
                     try {
                         val rawCookie = try { URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                         val masterResp = app.get(m3u8, headers = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
                             "Referer" to "$domain/",
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
-                        ))
+                        ), timeout = 30L)
                         val m3u8Body = masterResp.text
-                        // Backup: extract in= from CDN variant URL in M3U8 body
+                        // Extract in= from CDN variant URL (preferred over playlist src)
                         val cdnIn = Regex("""in=([^&\s#"]+)""").find(m3u8Body)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
-                        if (cdnIn.isNotBlank() && cdnIn != lastInParam) lastInParam = cdnIn
+                        if (cdnIn.isNotBlank()) {
+                            lastInParam = cdnIn
+                            Log.d("Netmirror", "in=OK from CDN body: ${cdnIn.take(50)}...")
+                        } else {
+                            Log.w("Netmirror", "in= from playlist (fallback): ${srcIn.take(50)}...")
+                        }
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
+                        if (srcIn.isNotBlank()) {
+                            Log.w("Netmirror", "in= using playlist fallback: ${srcIn.take(50)}...")
+                        }
                     }
 
                     val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
