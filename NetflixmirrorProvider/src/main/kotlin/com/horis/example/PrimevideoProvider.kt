@@ -266,7 +266,6 @@ class PrimevideoProvider : MainAPI() {
                     val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
                     Log.e("Netmirror", "URL M3U8: $m3u8")
 
-                    // Log M3U8 body for debugging episode transition
                     try {
                         val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
                         val m3u8Body = app.get(m3u8, headers = mapOf(
