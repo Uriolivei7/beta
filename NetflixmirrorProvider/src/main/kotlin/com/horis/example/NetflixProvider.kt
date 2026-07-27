@@ -8,12 +8,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import okhttp3.Interceptor
-import okhttp3.MediaType
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Protocol
 import okhttp3.Response
-import okhttp3.ResponseBody
-import okhttp3.ResponseBody.Companion.toResponseBody
 
 class  NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -33,53 +28,12 @@ class  NetflixProvider : MainAPI() {
         Log.e("Netmirror", "NetflixProvider init called")
     }
 
-    private fun stripM3u8Audio(master: String): String {
-        val lines = master.lines()
-        val groups = mutableSetOf<String>()
-        lines.forEach { line ->
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                Regex("""AUDIO="([^"]+)"""").find(line)?.let { groups.add(it.groupValues[1]) }
-            }
-        }
-        if (groups.isEmpty()) return master
-        // Keep also English and Spanish audio for language switching
-        val extraLangs = listOf("en", "eng", "es", "spa", "por")
-        return lines.filter { line ->
-            if (line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO")) {
-                val gid = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
-                val lang = Regex("""LANGUAGE="([^"]+)"""").find(line)?.groupValues?.get(1)
-                gid in groups || lang in extraLangs
-            } else {
-                true
-            }
-        }.joinToString("\n")
-    }
-
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
-
-                // Handle __cm=1: serve custom master from memory
-                if (url.contains("__cm=1")) {
-                    val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
-                    if (id != null) {
-                        val master = customMasters[id]
-                        if (master != null) {
-                            Log.d("Netmirror", "Serving custom master for id=$id")
-                            val mediaType = "application/vnd.apple.mpegurl".toMediaType()
-                            return Response.Builder()
-                                .request(request)
-                                .protocol(Protocol.HTTP_1_1)
-                                .code(200)
-                                .message("OK")
-                                .body(ResponseBody.create(mediaType, master))
-                                .build()
-                        }
-                    }
-                }
 
                 var cookie = lastBypassCookie
                 if (cookie.isBlank()) {
@@ -340,11 +294,13 @@ class  NetflixProvider : MainAPI() {
                         .replace("hp=yes&", "")
                         .replace("?hp=yes", "?")
 
-                    // Extract in= from playlist src as fallback
+                    // Store per-episode in= for interceptor
                     val srcIn = Regex("""in=([^&\s#]+)""").find(fixedSrc)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
-                    if (srcIn.isNotBlank()) lastInParam = srcIn
+                    if (srcIn.isNotBlank()) {
+                        perEpisodeInParams[id.toIntOrNull() ?: 0] = srcIn
+                    }
 
-                    val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
+                    val m3u8Url = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
 
                     // Parse subtitle tracks
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
@@ -355,37 +311,7 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    // Fetch M3U8 body, extract CDN's in= (preferred), store as custom master
-                    try {
-                        val rawCookie = try { URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
-                        val masterResp = app.get(m3u8, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
-                            "Referer" to "$domain/",
-                            "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
-                        ), timeout = 30L)
-                        val m3u8Body = masterResp.text
-                        // Extract in= from CDN variant URL (preferred over playlist src)
-                        val cdnIn = Regex("""in=([^&\s#"]+)""").find(m3u8Body)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
-                        if (cdnIn.isNotBlank()) {
-                            lastInParam = cdnIn
-                            perEpisodeInParams[id.toIntOrNull() ?: 0] = cdnIn
-                            Log.d("Netmirror", "in=OK from CDN body: ${cdnIn.take(50)}...")
-                        } else {
-                            Log.w("Netmirror", "in= from playlist (fallback): ${srcIn.take(50)}...")
-                        }
-                        val strippedMaster = stripM3u8Audio(m3u8Body)
-                        Log.d("Netmirror", "M3U8 stripped ${m3u8Body.length}→${strippedMaster.length} audio tracks")
-                        setCustomMaster(id, strippedMaster)
-                    } catch (e: Exception) {
-                        Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
-                        if (srcIn.isNotBlank()) {
-                            perEpisodeInParams[id.toIntOrNull() ?: 0] = srcIn
-                            Log.w("Netmirror", "in= using playlist fallback: ${srcIn.take(50)}...")
-                        }
-                    }
-
-                    val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
-                    callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
+                    callback(newExtractorLink(name, name, m3u8Url, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true
