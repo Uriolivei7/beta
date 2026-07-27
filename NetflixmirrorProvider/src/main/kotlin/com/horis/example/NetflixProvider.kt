@@ -67,8 +67,6 @@ class  NetflixProvider : MainAPI() {
                     cookie.replace("%3A%3A", "::")
                 }
                 if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
-                    Log.d("Netmirror", "CDN interceptor url=${url.take(120)} lastInParam=${lastInParam.take(40)}")
-
                     val builder = request.newBuilder()
                         .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=$ott")
                         .header("Connection", "close")
@@ -79,22 +77,20 @@ class  NetflixProvider : MainAPI() {
                             val newUrl = request.url.newBuilder()
                                 .addEncodedQueryParameter("in", lastInParam)
                                 .build()
-                            Log.d("Netmirror", "injected in= into: ${newUrl.toString().take(100)}")
+                            // Log.d("Netmirror", "injected in= into: ${newUrl.toString().take(100)}")
                             return chain.proceed(builder.url(newUrl).build())
                         } else {
-                            Log.w("Netmirror", "CDN req without in= and no lastInParam available")
+                            Log.w("Netmirror", "CDN no in=, no lastInParam")
                         }
                     } else {
-                        // URL has in=, save it for future segment requests
                         val inParam = url.substringAfter("in=", "").substringBefore("&", "").substringBefore("#", "")
                         if (inParam.isNotBlank()) {
                             lastInParam = inParam
-                            Log.d("Netmirror", "saved inParam from CDN: ${inParam.take(60)}...")
+                            // Log.d("Netmirror", "saved inParam from CDN")
                         }
                     }
 
-                    val isSeg = url.contains(".ts") || url.contains(".jpg") || url.contains(".js") || url.contains(".png")
-                    Log.d("Netmirror", "CDN req: ${url.take(80)} in=${url.contains("in=")} seg=$isSeg lastIn=${lastInParam.take(40)}")
+                    // Log.d("Netmirror", "CDN req: ${url.take(80)} in=${url.contains("in=")} seg=$isSeg lastIn=${lastInParam.take(40)}")
                     return chain.proceed(builder.build())
                 }
                 if (url.contains("net52") || url.contains("net22") || url.contains("net11")) {
@@ -320,24 +316,23 @@ class  NetflixProvider : MainAPI() {
                         .replace("hp=yes&", "")
                         .replace("?hp=yes", "?")
 
-                    // Extract in= from the source URL directly (more reliable than parsing body)
-                    val srcIn = fixedSrc.substringAfter("in=", "").substringBefore("&", "").substringBefore("#", "")
+                    // Extract in= from playlist source URL
+                    // Log.e("Netmirror", "fixedSrc=$fixedSrc")
+                    val srcIn = Regex("""in=([^&\s#]+)""").find(fixedSrc)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
                     if (srcIn.isNotBlank()) {
                         lastInParam = srcIn
-                        Log.d("Netmirror", "extracted in= from playlist src: ${srcIn.take(60)}...")
+                        Log.d("Netmirror", "in= from src: ${srcIn.take(60)}...")
                     } else {
-                        Log.e("Netmirror", "WARN: no in= param in playlist src: ${fixedSrc.take(120)}")
+                        Log.e("Netmirror", "WARN: no in= in src: ${fixedSrc.take(100)}")
                     }
 
                     val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
-                    Log.e("Netmirror", "URL M3U8 Base: $m3u8")
 
-                    // Parse subtitle tracks from JSON response
+                    // Parse subtitle tracks
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (t.kind == "captions" && !t.file.isNullOrBlank()) {
                             val subLang = t.label?.substringBefore(" [")?.lowercase() ?: "und"
                             val subUrl = if (t.file.startsWith("//")) "https:${t.file}" else t.file
-                            Log.d("Netmirror", "subtitle lang=$subLang url=$subUrl")
                             subtitleCallback(newSubtitleFile(subLang, subUrl))
                         }
                     }
@@ -351,8 +346,9 @@ class  NetflixProvider : MainAPI() {
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
                         val m3u8Body = masterResp.text
-                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
-                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
+                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length}")
+                        // Log only STREAM-INF lines (essential)
+                        m3u8Body.lines().filter { it.contains("STREAM-INF") }.forEach { Log.d("Netmirror", "M3U8: $it") }
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
