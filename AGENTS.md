@@ -96,37 +96,28 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - Audio already worked without `in=`; video now uses the same approach
 - Player.php demoted to fallback (returns preview content, wrong episode)
 
-### Fallbacks (in order)
-1. `playlist.php` — primary flow
-2. `player.php` — fallback (JioHotstar primary)
-3. Direct M3U8 with clean hash (via `getPlaylistUrl` in Utils.kt)
+### `getVideoInterceptor` (26 Jul 2026) — __cm=1 + Domain-aware + freecdn in= injection
+- **__cm=1 priority**: intercepta requests a `net52.cc/mobile/hls/{id}.m3u8?__cm=1`, sirve custom master desde `customMasters[id]` (alamacenado en loadLinks)
+- **net52.cc/net22.cc/net11.cc** requests: Cookie `t_hash_t=...; hd=on; ott=nf/pv/hs` + Connection: close
+- **CDN domains** (nm-cdn, freecdn, imgcdn): Cookie `t_hash_t=...; hd=on; ott=nf/pv/hs` + Connection: close
+- **freecdn in= injection**: Guarda `in=` de la variant M3U8 request, lo inyecta en segment requests (.ts) via `addEncodedQueryParameter`
+- All requests: `Cache-Control: no-cache`, `Connection: close`
+- `hp=yes` stripped from M3U8 URL
 
-### `getVideoInterceptor` (10 Jul 2026) — Domain-aware
-- **net52.cc/net22.cc/net11.cc** requests: Cookie `t_hash_t=...; hd=on; ott=nf/pv/hs` + User-Agent + Referer
-- **CDN domains** (nm-cdn, freecdn, imgcdn): ONLY `Cookie: hd=on` (no `t_hash_t` — CDN uses `in=` URL param)
-- All requests: `Cache-Control: no-cache`, `Pragma: no-cache`, `Connection: close`
-- `hp=yes` stripped from M3U8 URL (suspected "homepage preview" flag)
+## Current State (26 Jul 2026)
+- ✅ **__cm=1 restored** — loadLinks descarga M3U8 con conexión FRESCA, almacena en customMasters, sirve inline a ExoPlayer. Previene que el CDN devuelva preview basado en sesión compartida.
+- ✅ `clearCookie()` en cambio de episodio — t_hash_t fresco por episodio
+- ✅ Interceptor mejorado: t_hash_t en CDN + freecdn in= injection + Connection: close
+- ✅ `hp=yes` stripped, `_t=` cache-busting, anti-cache headers
+- ✅ M3U8 body logging (len, video lines, props como hasIFrames/hasThumbnails)
+- ✅ **PrimeVideo: episode transition WORKS** (nm-cdn, nunca tuvo el bug)
+- ⏸️ **BUG: Netflix "next episode → 10-min preview"** — pendiente de probar con __cm=1 restaurado
 
-## Current State (11 Jul 2026)
-- ✅ `bypass()` + `clearCookie()` on episode change (fresh t_hash_t per episode)
-- ✅ `_t=` cache-busting on M3U8 URL
-- ✅ Anti-cache headers in interceptor (Cache-Control, Pragma, Connection: close)
-- ✅ Domain-aware interceptor (t_hash_t only to main domain, hd=on only to CDN)
-- ✅ `hp=yes` stripped from M3U8 URL
-- ✅ MonoschinosProvider search fixed
-- ✅ **NEW: customMasters + __cm=1** — M3U8 descargado en loadLinks (fuera del interceptor compartido), servido inline a ExoPlayer
-- ✅ **NEW: M3U8 body logging** — log de primeras 1000 chars del body para comparar EP1 vs EP2
-
-- ⏸️ **BUG: "next episode → 10-min preview" still occurs** — audio/subs correct, video preview only
-- ⏸️ Trabajando en: identificar por qué el video se muestra como preview en EP2
-
-## Hipótesis actual (10 Jul 2026)
-- El problema NO es de cookie/bypass (ya comprobado con clearCookie + fresh bypass)
-- El problema NO es de cache HTTP (ya comprobado con `_t=` + Cache-Control headers)
-- El problema NO es de `t_hash_t` en CDN (ya domain-aware)
-- El problema NO es `hp=yes`
-- **NUEVA hipótesis**: CloudStream/ExoPlayer REUSA el mismo reproductor/HTTP client entre episodios. Cuando EP1 sigue activo (faltan 40s), las conexiones HTTP de EP1 se reusan para EP2, y el servidor/CDN sirve preview al ver el `in=` hash cambiado en la misma conexión.
-- **customMasters + __cm=1**: descarga el M3U8 en loadLinks (conexión FRESCA, no compartida), lo sirve inline. Los segmentos aún van por el interceptor compartido, pero el M3U8 en sí es correcto.
+## Hipótesis (26 Jul 2026)
+- El código **antiguo** (con `__cm=1` + `setCustomMaster`) **NO tenía** preview en video. Solo thumbnails incorrectos (ExoPlayer genera thumbnails de I-frames, no hay thumbnail track separado).
+- El código **actual** (URL directa sin __cm=1) **introdujo** el preview bug — ExoPlayer comparte conexión HTTP con el CDN entre episodios, CDN sirve preview al detectar sesión existente.
+- **Fix**: Restaurar __cm=1 (fetch M3U8 en loadLinks con conexión fresca) + mantener interceptor mejorado (t_hash_t a CDN + in= injection como safety net).
+- Si aún falla: el servidor CDN (`s24.freecdn3.top`) podría requerir `in=` en segment requests de forma obligatoria (no opcional).
 
 ## Files
 - `NetflixProvider.kt` — `loadLinks()` playlist.php → mobile/hls primary + __cm=1
