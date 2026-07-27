@@ -723,17 +723,117 @@ fun createNetmirrorInterceptor(): Interceptor {
             }
         }
 
-        if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
-            return@Interceptor chain.proceed(request.newBuilder()
+        val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+        if (host.contains("nm-cdn") || host.contains("freecdn") || host.contains("imgcdn")) {
+            val builder = request.newBuilder()
                 .header("Cookie", "hd=on")
                 .header("Connection", "close")
                 .header("Cache-Control", "no-cache")
-                .build())
+            return@Interceptor chain.proceed(builder.build())
         }
 
         chain.proceed(request)
     }
 }
+
+fun m3u8CdnFixInterceptor(): Interceptor {
+    Log.d("Netmirror", "m3u8CdnFixInterceptor() called - creating new interceptor")
+    return Interceptor { chain ->
+        var req = chain.request()
+        val url = req.url.toString()
+        // Serve custom master playlist if __cm=1 is present
+        if (url.contains("__cm=1")) {
+            val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
+            if (id != null) {
+                val master = customMasters[id]
+                if (master != null) {
+                    Log.d("Netmirror", "Serving custom master for id=$id")
+                    val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
+                    val body = ResponseBody.create(mediaType, master)
+                    val response = Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body)
+                        .build()
+                    return@Interceptor response
+                } else {
+                    Log.w("Netmirror", "No custom master found for id=$id, falling through to server")
+                }
+            }
+        }
+        val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+        if (cdnHost.contains("nm-cdn") || cdnHost.contains("freecdn") || cdnHost.contains("imgcdn")) {
+            val existing = req.header("Cookie") ?: ""
+            val parts = mutableListOf<String>()
+            if (existing.isNotBlank()) {
+                existing.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach {
+                    if (!it.startsWith("hd=")) {
+                        parts.add(it)
+                    }
+                }
+            }
+            parts.add("hd=on")
+            req = req.newBuilder().header("Cookie", parts.joinToString("; ")).build()
+        }
+        Log.d("Netmirror", "Interceptor firing for: $url")
+        val resp: Response
+        try {
+            resp = chain.proceed(req)
+        } catch (e: Exception) {
+            val cdnHost = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+            if (cdnHost.contains("nm-cdn") || cdnHost.contains("imgcdn") || cdnHost.contains("freecdn")) {
+                Log.d("Netmirror", "CDN unreachable: $url - ${e.message}")
+            }
+            Log.e("Netmirror", "NETWORK ERROR: $url - ${e.message}")
+            throw e
+        }
+        val ct = (resp.body?.contentType()?.toString() ?: "")
+        val isM3u8 = url.contains(".m3u8") || ct.contains("mpegurl") || ct.contains("vnd.apple.mpegurl")
+        if (cdnHost.contains("imgcdn") || cdnHost.contains("tv.imgcdn")) {
+            Log.e("Netmirror", "IMGCDN REQUEST: $url code=${resp.code} ct=$ct len=${resp.body?.contentLength()}")
+        }
+        if (isM3u8) {
+            val body = resp.body?.string() ?: return@Interceptor resp
+            if (!body.startsWith("#EXT")) {
+                Log.e("Netmirror", "M3U8 NOT valid: $url status=${resp.code} len=${body.length} first100=${body.take(100)}")
+                return@Interceptor resp
+            }
+            val inParam = Regex("[?&]in=([^&#]+)").find(url)?.groupValues?.get(1)
+            Log.d("Netmirror", "M3U8 OK: $url len=${body.length} hasBrokenCdn=${body.contains("https:///files/")} in=${inParam?.take(50)}")
+            var fixed = body
+            if (fixed.contains("https:///files/")) {
+                fixed = fixed.replace("https:///files/", "https://net11.cc/hls/")
+                Log.d("Netmirror", "CDN fix broken →net11.cc/hls/: $url")
+                Log.d("Netmirror", "Fixed broken CDN URLs (→net11.cc/hls/): $url")
+            }
+            val relSegmentRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
+            var segmentFixed = 0
+            fixed = relSegmentRegex.replace(fixed) { match ->
+                val line = match.value.trim()
+                if (line.isBlank() || line.contains("in=")) line
+                else if (line.startsWith("http")) line
+                else {
+                    segmentFixed++
+                    val base = url.substringBeforeLast("/")
+                    val suffix = if (inParam != null) {
+                        if (line.contains("?")) "&in=$inParam" else "?in=$inParam"
+                    } else ""
+                    "$base/$line$suffix"
+                }
+            }
+            if (segmentFixed > 0) {
+                Log.d("Netmirror", "Fixed $segmentFixed relative segment URLs (base=$url)")
+            }
+            val newBody = ResponseBody.create(resp.body?.contentType(), fixed)
+            return@Interceptor resp.newBuilder().body(newBody).build()
+        }
+        resp
+    }
+}
+
+
 
 suspend fun getPlaylistUrl(
     mainUrl: String,

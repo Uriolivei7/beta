@@ -207,13 +207,8 @@ class PrimevideoProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
-                if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
-                    return chain.proceed(request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .header("Connection", "close")
-                        .build())
-                }
                 val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
+
                 var cookie = lastBypassCookie
                 if (cookie.isBlank()) {
                     cookie = NetflixMirrorStorage.getCookie().first ?: ""
@@ -223,14 +218,21 @@ class PrimevideoProvider : MainAPI() {
                 } catch (_: Exception) {
                     cookie.replace("%3A%3A", "::")
                 }
-                return chain.proceed(request.newBuilder()
+
+                val builder = request.newBuilder()
                     .header("Cache-Control", "no-cache, no-store, must-revalidate")
                     .header("Pragma", "no-cache")
                     .header("Connection", "close")
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                    .header("Referer", "https://net52.cc/")
-                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
-                    .build())
+
+                if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
+                    builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                        .header("Referer", "https://net52.cc/")
+                        .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
+                } else {
+                    builder.header("Cookie", "hd=on")
+                }
+
+                return chain.proceed(builder.build())
             }
         }
     }
@@ -240,8 +242,11 @@ class PrimevideoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<NewTvLoadData>(data).id
-        lastLoadedId = id
 
+        if (id != lastLoadedId) {
+            NetflixMirrorStorage.clearCookie()
+            lastLoadedId = id
+        }
         val cookie = try { bypass(mainUrl) } catch (_: Exception) { "" }
         lastBypassCookie = cookie
         Log.d("Netmirror", "loadLinks id=$id cookie=$cookie")
@@ -264,24 +269,7 @@ class PrimevideoProvider : MainAPI() {
                         .replace("?hp=yes", "?")
 
                     val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
-                    Log.e("Netmirror", "URL M3U8: $m3u8")
-
-                    try {
-                        val rawCookie = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
-                        val m3u8Body = app.get(m3u8, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36",
-                            "Referer" to "$domain/",
-                            "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
-                        )).text
-                        Log.e("Netmirror", "M3U8 BODY id=$id len=${m3u8Body.length}")
-                        Log.e("Netmirror", "M3U8 BODY first1000: ${m3u8Body.take(1000)}")
-                        m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("RESOLUTION") || it.contains("cdn") || it.contains("nm-cdn") || it.contains("freecdn") }.forEach { Log.d("Netmirror", "M3U8 LINE: $it") }
-                        val hasBrokenCDN = m3u8Body.contains("https:///files/")
-                        val segCount = m3u8Body.lines().count { it.startsWith("https://") || (it.startsWith("/") && !it.startsWith("//")) }
-                        Log.e("Netmirror", "M3U8 PROPS id=$id hasBrokenCDN=$hasBrokenCDN segCount=$segCount")
-                    } catch (e: Exception) {
-                        Log.e("Netmirror", "M3U8 body fetch failed: ${e.message}")
-                    }
+                    Log.e("Netmirror", "URL M3U8 Base Enviada: $m3u8")
 
                     items.firstOrNull()?.tracks.orEmpty().forEach { t ->
                         if (t.kind == "captions" && !t.file.isNullOrBlank()) {

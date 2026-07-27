@@ -241,7 +241,7 @@ class JioHotstarProvider : MainAPI() {
         val playText = playResp.text
         Log.d("JioHotstar", "playlist.php raw=${playText.take(300)}")
         val items = tryParseJsonList<PlaylistItem>(playText)
-            val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
+        val src = items?.firstOrNull()?.sources?.firstOrNull()?.file
         if (src != null) {
             val fixedSrc = src
                 .replace("&hp=yes", "")
