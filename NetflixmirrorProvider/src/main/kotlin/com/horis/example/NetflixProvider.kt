@@ -67,29 +67,34 @@ class  NetflixProvider : MainAPI() {
                     cookie.replace("%3A%3A", "::")
                 }
                 if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
+                    Log.d("Netmirror", "CDN interceptor url=${url.take(120)} lastInParam=${lastInParam.take(40)}")
+
                     val builder = request.newBuilder()
                         .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=$ott")
                         .header("Connection", "close")
                         .header("Cache-Control", "no-cache")
 
-                    if (url.contains("in=")) {
-                        val inParam = url.substringAfter("in=", "").substringBefore("&", "")
+                    if (!url.contains("in=")) {
+                        if (lastInParam.isNotBlank()) {
+                            val newUrl = request.url.newBuilder()
+                                .addEncodedQueryParameter("in", lastInParam)
+                                .build()
+                            Log.d("Netmirror", "injected in= into: ${newUrl.toString().take(100)}")
+                            return chain.proceed(builder.url(newUrl).build())
+                        } else {
+                            Log.w("Netmirror", "CDN req without in= and no lastInParam available")
+                        }
+                    } else {
+                        // URL has in=, save it for future segment requests
+                        val inParam = url.substringAfter("in=", "").substringBefore("&", "").substringBefore("#", "")
                         if (inParam.isNotBlank()) {
                             lastInParam = inParam
-                            Log.d("Netmirror", "saved inParam: ${inParam.take(60)}...")
+                            Log.d("Netmirror", "saved inParam from CDN: ${inParam.take(60)}...")
                         }
                     }
-                    if (!url.contains("in=") && lastInParam.isNotBlank()) {
-                        val newUrl = request.url.newBuilder()
-                            .addEncodedQueryParameter("in", lastInParam)
-                            .build()
-                        Log.d("Netmirror", "injected in= into: ${newUrl.toString().take(100)}")
-                        return chain.proceed(builder.url(newUrl).build())
-                    }
 
-                    val hasParam = url.contains("in=")
-                    val isSeg = url.contains(".ts")
-                    Log.d("Netmirror", "CDN req: ${url.take(80)} in=$hasParam ts=$isSeg lastIn=${lastInParam.take(40)}")
+                    val isSeg = url.contains(".ts") || url.contains(".jpg") || url.contains(".js") || url.contains(".png")
+                    Log.d("Netmirror", "CDN req: ${url.take(80)} in=${url.contains("in=")} seg=$isSeg lastIn=${lastInParam.take(40)}")
                     return chain.proceed(builder.build())
                 }
                 if (url.contains("net52") || url.contains("net22") || url.contains("net11")) {
@@ -315,6 +320,15 @@ class  NetflixProvider : MainAPI() {
                         .replace("hp=yes&", "")
                         .replace("?hp=yes", "?")
 
+                    // Extract in= from the source URL directly (more reliable than parsing body)
+                    val srcIn = fixedSrc.substringAfter("in=", "").substringBefore("&", "").substringBefore("#", "")
+                    if (srcIn.isNotBlank()) {
+                        lastInParam = srcIn
+                        Log.d("Netmirror", "extracted in= from playlist src: ${srcIn.take(60)}...")
+                    } else {
+                        Log.e("Netmirror", "WARN: no in= param in playlist src: ${fixedSrc.take(120)}")
+                    }
+
                     val m3u8 = (if (fixedSrc.startsWith("http")) fixedSrc else "$domain$fixedSrc") + "&_t=${System.currentTimeMillis()}"
                     Log.e("Netmirror", "URL M3U8 Base: $m3u8")
 
@@ -339,15 +353,6 @@ class  NetflixProvider : MainAPI() {
                         val m3u8Body = masterResp.text
                         Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
                         m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
-                        // Extract in= from first CDN variant URL for segment injection
-                        val firstCdnUrl = m3u8Body.lines().firstOrNull { (it.contains("freecdn") || it.contains("nm-cdn")) && it.contains("in=") }
-                        if (firstCdnUrl != null) {
-                            val cdnIn = firstCdnUrl.substringAfter("in=", "").substringBefore("&", "")
-                            if (cdnIn.isNotBlank()) {
-                                lastInParam = cdnIn
-                                Log.d("Netmirror", "pre-armed lastInParam from M3U8: ${cdnIn.take(60)}...")
-                            }
-                        }
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
