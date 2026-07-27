@@ -33,6 +33,28 @@ class  NetflixProvider : MainAPI() {
         Log.e("Netmirror", "NetflixProvider init called")
     }
 
+    private fun stripM3u8Audio(master: String): String {
+        val lines = master.lines()
+        val groups = mutableSetOf<String>()
+        lines.forEach { line ->
+            if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                Regex("""AUDIO="([^"]+)"""").find(line)?.let { groups.add(it.groupValues[1]) }
+            }
+        }
+        if (groups.isEmpty()) return master
+        // Keep also English and Spanish audio for language switching
+        val extraLangs = listOf("en", "eng", "es", "spa", "por")
+        return lines.filter { line ->
+            if (line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO")) {
+                val gid = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
+                val lang = Regex("""LANGUAGE="([^"]+)"""").find(line)?.groupValues?.get(1)
+                gid in groups || lang in extraLangs
+            } else {
+                true
+            }
+        }.joinToString("\n")
+    }
+
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         return object : Interceptor {
@@ -351,7 +373,9 @@ class  NetflixProvider : MainAPI() {
                         } else {
                             Log.w("Netmirror", "in= from playlist (fallback): ${srcIn.take(50)}...")
                         }
-                        setCustomMaster(id, m3u8Body)
+                        val strippedMaster = stripM3u8Audio(m3u8Body)
+                        Log.d("Netmirror", "M3U8 stripped ${m3u8Body.length}→${strippedMaster.length} audio tracks")
+                        setCustomMaster(id, strippedMaster)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
                         if (srcIn.isNotBlank()) {
