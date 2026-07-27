@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
@@ -24,6 +25,7 @@ class  NetflixProvider : MainAPI() {
     private val ott = "nf"
     @Volatile private var lastBypassCookie = ""
     @Volatile private var lastInParam = ""
+    private val perEpisodeInParams = ConcurrentHashMap<Int, String>()
     private var lastLoadedId = ""
     private fun nfEpPoster(id: String) = "https://imgcdn.kim/epimg/150/$id.jpg"
 
@@ -67,15 +69,17 @@ class  NetflixProvider : MainAPI() {
                     cookie.replace("%3A%3A", "::")
                 }
                 if (url.contains("nm-cdn") || url.contains("freecdn") || url.contains("imgcdn")) {
+                    val epId = Regex("""/files/(\d+)/""").find(url)?.groupValues?.get(1)?.toIntOrNull()
                     val builder = request.newBuilder()
                         .header("Cookie", "hd=on; ott=$ott")
                         .header("Connection", "close")
                         .header("Cache-Control", "no-cache")
 
                     if (!url.contains("in=")) {
-                        if (lastInParam.isNotBlank()) {
+                        val inVal = epId?.let { perEpisodeInParams[it] } ?: lastInParam
+                        if (inVal.isNotBlank()) {
                             val newUrl = request.url.newBuilder()
-                                .addEncodedQueryParameter("in", lastInParam)
+                                .addEncodedQueryParameter("in", inVal)
                                 .build()
                             Log.d("Netmirror", "INJECT in= into: ${newUrl.toString().take(90)}")
                             return chain.proceed(builder.url(newUrl).build())
@@ -84,7 +88,10 @@ class  NetflixProvider : MainAPI() {
                         }
                     } else {
                         val inParam = url.substringAfter("in=", "").substringBefore("&", "").substringBefore("#", "")
-                        if (inParam.isNotBlank()) lastInParam = inParam
+                        if (inParam.isNotBlank()) {
+                            lastInParam = inParam
+                            if (epId != null) perEpisodeInParams[epId] = inParam
+                        }
                     }
                     return chain.proceed(builder.build())
                 }
@@ -339,6 +346,7 @@ class  NetflixProvider : MainAPI() {
                         val cdnIn = Regex("""in=([^&\s#"]+)""").find(m3u8Body)?.groupValues?.get(1)?.replace("%3A%3A", "::") ?: ""
                         if (cdnIn.isNotBlank()) {
                             lastInParam = cdnIn
+                            perEpisodeInParams[id.toIntOrNull() ?: 0] = cdnIn
                             Log.d("Netmirror", "in=OK from CDN body: ${cdnIn.take(50)}...")
                         } else {
                             Log.w("Netmirror", "in= from playlist (fallback): ${srcIn.take(50)}...")
@@ -347,6 +355,7 @@ class  NetflixProvider : MainAPI() {
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
                         if (srcIn.isNotBlank()) {
+                            perEpisodeInParams[id.toIntOrNull() ?: 0] = srcIn
                             Log.w("Netmirror", "in= using playlist fallback: ${srcIn.take(50)}...")
                         }
                     }
