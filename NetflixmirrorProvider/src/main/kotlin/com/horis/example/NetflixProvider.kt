@@ -72,17 +72,24 @@ class  NetflixProvider : MainAPI() {
                         .header("Connection", "close")
                         .header("Cache-Control", "no-cache")
 
-                    if (url.contains("freecdn") && url.contains("in=")) {
+                    if (url.contains("in=")) {
                         val inParam = url.substringAfter("in=", "").substringBefore("&", "")
-                        if (inParam.isNotBlank()) lastInParam = inParam
+                        if (inParam.isNotBlank()) {
+                            lastInParam = inParam
+                            Log.d("Netmirror", "saved inParam: ${inParam.take(60)}...")
+                        }
                     }
-                    if (url.contains("freecdn") && !url.contains("in=") && lastInParam.isNotBlank()) {
+                    if (!url.contains("in=") && lastInParam.isNotBlank()) {
                         val newUrl = request.url.newBuilder()
                             .addEncodedQueryParameter("in", lastInParam)
                             .build()
+                        Log.d("Netmirror", "injected in= into: ${newUrl.toString().take(100)}")
                         return chain.proceed(builder.url(newUrl).build())
                     }
 
+                    val hasParam = url.contains("in=")
+                    val isSeg = url.contains(".ts")
+                    Log.d("Netmirror", "CDN req: ${url.take(80)} in=$hasParam ts=$isSeg lastIn=${lastInParam.take(40)}")
                     return chain.proceed(builder.build())
                 }
                 if (url.contains("net52") || url.contains("net22") || url.contains("net11")) {
