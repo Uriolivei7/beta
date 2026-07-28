@@ -311,9 +311,31 @@ class  NetflixProvider : MainAPI() {
                             "Referer" to "$domain/",
                             "Cookie" to "t_hash_t=$rawCookie; hd=on; ott=$ott"
                         ))
-                        val m3u8Body = masterResp.text
+                        var m3u8Body = masterResp.text
                         Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length} body=${m3u8Body.take(2000)}")
                         m3u8Body.lines().filter { it.contains("STREAM-INF") || it.contains("freecdn") || it.contains("nm-cdn") || it.contains("hls/") }.forEach { Log.d("Netmirror", "M3U8 video line: $it") }
+
+                        if (m3u8Body.contains("https:///files/")) {
+                            m3u8Body = m3u8Body.replace("https:///files/", "https://net11.cc/hls/")
+                            Log.d("Netmirror", "Fixed broken CDN URLs in custom master")
+                        }
+                        val inParam = Regex("[?&]in=([^&#]+)").find(m3u8)?.groupValues?.get(1)
+                        if (inParam != null) {
+                            val relRegex = Regex("^(?!#)([^\n\r]+)$", RegexOption.MULTILINE)
+                            var fixedCount = 0
+                            m3u8Body = relRegex.replace(m3u8Body) { match ->
+                                val line = match.value.trim()
+                                if (line.isBlank() || line.contains("in=")) line
+                                else if (line.startsWith("http")) line
+                                else {
+                                    fixedCount++
+                                    val base = m3u8.substringBeforeLast("/")
+                                    val suffix = if (line.contains("?")) "&in=$inParam" else "?in=$inParam"
+                                    "$base/$line$suffix"
+                                }
+                            }
+                            if (fixedCount > 0) Log.d("Netmirror", "Fixed $fixedCount relative URLs in custom master")
+                        }
                         setCustomMaster(id, m3u8Body)
                     } catch (e: Exception) {
                         Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
