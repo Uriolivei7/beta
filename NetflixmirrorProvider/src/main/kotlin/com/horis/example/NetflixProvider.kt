@@ -33,7 +33,54 @@ class  NetflixProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return createNetmirrorInterceptor()
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val url = request.url.toString()
+
+                var cookie = lastBypassCookie
+                if (cookie.isBlank()) {
+                    cookie = NetflixMirrorStorage.getCookie().first ?: ""
+                }
+                val rawCookie = try {
+                    java.net.URLDecoder.decode(cookie, "UTF-8")
+                } catch (_: Exception) {
+                    cookie.replace("%3A%3A", "::")
+                }
+
+                if (url.contains("__cm=1")) {
+                    val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
+                    if (id != null) {
+                        val master = customMasters[id]
+                        if (master != null) {
+                            Log.d("Netmirror", "Serving custom master for id=$id")
+                            val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
+                            val body = ResponseBody.create(mediaType, master)
+                            return Response.Builder()
+                                .request(request)
+                                .protocol(Protocol.HTTP_1_1)
+                                .code(200)
+                                .message("OK")
+                                .body(body)
+                                .build()
+                        }
+                    }
+                }
+
+                val builder = request.newBuilder()
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .header("Referer", "https://net52.cc/")
+                    .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=nf")
+
+                if (url.contains(".ts") || url.contains(".m3u8")) {
+                    builder.header("Connection", "keep-alive")
+                }
+
+                return chain.proceed(builder.build())
+            }
+        }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
