@@ -220,8 +220,6 @@ class PrimevideoProvider : MainAPI() {
                 }
 
                 val builder = request.newBuilder()
-                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
-                    .header("Pragma", "no-cache")
 
                 if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
                     builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
@@ -229,10 +227,6 @@ class PrimevideoProvider : MainAPI() {
                         .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
                 } else {
                     builder.header("Cookie", "hd=on")
-                }
-
-                if (url.contains(".ts") || url.contains(".m3u8")) {
-                    builder.header("Connection", "keep-alive")
                 }
 
                 return chain.proceed(builder.build())
