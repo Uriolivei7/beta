@@ -194,18 +194,23 @@ class PlayhubProvider : MainAPI() {
     }
 
     data class EpisodeItem(
-        val id: Int,
-        val uuid: String,
-        @JsonProperty("seasonId") val seasonId: Int,
-        @JsonProperty("contentId") val contentId: Int,
-        @JsonProperty("episodeNumber") val episodeNumber: Int,
-        @JsonProperty("seasonNumber") val seasonNumber: Int,
-        val name: String,
-        val overview: String?,
-        val runtime: Int?,
-        val artwork: EpisodeArtwork?,
-        @JsonProperty("contentData") val contentData: EpisodeContentData?,
-    )
+        val id: Int? = null,
+        val uuid: String? = null,
+        @JsonProperty("seasonId") val seasonId: Int? = null,
+        @JsonProperty("contentId") val contentId: Int? = null,
+        @JsonProperty("episodeNumber") val episodeNumber: Int? = null,
+        @JsonProperty("seasonNumber") val seasonNumber: Int? = null,
+        val name: String? = null,
+        @JsonProperty("title") val title: String? = null,
+        val overview: String? = null,
+        val runtime: Int? = null,
+        val artwork: EpisodeArtwork? = null,
+        @JsonProperty("contentData") val contentData: EpisodeContentData? = null,
+    ) {
+        fun displayName(): String {
+            return name ?: title ?: "Episode ${episodeNumber ?: ""}"
+        }
+    }
 
     data class EpisodeArtwork(
         val backdrop: ImageSizes?,
@@ -218,9 +223,9 @@ class PlayhubProvider : MainAPI() {
     )
 
     data class EpisodesResponse(
-        val data: List<EpisodeItem>,
-        val currentPage: Int,
-        val hasMore: Boolean,
+        val data: List<EpisodeItem>? = null,
+        val currentPage: Int? = null,
+        val hasMore: Boolean? = null,
     )
 
     data class SourceResponse(
@@ -399,20 +404,20 @@ class PlayhubProvider : MainAPI() {
                 )
                 Log.d("PlayHub", "episodes season=${season.id} page=$page status=${epRes.code} len=${epRes.text.length}")
                 val epParsed = tryParseJson<EpisodesResponse>(epRes.text)
-                if (epParsed != null) {
+                if (epParsed != null && epParsed.data != null) {
                     Log.d("PlayHub", "episodes parsed: ${epParsed.data.size} items hasMore=${epParsed.hasMore}")
                     epParsed.data.forEach { ep ->
                         episodes.add(
-                            newEpisode("episode:${ep.uuid}") {
-                                this.name = ep.name
-                                this.season = ep.seasonNumber
-                                this.episode = ep.episodeNumber
+                            newEpisode("episode:${ep.uuid ?: ep.id}") {
+                                this.name = ep.displayName()
+                                this.season = ep.seasonNumber ?: 1
+                                this.episode = ep.episodeNumber ?: (episodes.size + 1)
                                 this.posterUrl = ep.artwork?.backdrop?.medium
                                 this.description = ep.overview
                             }
                         )
                     }
-                    hasMore = epParsed.hasMore
+                    hasMore = epParsed.hasMore ?: false
                     page++
                 } else {
                     Log.e("PlayHub", "Failed to parse episodes response, text first 300: ${epRes.text.take(300)}")
