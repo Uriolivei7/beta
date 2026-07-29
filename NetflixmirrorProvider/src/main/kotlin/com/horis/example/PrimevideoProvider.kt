@@ -2,11 +2,13 @@ package com.horis.example
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import okhttp3.Interceptor
 import okhttp3.Response
+import org.jsoup.Jsoup
 
 class PrimevideoProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -18,6 +20,8 @@ class PrimevideoProvider : MainAPI() {
     private val ott = "pv"
     @Volatile private var lastBypassCookie = ""
     private var lastLoadedId = ""
+
+    private val cloudflareKiller by lazy { CloudflareKiller() }
 
     init {
         Log.e("Netmirror", "PrimevideoProvider init called")
@@ -209,6 +213,10 @@ class PrimevideoProvider : MainAPI() {
                 val url = request.url.toString()
                 val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
 
+                if (!url.contains(".m3u8") && !url.contains(".ts") && !url.contains(".jpg")) {
+                    return chain.proceed(request)
+                }
+
                 var cookie = lastBypassCookie
                 if (cookie.isBlank()) {
                     cookie = NetflixMirrorStorage.getCookie().first ?: ""
@@ -222,14 +230,28 @@ class PrimevideoProvider : MainAPI() {
                 val builder = request.newBuilder()
 
                 if (host.contains("net52") || host.contains("net22") || host.contains("net11")) {
-                    builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
                         .header("Referer", "https://net52.cc/")
                         .header("Cookie", "t_hash_t=$rawCookie; hd=on; ott=pv")
+                        .header("Origin", "https://net52.cc")
                 } else {
                     builder.header("Cookie", "hd=on")
                 }
 
-                return chain.proceed(builder.build())
+                val newRequest = builder.build()
+                val response = chain.proceed(newRequest)
+
+                try {
+                    val body = response.peekBody(1048576L)
+                    val html = body.string()
+                    val doc = Jsoup.parse(html)
+                    if (doc.html().contains("Just a moment", ignoreCase = true)) {
+                        Log.d("Netmirror", "Cloudflare detected, resolving...")
+                        return cloudflareKiller.intercept(chain)
+                    }
+                } catch (_: Exception) { }
+
+                return response
             }
         }
     }
