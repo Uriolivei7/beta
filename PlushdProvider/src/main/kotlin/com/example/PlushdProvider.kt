@@ -247,7 +247,6 @@ class PlushdProvider : MainAPI() {
 
                 val response = chain.proceed(newRequest)
 
-                // Use peek body for Cloudflare check + M3U8 filtering (doesn't consume original)
                 try {
                     val peek = response.peekBody(2097152L)
                     val html = peek.string()
@@ -453,7 +452,6 @@ class PlushdProvider : MainAPI() {
             }
         }
 
-        // Retry una vez más si no se encontraron links pero había servidores válidos
         if (foundLinks.get() == 0 && hasValidServer) {
             Log.d("PlushdProvider", "No se encontraron links, reintentando con otro referer...")
             coroutineScope {
@@ -502,7 +500,6 @@ class PlushdProvider : MainAPI() {
         if (!url.contains("vidhide")) return false
         val tag = "PlushdProvider-VidHide"
         try {
-            // Use URL itself as Referer (MhdflixVidHide pattern)
             val vidReferer = if (url.contains("vidhide")) url else referer
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

@@ -21,17 +21,19 @@ class PlayhubProvider : MainAPI() {
     private val apiUrl = "https://api.playhubmax.com/api"
 
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/plain, */*",
         "Accept-Language" to "es",
         "Origin" to mainUrl,
         "Referer" to "$mainUrl/",
-        "sec-ch-ua" to "\"Brave\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
+        "sec-ch-ua" to "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Brave\";v=\"150\"",
         "sec-ch-ua-mobile" to "?0",
         "sec-ch-ua-platform" to "\"Windows\"",
         "sec-fetch-dest" to "empty",
         "sec-fetch-mode" to "cors",
         "sec-fetch-site" to "same-site",
+        "sec-gpc" to "1",
+        "priority" to "u=1, i",
     )
 
     private fun getImageUrl(artwork: Artwork?): String {
@@ -219,11 +221,14 @@ class PlayhubProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val resp = app.get("$apiUrl/pages/home", headers = headers)
-        val homeData = tryParseJson<HomePageData>(resp.text)
+        val raw = resp.text
+        Log.d("PlayHub", "Homepage response status=${resp.code} len=${raw.length} first500=${raw.take(500)}")
+        val homeData = tryParseJson<HomePageData>(raw)
         if (homeData?.sections == null) {
-            Log.e("PlayHub", "Failed to parse home page data")
+            Log.e("PlayHub", "Failed to parse home page data. status=${resp.code} raw.take(200)=${raw.take(200)}")
             return newHomePageResponse(emptyList())
         }
+        Log.d("PlayHub", "Homepage parsed OK: ${homeData.sections.size} sections")
 
         val homePageLists = homeData.sections.mapNotNull { section ->
             if (section.itemType != "content" || section.items.isNullOrEmpty()) return@mapNotNull null
@@ -275,6 +280,7 @@ class PlayhubProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val body = MeiliSearchBody(listOf(MeiliQuery(q = query)))
+        Log.d("PlayHub", "search query=$query")
         val res = app.post(
             "$meiliUrl/multi-search",
             json = body,
@@ -286,8 +292,11 @@ class PlayhubProvider : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
             )
         )
-        val parsed = tryParseJson<MeiliResponse>(res.text)
+        val raw = res.text
+        Log.d("PlayHub", "search response status=${res.code} len=${raw.length} first500=${raw.take(500)}")
+        val parsed = tryParseJson<MeiliResponse>(raw)
         val hits = parsed?.results?.firstOrNull()?.hits.orEmpty()
+        Log.d("PlayHub", "search hits=${hits.size}")
         return hits.mapNotNull { hit ->
             if (hit.uuid.isNullOrBlank() || hit.title.isNullOrBlank()) return@mapNotNull null
             newAnimeSearchResponse(hit.title, "$mainUrl/content/${hit.uuid}") {
@@ -297,12 +306,15 @@ class PlayhubProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d("PlayHub", "load url=$url")
         val uuid = url.substringAfterLast("/")
         val detailRes = app.get(
             "$apiUrl/contents/$uuid",
             headers = headers
         )
-        val content = tryParseJson<ContentDetailResponse>(detailRes.text) ?: return null
+        val raw = detailRes.text
+        Log.d("PlayHub", "load response status=${detailRes.code} len=${raw.length} first500=${raw.take(500)}")
+        val content = tryParseJson<ContentDetailResponse>(raw) ?: return null
 
         val tvType = if (content.type == "Movie") TvType.Movie else TvType.TvSeries
         val posterUrl = getImageUrl(content.artwork)
