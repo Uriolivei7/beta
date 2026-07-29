@@ -247,7 +247,7 @@ class PeliculaTvProvider : MainAPI() {
                 val embeds = listOf(
                     "https://embed.su/embed/movie/$tmdbId",
                     "https://vidsrc.pro/embed/movie/$tmdbId",
-                    "https://vidlink.pro/embed/movie/$tmdbId",
+                    "https://unlimplay.com/play/embed/movie/$tmdbId",
                 )
                 var linksCount = 0
                 for (url in embeds) {
@@ -273,7 +273,7 @@ class PeliculaTvProvider : MainAPI() {
                 val embeds = listOf(
                     "https://embed.su/embed/tv/$tmdbId/$season/$episode",
                     "https://vidsrc.pro/embed/tv/$tmdbId/$season/$episode",
-                    "https://multiembed.mov/?video_id=$tmdbId&tmdb=1&s=$season&e=$episode",
+                    "https://unlimplay.com/play/embed/tv/$tmdbId/$season/$episode",
                 )
                 var linksCount = 0
                 for (url in embeds) {
