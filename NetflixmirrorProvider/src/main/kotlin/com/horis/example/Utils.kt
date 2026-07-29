@@ -177,7 +177,6 @@ object NetflixMirrorStorage {
 
 var appContext: Context? = null
 
-// Latest bypass token, used by interceptor to replace in=unknown::ep watermark
 var currentBypassToken: String = ""
 
 // ---------------------------------------------------------------------------
@@ -235,7 +234,6 @@ suspend fun bypass(mainUrl: String): String {
         if (!newCookie.isNullOrBlank()) {
             NetflixMirrorStorage.saveCookie(newCookie)
 
-            // Extract addhash from Set-Cookie (same response might include it)
             val addHash = allSetCookie.firstOrNull { it.startsWith("addhash=") }
                 ?.substringAfter("addhash=")
                 ?.substringBefore(";")
@@ -245,7 +243,6 @@ suspend fun bypass(mainUrl: String): String {
                 Log.d("BYPASS", "Got addhash from verify.php: $addHash")
             }
 
-            // Also try verify2 to get addhash if not found
             if (addHash.isNullOrBlank()) {
                 try {
                     val tHashCookie = "t_hash_t=$newCookie"
@@ -287,7 +284,6 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
     val tHash = try { bypass("") } catch (_: Exception) { "" }
     val baseHeaders = buildNewTvHeaders(ott, emptyMap()) + mapOf("Cookie" to "t_hash_t=$tHash")
 
-    // Step 1: GET — server may return usertoken directly, or pub_msg with OTP hint
     val step1 = try { app.get("$apiBase/newtv/otp.php?ott=$ott", headers = baseHeaders).text } catch (_: Exception) { "{}" }
     Log.d("USERTOKEN", "step1=${step1.take(300)}")
     val step1Parsed = tryParseJson<NewTvOtpResponse>(step1)
@@ -296,7 +292,6 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String): String {
         return step1Parsed.usertoken
     }
 
-    // Step 2: try GET with OTP code as query param
     val otpCode = Regex("""(\d{4,8})""").find(step1Parsed?.pub_msg ?: "")?.groupValues?.get(1) ?: "111111"
     Log.d("USERTOKEN", "step2 trying GET with otp=$otpCode")
     try {
@@ -349,11 +344,11 @@ private suspend fun webViewBypass(mainUrl: String): String? {
                                 ?.replace("\\n", "\n")?.replace("\\t", "\t") ?: ""
                             Log.e("BYPASS", "WebView body=${bodyText.take(200)}")
                             if (bodyText.contains("Just a moment") || bodyText.contains("Checking")) {
-                                // Still on Cloudflare — wait for more page loads
+
                                 Log.e("BYPASS", "Still on Cloudflare challenge, waiting...")
                                 return@evaluateJavascript
                             }
-                            // Page loaded successfully — extract cookies
+
                             val cookies = CookieManager.getInstance().getCookie(url) ?: ""
                             Log.e("BYPASS", "WebView cookies=${cookies.take(200)}")
                             val tHash = cookies.split(";").firstOrNull {
@@ -363,7 +358,6 @@ private suspend fun webViewBypass(mainUrl: String): String? {
                                 finished = true; handler.removeCallbacks(timeout)
                                 cont.resume(tHash)
                             } else {
-                                // Try response JSON for token_hash
                                 if (bodyText.startsWith("{")) {
                                     val parsed = tryParseJson<NewTvTokenResponse>(bodyText)
                                     val hash = parsed?.token_hash
@@ -374,7 +368,6 @@ private suspend fun webViewBypass(mainUrl: String): String? {
                                     }
                                 }
                                 Log.e("BYPASS", "No token yet — waiting for reCAPTCHA completion or timeout")
-                                // DON'T resume null — keep waiting for next page load or 30s timeout
                             }
                         }
                     }
@@ -986,7 +979,7 @@ suspend fun getPlaylistUrl(
             Log.w("PlayPhp", "playlist.php $hlsDomain failed: ${e.message}")
         }
     }
-    // Fallback: try direct M3U8 with 3-part hash on all HLS domains
+
     for (hlsDomain in hlsDomains) {
         try {
             val m3u8Url = "$hlsDomain/hls/$id.m3u8?in=$cleanHash"

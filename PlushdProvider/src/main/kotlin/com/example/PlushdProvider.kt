@@ -257,6 +257,47 @@ class PlushdProvider : MainAPI() {
                     }
                 } catch (_: Exception) { }
 
+                // Filter 1080p from VidHide M3U8s (same freezing issue as Netflix)
+                if (url.contains(".m3u8") && (url.contains("vidhide") || url.contains("m3u8"))) {
+                    try {
+                        val body = response.body?.string()
+                        if (body != null && body.startsWith("#EXTM3U") && body.contains("RESOLUTION=")) {
+                            val lines = body.lines()
+                            val filtered = mutableListOf<String>()
+                            var skip = false
+                            for (line in lines) {
+                                if (line.contains("RESOLUTION=") && (
+                                        line.contains("1920x1080") ||
+                                        line.contains("1920x800") ||
+                                        line.contains("1080p") ||
+                                        line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
+                                    )) {
+                                    Log.d("PlushdProvider", "Filtering out 1080p variant: $line")
+                                    skip = true
+                                    continue
+                                }
+                                if (skip) {
+                                    // Skip the URL line(s) after the filtered variant
+                                    if (line.startsWith("http") || line.startsWith("/") || line.startsWith("https")) {
+                                        Log.d("PlushdProvider", "Filtering out 1080p URL: $line")
+                                        skip = false
+                                        continue
+                                    }
+                                    skip = false
+                                }
+                                filtered.add(line)
+                            }
+                            val filteredBody = filtered.joinToString("\n")
+                            if (filteredBody.length != body.length) {
+                                Log.d("PlushdProvider", "M3U8 filtered: ${body.length} → ${filteredBody.length} chars (removed 1080p)")
+                                val mediaType = response.body?.contentType()
+                                val newBody = okhttp3.ResponseBody.create(mediaType, filteredBody)
+                                return response.newBuilder().body(newBody).build()
+                            }
+                        }
+                    } catch (_: Exception) { }
+                }
+
                 return response
             }
         }
