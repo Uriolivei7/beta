@@ -404,7 +404,13 @@ class PlayhubProvider : MainAPI() {
                     headers = headers
                 )
                 Log.d("PlayHub", "episodes season=${season.id} page=$page status=${epRes.code} len=${epRes.text.length}")
-                val epParsed = tryParseJson<EpisodesResponse>(epRes.text)
+                val epParsed = try {
+                    jacksonObjectMapper().readValue(epRes.text, EpisodesResponse::class.java)
+                } catch (e: Exception) {
+                    Log.e("PlayHub", "Failed to parse episodes: ${e.message}")
+                    Log.d("PlayHub", "episodes raw first 2000: ${epRes.text.take(2000)}")
+                    null
+                }
                 if (epParsed != null && epParsed.data != null) {
                     Log.d("PlayHub", "episodes parsed: ${epParsed.data.size} items hasMore=${epParsed.hasMore}")
                     epParsed.data.forEach { ep ->
@@ -421,21 +427,7 @@ class PlayhubProvider : MainAPI() {
                     hasMore = epParsed.hasMore ?: false
                     page++
                 } else {
-                    Log.e("PlayHub", "Failed to parse episodes response")
-                    Log.d("PlayHub", "episodes raw first 2000: ${epRes.text.take(2000)}")
-                    // Try manual parse to see error
-                    try {
-                        val mapper = jacksonObjectMapper()
-                        val tree = mapper.readTree(epRes.text)
-                        val dataNode = tree.get("data")
-                        Log.d("PlayHub", "manual parse: data is array=${dataNode?.isArray}, data size=${if (dataNode?.isArray == true) dataNode.size() else "N/A"}, currentPage=${tree.get("currentPage")}, hasMore=${tree.get("hasMore")}")
-                        if (dataNode?.isArray == true && dataNode.size() > 0) {
-                            val first = dataNode[0]
-                            Log.d("PlayHub", "first episode fields: ${first.fieldNames().asSequence().joinToString(",")}")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("PlayHub", "manual parse also failed: ${e.message}")
-                    }
+                    Log.e("PlayHub", "Failed to parse episodes response or empty data")
                     hasMore = false
                 }
             }
