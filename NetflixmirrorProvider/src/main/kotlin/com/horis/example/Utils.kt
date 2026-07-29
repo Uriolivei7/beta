@@ -158,6 +158,21 @@ object NetflixMirrorStorage {
             apply()
         }
     }
+
+    fun saveAddhash(hash: String) {
+        prefs?.edit()?.apply {
+            putString("mirror_addhash", hash)
+            putLong("mirror_addhash_timestamp", System.currentTimeMillis())
+            apply()
+        }
+    }
+
+    fun getAddhash(): Pair<String?, Long> {
+        return Pair(
+            prefs?.getString("mirror_addhash", null),
+            prefs?.getLong("mirror_addhash_timestamp", 0L) ?: 0L
+        )
+    }
 }
 
 var appContext: Context? = null
@@ -215,9 +230,41 @@ suspend fun bypass(mainUrl: String): String {
             ?.substringAfter("t_hash_t=")
             ?.substringBefore(";")
             ?.trim()
+        val allSetCookie = response.headers("Set-Cookie")
         response.close()
         if (!newCookie.isNullOrBlank()) {
             NetflixMirrorStorage.saveCookie(newCookie)
+
+            // Extract addhash from Set-Cookie (same response might include it)
+            val addHash = allSetCookie.firstOrNull { it.startsWith("addhash=") }
+                ?.substringAfter("addhash=")
+                ?.substringBefore(";")
+                ?.trim()
+            if (!addHash.isNullOrBlank()) {
+                NetflixMirrorStorage.saveAddhash(addHash)
+                Log.d("BYPASS", "Got addhash from verify.php: $addHash")
+            }
+
+            // Also try verify2 to get addhash if not found
+            if (addHash.isNullOrBlank()) {
+                try {
+                    val tHashCookie = "t_hash_t=$newCookie"
+                    val verify2Resp = client.newCall(okhttp3.Request.Builder()
+                        .url("https://net22.cc/verify2")
+                        .header("Cookie", tHashCookie)
+                        .apply { headers.forEach { (k, v) -> if (k != "Content-Type") addHeader(k, v) } }
+                        .build()
+                    ).execute()
+                    val verify2Html = verify2Resp.body?.string().orEmpty()
+                    verify2Resp.close()
+                    val addHash2 = Regex("""data-addhash="([^"]+)"""").find(verify2Html)?.groupValues?.get(1)
+                    if (!addHash2.isNullOrBlank()) {
+                        NetflixMirrorStorage.saveAddhash(addHash2)
+                        Log.d("BYPASS", "Got addhash from verify2: $addHash2")
+                    }
+                } catch (_: Exception) { }
+            }
+
             Log.d("BYPASS", "Got new token: ${newCookie.take(60)}")
             return newCookie
         }
