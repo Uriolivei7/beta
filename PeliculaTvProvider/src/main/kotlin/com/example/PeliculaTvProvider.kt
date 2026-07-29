@@ -42,10 +42,10 @@ class PeliculaTvProvider : MainAPI() {
     private fun parseSearchResults(json: String, type: TvType): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         try {
-            val arr = JsonParser.parseString(json).asJsonObject.getAsJsonArray("results") ?: return results
+            val arr = JsonParser.parseString(json).asJsonObject.get("results")?.asJsonArray ?: return results
             for (item in arr) {
-                val obj = item.asJsonObject
-                val id = obj.get("id").asInt
+                val obj = item?.asJsonObject ?: continue
+                val id = obj.get("id")?.asInt ?: continue
                 val title = obj.get("title")?.asString ?: obj.get("name")?.asString ?: continue
                 val poster = fixPoster(obj.get("poster_path")?.asString)
                 val year = obj.get("release_date")?.asString?.take(4)?.toIntOrNull()
@@ -110,7 +110,7 @@ class PeliculaTvProvider : MainAPI() {
         val bg = fixPoster(root.get("backdrop_path")?.asString)
         val year = root.get("release_date")?.asString?.take(4)?.toIntOrNull()
         val voteAvg = root.get("vote_average")?.asFloat
-        val genres = root.getAsJsonArray("genres")?.mapNotNull { it.asJsonObject?.get("name")?.asString } ?: emptyList()
+        val genres = root.get("genres")?.asJsonArray?.mapNotNull { it?.asJsonObject?.get("name")?.asString } ?: emptyList()
 
         return newMovieLoadResponse(title, pageUrl, TvType.Movie, "movie:$id") {
             this.posterUrl = poster
@@ -120,7 +120,7 @@ class PeliculaTvProvider : MainAPI() {
             if (voteAvg != null) this.score = Score.from10((voteAvg * 10).toInt())
             this.tags = genres
             this.duration = root.get("runtime")?.asInt
-            this.recommendations = parseRecommendations(root.getAsJsonArray("recommendations"))
+            this.recommendations = parseRecommendations(root.get("recommendations")?.asJsonArray)
         }
     }
 
@@ -132,19 +132,19 @@ class PeliculaTvProvider : MainAPI() {
         val bg = fixPoster(root.get("backdrop_path")?.asString)
         val year = root.get("first_air_date")?.asString?.take(4)?.toIntOrNull()
         val voteAvg = root.get("vote_average")?.asFloat
-        val genres = root.getAsJsonArray("genres")?.mapNotNull { it.asJsonObject?.get("name")?.asString } ?: emptyList()
-        val seasons = root.getAsJsonArray("seasons")?.mapNotNull {
-            it.asJsonObject?.get("season_number")?.asInt?.takeIf { s -> s > 0 }
+        val genres = root.get("genres")?.asJsonArray?.mapNotNull { it?.asJsonObject?.get("name")?.asString } ?: emptyList()
+        val seasons = root.get("seasons")?.asJsonArray?.mapNotNull {
+            it?.asJsonObject?.get("season_number")?.asInt?.takeIf { s -> s > 0 }
         }?.sorted() ?: listOf(1)
 
         val episodes = mutableListOf<Episode>()
         for (seasonNum in seasons) {
             try {
                 val seasonJson = tmdbRequest("/tv/$id/season/$seasonNum")
-                val epList = JsonParser.parseString(seasonJson).asJsonObject.getAsJsonArray("episodes") ?: continue
+                val epList = JsonParser.parseString(seasonJson).asJsonObject.get("episodes")?.asJsonArray ?: continue
                 for (ep in epList) {
-                    val epObj = ep.asJsonObject
-                    val epNum = epObj.get("episode_number").asInt
+                    val epObj = ep?.asJsonObject ?: continue
+                    val epNum = epObj.get("episode_number")?.asInt ?: continue
                     episodes.add(newEpisode("tv:$id:$seasonNum:$epNum") {
                         this.name = epObj.get("name")?.asString ?: "Episodio $epNum"
                         this.episode = epNum
@@ -166,7 +166,7 @@ class PeliculaTvProvider : MainAPI() {
             if (year != null) this.year = year
             if (voteAvg != null) this.score = Score.from10((voteAvg * 10).toInt())
             this.tags = genres
-            this.recommendations = parseRecommendations(root.getAsJsonArray("recommendations"))
+            this.recommendations = parseRecommendations(root.get("recommendations")?.asJsonArray)
         }
     }
 
@@ -175,8 +175,8 @@ class PeliculaTvProvider : MainAPI() {
         val list = mutableListOf<SearchResponse>()
         for (item in arr) {
             try {
-                val obj = item.asJsonObject
-                val id = obj.get("id").asInt
+                val obj = item?.asJsonObject ?: continue
+                val id = obj.get("id")?.asInt ?: continue
                 val title = obj.get("title")?.asString ?: obj.get("name")?.asString ?: continue
                 val poster = fixPoster(obj.get("poster_path")?.asString)
                 val isTv = obj.get("media_type")?.asString == "tv"
