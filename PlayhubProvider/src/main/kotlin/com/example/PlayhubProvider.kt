@@ -296,10 +296,26 @@ class PlayhubProvider : MainAPI() {
     data class MeiliHit(
         val uuid: String? = null,
         val title: Map<String, String>? = null,
-        val artwork: HomeArtwork? = null,
+        val poster: Map<String, List<ArtworkUrl>>? = null,
     ) {
         fun displayTitle(): String {
             return title?.get("es-419") ?: title?.get("es-ES") ?: title?.get("en-US") ?: title?.values?.firstOrNull() ?: ""
+        }
+        fun getPosterUrl(): String {
+            if (poster == null) return ""
+            val langPriority = listOf("es-419", "es-ES", "en-US")
+            for (lang in langPriority) {
+                val match = poster[lang]?.firstOrNull { it.width == 320 }?.url
+                    ?: poster[lang]?.firstOrNull { it.width == 240 }?.url
+                    ?: poster[lang]?.firstOrNull { !it.url.isNullOrBlank() }?.url
+                if (!match.isNullOrBlank()) return match
+            }
+            // Fallback: any language, any size
+            for (list in poster.values) {
+                val match = list.firstOrNull { !it.url.isNullOrBlank() }?.url
+                if (!match.isNullOrBlank()) return match
+            }
+            return ""
         }
     }
 
@@ -328,31 +344,13 @@ class PlayhubProvider : MainAPI() {
         Log.d("PlayHub", "search hits=${hits.size}")
         if (hits.isNotEmpty()) {
             val first = hits.first()
-            Log.d("PlayHub", "first hit uuid=${first.uuid} title=${first.displayTitle()} artwork=${first.artwork?.poster?.size} posters=${first.artwork?.poster?.joinToString { "${it.url?.takeLast(30)}:${it.width}" }}")
-            // Log raw JSON of first hit to understand structure
-            val rawJson = res.text
-            val firstHitStart = rawJson.indexOf("\"hits\":[{")
-            if (firstHitStart > 0) {
-                val fromHits = rawJson.substring(firstHitStart + 7) // skip "hits":[
-                var braceDepth = 0
-                var endIdx = -1
-                for (j in fromHits.indices) {
-                    when (fromHits[j]) {
-                        '{' -> braceDepth++
-                        '}' -> { braceDepth--; if (braceDepth == 0) { endIdx = j + 1; break } }
-                    }
-                }
-                if (endIdx > 0) {
-                    val firstHitRaw = fromHits.substring(0, endIdx)
-                    Log.d("PlayHub", "first hit raw (500 chars): ${firstHitRaw.take(500)}")
-                }
-            }
+            Log.d("PlayHub", "first hit uuid=${first.uuid} title=${first.displayTitle()} posterSize=${first.poster?.size}")
         }
         return hits.mapNotNull { hit ->
             val t = hit.displayTitle()
             if (hit.uuid.isNullOrBlank() || t.isBlank()) return@mapNotNull null
             newAnimeSearchResponse(t, "$mainUrl/content/${hit.uuid}") {
-                this.posterUrl = getBestPoster(hit.artwork)
+                this.posterUrl = hit.getPosterUrl()
             }
         }
     }
