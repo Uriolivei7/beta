@@ -8,6 +8,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
+import kotlin.coroutines.cancellation.CancellationException
 
 class PeliculaTvProvider : MainAPI() {
 
@@ -23,14 +24,10 @@ class PeliculaTvProvider : MainAPI() {
     private val headers = mapOf("Accept" to "application/json")
 
     override val mainPage = mainPageOf(
+        "/trending/movie/week" to "Películas Tendencias",
+        "/movie/popular" to "Películas Populares",
         "/trending/tv/week" to "Series Tendencias",
         "/tv/popular" to "Series Populares",
-        "/tv/top_rated" to "Series Mejor Puntuadas",
-        "/tv/on_the_air" to "Series En Emisión",
-        "/trending/movie/week" to "Películas Tendencias",
-        "/movie/now_playing" to "Películas Estrenos",
-        "/movie/popular" to "Películas Populares",
-        "/movie/top_rated" to "Películas Mejor Puntuadas",
     )
 
     private fun fixPoster(path: String?): String {
@@ -48,6 +45,8 @@ class PeliculaTvProvider : MainAPI() {
                 return null
             }
             resp.text
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("PeliCulonTV", "tmdbRequest error ${e.message} para $endpoint")
             null
