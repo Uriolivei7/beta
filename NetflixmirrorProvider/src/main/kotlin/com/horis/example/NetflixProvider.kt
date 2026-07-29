@@ -151,8 +151,9 @@ class  NetflixProvider : MainAPI() {
 
         try {
             val url = "$mainUrl/mobile/search.php?s=${URLEncoder.encode(query, "UTF-8")}&t=${System.currentTimeMillis()}"
-            val data = app.get(url, headers = mHeaders, cookies = cookies, referer = "$mainUrl/home")
-                .parsed<MobileSearchData>()
+            val rawResp = app.get(url, headers = mHeaders, cookies = cookies, referer = "$mainUrl/home")
+            Log.e("Netmirror", "search raw response: ${rawResp.text.take(500)}")
+            val data = fromJson<MobileSearchData>(rawResp.text)
             return data.searchResult.orEmpty().map { item ->
                 newAnimeSearchResponse(item.t, NewTvId(item.id).toJson()) {
                     posterUrl = buildVerticalPosterUrl(item.id, ott)
