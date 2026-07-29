@@ -426,7 +426,7 @@ class PlayhubProvider : MainAPI() {
                             ?: ep.artwork?.poster?.firstOrNull { it.width == 320 }?.url
                             ?: ep.artwork?.poster?.firstOrNull { !it.url.isNullOrBlank() }?.url
                         episodes.add(
-                            newEpisode("episode:${ep.uuid ?: ep.id}") {
+                            newEpisode("${mainUrl}/play/episode/${ep.uuid ?: ep.id}") {
                                 this.name = ep.displayName()
                                 this.season = ep.seasonNumber ?: 1
                                 this.episode = ep.episodeNumber ?: (episodes.size + 1)
@@ -461,10 +461,8 @@ class PlayhubProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val splitIndex = data.lastIndexOf(':')
-        val prefix = if (splitIndex > 0) data.substring(0, splitIndex) else ""
-        val type = if (prefix == "episode") "episode" else "content"
-        val uuid = data.substring(splitIndex + 1)
+        val type = if (data.contains("/episode/")) "episode" else "content"
+        val uuid = if (data.contains("/episode/")) data.substringAfterLast("/") else data.substringAfterLast(":")
         val url = "$apiUrl/$type/$uuid/sources"
         Log.d("PlayHub", "loadLinks data: $data -> type=$type uuid=$uuid url=$url")
         val sourceRes = app.get(url, headers = headers)
