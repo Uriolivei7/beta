@@ -63,7 +63,7 @@ class PeliculaTvProvider : MainAPI() {
         return e as? JsonArray
     }
 
-    private fun parseStr(e: JsonElement?): String? = (e as? JsonPrimitive).let { parseStr(it) }
+    private fun parseStr(e: JsonElement?): String? = (e as? JsonPrimitive)?.asString
 
     private fun parseSearchResults(json: String?, type: TvType): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
