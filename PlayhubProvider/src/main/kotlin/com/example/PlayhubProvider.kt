@@ -1,6 +1,7 @@
 package com.example
 
 import android.util.Log
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
@@ -194,6 +195,7 @@ class PlayhubProvider : MainAPI() {
             ?: getBestPoster(artwork)
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodeItem(
         val id: Int? = null,
         val uuid: String? = null,
@@ -213,16 +215,19 @@ class PlayhubProvider : MainAPI() {
         }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodeArtwork(
         val backdrop: ImageSizes?,
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodeContentData(
         val id: Int,
         val uuid: String,
         val title: String,
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodesResponse(
         val data: List<EpisodeItem>? = null,
         val currentPage: Int? = null,
