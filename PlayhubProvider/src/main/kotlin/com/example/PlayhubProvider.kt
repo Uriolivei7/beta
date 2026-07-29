@@ -221,11 +221,16 @@ class PlayhubProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val resp = app.get("$apiUrl/pages/home", headers = headers)
-        val raw = resp.text
-        Log.d("PlayHub", "Homepage response status=${resp.code} len=${raw.length} first500=${raw.take(500)}")
-        val homeData = tryParseJson<HomePageData>(raw)
-        if (homeData?.sections == null) {
-            Log.e("PlayHub", "Failed to parse home page data. status=${resp.code} raw.take(200)=${raw.take(200)}")
+        Log.d("PlayHub", "Homepage response status=${resp.code} len=${resp.text.length}")
+        val homeData = try {
+            resp.parsed<HomePageData>()
+        } catch (e: Exception) {
+            Log.e("PlayHub", "Failed to parse homepage: ${e.message}")
+            Log.d("PlayHub", "first200=${resp.text.take(200)}")
+            return newHomePageResponse(emptyList())
+        }
+        if (homeData.sections.isNullOrEmpty()) {
+            Log.e("PlayHub", "Homepage has no sections")
             return newHomePageResponse(emptyList())
         }
         Log.d("PlayHub", "Homepage parsed OK: ${homeData.sections.size} sections")
@@ -292,10 +297,14 @@ class PlayhubProvider : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
             )
         )
-        val raw = res.text
-        Log.d("PlayHub", "search response status=${res.code} len=${raw.length} first500=${raw.take(500)}")
-        val parsed = tryParseJson<MeiliResponse>(raw)
-        val hits = parsed?.results?.firstOrNull()?.hits.orEmpty()
+        Log.d("PlayHub", "search response status=${res.code} len=${res.text.length}")
+        val parsed = try {
+            res.parsed<MeiliResponse>()
+        } catch (e: Exception) {
+            Log.e("PlayHub", "Failed to parse search: ${e.message}")
+            return emptyList()
+        }
+        val hits = parsed.results?.firstOrNull()?.hits.orEmpty()
         Log.d("PlayHub", "search hits=${hits.size}")
         return hits.mapNotNull { hit ->
             if (hit.uuid.isNullOrBlank() || hit.title.isNullOrBlank()) return@mapNotNull null
@@ -312,9 +321,13 @@ class PlayhubProvider : MainAPI() {
             "$apiUrl/contents/$uuid",
             headers = headers
         )
-        val raw = detailRes.text
-        Log.d("PlayHub", "load response status=${detailRes.code} len=${raw.length} first500=${raw.take(500)}")
-        val content = tryParseJson<ContentDetailResponse>(raw) ?: return null
+        Log.d("PlayHub", "load response status=${detailRes.code} len=${detailRes.text.length}")
+        val content = try {
+            detailRes.parsed<ContentDetailResponse>()
+        } catch (e: Exception) {
+            Log.e("PlayHub", "Failed to parse load: ${e.message}")
+            return null
+        }
 
         val tvType = if (content.type == "Movie") TvType.Movie else TvType.TvSeries
         val posterUrl = getImageUrl(content.artwork)
