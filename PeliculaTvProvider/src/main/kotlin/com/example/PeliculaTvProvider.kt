@@ -269,14 +269,19 @@ class PeliculaTvProvider : MainAPI() {
             for (url in candidateUrls) {
                 try {
                     val before = linksCount
-                    linksCount += if (url.contains("unlimplay.com")) {
-                        processUnlimplay(url, subtitleCallback, callback, debugType)
+                    if (url.contains("unlimplay.com")) {
+                        linksCount += processUnlimplay(url, subtitleCallback, callback, debugType)
                     } else {
                         var count = 0
                         val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
                         val found = loadExtractor(url, mainUrl, subtitleCallback, trackCb)
                         Log.i("PeliCulonTV", "loadLinks[$debugType]: ${url.substringAfter("//embed.")} -> loadExtractor=$found links=$count")
-                        count
+                        if (!found || count == 0) {
+                            Log.i("PeliCulonTV", "loadLinks[$debugType]: fallback directo para ${url.substringAfter("//")}")
+                            val name = if (url.contains("embed.su")) "EmbedSu" else "VidSrc"
+                            count += tryExtractDirect(url, name, callback)
+                        }
+                        linksCount += count
                     }
                     val added = linksCount - before
                     Log.i("PeliCulonTV", "loadLinks[$debugType]: ${url.substringAfter("//")} -> +${added} links (total=$linksCount)")
@@ -306,21 +311,28 @@ class PeliculaTvProvider : MainAPI() {
         val html = app.get(url).text
         Log.i("PeliCulonTV", "processUnlimplay[$debugType]: HTML len=${html.length}")
 
-        val embedsMatch = Regex("""const\s+EMBEDS\s*=\s*(\{.+?\});""", RegexOption.DOT_MATCHES_ALL)
-            .find(html)
-        if (embedsMatch == null) {
-            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: no EMBEDS encontrado en HTML")
+        val embedsStr = Regex("""const\s+EMBEDS\s*=\s*(\[.+?\]|\{.+?\});""", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)
+        if (embedsStr == null) {
+            val embedsIdx = html.indexOf("EMBEDS")
+            val context = if (embedsIdx >= 0) html.substring(maxOf(0, embedsIdx - 20), minOf(html.length, embedsIdx + 60)) else "not found"
+            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: no EMBEDS match. context=...$context...")
             return 0
         }
 
-        val root = parseObj(JsonParser.parseString(embedsMatch.groupValues[1]))
+        if (embedsStr.startsWith("[")) {
+            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS es array vacio/sin servidores: ${embedsStr.take(80)}")
+            return 0
+        }
+
+        val root = parseObj(JsonParser.parseString(embedsStr))
         if (root == null) {
-            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS no es JSON object: ${embedsMatch.groupValues[1].take(100)}")
+            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS no es JSON object: ${embedsStr.take(100)}")
             return 0
         }
 
         val langCount = root.entrySet().size
-        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS parseado OK, ${langCount} idioma(s)")
+        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS parseado OK, ${langCount} idioma(s): ${root.entrySet().map { it.key }}")
 
         for ((lang, serversElement) in root.entrySet()) {
             val serversObj = parseObj(serversElement)
