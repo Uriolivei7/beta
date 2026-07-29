@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.newSubtitleFile
 import java.net.URI
 
 class PlayhubProvider : MainAPI() {
@@ -328,6 +329,24 @@ class PlayhubProvider : MainAPI() {
         if (hits.isNotEmpty()) {
             val first = hits.first()
             Log.d("PlayHub", "first hit uuid=${first.uuid} title=${first.displayTitle()} artwork=${first.artwork?.poster?.size} posters=${first.artwork?.poster?.joinToString { "${it.url?.takeLast(30)}:${it.width}" }}")
+            // Log raw JSON of first hit to understand structure
+            val rawJson = res.text
+            val firstHitStart = rawJson.indexOf("\"hits\":[{")
+            if (firstHitStart > 0) {
+                val fromHits = rawJson.substring(firstHitStart + 7) // skip "hits":[
+                var braceDepth = 0
+                var endIdx = -1
+                for (j in fromHits.indices) {
+                    when (fromHits[j]) {
+                        '{' -> braceDepth++
+                        '}' -> { braceDepth--; if (braceDepth == 0) { endIdx = j + 1; break } }
+                    }
+                }
+                if (endIdx > 0) {
+                    val firstHitRaw = fromHits.substring(0, endIdx)
+                    Log.d("PlayHub", "first hit raw (500 chars): ${firstHitRaw.take(500)}")
+                }
+            }
         }
         return hits.mapNotNull { hit ->
             val t = hit.displayTitle()
@@ -449,6 +468,32 @@ class PlayhubProvider : MainAPI() {
         return true
     }
 
+    private suspend fun extractSubtitlesFromDecoded(js: String, pageUrl: String, subtitleCallback: (SubtitleFile) -> Unit) {
+        val tracksRegex = Regex("""tracks:\s*\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL)
+        val tracksMatch = tracksRegex.find(js) ?: return
+        val tracksContent = tracksMatch.groupValues[1]
+
+        val vttRegex = Regex("""file:\s*["']([^"']+\.vtt[^"']*)["']""")
+        val labelRegex = Regex("""label:\s*["']([^"']+)["']""")
+
+        val fileMatches = vttRegex.findAll(tracksContent).toList()
+        val labelMatches = labelRegex.findAll(tracksContent).toList()
+
+        for (i in fileMatches.indices) {
+            val rawUrl = fileMatches[i].groupValues[1].replace("\\/", "/")
+            val label = labelMatches.getOrNull(i)?.groupValues?.get(1) ?: "Subtitle"
+            val fullUrl = if (rawUrl.startsWith("http")) rawUrl else {
+                val uri = URI(pageUrl)
+                "${uri.scheme}://${uri.host}$rawUrl"
+            }
+            Log.d("PlayHub", "Subtitle: $label -> $fullUrl")
+            val subFile = newSubtitleFile(label, fullUrl) {
+                this.headers = mapOf("Referer" to pageUrl)
+            }
+            subtitleCallback.invoke(subFile)
+        }
+    }
+
     private fun decodeEvalPacker(p: String, a: Int, c: Int, k: List<String>): String {
         var result = p
         var i = c - 1
@@ -536,6 +581,8 @@ class PlayhubProvider : MainAPI() {
             val decoded = decodeEvalPacker(p, a, c, k)
             Log.d("PlayHub", "Decoded length: ${decoded.length}")
             Log.d("PlayHub", "Decoded first 3000: ${decoded.take(3000)}")
+
+            extractSubtitlesFromDecoded(decoded, url, subtitleCallback)
 
             // Prefer /stream/.../master.m3u8 path (goes through embed server proxy, more reliable)
             val streamPathRegex = Regex("""(/stream/[^"'\s]+/master\.(?:m3u8|txt))""")
