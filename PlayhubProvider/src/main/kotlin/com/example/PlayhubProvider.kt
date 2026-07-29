@@ -127,6 +127,56 @@ class PlayhubProvider : MainAPI() {
         val data: List<SectionItem>,
     )
 
+    // New API (pages/home) data classes
+    data class HomePageData(
+        val placement: String? = null,
+        val sections: List<HomeSection>? = null,
+    )
+
+    data class HomeSection(
+        val uuid: String? = null,
+        val name: String? = null,
+        val maxItems: Int? = null,
+        val layout: String? = null,
+        @JsonProperty("itemType") val itemType: String? = null,
+        val showAll: Boolean? = null,
+        val items: List<HomeItem>? = null,
+    )
+
+    data class HomeItem(
+        val id: Int? = null,
+        val uuid: String? = null,
+        val title: String? = null,
+        val isAdult: Boolean? = null,
+        val overview: String? = null,
+        val languages: List<String>? = null,
+        val artwork: HomeArtwork? = null,
+        val linkCount: Int? = null,
+    )
+
+    data class HomeArtwork(
+        val poster: List<ArtworkUrl>? = null,
+        val backdrop: List<ArtworkUrl>? = null,
+        val logo: List<ArtworkUrl>? = null,
+    )
+
+    data class ArtworkUrl(
+        val url: String? = null,
+        val width: Int? = null,
+        val blurhash: String? = null,
+    )
+
+    private fun getBestPoster(artwork: HomeArtwork?): String {
+        if (artwork == null) return ""
+        // Prefer 320px poster, fallback to 240, then any
+        val sizes = listOf(320, 240, 420, 560)
+        for (size in sizes) {
+            val match = artwork.poster?.firstOrNull { it.width == size }?.url
+            if (!match.isNullOrBlank()) return match
+        }
+        return artwork.poster?.firstOrNull { !it.url.isNullOrBlank() }?.url ?: ""
+    }
+
     data class EpisodeItem(
         val id: Int,
         val uuid: String,
@@ -168,61 +218,88 @@ class PlayhubProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val sectionsRes = app.get(
-            "$apiUrl/es/content-sections",
-            headers = headers
-        ).parsed<SectionsResponse>()
+        val resp = app.get("$apiUrl/pages/home", headers = headers)
+        val homeData = tryParseJson<HomePageData>(resp.text)
+        if (homeData?.sections == null) {
+            Log.e("PlayHub", "Failed to parse home page data")
+            return newHomePageResponse(emptyList())
+        }
 
-        val homePageLists = sectionsRes.data.mapNotNull { section ->
-            val items = try {
-                val contentsUrl = "$apiUrl${section.path}&page=$page"
-                val res = app.get(contentsUrl, headers = headers)
-                val parsed = tryParseJson<ContentListResponse>(res.text)
-                parsed?.data?.map { content ->
-                    newAnimeSearchResponse(content.title, "$mainUrl/content/${content.uuid}") {
-                        this.type = when (content.type) {
-                            "Movie" -> TvType.Movie
-                            "Show" -> TvType.TvSeries
-                            else -> TvType.Others
-                        }
-                        this.posterUrl = getImageUrl(content.artwork)
-                    }
-                } ?: emptyList()
-            } catch (e: Exception) {
-                Log.e("PlayHub", "Error loading section ${section.name}: ${e.message}")
-                emptyList()
+        val homePageLists = homeData.sections.mapNotNull { section ->
+            if (section.itemType != "content" || section.items.isNullOrEmpty()) return@mapNotNull null
+
+            val items = section.items.mapNotNull { item ->
+                if (item.uuid.isNullOrBlank() || item.title.isNullOrBlank()) return@mapNotNull null
+                val poster = getBestPoster(item.artwork)
+                newAnimeSearchResponse(item.title, "$mainUrl/content/${item.uuid}") {
+                    this.posterUrl = poster
+                }
             }
 
             if (items.isNotEmpty()) {
-                HomePageList(section.name, items)
+                HomePageList(section.name ?: "Section", items)
             } else null
         }
 
         return newHomePageResponse(homePageLists)
     }
 
+    private val meiliUrl = "https://meili.playhub-plus.com"
+    private val meiliToken = "72750fbe7a11442219b3828261ddb4d6d3cbd38c90d57178e90c32fd03e05dfd"
+
+    data class MeiliSearchBody(
+        val queries: List<MeiliQuery>,
+    )
+
+    data class MeiliQuery(
+        val indexUid: String = "contents",
+        val q: String,
+        val limit: Int = 20,
+        val filter: String = "is_active = true AND is_adult = false",
+    )
+
+    data class MeiliResponse(
+        val results: List<MeiliResult>? = null,
+    )
+
+    data class MeiliResult(
+        val indexUid: String? = null,
+        val hits: List<MeiliHit>? = null,
+    )
+
+    data class MeiliHit(
+        val uuid: String? = null,
+        val title: String? = null,
+        val artwork: HomeArtwork? = null,
+    )
+
     override suspend fun search(query: String): List<SearchResponse> {
-        val res = app.get(
-            "$apiUrl/ES/es/contents?q=$query",
-            headers = headers
+        val body = MeiliSearchBody(listOf(MeiliQuery(q = query)))
+        val res = app.post(
+            "$meiliUrl/multi-search",
+            json = body,
+            headers = mapOf(
+                "Content-Type" to "application/json",
+                "Authorization" to "Bearer $meiliToken",
+                "Origin" to mainUrl,
+                "Referer" to "$mainUrl/",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+            )
         )
-        val parsed = tryParseJson<ContentListResponse>(res.text)
-        return parsed?.data?.map { content ->
-            newAnimeSearchResponse(content.title, "$mainUrl/content/${content.uuid}") {
-                this.type = when (content.type) {
-                    "Movie" -> TvType.Movie
-                    "Show" -> TvType.TvSeries
-                    else -> TvType.Others
-                }
-                this.posterUrl = getImageUrl(content.artwork)
+        val parsed = tryParseJson<MeiliResponse>(res.text)
+        val hits = parsed?.results?.firstOrNull()?.hits.orEmpty()
+        return hits.mapNotNull { hit ->
+            if (hit.uuid.isNullOrBlank() || hit.title.isNullOrBlank()) return@mapNotNull null
+            newAnimeSearchResponse(hit.title, "$mainUrl/content/${hit.uuid}") {
+                this.posterUrl = getBestPoster(hit.artwork)
             }
-        } ?: emptyList()
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
         val uuid = url.substringAfterLast("/")
         val detailRes = app.get(
-            "$apiUrl/es/contents/$uuid",
+            "$apiUrl/contents/$uuid",
             headers = headers
         )
         val content = tryParseJson<ContentDetailResponse>(detailRes.text) ?: return null
@@ -251,7 +328,7 @@ class PlayhubProvider : MainAPI() {
             var hasMore = true
             while (hasMore) {
                 val epRes = app.get(
-                    "$apiUrl/es/episodes?season_id=${season.id}&page=$page",
+                    "$apiUrl/episodes?seasonId=${season.id}&page=$page",
                     headers = headers
                 )
                 val epParsed = tryParseJson<EpisodesResponse>(epRes.text)
