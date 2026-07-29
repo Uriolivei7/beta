@@ -209,7 +209,6 @@ class PrimevideoProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
-                val host = Regex("https://([^/]+)/").find(url)?.groupValues?.get(1).orEmpty()
 
                 if (!url.contains(".m3u8") && !url.contains(".ts") && !url.contains(".jpg")) {
                     return chain.proceed(request)
@@ -227,33 +226,25 @@ class PrimevideoProvider : MainAPI() {
 
                 val addHash = NetflixMirrorStorage.getAddhash().first ?: ""
 
-                val isCdn = host.contains("nm-cdn") || host.contains("freecdn") || host.contains("imgcdn") || host.contains("net52") || host.contains("net22") || host.contains("net11")
-
                 val cookieStr = if (addHash.isNotBlank()) {
                     "t_hash_t=$rawCookie; addhash=$addHash; hd=on; ott=pv"
                 } else {
                     "t_hash_t=$rawCookie; hd=on; ott=pv"
                 }
 
-                val builder = request.newBuilder()
+                val newRequest = request.newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
-                    .header("Referer", "https://net52.cc/")
-                    .header("Origin", "https://net52.cc")
+                    .header("Referer", "$mainUrl/mobile/home?app=1")
+                    .header("Origin", mainUrl)
                     .header("Cookie", cookieStr)
+                    .build()
 
-                if (isCdn) {
-                    builder.header("Connection", "close")
-                        .header("Cache-Control", "no-cache")
-                }
-
-                val newRequest = builder.build()
                 val response = chain.proceed(newRequest)
 
                 try {
                     val body = response.peekBody(1048576L)
                     val html = body.string()
-                    val doc = Jsoup.parse(html)
-                    if (doc.html().contains("Just a moment", ignoreCase = true)) {
+                    if (html.contains("Just a moment", ignoreCase = true)) {
                         Log.d("Netmirror", "Cloudflare detected, resolving...")
                         return cloudflareKiller.intercept(chain)
                     }
