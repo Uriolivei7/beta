@@ -639,7 +639,7 @@
     "authors": ["Ranita"],
     "description": "Plugin de PlutoTV",
     "tvTypes": ["TvSeries", "Movie"],
-    "iconUrl": "https://pluto.tv/assets/images/favicon/large-9423670b9efa0f1ba821b3729ad1e94e.png",
+    "iconUrl": "https://pluto.tv/favicon/large.png",
     "language": "mx",
     "fileSize": 65000
   },

@@ -23,5 +23,5 @@ cloudstream {
         "Anime"
     )
 
-    //iconUrl = "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/NetflixMirrorProvider/icon.png"
+    //iconUrl = "https://www.google.com/s2/favicons?domain=playhubmax.com&sz=%size%"
 }
