@@ -7,12 +7,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import java.net.URLEncoder
 import okhttp3.Interceptor
-import okhttp3.MediaType
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Protocol
 import okhttp3.Response
-import okhttp3.ResponseBody
-import org.jsoup.Jsoup
 
 class  NetflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -42,25 +37,6 @@ class  NetflixProvider : MainAPI() {
 
                 if (!url.contains(".m3u8") && !url.contains(".ts") && !url.contains(".jpg")) {
                     return chain.proceed(request)
-                }
-
-                if (url.contains("__cm=1")) {
-                    val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
-                    if (id != null) {
-                        val master = customMasters[id]
-                        if (master != null) {
-                            Log.d("Netmirror", "Serving custom master for id=$id")
-                            val mediaType: MediaType = "application/vnd.apple.mpegurl".toMediaType()
-                            val body = ResponseBody.create(mediaType, master)
-                            return Response.Builder()
-                                .request(request)
-                                .protocol(Protocol.HTTP_1_1)
-                                .code(200)
-                                .message("OK")
-                                .body(body)
-                                .build()
-                        }
-                    }
                 }
 
                 var cookie = lastBypassCookie
@@ -326,28 +302,7 @@ class  NetflixProvider : MainAPI() {
                         }
                     }
 
-                    // Fetch M3U8 master and store as custom master (prevents CDN preview on episode transition)
-                    try {
-                        val addHash = NetflixMirrorStorage.getAddhash().first ?: ""
-                        val rawCookie2 = try { java.net.URLDecoder.decode(cookie, "UTF-8") } catch (_: Exception) { cookie.replace("%3A%3A", "::") }
-                        val cookieVal = if (addHash.isNotBlank()) "t_hash_t=$rawCookie2; addhash=$addHash; hd=on; ott=$ott" else "t_hash_t=$rawCookie2; hd=on; ott=$ott"
-                        val masterResp = app.get(m3u8, headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-                            "Referer" to "$domain/",
-                            "Origin" to "$domain",
-                            "Cookie" to cookieVal
-                        ))
-                        val m3u8Body = masterResp.text
-                        Log.d("Netmirror", "M3U8 OK len=${m3u8Body.length}")
-                        if (m3u8Body.isNotBlank()) {
-                            setCustomMaster(id, m3u8Body)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("Netmirror", "M3U8 fetch failed: ${e.message}")
-                    }
-
-                    val cmUrl = "$domain/mobile/hls/$id.m3u8?__cm=1&_t=${System.currentTimeMillis()}"
-                    callback(newExtractorLink(name, name, cmUrl, type = ExtractorLinkType.M3U8) {
+                    callback(newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                         referer = "$domain/"
                     })
                     return true
