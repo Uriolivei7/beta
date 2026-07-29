@@ -739,8 +739,21 @@ val customMasters = java.util.concurrent.ConcurrentHashMap<String, String>()
 private val customMastersLogged = java.util.concurrent.atomic.AtomicBoolean(false)
 
 fun setCustomMaster(id: String, master: String) {
-    customMasters[id] = master
-    Log.d("Netmirror", "setCustomMaster id=$id size=${master.length}")
+    val filtered = master.lines().filter { line ->
+        val t = line.trim()
+        !t.startsWith("#EXT-X-IMAGE-STREAM-INF") &&
+        !t.startsWith("#EXT-X-MEDIA:TYPE=IMAGE") &&
+        !t.contains("s21.freecdn") &&
+        !t.contains("freecdn4") &&
+        !t.contains("preview") &&
+        !t.contains("jpg")
+    }.joinToString("\n")
+    val removed = master.lines().size - filtered.lines().size
+    if (removed > 0) {
+        Log.d("Netmirror", "setCustomMaster id=$id removed $removed thumbnail/preview lines (was ${master.length}b now ${filtered.length}b)")
+    }
+    customMasters[id] = filtered
+    Log.d("Netmirror", "setCustomMaster id=$id size=${filtered.length}")
 }
 
 fun createNetmirrorInterceptor(): Interceptor {
