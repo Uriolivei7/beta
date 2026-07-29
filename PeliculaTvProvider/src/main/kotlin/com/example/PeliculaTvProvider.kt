@@ -65,6 +65,7 @@ class PeliculaTvProvider : MainAPI() {
 
     private fun parseSearchResults(json: String?, type: TvType): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
+        if (json.isNullOrBlank()) return results
         val root = parseObj(JsonParser.parseString(json)) ?: return results
         val arr = parseArr(root.get("results")) ?: return results
         for (item in arr) {
@@ -92,7 +93,7 @@ class PeliculaTvProvider : MainAPI() {
             val totalPages = root.get("total_pages")?.asInt ?: 1
             return newHomePageResponse(listOf(HomePageList(request.name, items.take(50))), page < totalPages)
         } catch (e: Exception) {
-            Log.e("PeliCulonTV", "getMainPage error: ${e.message}")
+            Log.e("PeliCulonTV", "getMainPage error", e)
             return null
         }
     }
@@ -105,7 +106,7 @@ class PeliculaTvProvider : MainAPI() {
             parseSearchResults(tmdbRequest("/search/movie?query=$q"), TvType.Movie).let { results.addAll(it) }
             parseSearchResults(tmdbRequest("/search/tv?query=$q"), TvType.TvSeries).let { results.addAll(it) }
         } catch (e: Exception) {
-            Log.e("PeliCulonTV", "search error: ${e.message}")
+            Log.e("PeliCulonTV", "search error query='$query'", e)
         }
         return results.distinctBy { it.url }.take(50)
     }
@@ -119,7 +120,7 @@ class PeliculaTvProvider : MainAPI() {
             Log.w("PeliCulonTV", "load: URL no reconocida: $url")
             return null
         } catch (e: Exception) {
-            Log.e("PeliCulonTV", "load error (${url.take(60)}): ${e.message}")
+            Log.e("PeliCulonTV", "load error (${url.take(60)})", e)
             return null
         }
     }
@@ -193,7 +194,11 @@ class PeliculaTvProvider : MainAPI() {
             }
         }
         episodes.sortWith(compareBy({ it.season ?: 1 }, { it.episode ?: 1 }))
-        Log.i("PeliCulonTV", "loadTvSeries $id: ${episodes.size} episodios totales")
+        Log.i("PeliCulonTV", "loadTvSeries $id: ${episodes.size} episodios totales (pre-return)")
+        if (episodes.isEmpty()) {
+            Log.w("PeliCulonTV", "loadTvSeries $id: 0 episodios, no se crea LoadResponse")
+            return null
+        }
 
         return newTvSeriesLoadResponse(title, pageUrl, TvType.TvSeries, episodes) {
             this.posterUrl = poster
