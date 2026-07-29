@@ -217,7 +217,8 @@ class PlayhubProvider : MainAPI() {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class EpisodeArtwork(
-        val backdrop: ImageSizes?,
+        val poster: List<ArtworkUrl>? = null,
+        val backdrop: List<ArtworkUrl>? = null,
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -419,12 +420,17 @@ class PlayhubProvider : MainAPI() {
                 if (epParsed != null && epParsed.data != null) {
                     Log.d("PlayHub", "episodes parsed: ${epParsed.data.size} items hasMore=${epParsed.hasMore}")
                     epParsed.data.forEach { ep ->
+                        val epPoster = ep.artwork?.backdrop?.firstOrNull { it.width == 320 }?.url
+                            ?: ep.artwork?.backdrop?.firstOrNull { it.width == 240 }?.url
+                            ?: ep.artwork?.backdrop?.firstOrNull { !it.url.isNullOrBlank() }?.url
+                            ?: ep.artwork?.poster?.firstOrNull { it.width == 320 }?.url
+                            ?: ep.artwork?.poster?.firstOrNull { !it.url.isNullOrBlank() }?.url
                         episodes.add(
                             newEpisode("episode:${ep.uuid ?: ep.id}") {
                                 this.name = ep.displayName()
                                 this.season = ep.seasonNumber ?: 1
                                 this.episode = ep.episodeNumber ?: (episodes.size + 1)
-                                this.posterUrl = ep.artwork?.backdrop?.medium
+                                this.posterUrl = epPoster
                                 this.description = ep.overview
                             }
                         )
