@@ -7,6 +7,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
 
 class PeliculaTvProvider : MainAPI() {
 
@@ -63,6 +64,8 @@ class PeliculaTvProvider : MainAPI() {
         return e as? JsonArray
     }
 
+    private fun parseStr(e: JsonElement?): String? = (e as? JsonPrimitive).let { parseStr(it) }
+
     private fun parseSearchResults(json: String?, type: TvType): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         if (json.isNullOrBlank()) return results
@@ -71,10 +74,10 @@ class PeliculaTvProvider : MainAPI() {
         for (item in arr) {
             val obj = parseObj(item) ?: continue
             val id = obj.get("id")?.asInt ?: continue
-            val title = obj.get("title")?.asString ?: obj.get("name")?.asString ?: continue
-            val poster = fixPoster(obj.get("poster_path")?.asString)
-            val year = obj.get("release_date")?.asString?.take(4)?.toIntOrNull()
-                ?: obj.get("first_air_date")?.asString?.take(4)?.toIntOrNull()
+            val title = obj.get("title").let { parseStr(it) } ?: obj.get("name").let { parseStr(it) } ?: continue
+            val poster = fixPoster(obj.get("poster_path").let { parseStr(it) })
+            val year = obj.get("release_date").let { parseStr(it) }?.take(4)?.toIntOrNull()
+                ?: obj.get("first_air_date").let { parseStr(it) }?.take(4)?.toIntOrNull()
             val url = "$mainUrl/${if (type == TvType.Movie) "movie" else "tv"}/$id"
             results.add(newMovieSearchResponse(title, url, type) {
                 this.posterUrl = poster
@@ -128,20 +131,20 @@ class PeliculaTvProvider : MainAPI() {
     private suspend fun loadMovie(id: String, pageUrl: String): LoadResponse? {
         val json = tmdbRequest("/movie/$id?append_to_response=credits,videos,recommendations") ?: return null
         val root = parseObj(JsonParser.parseString(json)) ?: return null
-        val title = root.get("title")?.asString ?: run {
+        val title = root.get("title").let { parseStr(it) } ?: run {
             Log.w("PeliCulonTV", "loadMovie $id: sin title, keys=${root.keySet()}")
             return null
         }
-        val poster = fixPoster(root.get("poster_path")?.asString)
-        val bg = fixPoster(root.get("backdrop_path")?.asString)
-        val year = root.get("release_date")?.asString?.take(4)?.toIntOrNull()
+        val poster = fixPoster(root.get("poster_path").let { parseStr(it) })
+        val bg = fixPoster(root.get("backdrop_path").let { parseStr(it) })
+        val year = root.get("release_date").let { parseStr(it) }?.take(4)?.toIntOrNull()
         val voteAvg = root.get("vote_average")?.asFloat
-        val genres = parseArr(root.get("genres"))?.mapNotNull { parseObj(it)?.get("name")?.asString } ?: emptyList()
+        val genres = parseArr(root.get("genres"))?.mapNotNull { parseObj(it)?.get("name").let { parseStr(it) } } ?: emptyList()
 
         return newMovieLoadResponse(title, pageUrl, TvType.Movie, "movie:$id") {
             this.posterUrl = poster
             this.backgroundPosterUrl = bg
-            this.plot = root.get("overview")?.asString ?: ""
+            this.plot = root.get("overview").let { parseStr(it) } ?: ""
             if (year != null) this.year = year
             if (voteAvg != null) this.score = Score.from10((voteAvg * 10).toInt())
             this.tags = genres
@@ -153,15 +156,15 @@ class PeliculaTvProvider : MainAPI() {
     private suspend fun loadTvSeries(id: String, pageUrl: String): LoadResponse? {
         val json = tmdbRequest("/tv/$id?append_to_response=credits,videos,recommendations") ?: return null
         val root = parseObj(JsonParser.parseString(json)) ?: return null
-        val title = root.get("name")?.asString ?: run {
+        val title = root.get("name").let { parseStr(it) } ?: run {
             Log.w("PeliCulonTV", "loadTvSeries $id: sin name, keys=${root.keySet()}")
             return null
         }
-        val poster = fixPoster(root.get("poster_path")?.asString)
-        val bg = fixPoster(root.get("backdrop_path")?.asString)
-        val year = root.get("first_air_date")?.asString?.take(4)?.toIntOrNull()
+        val poster = fixPoster(root.get("poster_path").let { parseStr(it) })
+        val bg = fixPoster(root.get("backdrop_path").let { parseStr(it) })
+        val year = root.get("first_air_date").let { parseStr(it) }?.take(4)?.toIntOrNull()
         val voteAvg = root.get("vote_average")?.asFloat
-        val genres = parseArr(root.get("genres"))?.mapNotNull { parseObj(it)?.get("name")?.asString } ?: emptyList()
+        val genres = parseArr(root.get("genres"))?.mapNotNull { parseObj(it)?.get("name").let { parseStr(it) } } ?: emptyList()
         val seasons = parseArr(root.get("seasons"))?.mapNotNull {
             parseObj(it)?.get("season_number")?.asInt?.takeIf { s -> s > 0 }
         }?.sorted() ?: listOf(1)
@@ -185,11 +188,11 @@ class PeliculaTvProvider : MainAPI() {
                 val epObj = parseObj(ep) ?: continue
                 val epNum = epObj.get("episode_number")?.asInt ?: continue
                 episodes.add(newEpisode("tv:$id:$seasonNum:$epNum") {
-                    this.name = epObj.get("name")?.asString ?: "Episodio $epNum"
+                    this.name = epObj.get("name").let { parseStr(it) } ?: "Episodio $epNum"
                     this.episode = epNum
                     this.season = seasonNum
-                    this.description = epObj.get("overview")?.asString ?: ""
-                    this.posterUrl = fixPoster(epObj.get("still_path")?.asString)
+                    this.description = epObj.get("overview").let { parseStr(it) } ?: ""
+                    this.posterUrl = fixPoster(epObj.get("still_path").let { parseStr(it) })
                 })
             }
         }
@@ -203,7 +206,7 @@ class PeliculaTvProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, pageUrl, TvType.TvSeries, episodes) {
             this.posterUrl = poster
             this.backgroundPosterUrl = bg
-            this.plot = root.get("overview")?.asString ?: ""
+            this.plot = root.get("overview").let { parseStr(it) } ?: ""
             if (year != null) this.year = year
             if (voteAvg != null) this.score = Score.from10((voteAvg * 10).toInt())
             this.tags = genres
@@ -218,9 +221,9 @@ class PeliculaTvProvider : MainAPI() {
             try {
                 val obj = parseObj(item) ?: continue
                 val id = obj.get("id")?.asInt ?: continue
-                val title = obj.get("title")?.asString ?: obj.get("name")?.asString ?: continue
-                val poster = fixPoster(obj.get("poster_path")?.asString)
-                val isTv = obj.get("media_type")?.asString == "tv"
+                val title = obj.get("title").let { parseStr(it) } ?: obj.get("name").let { parseStr(it) } ?: continue
+                val poster = fixPoster(obj.get("poster_path").let { parseStr(it) })
+                val isTv = obj.get("media_type").let { parseStr(it) } == "tv"
                 val type = if (isTv) TvType.TvSeries else TvType.Movie
                 list.add(newMovieSearchResponse(title, "$mainUrl/${if (isTv) "tv" else "movie"}/$id", type) {
                     this.posterUrl = poster
