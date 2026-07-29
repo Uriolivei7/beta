@@ -37,7 +37,6 @@ class PlayhubProvider : MainAPI() {
         "priority" to "u=1, i",
     )
 
-    // Unused (old API) — kept for reference
     private fun getImageUrl(artwork: Artwork?): String = ""
 
     private fun getBackdropUrl(artwork: Artwork?): String = ""
@@ -136,7 +135,6 @@ class PlayhubProvider : MainAPI() {
         val data: List<SectionItem>,
     )
 
-    // New API (pages/home) data classes
     data class HomePageData(
         val placement: String? = null,
         val sections: List<HomeSection>? = null,
@@ -310,7 +308,6 @@ class PlayhubProvider : MainAPI() {
                     ?: poster[lang]?.firstOrNull { !it.url.isNullOrBlank() }?.url
                 if (!match.isNullOrBlank()) return match
             }
-            // Fallback: any language, any size
             for (list in poster.values) {
                 val match = list.firstOrNull { !it.url.isNullOrBlank() }?.url
                 if (!match.isNullOrBlank()) return match
@@ -344,7 +341,8 @@ class PlayhubProvider : MainAPI() {
         Log.d("PlayHub", "search hits=${hits.size}")
         if (hits.isNotEmpty()) {
             val first = hits.first()
-            Log.d("PlayHub", "first hit uuid=${first.uuid} title=${first.displayTitle()} posterSize=${first.poster?.size}")
+            val posterUrl = first.getPosterUrl()
+            Log.d("PlayHub", "first hit uuid=${first.uuid} title=${first.displayTitle()} posterSize=${first.poster?.size} posterUrl=${posterUrl.take(80)}")
         }
         return hits.mapNotNull { hit ->
             val t = hit.displayTitle()
@@ -374,6 +372,7 @@ class PlayhubProvider : MainAPI() {
         val posterUrl = getBestPoster(content.artwork)
         val backdropUrl = getBestBackdrop(content.artwork)
         val year = content.releaseDate?.substringBefore("-")?.toIntOrNull()
+        Log.d("PlayHub", "load type=${content.type} tvType=$tvType seasons=${content.seasons?.size} title=${content.displayTitle()}")
 
         if (tvType == TvType.Movie) {
             return newMovieLoadResponse(content.displayTitle(), url, tvType, "content:$uuid") {
@@ -388,6 +387,7 @@ class PlayhubProvider : MainAPI() {
 
         val episodes = mutableListOf<Episode>()
         val seasons = content.seasons ?: emptyList()
+        Log.d("PlayHub", "load episodes: ${seasons.size} seasons")
 
         for (season in seasons.sortedBy { it.seasonNumber }) {
             var page = 1
@@ -397,8 +397,10 @@ class PlayhubProvider : MainAPI() {
                     "$apiUrl/episodes?seasonId=${season.id}&page=$page",
                     headers = headers
                 )
+                Log.d("PlayHub", "episodes season=${season.id} page=$page status=${epRes.code} len=${epRes.text.length}")
                 val epParsed = tryParseJson<EpisodesResponse>(epRes.text)
                 if (epParsed != null) {
+                    Log.d("PlayHub", "episodes parsed: ${epParsed.data.size} items hasMore=${epParsed.hasMore}")
                     epParsed.data.forEach { ep ->
                         episodes.add(
                             newEpisode("episode:${ep.uuid}") {
@@ -413,10 +415,12 @@ class PlayhubProvider : MainAPI() {
                     hasMore = epParsed.hasMore
                     page++
                 } else {
+                    Log.e("PlayHub", "Failed to parse episodes response, text first 300: ${epRes.text.take(300)}")
                     hasMore = false
                 }
             }
         }
+        Log.d("PlayHub", "load done: ${episodes.size} episodes total")
 
         return newTvSeriesLoadResponse(content.displayTitle(), url, tvType, episodes) {
             this.posterUrl = posterUrl
@@ -582,7 +586,6 @@ class PlayhubProvider : MainAPI() {
 
             extractSubtitlesFromDecoded(decoded, url, subtitleCallback)
 
-            // Prefer /stream/.../master.m3u8 path (goes through embed server proxy, more reliable)
             val streamPathRegex = Regex("""(/stream/[^"'\s]+/master\.(?:m3u8|txt))""")
             val streamPathMatch = streamPathRegex.find(decoded)
             if (streamPathMatch != null) {
@@ -604,7 +607,6 @@ class PlayhubProvider : MainAPI() {
                 return
             }
 
-            // Fallback: direct m3u8 CDN URLs (may have token expiration issues)
             val m3u8Regex = Regex("""(https?://[^"'\s]+/master\.m3u8[^"'\s]*)""")
             val m3u8Match = m3u8Regex.find(decoded)
             if (m3u8Match != null) {
@@ -623,7 +625,6 @@ class PlayhubProvider : MainAPI() {
                 return
             }
 
-            // Fallback: master.txt - fetch and parse to find actual m3u8 links
             val txtRegex = Regex("""(https?://[^"'\s]+/master\.txt[^"'\s]*)""")
             val txtMatch = txtRegex.find(decoded)
             if (txtMatch != null) {
