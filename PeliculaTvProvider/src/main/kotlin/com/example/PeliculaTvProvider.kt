@@ -148,7 +148,7 @@ class PeliculaTvProvider : MainAPI() {
             if (voteAvg != null) this.score = Score.from10((voteAvg * 10).toInt())
             this.tags = genres
             this.duration = root.get("runtime")?.asInt
-            this.recommendations = parseRecommendations(parseArr(root.get("recommendations")))
+            this.recommendations = parseRecommendations(parseArr(parseObj(root.get("recommendations"))?.get("results")))
         }
     }
 
@@ -209,7 +209,7 @@ class PeliculaTvProvider : MainAPI() {
             if (year != null) this.year = year
             if (voteAvg != null) this.score = Score.from10((voteAvg * 10).toInt())
             this.tags = genres
-            this.recommendations = parseRecommendations(parseArr(root.get("recommendations")))
+            this.recommendations = parseRecommendations(parseArr(parseObj(root.get("recommendations"))?.get("results")))
         }
     }
 
@@ -249,17 +249,21 @@ class PeliculaTvProvider : MainAPI() {
                     "https://vidsrc.pro/embed/movie/$tmdbId",
                     "https://vidlink.pro/embed/movie/$tmdbId",
                 )
-                var found = false
+                var linksCount = 0
                 for (url in embeds) {
                     try {
-                        val ok = loadExtractor(url, mainUrl, subtitleCallback, callback)
-                        if (ok) { found = true; Log.i("PeliCulonTV", "loadLinks movie OK: $url") }
-                        else Log.w("PeliCulonTV", "loadLinks movie no links: $url")
+                        var count = 0
+                        val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
+                        val ok = loadExtractor(url, mainUrl, subtitleCallback, trackCb)
+                        linksCount += count
+                        if (ok) Log.i("PeliCulonTV", "loadLinks movie OK ($count links): $url")
+                        else Log.w("PeliCulonTV", "loadLinks movie sin links: $url")
                     } catch (e: Exception) {
                         Log.w("PeliCulonTV", "loadLinks movie error: ${e.message} en $url")
                     }
                 }
-                return found
+                Log.i("PeliCulonTV", "loadLinks movie total: $linksCount links para ID $tmdbId")
+                return linksCount > 0
             }
 
             if (tvMatch != null) {
@@ -271,17 +275,21 @@ class PeliculaTvProvider : MainAPI() {
                     "https://vidsrc.pro/embed/tv/$tmdbId/$season/$episode",
                     "https://multiembed.mov/?video_id=$tmdbId&tmdb=1&s=$season&e=$episode",
                 )
-                var found = false
+                var linksCount = 0
                 for (url in embeds) {
                     try {
-                        val ok = loadExtractor(url, mainUrl, subtitleCallback, callback)
-                        if (ok) { found = true; Log.i("PeliCulonTV", "loadLinks tv OK: $url") }
-                        else Log.w("PeliCulonTV", "loadLinks tv no links: $url")
+                        var count = 0
+                        val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
+                        val ok = loadExtractor(url, mainUrl, subtitleCallback, trackCb)
+                        linksCount += count
+                        if (ok) Log.i("PeliCulonTV", "loadLinks tv OK ($count links): $url")
+                        else Log.w("PeliCulonTV", "loadLinks tv sin links: $url")
                     } catch (e: Exception) {
                         Log.w("PeliCulonTV", "loadLinks tv error: ${e.message} en $url")
                     }
                 }
-                return found
+                Log.i("PeliCulonTV", "loadLinks tv total: $linksCount links para ID $tmdbId S${season}E${episode}")
+                return linksCount > 0
             }
 
             return false
