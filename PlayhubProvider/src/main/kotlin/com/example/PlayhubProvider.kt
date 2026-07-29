@@ -36,17 +36,10 @@ class PlayhubProvider : MainAPI() {
         "priority" to "u=1, i",
     )
 
-    private fun getImageUrl(artwork: Artwork?): String {
-        return artwork?.poster?.medium?.takeIf { it.isNotBlank() }
-            ?: artwork?.backdrop?.medium?.takeIf { it.isNotBlank() }
-            ?: artwork?.poster?.small.orEmpty()
-    }
+    // Unused (old API) — kept for reference
+    private fun getImageUrl(artwork: Artwork?): String = ""
 
-    private fun getBackdropUrl(artwork: Artwork?): String {
-        return artwork?.backdrop?.large?.takeIf { it.isNotBlank() }
-            ?: artwork?.backdrop?.medium?.takeIf { it.isNotBlank() }
-            ?: artwork?.poster?.medium.orEmpty()
-    }
+    private fun getBackdropUrl(artwork: Artwork?): String = ""
 
     data class ApiContent(
         val id: Int,
@@ -111,7 +104,7 @@ class PlayhubProvider : MainAPI() {
         val seasonCount: Int?,
         val episodeCount: Int?,
         val languages: List<String>?,
-        val artwork: Artwork?,
+        val artwork: HomeArtwork?,
         val genres: List<GenreItem>?,
         val people: List<PeopleItem>?,
         val seasons: List<SeasonItem>?,
@@ -182,13 +175,23 @@ class PlayhubProvider : MainAPI() {
 
     private fun getBestPoster(artwork: HomeArtwork?): String {
         if (artwork == null) return ""
-        // Prefer 320px poster, fallback to 240, then any
         val sizes = listOf(320, 240, 420, 560)
         for (size in sizes) {
             val match = artwork.poster?.firstOrNull { it.width == size }?.url
             if (!match.isNullOrBlank()) return match
         }
         return artwork.poster?.firstOrNull { !it.url.isNullOrBlank() }?.url ?: ""
+    }
+
+    private fun getBestBackdrop(artwork: HomeArtwork?): String {
+        if (artwork == null) return ""
+        val sizes = listOf(1280, 1920, 1080, 720)
+        for (size in sizes) {
+            val match = artwork.backdrop?.firstOrNull { it.width == size }?.url
+            if (!match.isNullOrBlank()) return match
+        }
+        return artwork.backdrop?.firstOrNull { !it.url.isNullOrBlank() }?.url
+            ?: getBestPoster(artwork)
     }
 
     data class EpisodeItem(
@@ -322,6 +325,10 @@ class PlayhubProvider : MainAPI() {
         }
         val hits = parsed.results?.firstOrNull()?.hits.orEmpty()
         Log.d("PlayHub", "search hits=${hits.size}")
+        if (hits.isNotEmpty()) {
+            val first = hits.first()
+            Log.d("PlayHub", "first hit uuid=${first.uuid} title=${first.displayTitle()} artwork=${first.artwork?.poster?.size} posters=${first.artwork?.poster?.joinToString { "${it.url?.takeLast(30)}:${it.width}" }}")
+        }
         return hits.mapNotNull { hit ->
             val t = hit.displayTitle()
             if (hit.uuid.isNullOrBlank() || t.isBlank()) return@mapNotNull null
@@ -347,8 +354,8 @@ class PlayhubProvider : MainAPI() {
         }
 
         val tvType = if (content.type == "Movie") TvType.Movie else TvType.TvSeries
-        val posterUrl = getImageUrl(content.artwork)
-        val backdropUrl = getBackdropUrl(content.artwork)
+        val posterUrl = getBestPoster(content.artwork)
+        val backdropUrl = getBestBackdrop(content.artwork)
         val year = content.releaseDate?.substringBefore("-")?.toIntOrNull()
 
         if (tvType == TvType.Movie) {
