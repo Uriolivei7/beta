@@ -247,56 +247,50 @@ class PlushdProvider : MainAPI() {
 
                 val response = chain.proceed(newRequest)
 
+                // Use peek body for Cloudflare check + M3U8 filtering (doesn't consume original)
                 try {
-                    val body = response.peekBody(1048576L)
-                    val html = body.string()
+                    val peek = response.peekBody(2097152L)
+                    val html = peek.string()
                     if (html.contains("Just a moment", ignoreCase = true) ||
                         html.contains("Attention Required", ignoreCase = true)) {
                         Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
                         return cloudflareKiller.intercept(chain)
                     }
-                } catch (_: Exception) { }
-
-                // Filter 1080p from VidHide M3U8s (same freezing issue as Netflix)
-                if (url.contains(".m3u8") && (url.contains("vidhide") || url.contains("m3u8"))) {
-                    try {
-                        val body = response.body?.string()
-                        if (body != null && body.startsWith("#EXTM3U") && body.contains("RESOLUTION=")) {
-                            val lines = body.lines()
-                            val filtered = mutableListOf<String>()
-                            var skip = false
-                            for (line in lines) {
-                                if (line.contains("RESOLUTION=") && (
-                                        line.contains("1920x1080") ||
-                                        line.contains("1920x800") ||
-                                        line.contains("1080p") ||
-                                        line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
-                                    )) {
-                                    Log.d("PlushdProvider", "Filtering out 1080p variant: $line")
-                                    skip = true
+                    if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
+                        val lines = html.lines()
+                        val filtered = mutableListOf<String>()
+                        var skip = false
+                        for (line in lines) {
+                            if (line.contains("RESOLUTION=") && (
+                                    line.contains("1920x1080") ||
+                                    line.contains("1920x800") ||
+                                    line.contains("1080p") ||
+                                    line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
+                                )) {
+                                Log.d("PlushdProvider", "Filtering out 1080p variant: $line")
+                                skip = true
+                                continue
+                            }
+                            if (skip) {
+                                if (line.startsWith("http") || line.startsWith("/") || line.startsWith("https")) {
+                                    Log.d("PlushdProvider", "Filtering out 1080p URL: $line")
+                                    skip = false
                                     continue
                                 }
-                                if (skip) {
-                                    // Skip the URL line(s) after the filtered variant
-                                    if (line.startsWith("http") || line.startsWith("/") || line.startsWith("https")) {
-                                        Log.d("PlushdProvider", "Filtering out 1080p URL: $line")
-                                        skip = false
-                                        continue
-                                    }
-                                    skip = false
-                                }
-                                filtered.add(line)
+                                skip = false
                             }
-                            val filteredBody = filtered.joinToString("\n")
-                            if (filteredBody.length != body.length) {
-                                Log.d("PlushdProvider", "M3U8 filtered: ${body.length} → ${filteredBody.length} chars (removed 1080p)")
-                                val mediaType = response.body?.contentType()
-                                val newBody = okhttp3.ResponseBody.create(mediaType, filteredBody)
-                                return response.newBuilder().body(newBody).build()
+                            filtered.add(line)
+                        }
+                        val filteredBody = filtered.joinToString("\n")
+                        if (filteredBody.length != html.length) {
+                            Log.d("PlushdProvider", "M3U8 filtered: ${html.length} -> ${filteredBody.length} chars (removed 1080p)")
+                            val mediaType = response.body?.contentType()
+                            if (mediaType != null) {
+                                return response.newBuilder().body(okhttp3.ResponseBody.create(mediaType, filteredBody)).build()
                             }
                         }
-                    } catch (_: Exception) { }
-                }
+                    }
+                } catch (_: Exception) { }
 
                 return response
             }
@@ -429,15 +423,15 @@ class PlushdProvider : MainAPI() {
                             Log.d(tag, "URL VidHide detectada, usando extractor directo...")
                             val ok = tryVidHideExtraction(
                                 url = fixedLink,
-                                referer = data,
+                                referer = fixedLink, // MhdflixVidHide usa URL como referer
                                 subtitleCallback = loggingSubtitleCallback,
                                 callback = wrappedCallback2
                             )
                             if (!ok) {
-                                Log.w(tag, "VidHide directo falló, probando loadExtractor...")
+                                Log.w(tag, "VidHide directo fallo, probando loadExtractor...")
                                 loadExtractor(
                                     url = fixedLink,
-                                    referer = data,
+                                    referer = fixedLink,
                                     subtitleCallback = loggingSubtitleCallback,
                                     callback = wrappedCallback2
                                 )
@@ -475,7 +469,7 @@ class PlushdProvider : MainAPI() {
                                     if (fixedLink.contains("vidhide")) {
                                         tryVidHideExtraction(
                                             url = fixedLink,
-                                            referer = "$mainUrl/",
+                                            referer = fixedLink,
                                             subtitleCallback = loggingSubtitleCallback,
                                             callback = wrappedCallback2
                                         )
@@ -508,9 +502,11 @@ class PlushdProvider : MainAPI() {
         if (!url.contains("vidhide")) return false
         val tag = "PlushdProvider-VidHide"
         try {
+            // Use URL itself as Referer (MhdflixVidHide pattern)
+            val vidReferer = if (url.contains("vidhide")) url else referer
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer" to referer,
+                "Referer" to vidReferer,
                 "Accept-Language" to "es",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             )
