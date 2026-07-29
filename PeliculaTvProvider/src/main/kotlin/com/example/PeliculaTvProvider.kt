@@ -241,61 +241,112 @@ class PeliculaTvProvider : MainAPI() {
         try {
             val movieMatch = Regex("""movie:(\d+)""").find(data)
             val tvMatch = Regex("""tv:(\d+):(\d+):(\d+)""").find(data)
+            val candidateUrls = mutableListOf<String>()
 
             if (movieMatch != null) {
                 val tmdbId = movieMatch.groupValues[1]
-                val embeds = listOf(
-                    "https://embed.su/embed/movie/$tmdbId",
-                    "https://vidsrc.pro/embed/movie/$tmdbId",
-                    "https://unlimplay.com/play/embed/movie/$tmdbId",
-                )
-                var linksCount = 0
-                for (url in embeds) {
-                    try {
-                        var count = 0
-                        val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
-                        val ok = loadExtractor(url, mainUrl, subtitleCallback, trackCb)
-                        linksCount += count
-                        if (ok) Log.i("PeliCulonTV", "loadLinks movie OK ($count links): $url")
-                        else Log.w("PeliCulonTV", "loadLinks movie sin links: $url")
-                    } catch (e: Exception) {
-                        Log.w("PeliCulonTV", "loadLinks movie error: ${e.message} en $url")
-                    }
-                }
-                Log.i("PeliCulonTV", "loadLinks movie total: $linksCount links para ID $tmdbId")
-                return linksCount > 0
-            }
-
-            if (tvMatch != null) {
+                candidateUrls.add("https://unlimplay.com/play/embed/movie/$tmdbId")
+                candidateUrls.add("https://embed.su/embed/movie/$tmdbId")
+                candidateUrls.add("https://vidsrc.pro/embed/movie/$tmdbId")
+            } else if (tvMatch != null) {
                 val tmdbId = tvMatch.groupValues[1]
                 val season = tvMatch.groupValues[2]
                 val episode = tvMatch.groupValues[3]
-                val embeds = listOf(
-                    "https://embed.su/embed/tv/$tmdbId/$season/$episode",
-                    "https://vidsrc.pro/embed/tv/$tmdbId/$season/$episode",
-                    "https://unlimplay.com/play/embed/tv/$tmdbId/$season/$episode",
-                )
-                var linksCount = 0
-                for (url in embeds) {
-                    try {
-                        var count = 0
-                        val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
-                        val ok = loadExtractor(url, mainUrl, subtitleCallback, trackCb)
-                        linksCount += count
-                        if (ok) Log.i("PeliCulonTV", "loadLinks tv OK ($count links): $url")
-                        else Log.w("PeliCulonTV", "loadLinks tv sin links: $url")
-                    } catch (e: Exception) {
-                        Log.w("PeliCulonTV", "loadLinks tv error: ${e.message} en $url")
-                    }
-                }
-                Log.i("PeliCulonTV", "loadLinks tv total: $linksCount links para ID $tmdbId S${season}E${episode}")
-                return linksCount > 0
+                candidateUrls.add("https://unlimplay.com/play/embed/tv/$tmdbId/$season/$episode")
+                candidateUrls.add("https://embed.su/embed/tv/$tmdbId/$season/$episode")
+                candidateUrls.add("https://vidsrc.pro/embed/tv/$tmdbId/$season/$episode")
+            } else {
+                return false
             }
 
-            return false
+            var linksCount = 0
+            for (url in candidateUrls) {
+                try {
+                    linksCount += if (url.contains("unlimplay.com")) {
+                        processUnlimplay(url, subtitleCallback, callback)
+                    } else {
+                        var count = 0
+                        val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
+                        loadExtractor(url, mainUrl, subtitleCallback, trackCb)
+                        count
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("PeliCulonTV", "loadLinks error: ${e.message} en $url")
+                }
+            }
+            return linksCount > 0
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("PeliCulonTV", "loadLinks error: ${e.message}")
             return false
+        }
+    }
+
+    private suspend fun processUnlimplay(
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Int {
+        var count = 0
+        val html = app.get(url).text
+
+        val embedsMatch = Regex("""const\s+EMBEDS\s*=\s*(\{.+?\});""", RegexOption.DOT_MATCHES_ALL)
+            .find(html) ?: return 0
+
+        val root = parseObj(JsonParser.parseString(embedsMatch.groupValues[1])) ?: return 0
+
+        for ((_, serversElement) in root.entrySet()) {
+            val serversObj = parseObj(serversElement) ?: continue
+            for ((name, urlElement) in serversObj.entrySet()) {
+                val embedUrl = parseStr(urlElement) ?: continue
+                try {
+                    if (embedUrl.contains("remux.unlimplay.com")) {
+                        callback(newExtractorLink("Remux", "Remux", embedUrl, INFER_TYPE) {
+                            this.referer = "https://unlimplay.com"
+                        })
+                        count++
+                    } else {
+                        var subCount = 0
+                        val trackCb: (ExtractorLink) -> Unit = { link -> subCount++; callback(link) }
+                        val ok = loadExtractor(embedUrl, "https://unlimplay.com", subtitleCallback, trackCb)
+                        if (!ok || subCount == 0) {
+                            subCount += tryExtractDirect(embedUrl, name, callback)
+                        }
+                        count += subCount
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("PeliCulonTV", "Embed error ${e.message} en $embedUrl")
+                }
+            }
+        }
+        return count
+    }
+
+    private suspend fun tryExtractDirect(
+        embedUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Int {
+        return try {
+            val embedHtml = app.get(embedUrl).text
+            val m3u8 = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(embedHtml)?.value
+            if (m3u8 != null) {
+                callback(newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
+                    this.referer = embedUrl
+                })
+                1
+            } else {
+                0
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            0
         }
     }
 }
