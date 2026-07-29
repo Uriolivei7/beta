@@ -796,5 +796,19 @@
     "iconUrl": "https://tokianime.tv/favicon.ico",
     "language": "mx",
     "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PeliculaTvProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "PeliCulónTV",
+    "internalName": "PeliculaTvProvider",
+    "authors": ["Ranita"],
+    "description": "https://peliculontv.netlify.app/",
+    "tvTypes": ["Movie", "TvSeries"],
+    "iconUrl": "https://img.icons8.com/?size=192&id=7kZqudzK4XyS&format=png",
+    "language": "mx",
+    "fileSize": 20000
   }
 ]
