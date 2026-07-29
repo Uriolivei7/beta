@@ -248,16 +248,18 @@ class PeliculaTvProvider : MainAPI() {
                     "https://embed.su/embed/movie/$tmdbId",
                     "https://vidsrc.pro/embed/movie/$tmdbId",
                     "https://vidlink.pro/embed/movie/$tmdbId",
-                    "https://moviesapi.club/movie/$tmdbId",
-                    "https://player.autoembed.cc/embed/movie/$tmdbId",
-                    "https://vidsrc.me/embed/movie/$tmdbId",
                 )
+                var found = false
                 for (url in embeds) {
                     try {
-                        loadExtractor(url, mainUrl, subtitleCallback, callback)
-                    } catch (_: Exception) {}
+                        val ok = loadExtractor(url, mainUrl, subtitleCallback, callback)
+                        if (ok) { found = true; Log.i("PeliCulonTV", "loadLinks movie OK: $url") }
+                        else Log.w("PeliCulonTV", "loadLinks movie no links: $url")
+                    } catch (e: Exception) {
+                        Log.w("PeliCulonTV", "loadLinks movie error: ${e.message} en $url")
+                    }
                 }
-                return true
+                return found
             }
 
             if (tvMatch != null) {
@@ -268,16 +270,18 @@ class PeliculaTvProvider : MainAPI() {
                     "https://embed.su/embed/tv/$tmdbId/$season/$episode",
                     "https://vidsrc.pro/embed/tv/$tmdbId/$season/$episode",
                     "https://multiembed.mov/?video_id=$tmdbId&tmdb=1&s=$season&e=$episode",
-                    "https://unlimplay.com/embed/tv/$tmdbId/$season/$episode",
-                    "https://efilm.online/embed/tv/$tmdbId/$season/$episode",
-                    "https://2embed.cc/embedtv2/$tmdbId&s=$season&e=$episode",
                 )
+                var found = false
                 for (url in embeds) {
                     try {
-                        loadExtractor(url, mainUrl, subtitleCallback, callback)
-                    } catch (_: Exception) {}
+                        val ok = loadExtractor(url, mainUrl, subtitleCallback, callback)
+                        if (ok) { found = true; Log.i("PeliCulonTV", "loadLinks tv OK: $url") }
+                        else Log.w("PeliCulonTV", "loadLinks tv no links: $url")
+                    } catch (e: Exception) {
+                        Log.w("PeliCulonTV", "loadLinks tv error: ${e.message} en $url")
+                    }
                 }
-                return true
+                return found
             }
 
             return false
