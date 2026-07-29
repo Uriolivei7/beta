@@ -801,7 +801,6 @@ fun m3u8CdnFixInterceptor(): Interceptor {
     return Interceptor { chain ->
         var req = chain.request()
         val url = req.url.toString()
-        // Serve custom master playlist if __cm=1 is present
         if (url.contains("__cm=1")) {
             val id = Regex("""/hls/(\d+)\.m3u8""").find(url)?.groupValues?.get(1)
             if (id != null) {
