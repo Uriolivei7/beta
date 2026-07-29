@@ -242,9 +242,11 @@ class PeliculaTvProvider : MainAPI() {
             val movieMatch = Regex("""movie:(\d+)""").find(data)
             val tvMatch = Regex("""tv:(\d+):(\d+):(\d+)""").find(data)
             val candidateUrls = mutableListOf<String>()
+            var debugType = ""
 
             if (movieMatch != null) {
                 val tmdbId = movieMatch.groupValues[1]
+                debugType = "movie:$tmdbId"
                 candidateUrls.add("https://unlimplay.com/play/embed/movie/$tmdbId")
                 candidateUrls.add("https://embed.su/embed/movie/$tmdbId")
                 candidateUrls.add("https://vidsrc.pro/embed/movie/$tmdbId")
@@ -252,30 +254,39 @@ class PeliculaTvProvider : MainAPI() {
                 val tmdbId = tvMatch.groupValues[1]
                 val season = tvMatch.groupValues[2]
                 val episode = tvMatch.groupValues[3]
+                debugType = "tv:$tmdbId S${season}E${episode}"
                 candidateUrls.add("https://unlimplay.com/play/embed/tv/$tmdbId/$season/$episode")
                 candidateUrls.add("https://embed.su/embed/tv/$tmdbId/$season/$episode")
                 candidateUrls.add("https://vidsrc.pro/embed/tv/$tmdbId/$season/$episode")
             } else {
+                Log.w("PeliCulonTV", "loadLinks: data no reconocida: $data")
                 return false
             }
+
+            Log.i("PeliCulonTV", "loadLinks[$debugType]: candidatos=${candidateUrls.size} -> ${candidateUrls.joinToString(" | ") { it.substringAfter("//") }}")
 
             var linksCount = 0
             for (url in candidateUrls) {
                 try {
+                    val before = linksCount
                     linksCount += if (url.contains("unlimplay.com")) {
-                        processUnlimplay(url, subtitleCallback, callback)
+                        processUnlimplay(url, subtitleCallback, callback, debugType)
                     } else {
                         var count = 0
                         val trackCb: (ExtractorLink) -> Unit = { link -> count++; callback(link) }
-                        loadExtractor(url, mainUrl, subtitleCallback, trackCb)
+                        val found = loadExtractor(url, mainUrl, subtitleCallback, trackCb)
+                        Log.i("PeliCulonTV", "loadLinks[$debugType]: ${url.substringAfter("//embed.")} -> loadExtractor=$found links=$count")
                         count
                     }
+                    val added = linksCount - before
+                    Log.i("PeliCulonTV", "loadLinks[$debugType]: ${url.substringAfter("//")} -> +${added} links (total=$linksCount)")
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w("PeliCulonTV", "loadLinks error: ${e.message} en $url")
+                    Log.w("PeliCulonTV", "loadLinks[$debugType]: error ${e.message} en ${url.substringAfter("//")}")
                 }
             }
+            Log.i("PeliCulonTV", "loadLinks[$debugType]: FINAL links=$linksCount")
             return linksCount > 0
         } catch (e: CancellationException) {
             throw e
@@ -288,42 +299,79 @@ class PeliculaTvProvider : MainAPI() {
     private suspend fun processUnlimplay(
         url: String,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
+        debugType: String
     ): Int {
         var count = 0
         val html = app.get(url).text
+        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: HTML len=${html.length}")
 
         val embedsMatch = Regex("""const\s+EMBEDS\s*=\s*(\{.+?\});""", RegexOption.DOT_MATCHES_ALL)
-            .find(html) ?: return 0
+            .find(html)
+        if (embedsMatch == null) {
+            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: no EMBEDS encontrado en HTML")
+            return 0
+        }
 
-        val root = parseObj(JsonParser.parseString(embedsMatch.groupValues[1])) ?: return 0
+        val root = parseObj(JsonParser.parseString(embedsMatch.groupValues[1]))
+        if (root == null) {
+            Log.w("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS no es JSON object: ${embedsMatch.groupValues[1].take(100)}")
+            return 0
+        }
 
-        for ((_, serversElement) in root.entrySet()) {
-            val serversObj = parseObj(serversElement) ?: continue
+        val langCount = root.entrySet().size
+        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: EMBEDS parseado OK, ${langCount} idioma(s)")
+
+        for ((lang, serversElement) in root.entrySet()) {
+            val serversObj = parseObj(serversElement)
+            if (serversObj == null) {
+                Log.w("PeliCulonTV", "processUnlimplay[$debugType]: lang='$lang' no es Object")
+                continue
+            }
+            Log.i("PeliCulonTV", "processUnlimplay[$debugType]: idioma=$lang servidores=${serversObj.entrySet().map { it.key }}")
+
             for ((name, urlElement) in serversObj.entrySet()) {
-                val embedUrl = parseStr(urlElement) ?: continue
+                val embedUrl = parseStr(urlElement)
+                if (embedUrl == null) {
+                    Log.w("PeliCulonTV", "processUnlimplay[$debugType]: lang=$lang server=$name URL no es string")
+                    continue
+                }
+                Log.i("PeliCulonTV", "processUnlimplay[$debugType]: -> server=$name lang=$lang url=$embedUrl")
+
                 try {
                     if (embedUrl.contains("remux.unlimplay.com")) {
                         callback(newExtractorLink("Remux", "Remux", embedUrl, INFER_TYPE) {
                             this.referer = "https://unlimplay.com"
                         })
                         count++
+                        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: REMUX link agregado: $embedUrl")
                     } else {
                         var subCount = 0
-                        val trackCb: (ExtractorLink) -> Unit = { link -> subCount++; callback(link) }
+                        val trackCb: (ExtractorLink) -> Unit = { link ->
+                            subCount++
+                            Log.i("PeliCulonTV", "processUnlimplay[$debugType]: loadExtractor link #$subCount: ${link.url.take(80)}")
+                            callback(link)
+                        }
                         val ok = loadExtractor(embedUrl, "https://unlimplay.com", subtitleCallback, trackCb)
+                        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: loadExtractor($name)=$ok links=$subCount")
+
                         if (!ok || subCount == 0) {
-                            subCount += tryExtractDirect(embedUrl, name, callback)
+                            Log.i("PeliCulonTV", "processUnlimplay[$debugType]: fallback tryExtractDirect($name)")
+                            val direct = tryExtractDirect(embedUrl, name, callback)
+                            Log.i("PeliCulonTV", "processUnlimplay[$debugType]: tryExtractDirect($name)=$direct")
+                            subCount += direct
                         }
                         count += subCount
+                        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: server=$name total subCount=$subCount")
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w("PeliCulonTV", "Embed error ${e.message} en $embedUrl")
+                    Log.w("PeliCulonTV", "processUnlimplay[$debugType]: error ${e.message} en $name ($embedUrl)")
                 }
             }
         }
+        Log.i("PeliCulonTV", "processUnlimplay[$debugType]: total links de unlimplay=$count")
         return count
     }
 
@@ -333,19 +381,24 @@ class PeliculaTvProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Int {
         return try {
+            Log.i("PeliCulonTV", "tryExtractDirect: fetching $name ($embedUrl)")
             val embedHtml = app.get(embedUrl).text
+            Log.i("PeliCulonTV", "tryExtractDirect: $name HTML len=${embedHtml.length}")
             val m3u8 = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(embedHtml)?.value
             if (m3u8 != null) {
+                Log.i("PeliCulonTV", "tryExtractDirect: $name M3U8 encontrado: ${m3u8.take(100)}")
                 callback(newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
                     this.referer = embedUrl
                 })
                 1
             } else {
+                Log.w("PeliCulonTV", "tryExtractDirect: $name sin M3U8 en HTML")
                 0
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("PeliCulonTV", "tryExtractDirect: $name error: ${e.message}")
             0
         }
     }
