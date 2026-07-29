@@ -102,7 +102,7 @@ class PlayhubProvider : MainAPI() {
     data class ContentDetailResponse(
         val id: Int,
         val uuid: String,
-        val title: String,
+        @JsonProperty("title") private val titleRaw: Any? = null,
         val overview: String?,
         val type: String?,
         val releaseDate: String?,
@@ -115,7 +115,20 @@ class PlayhubProvider : MainAPI() {
         val genres: List<GenreItem>?,
         val people: List<PeopleItem>?,
         val seasons: List<SeasonItem>?,
-    )
+    ) {
+        fun displayTitle(): String {
+            @Suppress("UNCHECKED_CAST")
+            fun extractFromMap(m: Any): String {
+                val map = m as Map<String, String>
+                return map["es-419"] ?: map["es-ES"] ?: map["en-US"] ?: map.values.firstOrNull() ?: ""
+            }
+            return when (titleRaw) {
+                is Map<*, *> -> extractFromMap(titleRaw)
+                is String -> titleRaw
+                else -> ""
+            }
+        }
+    }
 
     data class SectionItem(
         val id: Int,
@@ -151,7 +164,6 @@ class PlayhubProvider : MainAPI() {
         val title: String? = null,
         val isAdult: Boolean? = null,
         val overview: String? = null,
-        val languages: List<String>? = null,
         val artwork: HomeArtwork? = null,
         val linkCount: Int? = null,
     )
@@ -279,9 +291,13 @@ class PlayhubProvider : MainAPI() {
 
     data class MeiliHit(
         val uuid: String? = null,
-        val title: String? = null,
+        val title: Map<String, String>? = null,
         val artwork: HomeArtwork? = null,
-    )
+    ) {
+        fun displayTitle(): String {
+            return title?.get("es-419") ?: title?.get("es-ES") ?: title?.get("en-US") ?: title?.values?.firstOrNull() ?: ""
+        }
+    }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val body = MeiliSearchBody(listOf(MeiliQuery(q = query)))
@@ -307,8 +323,9 @@ class PlayhubProvider : MainAPI() {
         val hits = parsed.results?.firstOrNull()?.hits.orEmpty()
         Log.d("PlayHub", "search hits=${hits.size}")
         return hits.mapNotNull { hit ->
-            if (hit.uuid.isNullOrBlank() || hit.title.isNullOrBlank()) return@mapNotNull null
-            newAnimeSearchResponse(hit.title, "$mainUrl/content/${hit.uuid}") {
+            val t = hit.displayTitle()
+            if (hit.uuid.isNullOrBlank() || t.isBlank()) return@mapNotNull null
+            newAnimeSearchResponse(t, "$mainUrl/content/${hit.uuid}") {
                 this.posterUrl = getBestPoster(hit.artwork)
             }
         }
@@ -335,7 +352,7 @@ class PlayhubProvider : MainAPI() {
         val year = content.releaseDate?.substringBefore("-")?.toIntOrNull()
 
         if (tvType == TvType.Movie) {
-            return newMovieLoadResponse(content.title, url, tvType, "content:$uuid") {
+            return newMovieLoadResponse(content.displayTitle(), url, tvType, "content:$uuid") {
                 this.posterUrl = posterUrl
                 this.backgroundPosterUrl = backdropUrl
                 this.plot = content.overview
@@ -377,7 +394,7 @@ class PlayhubProvider : MainAPI() {
             }
         }
 
-        return newTvSeriesLoadResponse(content.title, url, tvType, episodes) {
+        return newTvSeriesLoadResponse(content.displayTitle(), url, tvType, episodes) {
             this.posterUrl = posterUrl
             this.backgroundPosterUrl = backdropUrl
             this.plot = content.overview
@@ -394,7 +411,8 @@ class PlayhubProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val splitIndex = data.lastIndexOf(':')
-        val type = if (splitIndex > 0 && data.substringBeforeLast(':').contains("/episode")) "episode" else "content"
+        val prefix = if (splitIndex > 0) data.substring(0, splitIndex) else ""
+        val type = if (prefix == "episode") "episode" else "content"
         val uuid = data.substring(splitIndex + 1)
         val url = "$apiUrl/$type/$uuid/sources"
         Log.d("PlayHub", "loadLinks data: $data -> type=$type uuid=$uuid url=$url")
