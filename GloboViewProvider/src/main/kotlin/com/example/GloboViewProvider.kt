@@ -48,9 +48,8 @@ class GloboViewProvider : MainAPI() {
                 val channels = doc.select("div.card a[href*=/directorio/]").mapNotNull { a ->
                     val link = a.attr("href")
                     val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@mapNotNull null
-                    val poster = a.selectFirst("img")?.attr("src")
                     newLiveSearchResponse(title, fixUrl(link), TvType.Live) {
-                        this.posterUrl = if (poster?.startsWith("http") == true) poster else null
+                        this.posterUrl = getChannelPoster(a, title)
                     }
                 }.distinctBy { it.url }
                 if (channels.isNotEmpty()) {
@@ -154,7 +153,7 @@ class GloboViewProvider : MainAPI() {
                         val title = a.selectFirst("h3.card-title")?.text()?.trim() ?: return@forEach
                         if (title.contains(query, ignoreCase = true)) {
                             results.add(newLiveSearchResponse(title, link, TvType.Live) {
-                                this.posterUrl = posterMap[title.lowercase()]
+                                this.posterUrl = posterMap[title.lowercase()] ?: getChannelPoster(a, title)
                             })
                         }
                     }
@@ -256,5 +255,12 @@ class GloboViewProvider : MainAPI() {
 
     private fun fixUrl(url: String): String {
         return if (url.startsWith("http")) url else "$mainUrl$url"
+    }
+
+    private fun getChannelPoster(a: Element, title: String): String {
+        val img = a.selectFirst("img")?.attr("src")
+        if (!img.isNullOrBlank() && img.startsWith("http")) return img
+        val encoded = java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20")
+        return "https://ui-avatars.com/api/?name=$encoded&background=1e293b&color=ffffff&size=128&bold=true"
     }
 }
