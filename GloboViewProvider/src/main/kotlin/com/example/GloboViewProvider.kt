@@ -115,7 +115,7 @@ class GloboViewProvider : MainAPI() {
                         val key = title.lowercase()
                         val existente = posterMap[key]
                         if (!poster.endsWith(".svg") || existente == null || existente.endsWith(".svg")) {
-                            posterMap[key] = poster
+                            posterMap[key] = unproxyImage(poster)
                         }
                     }
                 }
@@ -138,7 +138,7 @@ class GloboViewProvider : MainAPI() {
                                     posterUrl = posterMap.entries.firstOrNull { name.lowercase().contains(it.key) || it.key.contains(name.lowercase()) }?.value
                                 }
                                 results.add(newLiveSearchResponse(name, chUrl, TvType.Live) {
-                                    this.posterUrl = posterUrl
+                                    this.posterUrl = posterUrl ?: avatarForTitle(name)
                                 })
                             }
                         }
@@ -257,10 +257,35 @@ class GloboViewProvider : MainAPI() {
         return if (url.startsWith("http")) url else "$mainUrl$url"
     }
 
-    private fun getChannelPoster(a: Element, title: String): String {
-        val img = a.selectFirst("img")?.attr("src")
-        if (!img.isNullOrBlank() && img.startsWith("http")) return img
+    private fun avatarForTitle(title: String): String {
         val encoded = java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20")
         return "https://ui-avatars.com/api/?name=$encoded&background=1e293b&color=ffffff&size=128&bold=true"
+    }
+
+    private fun unproxyImage(url: String): String {
+        if (url.startsWith("https://wsrv.nl/")) {
+            val queryStart = url.indexOf('?')
+            if (queryStart >= 0) {
+                val query = url.substring(queryStart + 1)
+                for (part in query.split("&")) {
+                    if (part.startsWith("url=")) {
+                        val raw = part.substring(4)
+                        val decoded = try {
+                            java.net.URLDecoder.decode(raw, "UTF-8")
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (!decoded.isNullOrBlank()) return decoded
+                    }
+                }
+            }
+        }
+        return url
+    }
+
+    private fun getChannelPoster(a: Element, title: String): String {
+        val img = a.selectFirst("img")?.attr("src")
+        if (!img.isNullOrBlank() && img.startsWith("http")) return unproxyImage(img)
+        return avatarForTitle(title)
     }
 }
