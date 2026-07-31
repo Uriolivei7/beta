@@ -651,7 +651,7 @@
     "name": "SeriesBiblicas",
     "internalName": "SeriesbiblicasProvider",
     "authors": ["Ranita"],
-    "description": "Plugin de PlutoTV",
+    "description": "https://seriesbiblicas.net/",
     "tvTypes": ["TvSeries", "Movie", "Cartoon"],
     "iconUrl": "https://seriesbiblicas.net/wp-content/uploads/2019/01/FAVICON.png",
     "language": "mx",
