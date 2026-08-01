@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.json.JSONArray
 import org.jsoup.Jsoup
 
 class TokianimeProvider : MainAPI() {
@@ -395,6 +396,58 @@ class TokianimeProvider : MainAPI() {
             Log.i("Tokianime", "loadLinks: contiene 'rankedServers'=$hasRankedServers")
 
             val normalized = html.replace("\\\"", "\"")
+            val servers = parseRankedServers(normalized)
+            Log.i("Tokianime", "loadLinks: rankedServers parsed = ${servers.size}")
+            if (servers.isNotEmpty()) {
+                var found = false
+                val seenSids = mutableSetOf<String>()
+                for (server in servers) {
+                    val langRaw = server.first
+                    val qualityStr = server.second
+                    val srcRaw = server.third
+                    val lang = langRaw.uppercase()
+                    val quality = qualityStr.takeWhile { it.isDigit() }.toIntOrNull() ?: Qualities.Unknown.value
+                    val cleanSrc = srcRaw.replace("""\u0026""", "&")
+                    val apiUrl = "$mainUrl$cleanSrc"
+                    val sid = Regex("sid=([^&]+)").find(cleanSrc)?.groupValues?.get(1) ?: ""
+                    if (sid.isNotEmpty() && !seenSids.add(sid)) continue
+                    Log.i("Tokianime", "loadLinks: server lang='$lang' quality='$qualityStr' src='$cleanSrc'")
+                    try {
+                        val respCall = app.get(apiUrl, headers = headers)
+                        val headBuf = ByteArray(10240)
+                        val headRead = respCall.body.byteStream().use { s -> s.read(headBuf) }
+                        val headStr = if (headRead > 0) String(headBuf, 0, headRead) else ""
+                        val langLabel = labelFor(lang)
+                        if (headStr.trimStart().startsWith("#EXTM3U")) {
+                            callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, ExtractorLinkType.M3U8) {
+                                this.referer = mainUrl; this.quality = quality
+                            })
+                            found = true
+                            Log.i("Tokianime", "loadLinks: M3U8 [$langLabel] q=$quality")
+                        } else if (headStr.contains("ftyp")) {
+                            val iframeOk = tryFallbackIframe(apiUrl, langLabel, quality, callback, mainUrl)
+                            if (!iframeOk) {
+                                callback.invoke(newExtractorLink("Tokianime", "Tokianime [$langLabel]", apiUrl, ExtractorLinkType.VIDEO) {
+                                    this.referer = mainUrl; this.quality = quality
+                                })
+                                found = true
+                                Log.i("Tokianime", "loadLinks: MP4 [$langLabel] q=$quality")
+                            } else {
+                                found = true
+                            }
+                        } else if (headStr.contains("<!DOCTYPE html", ignoreCase = true) || headStr.contains("<html", ignoreCase = true)) {
+                            tryFallbackIframe(apiUrl, langLabel, quality, callback, mainUrl)
+                        } else {
+                            Log.w("Tokianime", "loadLinks: respuesta no reconocida para '$lang': '${headStr.take(100)}'")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Tokianime", "loadLinks: error al consultar API server: ${e.message}")
+                    }
+                }
+                Log.i("Tokianime", "loadLinks: resultado final=${if (found) "OK" else "SIN_ENLACES"}")
+                return found
+            }
+
             val playRegex = Regex(""""lang":"([^"]+)".*?"quality":"([^"]+)".*?"play":\{"src":"(/api/player/source[^"]+)""")
             val matches = playRegex.findAll(normalized).toList()
             Log.i("Tokianime", "loadLinks: matches de regex playSrc (normalizado) = ${matches.size}")
@@ -483,14 +536,6 @@ class TokianimeProvider : MainAPI() {
             val allLangs = matches.map { it.groupValues[1].uppercase() }.toSet()
             val hasEs = allLangs.any { it == "ES" }
             val hasLat = allLangs.contains("LAT")
-            fun labelFor(raw: String): String {
-                val upper = raw.uppercase()
-                if (upper == "SUB") return "SUB"
-
-                if (hasEs && hasLat && upper == "ES") return "ES"
-                if (hasEs && hasLat && upper == "LAT") return "LAT"
-                return upper
-            }
             Log.i("Tokianime", "loadLinks: allLangs=$allLangs hasEs=$hasEs hasLat=$hasLat")
 
             for ((idx, match) in matches.withIndex()) {
@@ -591,6 +636,70 @@ class TokianimeProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e("Tokianime", "loadLinks error: ${e.message}")
             return false
+        }
+    }
+
+    private fun labelFor(raw: String): String {
+        return when (raw.uppercase()) {
+            "SUB" -> "SUB"
+            "LAT" -> "LAT"
+            "ES" -> "ES"
+            "CAST" -> "CAST"
+            else -> raw.uppercase()
+        }
+    }
+
+    private fun parseRankedServers(html: String): List<Triple<String, String, String>> {
+        val result = mutableListOf<Triple<String, String, String>>()
+        val idx = html.indexOf("\"rankedServers\":")
+        if (idx < 0) return result
+        val arrStart = html.indexOf('[', idx)
+        if (arrStart < 0) return result
+        var depth = 0
+        var end = -1
+        var inString = false
+        var i = arrStart
+        while (i < html.length) {
+            val ch = html[i]
+            if (inString) {
+                if (ch == '\\') {
+                    i += 2
+                    continue
+                }
+                if (ch == '"') inString = false
+            } else {
+                when (ch) {
+                    '"' -> inString = true
+                    '{', '[' -> depth++
+                    '}', ']' -> {
+                        depth--
+                        if (depth == 0) {
+                            end = i
+                            break
+                        }
+                    }
+                }
+            }
+            i++
+        }
+        if (end < 0) return result
+        val arrayJson = html.substring(arrStart, end + 1)
+        return try {
+            val array = JSONArray(arrayJson)
+            for (j in 0 until array.length()) {
+                val obj = array.optJSONObject(j) ?: continue
+                val lang = obj.optString("lang", "")
+                val quality = obj.optString("quality", "")
+                val play = obj.optJSONObject("play")
+                val src = play?.optString("src", "") ?: ""
+                if (src.isNotEmpty() && src.contains("mode=play")) {
+                    result.add(Triple(lang, quality, src))
+                }
+            }
+            result
+        } catch (e: Exception) {
+            Log.e("Tokianime", "loadLinks: parseRankedServers error: ${e.message}")
+            result
         }
     }
 
