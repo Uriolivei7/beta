@@ -221,8 +221,8 @@ class MonoschinosProvider : MainAPI() {
             subtitleCallback: (SubtitleFile) -> Unit,
             callback: (ExtractorLink) -> Unit
     ): Boolean {
-        app.get(data).document.select("#myTab li").amap {
-            val encodedurl = it.select(".play-video").attr("data-player")
+        app.get(data).document.select(".play-video").amap {
+            val encodedurl = it.attr("data-player")
             val urlDecoded = base64Decode(encodedurl)
             val url = (urlDecoded).replace("https://monoschinos2.com/reproductor?url=", "")
                     .replace("https://sblona.com","https://watchsb.com").replace("https://swdyu.com","https://streamwish.to")
