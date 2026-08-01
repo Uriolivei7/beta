@@ -399,22 +399,9 @@ class TokianimeProvider : MainAPI() {
             val servers = parseRankedServers(normalized)
             Log.i("Tokianime", "loadLinks: rankedServers parsed = ${servers.size}")
             if (servers.isNotEmpty()) {
-                val sortedServers = servers.sortedWith(
-                    compareByDescending<Triple<String, String, String>> { server ->
-                        when (server.first.uppercase()) {
-                            "LAT" -> 4
-                            "SUB" -> 3
-                            "ES" -> 1
-                            "CAST" -> 1
-                            else -> 2
-                        }
-                    }.thenByDescending { server ->
-                        server.second.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
-                    }
-                )
                 var found = false
                 val seenSids = mutableSetOf<String>()
-                for (server in sortedServers) {
+                for (server in servers) {
                     val langRaw = server.first
                     val qualityStr = server.second
                     val srcRaw = server.third
@@ -448,7 +435,7 @@ class TokianimeProvider : MainAPI() {
                             } else {
                                 found = true
                             }
-                        } else if (headStr.contains("<!DOCTYPE html", ignoreCase = true) || headStr.contains("<html", ignoreCase = true)) {
+                        } else if (headStr.contains("<!DOCTYPE html", ignoreCase = true) || headStr.contains("<html", ignoreCase = true) || headStr.isBlank()) {
                             tryFallbackIframe(apiUrl, langLabel, quality, callback, mainUrl)
                         } else {
                             Log.w("Tokianime", "loadLinks: respuesta no reconocida para '$lang': '${headStr.take(100)}'")
