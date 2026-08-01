@@ -7,6 +7,10 @@ import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.serialization.*
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Response
+import okhttp3.ResponseBody
 import java.io.File
 
 class UniqueStreamProvider : MainAPI() {
@@ -29,6 +33,50 @@ class UniqueStreamProvider : MainAPI() {
             this.posterUrl = image
         }
     }
+
+    // El CDN sirve key.bin cifrado (señuelo). La key AES-128 real es hex.decode(media_id),
+    // y el media_id está en el path del m3u8: .../{media_id}_{locale}/master.m3u8
+    private val keyRegex = Regex("/([0-9a-f]{32})_[^/]+/master\\.m3u8")
+
+    @Suppress("ObjectLiteralToLambda")
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val linkUrl = extractorLink.url
+        val mediaId = keyRegex.find(linkUrl)?.groupValues?.get(1)
+            ?: Regex("/([0-9a-f]{32})_[^/]+/").find(linkUrl)?.groupValues?.get(1)
+
+        // key real = hex.decode(media_id) → 16 bytes AES-128 (solo para HLS de mediacache)
+        val realKey: ByteArray? = try {
+            if (mediaId != null && mediaId.length == 32) {
+                mediaId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            } else null
+        } catch (e: Exception) {
+            Log.w(TAG, "getVideoInterceptor: media_id inválido $mediaId")
+            null
+        }
+
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val url = request.url.toString()
+
+                // Solo intercepta la petición de la key AES
+                if (realKey != null && url.contains("keys/") && url.contains("key.bin")) {
+                    Log.d(TAG, "Interceptando key.bin -> ${realKey.toHex()}")
+                    return Response.Builder()
+                        .request(request)
+                        .protocol(okhttp3.Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .header("Content-Type", "application/octet-stream")
+                        .body(ResponseBody.create("application/octet-stream".toMediaTypeOrNull(), realKey))
+                        .build()
+                }
+                return chain.proceed(request)
+            }
+        }
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
