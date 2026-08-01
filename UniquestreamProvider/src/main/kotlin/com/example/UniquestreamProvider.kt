@@ -29,9 +29,38 @@ class UniqueStreamProvider : MainAPI() {
     )
 
     private fun SeriesItem.toSearchResponse(): SearchResponse {
-        return newAnimeSearchResponse(this.title, this.content_id) {
-            this.posterUrl = image
+        val isMovie = this.type == "movie"
+        val resp = if (isMovie) {
+            newAnimeSearchResponse(this.title, this.content_id, TvType.AnimeMovie)
+        } else {
+            newAnimeSearchResponse(this.title, this.content_id)
         }
+        resp.posterUrl = image?.replace("posters/60x90/", "posters/480x720/")
+        return resp
+    }
+
+    private fun String?.upgradePoster(): String? =
+        this?.replace("posters/60x90/", "posters/480x720/")
+
+    private fun localeLabel(locale: String): String = when (locale) {
+        "en-US" -> "English (US)"
+        "es-419" -> "Español (LATAM)"
+        "es-ES" -> "Español (España)"
+        "ja-JP" -> "日本語"
+        "pt-BR" -> "Português (BR)"
+        "de-DE" -> "Deutsch"
+        "fr-FR" -> "Français"
+        "it-IT" -> "Italiano"
+        "zh-CN" -> "中文"
+        "zh-HK" -> "中文 (HK)"
+        "ko-KR" -> "한국어"
+        "ru-RU" -> "Русский"
+        "ar-SA" -> "العربية"
+        "id-ID" -> "Indonesia"
+        "ms-MY" -> "Melayu"
+        "th-TH" -> "ไทย"
+        "vi-VN" -> "Tiếng Việt"
+        else -> locale
     }
 
     // El CDN sirve key.bin cifrado (señuelo). La key AES-128 real es hex.decode(media_id),
@@ -82,25 +111,39 @@ class UniqueStreamProvider : MainAPI() {
         return try {
             Log.d(TAG, "Cargando MainPage...")
 
-            val response = app.get(
-                "$apiUrl/search?query=&limit=20&order_by=popular",
-                headers = baseHeaders,
-                timeout = 30L
-            ).text
+            val sections = listOf(
+                Triple("Nuevos", "$apiUrl/videos/new?slider=1&limit=10", 0),
+                Triple("Populares", "$apiUrl/videos/popular?slider=1&limit=10", 1),
+                Triple("Películas", "$apiUrl/videos/movies?limit=6&sort=popular", 2),
+                Triple("Acción", "$apiUrl/browse?categories=action,popular&limit=20&type=all&slider=1", 3),
+                Triple("Aventura", "$apiUrl/browse?categories=adventure,popular&limit=20&type=all&slider=1", 4),
+                Triple("Comedia", "$apiUrl/browse?categories=comedy,popular&limit=20&type=all&slider=1", 5),
+                Triple("Drama", "$apiUrl/browse?categories=drama,popular&limit=20&type=all&slider=1", 6),
+                Triple("Fantasía", "$apiUrl/browse?categories=fantasy,popular&limit=20&type=all&slider=1", 7),
+                Triple("Sci-Fi", "$apiUrl/browse?categories=sci-fi,popular&limit=20&type=all&slider=1", 8),
+            )
 
-            val data = AppUtils.parseJson<SearchRoot>(response)
             val homeItems = mutableListOf<HomePageList>()
 
-            val seriesList = data.series?.map {
-                newAnimeSearchResponse(it.title, it.content_id) {
-                    this.posterUrl = it.image
+            for (section in sections) {
+                try {
+                    val response = app.get(
+                        section.second,
+                        headers = baseHeaders,
+                        timeout = 30L
+                    ).text
+
+                    val items = AppUtils.parseJson<List<SeriesItem>>(response)
+                    val list = items.map { it.toSearchResponse() }
+                    if (list.isNotEmpty()) {
+                        homeItems.add(HomePageList(section.first, list))
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Sección '${section.first}' falló: ${e.message}")
                 }
             }
 
-            if (!seriesList.isNullOrEmpty()) {
-                homeItems.add(HomePageList("Series Destacadas", seriesList))
-            }
-
+            Log.d(TAG, "Secciones cargadas: ${homeItems.size}")
             newHomePageResponse(homeItems, homeItems.isNotEmpty())
         } catch (e: Exception) {
             Log.e(TAG, "Error en getMainPage: ${e.message}")
@@ -185,9 +228,21 @@ class UniqueStreamProvider : MainAPI() {
 
         Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
 
+        val audioText = details.audio_locales?.joinToString(", ") { localeLabel(it) }
+        val subText = details.subtitle_locales?.joinToString(", ") { localeLabel(it) }
+        val fullPlot = buildString {
+            append(details.description ?: "")
+            if (!audioText.isNullOrBlank() || !subText.isNullOrBlank()) {
+                append("\n\n")
+                if (!audioText.isNullOrBlank()) append(" -- Audio: $audioText")
+                if (!audioText.isNullOrBlank() && !subText.isNullOrBlank()) append("\n")
+                if (!subText.isNullOrBlank()) append(" -- Subtítulos: $subText")
+            }
+        }
+
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
-            this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url
-            this.plot = details.description
+            this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url?.upgradePoster()
+            this.plot = fullPlot
             this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
             addEpisodes(DubStatus.Subbed, episodesList)
         }
@@ -348,7 +403,8 @@ class UniqueStreamProvider : MainAPI() {
     data class SeriesItem(
         val content_id: String,
         val title: String,
-        val image: String? = null
+        val image: String? = null,
+        val type: String? = null
     )
 
     @Serializable
