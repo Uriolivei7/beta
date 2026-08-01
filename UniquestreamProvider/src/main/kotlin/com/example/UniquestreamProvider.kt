@@ -63,8 +63,6 @@ class UniqueStreamProvider : MainAPI() {
         else -> locale
     }
 
-    // El CDN sirve key.bin cifrado (señuelo). La key AES-128 real es hex.decode(media_id),
-    // y el media_id está en el path del m3u8: .../{media_id}_{locale}/master.m3u8
     private val keyRegex = Regex("/([0-9a-f]{32})_[^/]+/master\\.m3u8")
 
     @Suppress("ObjectLiteralToLambda")
@@ -73,7 +71,6 @@ class UniqueStreamProvider : MainAPI() {
         val mediaId = keyRegex.find(linkUrl)?.groupValues?.get(1)
             ?: Regex("/([0-9a-f]{32})_[^/]+/").find(linkUrl)?.groupValues?.get(1)
 
-        // key real = hex.decode(media_id) → 16 bytes AES-128 (solo para HLS de mediacache)
         val realKey: ByteArray? = try {
             if (mediaId != null && mediaId.length == 32) {
                 mediaId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
@@ -88,7 +85,6 @@ class UniqueStreamProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
-                // Solo intercepta la petición de la key AES
                 if (realKey != null && url.contains("keys/") && url.contains("key.bin")) {
                     Log.d(TAG, "Interceptando key.bin -> ${realKey.toHex()}")
                     return Response.Builder()
@@ -265,7 +261,6 @@ class UniqueStreamProvider : MainAPI() {
         Log.d(TAG, "========================================")
 
         return try {
-            // Probar diferentes locales
             val locales = listOf("es-419", "en-US", "ja-JP")
             var linksEnviados = 0
 
@@ -287,7 +282,6 @@ class UniqueStreamProvider : MainAPI() {
 
                         val videoData = AppUtils.parseJson<VideoResponse>(response.text)
 
-                        // Debug: Ver qué contiene la respuesta
                         Log.d(TAG, "DEBUG - DASH disponible: ${videoData.versions?.dash != null}")
                         Log.d(TAG, "DEBUG - HLS disponible: ${videoData.versions?.hls != null}")
                         Log.d(TAG, "DEBUG - Cantidad DASH: ${videoData.versions?.dash?.size ?: 0}")
@@ -325,8 +319,6 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — emitir el MASTER directamente (incluye la pista de audio EXT-X-MEDIA y las keys AES-128
-                        // que el interceptor resuelve). ExoPlayer descarga master → variante + audio.
                         if (hlsVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
                             val commonHeaders = mapOf(
@@ -354,7 +346,6 @@ class UniqueStreamProvider : MainAPI() {
                                     )
                                     linksEnviados++
 
-                                    // Subtítulos VTT (soft subs reales del API)
                                     hlsVersion.subtitles?.forEach { sub ->
                                         if (sub.url.isNotBlank()) {
                                             Log.d(TAG, "✓ Subtitle ${sub.language}: ${sub.url}")
@@ -362,7 +353,6 @@ class UniqueStreamProvider : MainAPI() {
                                         }
                                     }
 
-                                    // Subtítulos: solo existen como hard_subs (quemados en el video)
                                     hlsVersion.hard_subs?.forEach { hs ->
                                         if (hs.playlist.isNotBlank()) {
                                             val hsUrl = hs.playlist
