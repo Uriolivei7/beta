@@ -270,7 +270,8 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — emitir la variante directamente (ExoPlayer la resuelve, incluye el key AES-128)
+                        // HLS — emitir el MASTER directamente (incluye la pista de audio EXT-X-MEDIA y las keys AES-128
+                        // que el interceptor resuelve). ExoPlayer descarga master → variante + audio.
                         if (hlsVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
                             val commonHeaders = mapOf(
@@ -281,58 +282,42 @@ class UniqueStreamProvider : MainAPI() {
                             )
                             for (hlsVersion in hlsVersions) {
                                 if (hlsVersion.playlist.isNotBlank()) {
-                                    try {
-                                        val masterUrl = hlsVersion.playlist
-                                        Log.d(TAG, "Master URL: $masterUrl")
-
-                                        val masterResp = app.get(masterUrl, headers = commonHeaders, timeout = 20L)
-                                        if (masterResp.code != 200) {
-                                            Log.w(TAG, "${hlsVersion.locale} master falló: ${masterResp.code}")
-                                            continue
+                                    val masterUrl = hlsVersion.playlist
+                                    val localeTag = hlsVersion.locale.uppercase()
+                                    Log.d(TAG, "Master URL: $masterUrl")
+                                    callback(
+                                        newExtractorLink(
+                                            source = this.name,
+                                            name = "${this.name} - 1080p [${localeTag}]",
+                                            url = masterUrl,
+                                            type = ExtractorLinkType.M3U8
+                                        ) {
+                                            this.quality = Qualities.P1080.value
+                                            this.referer = "$mainUrl/"
+                                            this.headers = commonHeaders
                                         }
+                                    )
+                                    linksEnviados++
 
-                                        val masterText = masterResp.text
-                                        val masterBase = masterUrl.substringBeforeLast("/").substringBefore("?")
-
-                                        val variantLines = masterText.lines().filter { line ->
-                                            !line.startsWith("#") && line.isNotBlank() && !line.startsWith("http")
-                                        }
-
-                                        if (variantLines.isEmpty()) {
-                                            Log.w(TAG, "${hlsVersion.locale}: sin variantes en master")
-                                            continue
-                                        }
-
-                                        for (variantLine in variantLines) {
-                                            val variantUrl = "$masterBase/$variantLine"
-                                            val quality = when {
-                                                variantLine.contains("1920") -> "1080p"
-                                                variantLine.contains("1280") -> "720p"
-                                                else -> "Auto"
-                                            }
-                                            val qualityValue = when (quality) {
-                                                "1080p" -> Qualities.P1080.value
-                                                "720p" -> Qualities.P720.value
-                                                else -> Qualities.Unknown.value
-                                            }
-
-                                            Log.d(TAG, "✓ Variante ($quality): $variantUrl")
+                                    // Subtítulos: solo existen como hard_subs (quemados en el video)
+                                    hlsVersion.hard_subs?.forEach { hs ->
+                                        if (hs.playlist.isNotBlank()) {
+                                            val hsUrl = hs.playlist
+                                            Log.d(TAG, "✓ HardSub ${hs.locale}: $hsUrl")
                                             callback(
                                                 newExtractorLink(
                                                     source = this.name,
-                                                    name = "${this.name} - ${quality} [${hlsVersion.locale.uppercase()}]",
-                                                    url = variantUrl,
+                                                    name = "${this.name} - 1080p [${localeTag}] (Subs ${hs.locale.uppercase()})",
+                                                    url = hsUrl,
                                                     type = ExtractorLinkType.M3U8
                                                 ) {
-                                                    this.quality = qualityValue
+                                                    this.quality = Qualities.P1080.value
                                                     this.referer = "$mainUrl/"
                                                     this.headers = commonHeaders
                                                 }
                                             )
                                             linksEnviados++
                                         }
-                                    } catch (e: Exception) {
-                                        Log.w(TAG, "Error con ${hlsVersion.locale}: ${e.message}")
                                     }
                                 }
                             }
