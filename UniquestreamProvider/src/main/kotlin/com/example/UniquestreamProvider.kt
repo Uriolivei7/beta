@@ -354,6 +354,14 @@ class UniqueStreamProvider : MainAPI() {
                                     )
                                     linksEnviados++
 
+                                    // Subtítulos VTT (soft subs reales del API)
+                                    hlsVersion.subtitles?.forEach { sub ->
+                                        if (sub.url.isNotBlank()) {
+                                            Log.d(TAG, "✓ Subtitle ${sub.language}: ${sub.url}")
+                                            subtitleCallback(newSubtitleFile(sub.language, sub.url))
+                                        }
+                                    }
+
                                     // Subtítulos: solo existen como hard_subs (quemados en el video)
                                     hlsVersion.hard_subs?.forEach { hs ->
                                         if (hs.playlist.isNotBlank()) {
@@ -483,7 +491,8 @@ class UniqueStreamProvider : MainAPI() {
 
     @Serializable
     data class SubtitleItem(
-        val locale: String,
-        val url: String
+        val language: String,
+        val url: String,
+        val mimeType: String? = null
     )
 }
