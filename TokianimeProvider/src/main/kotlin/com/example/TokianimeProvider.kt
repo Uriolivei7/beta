@@ -399,9 +399,22 @@ class TokianimeProvider : MainAPI() {
             val servers = parseRankedServers(normalized)
             Log.i("Tokianime", "loadLinks: rankedServers parsed = ${servers.size}")
             if (servers.isNotEmpty()) {
+                val sortedServers = servers.sortedWith(
+                    compareByDescending<Triple<String, String, String>> { server ->
+                        when (server.first.uppercase()) {
+                            "LAT" -> 4
+                            "SUB" -> 3
+                            "ES" -> 1
+                            "CAST" -> 1
+                            else -> 2
+                        }
+                    }.thenByDescending { server ->
+                        server.second.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
+                    }
+                )
                 var found = false
                 val seenSids = mutableSetOf<String>()
-                for (server in servers) {
+                for (server in sortedServers) {
                     val langRaw = server.first
                     val qualityStr = server.second
                     val srcRaw = server.third
