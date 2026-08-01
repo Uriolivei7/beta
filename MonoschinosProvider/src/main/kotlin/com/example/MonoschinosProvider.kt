@@ -142,8 +142,7 @@ class MonoschinosProvider : MainAPI() {
 
         Log.d(TAG, "load: HTML title='${doc.title()}', body length=${doc.text().length}")
         Log.d(TAG, "load: .caplist found=${doc.selectFirst(".caplist") != null}")
-        Log.d(TAG, "load: img.w-100 found=${doc.selectFirst("img.w-100") != null}")
-        Log.d(TAG, "load: .fs-2 found=${doc.selectFirst(".fs-2") != null}")
+        Log.d(TAG, "load: h1 found=${doc.selectFirst("h1") != null}")
 
         if (doc.selectFirst(".caplist") == null) {
             Log.e(TAG, "load: .caplist NO ENCONTRADO — posible bloqueo Cloudflare o cambio de HTML")
@@ -153,15 +152,14 @@ class MonoschinosProvider : MainAPI() {
 
         val caplist = doc.selectFirst(".caplist")!!.attr("data-ajax")
         Log.d(TAG, "load: caplist url=$caplist")
-        val poster = doc.selectFirst("img.w-100")!!.attr("data-src")
-        val backimage = doc.selectFirst("img.rounded-3")!!.attr("data-src")
-        val title = doc.selectFirst(".fs-2")!!.text()
-        val type = doc.selectFirst("div.bg-transparent > dl:nth-child(1) > dd:nth-child(2)")?.text() ?: ""
-        val description = doc.selectFirst("div.mb-3")!!.text().replace("Ver menos", "")
-        val genres = doc.select(".my-4 > div a span").map { it.text() }
-        val status = when (doc.selectFirst("div.col:nth-child(1) > div:nth-child(1) > div")?.text()) {
-            "Estreno" -> ShowStatus.Ongoing
+        val poster = doc.selectFirst("img.lazy")?.attr("data-src") ?: doc.selectFirst("img[data-src]")?.attr("data-src") ?: ""
+        val title = doc.selectFirst("h1")?.text() ?: doc.title()
+        val type = doc.select("span.uppercase.text-brand").firstOrNull()?.text() ?: ""
+        val description = doc.select("main p").firstOrNull()?.text() ?: ""
+        val genres = doc.select("a[href^='/genero/']").map { it.text() }
+        val status = when (doc.select("span.uppercase").firstOrNull()?.text()?.trim()) {
             "Finalizado" -> ShowStatus.Completed
+            "En emisión" -> ShowStatus.Ongoing
             else -> null
         }
         Log.d(TAG, "load: title='$title' type='$type' status=$status poster=$poster")
@@ -199,7 +197,7 @@ class MonoschinosProvider : MainAPI() {
             val thumbUrl = if (!ep.thumb.isNullOrBlank()) {
                 if (ep.thumb.startsWith("http")) ep.thumb else "$mainUrl${ep.thumb}"
             } else {
-                backimage
+                poster
             }
 
             newEpisode(epUrl) {
@@ -210,7 +208,6 @@ class MonoschinosProvider : MainAPI() {
 
         return newAnimeLoadResponse(title, url, getType(type)) {
             posterUrl = poster
-            backgroundPosterUrl = backimage
             addEpisodes(DubStatus.Subbed, epList)
             showStatus = status
             plot = description
