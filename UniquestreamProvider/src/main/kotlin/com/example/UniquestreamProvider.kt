@@ -222,7 +222,7 @@ class UniqueStreamProvider : MainAPI() {
                             }
                         }
 
-                        // HLS — usar M3u8Helper para crear enlaces proxy compatibles con ExoPlayer
+                        // HLS — emitir la variante directamente (ExoPlayer la resuelve, incluye el key AES-128)
                         if (hlsVersions.isNotEmpty()) {
                             Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
                             val commonHeaders = mapOf(
@@ -269,16 +269,19 @@ class UniqueStreamProvider : MainAPI() {
                                             }
 
                                             Log.d(TAG, "✓ Variante ($quality): $variantUrl")
-                                            M3u8Helper.generateM3u8(
-                                                source = this.name,
-                                                streamUrl = variantUrl,
-                                                referer = "$mainUrl/",
-                                                headers = commonHeaders
-                                            ).forEach { link ->
-                                                link.quality = qualityValue
-                                                callback(link)
-                                                linksEnviados++
-                                            }
+                                            callback(
+                                                newExtractorLink(
+                                                    source = this.name,
+                                                    name = "${this.name} - ${quality} [${hlsVersion.locale.uppercase()}]",
+                                                    url = variantUrl,
+                                                    type = ExtractorLinkType.M3U8
+                                                ) {
+                                                    this.quality = qualityValue
+                                                    this.referer = "$mainUrl/"
+                                                    this.headers = commonHeaders
+                                                }
+                                            )
+                                            linksEnviados++
                                         }
                                     } catch (e: Exception) {
                                         Log.w(TAG, "Error con ${hlsVersion.locale}: ${e.message}")
