@@ -181,7 +181,13 @@ class UniqueStreamProvider : MainAPI() {
         val episodesList = mutableListOf<Episode>()
         val processedSeasonIds = mutableSetOf<String>()
 
-        details.seasons?.forEach { season ->
+        // Ordenar temporadas por season_seq_number (el número de temporada viene revuelto)
+        val orderedSeasons = (details.seasons ?: emptyList()).sortedWith(
+            compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
+                .thenBy { it.season_number }
+        )
+
+        orderedSeasons.forEach { season ->
             if (processedSeasonIds.contains(season.content_id)) return@forEach
             processedSeasonIds.add(season.content_id)
 
@@ -464,7 +470,8 @@ class UniqueStreamProvider : MainAPI() {
         val content_id: String,
         val season_number: Int,
         val title: String? = null,
-        val episode_count: Int? = null
+        val episode_count: Int? = null,
+        val season_seq_number: Int? = null
     )
 
     @Serializable
