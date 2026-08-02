@@ -263,8 +263,16 @@ class UniqueStreamProvider : MainAPI() {
 
         Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
 
+        val audioText = details.audio_locales?.joinToString(", ") { localeLabel(it) }
+        val subText = details.subtitle_locales?.joinToString(", ") { localeLabel(it) }
         val fullPlot = buildString {
             append(details.description ?: "")
+            if (!audioText.isNullOrBlank() || !subText.isNullOrBlank()) {
+                append("\n\n")
+                if (!audioText.isNullOrBlank()) append(" -- Audio: $audioText")
+                if (!audioText.isNullOrBlank() && !subText.isNullOrBlank()) append("\n")
+                if (!subText.isNullOrBlank()) append(" -- Subtítulos: $subText")
+            }
         }
 
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
