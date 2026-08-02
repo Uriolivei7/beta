@@ -178,90 +178,42 @@ class UniqueStreamProvider : MainAPI() {
         ).text
 
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
-        val episodesList = mutableListOf<Episode>()
         val processedSeasonIds = mutableSetOf<String>()
 
-        // Ordenar temporadas por season_seq_number (el número de temporada viene revuelto)
-        val orderedSeasons = (details.seasons ?: emptyList()).sortedWith(
-            compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
-                .thenBy { it.season_number }
-        )
+        // Ordenar temporadas por season_seq_number (el número de temporada viene revuelto en One Piece)
+        val orderedSeasons = (details.seasons ?: emptyList())
+            .filter { processedSeasonIds.add(it.content_id) }
+            .sortedWith(
+                compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
+                    .thenBy { it.season_number }
+            )
 
-        orderedSeasons.forEach { season ->
-            if (processedSeasonIds.contains(season.content_id)) return@forEach
-            processedSeasonIds.add(season.content_id)
+        // Descargar TODAS las temporadas en paralelo. Cada temporada se numera por índice
+        // secuencial (1..N) para que CloudStream no combine bloques con season_number duplicado.
+        val seasonResults = mutableListOf<Pair<Int, List<EpisodeItem>>>()
 
-            // Descargar todas las páginas de la temporada en paralelo
-            val episodeCount = season.episode_count ?: 0
-            val totalPages = if (episodeCount > 0) {
-                (episodeCount + 19) / 20
-            } else {
-                1
-            }
-
-            val pageResults = mutableListOf<List<EpisodeItem>>()
-
-            coroutineScope {
-                val jobs = (1..totalPages).map { page ->
-                    async {
-                        try {
-                            val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$page&limit=20&order_by=asc"
-                            val response = app.get(seasonUrl, headers = baseHeaders, timeout = 30L).text
-                            if (response.trim().startsWith("[")) {
-                                AppUtils.parseJson<List<EpisodeItem>>(response)
-                            } else {
-                                emptyList()
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error en página $page: ${e.message}")
-                            emptyList()
-                        }
-                    }
-                }
-                jobs.forEach { job ->
-                    pageResults.add(job.await())
+        coroutineScope {
+            val jobs = orderedSeasons.mapIndexed { index, season ->
+                async {
+                    val displaySeason = index + 1
+                    val eps = loadSeasonEpisodes(season)
+                    displaySeason to eps
                 }
             }
-
-            val allEps = pageResults.flatten().toMutableList()
-
-            // Si no teníamos episode_count, seguir paginando hasta vacío
-            if (episodeCount <= 0) {
-                var extraPage = totalPages + 1
-                var keepLoading = true
-                while (keepLoading) {
-                    try {
-                        val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$extraPage&limit=20&order_by=asc"
-                        val response = app.get(seasonUrl, headers = baseHeaders, timeout = 30L).text
-                        if (response.trim().startsWith("[")) {
-                            val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
-                            if (eps.isEmpty()) {
-                                keepLoading = false
-                            } else {
-                                allEps.addAll(eps)
-                                extraPage++
-                                if (eps.size < 20) keepLoading = false
-                            }
-                        } else {
-                            keepLoading = false
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error en paginación extra: ${e.message}")
-                        keepLoading = false
-                    }
-                }
+            jobs.forEach { job ->
+                seasonResults.add(job.await())
             }
+        }
 
-            val uniqueEps = allEps.distinctBy { it.content_id }
-            uniqueEps.forEach { ep ->
-                if (ep.is_clip != true) {
-                    episodesList.add(newEpisode(ep.content_id) {
-                        this.name = ep.title
-                        this.episode = ep.episode_number?.toInt()
-                        this.season = season.season_number
-                        this.posterUrl = ep.image
-                    })
-                }
+        val episodesList = mutableListOf<Episode>()
+        seasonResults.sortedBy { it.first }.forEach { (displaySeason, eps) ->
+            eps.forEach { ep ->
+                episodesList.add(newEpisode(ep.content_id) {
+                    this.name = ep.title
+                    this.episode = ep.episode_number?.toInt()
+                    this.season = displaySeason
+                    this.posterUrl = ep.image
+                })
             }
         }
 
@@ -285,6 +237,73 @@ class UniqueStreamProvider : MainAPI() {
             this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
             addEpisodes(DubStatus.Subbed, episodesList)
         }
+    }
+
+    private suspend fun loadSeasonEpisodes(season: SeasonItem): List<EpisodeItem> {
+        val episodeCount = season.episode_count ?: 0
+        val totalPages = if (episodeCount > 0) {
+            (episodeCount + 19) / 20
+        } else {
+            1
+        }
+
+        val pageResults = mutableListOf<List<EpisodeItem>>()
+
+        coroutineScope {
+            val jobs = (1..totalPages).map { page ->
+                async {
+                    try {
+                        val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$page&limit=20&order_by=asc"
+                        val response = app.get(seasonUrl, headers = baseHeaders, timeout = 30L).text
+                        if (response.trim().startsWith("[")) {
+                            AppUtils.parseJson<List<EpisodeItem>>(response)
+                        } else {
+                            emptyList()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error en página $page: ${e.message}")
+                        emptyList()
+                    }
+                }
+            }
+            jobs.forEach { job ->
+                pageResults.add(job.await())
+            }
+        }
+
+        val allEps = pageResults.flatten().toMutableList()
+
+        // Si no teníamos episode_count, seguir paginando hasta vacío
+        if (episodeCount <= 0) {
+            var extraPage = totalPages + 1
+            var keepLoading = true
+            while (keepLoading) {
+                try {
+                    val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$extraPage&limit=20&order_by=asc"
+                    val response = app.get(seasonUrl, headers = baseHeaders, timeout = 30L).text
+                    if (response.trim().startsWith("[")) {
+                        val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
+                        if (eps.isEmpty()) {
+                            keepLoading = false
+                        } else {
+                            allEps.addAll(eps)
+                            extraPage++
+                            if (eps.size < 20) keepLoading = false
+                        }
+                    } else {
+                        keepLoading = false
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error en paginación extra: ${e.message}")
+                    keepLoading = false
+                }
+            }
+        }
+
+        return allEps
+            .distinctBy { it.content_id }
+            .filter { it.is_clip != true }
+            .sortedBy { it.episode_number ?: 0.0 }
     }
 
     override suspend fun loadLinks(
