@@ -243,3 +243,37 @@ Plugin completo que usa:
 - `TMDBProvider/build.gradle.kts`
 - `TMDBProvider/src/main/kotlin/com/example/TMDBPlugin.kt`
 - `TMDBProvider/src/main/kotlin/com/example/TMDBProvider.kt`
+
+---
+
+## UniqueStreamProvider (AnimeStream) — Estado (02 Ago 2026)
+
+Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/main/kotlin/com/example/UniquestreamProvider.kt`.
+
+### ✅ Causa raíz del error 3001 RESUELTA (02 Ago 2026)
+- **Síntoma**: `ERROR_CODE_PARSING_CONTAINER_MALFORMED (3001)` en TODOS los links de algunos episodios (ej. serie `HWH21Ge0`, episodios `hDGx3QZd` fallan, `vEPPCFXi`/`HAx1NgR2` funcionan).
+- **Causa**: el interceptor devolvía `hex.decode(media_id)` como key AES. Eso funciona SOLO cuando la key real coincide con el media_id (casualidad para ciertos episodios). El key.bin del servidor es un **señuelo cifrado** cuya key real se deriva distinta por episodio.
+- **Derivación REAL de la key (encontrada en el JS del player, función `Za`)**:
+  1. Fetch de `key.bin` **con header obligatorio `x-am-media-id: {media_id}`** (sin el header el servidor devuelve señuelo que no descifra).
+  2. El body es **base64** del dato cifrado.
+  3. Descifrar AES-CBC: `key = SHA256("key"+media_id)[:16]`, `iv = SHA256("iv"+media_id)[:16]`.
+  4. El resultado (16 bytes) es la key real de los segmentos.
+- **IV de segmentos**: media sequence number (`seg-N.png` → IV = N en 16 bytes big-endian), igual que el EXT-X-KEY (sin atributo IV).
+- **Verificado con Python (pycryptodome)**:
+  - `hDGx3QZd`: derived=`f127680318f3aeaf6c2f050108fb7372` → 5/5 seg TS-OK (con media_id fallaba).
+  - `vEPPCFXi`: derived=`a18520f3ab9af4169f0d36f4f085eccc` == hex(media_id) → 5/5 TS-OK.
+- **Fix implementado** en `getVideoInterceptor`: hace el fetch real del key.bin con header `x-am-media-id`, descifra con SHA-256/AES-CBC, y devuelve la key derivada. Fallback a `hex.decode(media_id)` si el fetch/decrypt falla.
+- Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
+
+### ✅ Funcional (antes del fix)
+- `getMainPage`: 9 secciones (Nuevos, Populares, Películas, Acción, Aventura, Comedia, Drama, Fantasía, Sci-Fi).
+- Posters `480x720`; películas `TvType.AnimeMovie`; descripción con `Audio:`/`Subtítulos:`.
+- Temporadas ordenadas por `season_seq_number`, indexadas 1..N; `distinctBy { content_id }`.
+- Subtítulos VTT: `subtitleCallback(SubtitleFile(lang, url))` con `language` (NO `locale`).
+
+### ⏸️ Pendiente
+- Compilar APK completo y probar en dispositivo (los episodios que daban 3001).
+- Scripts de verificación en `%TEMP%\opencode\`: `check_final.py` (derivación key real), `check_xam.py` (header x-am-media-id), `check_derive3.py`, `check_hdg.py`.
+
+### Archivos
+- `UniquestreamProvider/src/main/kotlin/com/example/UniquestreamProvider.kt` (~570 líneas)

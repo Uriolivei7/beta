@@ -69,13 +69,31 @@ class UniqueStreamProvider : MainAPI() {
 
     private val keyRegex = Regex("/([0-9a-f]{32})_[^/]+/master\\.m3u8")
 
+    private fun sha256(data: ByteArray): ByteArray =
+        java.security.MessageDigest.getInstance("SHA-256").digest(data)
+
+    private fun aesCbcDecrypt(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
+        return try {
+            val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(key, "AES"),
+                javax.crypto.spec.IvParameterSpec(iv)
+            )
+            cipher.doFinal(data)
+        } catch (e: Exception) {
+            Log.w(TAG, "aesCbcDecrypt error: ${e.message}")
+            null
+        }
+    }
+
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val linkUrl = extractorLink.url
         val mediaId = keyRegex.find(linkUrl)?.groupValues?.get(1)
             ?: Regex("/([0-9a-f]{32})_[^/]+/").find(linkUrl)?.groupValues?.get(1)
 
-        val realKey: ByteArray? = try {
+        val fallbackKey: ByteArray? = try {
             if (mediaId != null && mediaId.length == 32) {
                 mediaId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
             } else null
@@ -89,16 +107,46 @@ class UniqueStreamProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
-                if (realKey != null && url.contains("keys/") && url.contains("key.bin")) {
-                    Log.d(TAG, "Interceptando key.bin -> ${realKey.toHex()}")
-                    return Response.Builder()
-                        .request(request)
-                        .protocol(okhttp3.Protocol.HTTP_1_1)
-                        .code(200)
-                        .message("OK")
-                        .header("Content-Type", "application/octet-stream")
-                        .body(ResponseBody.create("application/octet-stream".toMediaTypeOrNull(), realKey))
+                if (url.contains("keys/") && url.contains("key.bin") && mediaId != null) {
+                    // 1. Fetch key.bin con header x-am-media-id (requerido)
+                    val realRequest = request.newBuilder()
+                        .header("x-am-media-id", mediaId)
                         .build()
+                    val rawBody = try {
+                        chain.proceed(realRequest).body?.bytes()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "key.bin fetch error: ${e.message}")
+                        null
+                    }
+
+                    // 2. Descifrar: base64 -> AES-CBC(key=SHA256("key"+mid)[:16], iv=SHA256("iv"+mid)[:16])
+                    val derivedKey: ByteArray? = rawBody?.let { body ->
+                        val b64 = String(body).trim()
+                        val encrypted = try {
+                            android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "key.bin base64 error: ${e.message}")
+                            null
+                        }
+                        if (encrypted != null) {
+                            val dek = sha256("key$mediaId".toByteArray()).copyOfRange(0, 16)
+                            val div = sha256("iv$mediaId".toByteArray()).copyOfRange(0, 16)
+                            aesCbcDecrypt(encrypted, dek, div)
+                        } else null
+                    }
+
+                    val realKey = derivedKey ?: fallbackKey
+                    if (realKey != null) {
+                        Log.d(TAG, "Interceptando key.bin -> ${realKey.toHex()} (derived=${derivedKey != null})")
+                        return Response.Builder()
+                            .request(request)
+                            .protocol(okhttp3.Protocol.HTTP_1_1)
+                            .code(200)
+                            .message("OK")
+                            .header("Content-Type", "application/octet-stream")
+                            .body(ResponseBody.create("application/octet-stream".toMediaTypeOrNull(), realKey))
+                            .build()
+                    }
                 }
                 return chain.proceed(request)
             }
