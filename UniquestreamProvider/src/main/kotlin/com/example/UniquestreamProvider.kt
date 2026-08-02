@@ -180,7 +180,6 @@ class UniqueStreamProvider : MainAPI() {
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
         val processedSeasonIds = mutableSetOf<String>()
 
-        // Ordenar temporadas por season_seq_number (el número de temporada viene revuelto en One Piece)
         val orderedSeasons = (details.seasons ?: emptyList())
             .filter { processedSeasonIds.add(it.content_id) }
             .sortedWith(
@@ -188,8 +187,6 @@ class UniqueStreamProvider : MainAPI() {
                     .thenBy { it.season_number }
             )
 
-        // Descargar TODAS las temporadas en paralelo. Cada temporada se numera por índice
-        // secuencial (1..N) para que CloudStream no combine bloques con season_number duplicado.
         val seasonResults = mutableListOf<Pair<Int, List<EpisodeItem>>>()
 
         coroutineScope {
@@ -273,7 +270,6 @@ class UniqueStreamProvider : MainAPI() {
 
         val allEps = pageResults.flatten().toMutableList()
 
-        // Si no teníamos episode_count, seguir paginando hasta vacío
         if (episodeCount <= 0) {
             var extraPage = totalPages + 1
             var keepLoading = true
