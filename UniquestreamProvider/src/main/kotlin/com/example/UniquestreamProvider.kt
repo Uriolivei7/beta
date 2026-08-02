@@ -108,7 +108,6 @@ class UniqueStreamProvider : MainAPI() {
                 val url = request.url.toString()
 
                 if (url.contains("keys/") && url.contains("key.bin") && mediaId != null) {
-                    // 1. Fetch key.bin con header x-am-media-id (requerido)
                     val realRequest = request.newBuilder()
                         .header("x-am-media-id", mediaId)
                         .build()
@@ -119,7 +118,6 @@ class UniqueStreamProvider : MainAPI() {
                         null
                     }
 
-                    // 2. Descifrar: base64 -> AES-CBC(key=SHA256("key"+mid)[:16], iv=SHA256("iv"+mid)[:16])
                     val derivedKey: ByteArray? = rawBody?.let { body ->
                         val b64 = String(body).trim()
                         val encrypted = try {
@@ -258,28 +256,35 @@ class UniqueStreamProvider : MainAPI() {
                     this.episode = ep.episode_number?.toInt()
                     this.season = displaySeason
                     this.posterUrl = ep.image
+                    ep.duration_ms?.let { this.runTime = (it / 60000).toInt().coerceAtLeast(1) }
                 })
             }
         }
 
         Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
 
-        val audioText = details.audio_locales?.joinToString(", ") { localeLabel(it) }
-        val subText = details.subtitle_locales?.joinToString(", ") { localeLabel(it) }
+        val genreText = details.genre?.mapNotNull { it.title }?.joinToString(", ")
         val fullPlot = buildString {
             append(details.description ?: "")
-            if (!audioText.isNullOrBlank() || !subText.isNullOrBlank()) {
+            if (!genreText.isNullOrBlank()) {
                 append("\n\n")
-                if (!audioText.isNullOrBlank()) append(" -- Audio: $audioText")
-                if (!audioText.isNullOrBlank() && !subText.isNullOrBlank()) append("\n")
-                if (!subText.isNullOrBlank()) append(" -- Subtítulos: $subText")
+                append(" -- Géneros: $genreText")
             }
+        }
+
+        val year = try {
+            val html = app.get("$mainUrl/title/$cleanId", headers = baseHeaders, timeout = 20L).text
+            Regex("\"year\"\\s*:\\s*(\\d{4})").find(html)?.groupValues?.get(1)?.toIntOrNull()
+        } catch (e: Exception) {
+            null
         }
 
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url?.upgradePoster()
             this.plot = fullPlot
-            this.tags = (details.audio_locales ?: emptyList()) + (details.subtitle_locales ?: emptyList())
+            this.tags = details.genre?.mapNotNull { it.name } ?: emptyList()
+            this.year = year
+            if (details.rating_avg != null) this.score = Score.from10(details.rating_avg * 2f)
             addEpisodes(DubStatus.Subbed, episodesList)
         }
     }
@@ -525,7 +530,16 @@ class UniqueStreamProvider : MainAPI() {
         val images: List<ImageItem>? = null,
         val seasons: List<SeasonItem>? = null,
         val audio_locales: List<String>? = null,
-        val subtitle_locales: List<String>? = null
+        val subtitle_locales: List<String>? = null,
+        val genre: List<GenreItem>? = null,
+        val rating_avg: Double? = null,
+        val rating_count: Int? = null
+    )
+
+    @Serializable
+    data class GenreItem(
+        val title: String? = null,
+        val name: String? = null
     )
 
     @Serializable
@@ -544,7 +558,8 @@ class UniqueStreamProvider : MainAPI() {
         val title: String? = null,
         val episode_number: Double? = null,
         val image: String? = null,
-        val is_clip: Boolean? = false
+        val is_clip: Boolean? = false,
+        val duration_ms: Long? = null
     )
 
     @Serializable
