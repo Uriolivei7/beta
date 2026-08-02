@@ -263,27 +263,14 @@ class UniqueStreamProvider : MainAPI() {
 
         Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
 
-        val genreText = details.genre?.mapNotNull { it.title }?.joinToString(", ")
         val fullPlot = buildString {
             append(details.description ?: "")
-            if (!genreText.isNullOrBlank()) {
-                append("\n\n")
-                append(" -- Géneros: $genreText")
-            }
-        }
-
-        val year = try {
-            val html = app.get("$mainUrl/title/$cleanId", headers = baseHeaders, timeout = 20L).text
-            Regex("\"year\"\\s*:\\s*(\\d{4})").find(html)?.groupValues?.get(1)?.toIntOrNull()
-        } catch (e: Exception) {
-            null
         }
 
         return newAnimeLoadResponse(details.title ?: "Sin Título", url, TvType.Anime) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url?.upgradePoster()
             this.plot = fullPlot
             this.tags = details.genre?.mapNotNull { it.name } ?: emptyList()
-            this.year = year
             if (details.rating_avg != null) this.score = Score.from10(details.rating_avg * 2f)
             addEpisodes(DubStatus.Subbed, episodesList)
         }
