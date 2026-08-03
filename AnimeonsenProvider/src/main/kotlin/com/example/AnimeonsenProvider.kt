@@ -306,7 +306,7 @@ class AnimeonsenProvider : MainAPI() {
 
                 res.uri.subtitles?.forEach { (langPrefix, subUrl) ->
                     val langName = res.metadata.subtitles?.get(langPrefix) ?: langPrefix
-                    val finalSubUrl = "${subUrl}?format=vtt&t=${System.currentTimeMillis()}"
+                    val finalSubUrl = "${subUrl}?format=ass&t=${System.currentTimeMillis()}"
                     subtitleCallback.invoke(
                         newSubtitleFile(langName, finalSubUrl) {
                             this.headers = mapOf(
