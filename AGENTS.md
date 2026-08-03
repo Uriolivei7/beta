@@ -271,9 +271,17 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Temporadas ordenadas por `season_seq_number`, indexadas 1..N; `distinctBy { content_id }`.
 - Subtítulos VTT: `subtitleCallback(SubtitleFile(lang, url))` con `language` (NO `locale`).
 
+### 🔧 Fix desorden de temporadas al re-entrar (03 Ago 2026)
+- **Síntoma**: 1ª carga orden correcto (1,2,3,4,5); 2ª/3ª carga la UI muestra temporadas desordenadas (1,2,5,3,4 / 1,4,5,7,9,10,2,3,6,8).
+- **Diagnóstico**: logs en `load()` probaron que el provider SIEMPRE entregaba orden correcto (API estable, sort por `season_seq_number`, `episodesList` ordenado). El desorden lo producía CloudStream al **restaurar** la agrupación en la rama Anime de `postEpisodes()` (NO reordena: confía en el orden de inserción, que al restaurar del caché/ViewModel se pierde).
+- **Causa raíz estructural**: la rama `AnimeLoadResponse` de CloudStream no ordena y su agrupación se desordena al restaurar; la rama `TvSeriesLoadResponse` **sí** reordena por `season*10000 + episode` (determinista y estable ante restauración). Providers sin `this.season` (Hianime, AnimeOnsen) no sufren el bug por tener una sola temporada.
+- **Fix**: cambiar `newAnimeLoadResponse(TvType.Anime)` → `newTvSeriesLoadResponse(TvType.TvSeries, episodesList)` pasando la lista directamente (mismo patrón que `PrimevideoProvider.kt:162`). El reproductor/lector de episodios no cambia.
+- Logs de diagnóstico en `load()` agregados y luego **removidos** tras confirmar la causa.
+
 ### ⏸️ Pendiente
 - Compilar APK completo y probar en dispositivo (los episodios que daban 3001).
-- Scripts de verificación en `%TEMP%\opencode\`: `check_final.py` (derivación key real), `check_xam.py` (header x-am-media-id), `check_derive3.py`, `check_hdg.py`.
+- **Probar el fix de temporadas**: entrar 2ª vez en `5spNP0fT` (Re:ZERO) y `oC7sJj1J` — verificar que el orden 1..N se mantiene.
+- Scripts de verificación en `%TEMP%\opencode\`: `check_final.py` (derivación key real), `check_xam.py` (header x-am-media-id), `check_derive3.py`, `check_hdg.py`, `check_seasons.py` (orden API).
 
 ### Archivos
 - `UniquestreamProvider/src/main/kotlin/com/example/UniquestreamProvider.kt` (~570 líneas)
