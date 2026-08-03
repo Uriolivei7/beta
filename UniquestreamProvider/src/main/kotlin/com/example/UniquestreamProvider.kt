@@ -224,14 +224,25 @@ class UniqueStreamProvider : MainAPI() {
         ).text
 
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
+
+        Log.d(TAG, "load($cleanId): orden API de temporadas:")
+        (details.seasons ?: emptyList()).forEach { s ->
+            Log.d(TAG, "  API season: seq=${s.season_seq_number} num=${s.season_number} cid=${s.content_id}")
+        }
+
         val processedSeasonIds = mutableSetOf<String>()
 
         val orderedSeasons = (details.seasons ?: emptyList())
             .filter { processedSeasonIds.add(it.content_id) }
-            .sortedWith(
-                compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
-                    .thenBy { it.season_number }
-            )
+.sortedWith(
+                    compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
+                        .thenBy { it.season_number }
+                )
+
+        Log.d(TAG, "load($cleanId): orden tras sort:")
+        orderedSeasons.forEachIndexed { i, s ->
+            Log.d(TAG, "  sorted[$i] -> displaySeason=${i + 1} seq=${s.season_seq_number} num=${s.season_number} cid=${s.content_id}")
+        }
 
         val seasonResults = mutableListOf<Pair<Int, List<EpisodeItem>>>()
 
@@ -262,6 +273,10 @@ class UniqueStreamProvider : MainAPI() {
         }
 
         Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
+
+        val seasonOrder = linkedMapOf<Int, Int>()
+        episodesList.forEach { ep -> seasonOrder[ep.season ?: 0] = (seasonOrder[ep.season ?: 0] ?: 0) + 1 }
+        Log.d(TAG, "load($cleanId): season -> #episodios entregados (orden): $seasonOrder")
 
         val audioText = details.audio_locales?.joinToString(", ") { localeLabel(it) }
         val subText = details.subtitle_locales?.joinToString(", ") { localeLabel(it) }
