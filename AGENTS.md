@@ -277,10 +277,11 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Causa raíz estructural**: la rama `AnimeLoadResponse` de CloudStream no ordena y su agrupación se desordena al restaurar; la rama `TvSeriesLoadResponse` **sí** reordena por `season*10000 + episode` (determinista y estable ante restauración). Providers sin `this.season` (Hianime, AnimeOnsen) no sufren el bug por tener una sola temporada.
 - **Fix**: cambiar `newAnimeLoadResponse(TvType.Anime)` → `newTvSeriesLoadResponse(TvType.TvSeries, episodesList)` pasando la lista directamente (mismo patrón que `PrimevideoProvider.kt:162`). El reproductor/lector de episodios no cambia.
 - Logs de diagnóstico en `load()` agregados y luego **removidos** tras confirmar la causa.
+- ✅ **Confirmado en dispositivo (03 Ago 2026)**: el bug era de la rama `Anime` de CloudStream (no soporta bien muchas temporadas). Con `TvSeries` las temporadas se mantienen ordenadas 1..N en re-entries y las series con muchas temporadas cargan **más rápido**.
 
 ### ⏸️ Pendiente
 - Compilar APK completo y probar en dispositivo (los episodios que daban 3001).
-- **Probar el fix de temporadas**: entrar 2ª vez en `5spNP0fT` (Re:ZERO) y `oC7sJj1J` — verificar que el orden 1..N se mantiene.
+- **Probar el fix de temporadas**: entrar 2ª vez en `5spNP0fT` (Re:ZERO) y `oC7sJj1J` — verificar que el orden 1..N se mantiene. ✅ **VERIFICADO**
 - Scripts de verificación en `%TEMP%\opencode\`: `check_final.py` (derivación key real), `check_xam.py` (header x-am-media-id), `check_derive3.py`, `check_hdg.py`, `check_seasons.py` (orden API).
 
 ### Archivos
