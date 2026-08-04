@@ -554,6 +554,7 @@ class UniqueStreamProvider : MainAPI() {
         val series_id: String? = null,
         val title: String? = null,
         val episode_number: Double? = null,
+        val episode: String? = null,
         val image: String? = null,
         val is_clip: Boolean? = false,
         val duration_ms: Long? = null
