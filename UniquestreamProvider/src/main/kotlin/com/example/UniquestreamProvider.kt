@@ -346,7 +346,10 @@ class UniqueStreamProvider : MainAPI() {
         return allEps
             .distinctBy { it.content_id }
             .filter { it.is_clip != true }
-            .sortedBy { it.episode_number ?: 0.0 }
+            .sortedWith(
+                compareBy<EpisodeItem> { (it.title?.contains("Special", ignoreCase = true) == true) }
+                    .thenBy { it.episode_number ?: 0.0 }
+            )
     }
 
     override suspend fun loadLinks(
