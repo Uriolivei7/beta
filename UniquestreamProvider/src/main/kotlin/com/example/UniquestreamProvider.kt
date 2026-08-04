@@ -315,6 +315,8 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
+        Log.d(TAG, "loadSeasonEpisodes(${season.content_id}): pages=$totalPages count=$episodeCount")
+
         val allEps = pageResults.flatten().toMutableList()
 
         if (episodeCount <= 0) {
@@ -343,13 +345,25 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        return allEps
+        Log.d(TAG, "loadSeasonEpisodes(${season.content_id}): orden crudo de la API:")
+        allEps.forEach { e ->
+            Log.d(TAG, "  raw: ep=${e.episode_number} sp=${e.episode} title=${e.title?.take(60)}")
+        }
+
+        val sortedEps = allEps
             .distinctBy { it.content_id }
             .filter { it.is_clip != true }
             .sortedWith(
                 compareBy<EpisodeItem> { (it.title?.contains("Special", ignoreCase = true) == true) }
                     .thenBy { it.episode_number ?: 0.0 }
             )
+
+        Log.d(TAG, "loadSeasonEpisodes(${season.content_id}): orden FINAL tras sort:")
+        sortedEps.forEach { e ->
+            Log.d(TAG, "  final: ep=${e.episode_number} sp=${e.episode} special=${e.title?.contains("Special", ignoreCase = true)} title=${e.title?.take(60)}")
+        }
+
+        return sortedEps
     }
 
     override suspend fun loadLinks(
