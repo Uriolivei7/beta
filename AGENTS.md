@@ -279,6 +279,14 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Logs de diagnóstico en `load()` agregados y luego **removidos** tras confirmar la causa.
 - ✅ **Confirmado en dispositivo (03 Ago 2026)**: el bug era de la rama `Anime` de CloudStream (no soporta bien muchas temporadas). Con `TvSeries` las temporadas se mantienen ordenadas 1..N en re-entries y las series con muchas temporadas cargan **más rápido**.
 
+### 🔧 Fix especiales al inicio de la temporada (04 Ago 2026)
+- **Síntoma (Attack on Titan `AG689vQw`, temporada 4 `heIY0Kaq`)**: los Especiales (THE FINAL CHAPTERS Special 1/2, `episode_number=1.0/2.0`) aparecían como "episodio 1 y 2" al INICIO de la temporada 4 en la UI.
+- **Diagnóstico por logs**: el provider SÍ los entregaba al final (`orden FINAL`: 60-87, luego Special 1, Special 2). PERO la rama `TvSeries` de CloudStream **reordena** por `season*10000 + episode`, y como los especiales tienen `episode_number=1/2`, quedaban siempre primeros numéricamente.
+- **Causa raíz**: imposible separar la clave de orden de CloudStream del número de episodio mostrado; si los especiales tienen número bajo, CloudStream los fuerza al inicio.
+- **Fix** en `loadSeasonEpisodes` (`UniquestreamProvider.kt:~353`): separar `regulars`/`specials` (special = título contiene "Special" O `episode` empieza con "SP"), ordenar normales ascendente, y **renumerar los especiales con `maxRegular + 1, +2, ...`** (en AoT pasan a ser 88, 89). Así CloudStream los ordena al final de la temporada y ya no son "1 y 2". No afecta playback (el ID usado en loadLinks es `content_id`, no el número).
+- Logs de diagnóstico removidos tras implementar el fix.
+- Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
+
 ### ⏸️ Pendiente
 - Compilar APK completo y probar en dispositivo (los episodios que daban 3001).
 - **Probar el fix de temporadas**: entrar 2ª vez en `5spNP0fT` (Re:ZERO) y `oC7sJj1J` — verificar que el orden 1..N se mantiene. ✅ **VERIFICADO**

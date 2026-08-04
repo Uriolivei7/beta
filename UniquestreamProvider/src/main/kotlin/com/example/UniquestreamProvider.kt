@@ -345,25 +345,28 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        Log.d(TAG, "loadSeasonEpisodes(${season.content_id}): orden crudo de la API:")
-        allEps.forEach { e ->
-            Log.d(TAG, "  raw: ep=${e.episode_number} sp=${e.episode} title=${e.title?.take(60)}")
+        val isSpecialFn: (EpisodeItem) -> Boolean = { ep ->
+            ep.title?.contains("Special", ignoreCase = true) == true ||
+                ep.episode?.startsWith("SP", ignoreCase = true) == true
         }
 
-        val sortedEps = allEps
+        val baseEps = allEps
             .distinctBy { it.content_id }
             .filter { it.is_clip != true }
-            .sortedWith(
-                compareBy<EpisodeItem> { (it.title?.contains("Special", ignoreCase = true) == true) }
-                    .thenBy { it.episode_number ?: 0.0 }
-            )
 
-        Log.d(TAG, "loadSeasonEpisodes(${season.content_id}): orden FINAL tras sort:")
-        sortedEps.forEach { e ->
-            Log.d(TAG, "  final: ep=${e.episode_number} sp=${e.episode} special=${e.title?.contains("Special", ignoreCase = true)} title=${e.title?.take(60)}")
+        val regulars = baseEps
+            .filterNot(isSpecialFn)
+            .sortedBy { it.episode_number ?: 0.0 }
+
+        val specials = baseEps
+            .filter(isSpecialFn)
+            .sortedBy { it.episode_number ?: 0.0 }
+
+        val maxRegular = regulars.maxOfOrNull { it.episode_number ?: 0.0 } ?: 0.0
+
+        return regulars + specials.mapIndexed { i, s ->
+            s.copy(episode_number = maxRegular + i + 1)
         }
-
-        return sortedEps
     }
 
     override suspend fun loadLinks(
