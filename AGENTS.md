@@ -265,6 +265,23 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Fix implementado** en `getVideoInterceptor`: hace el fetch real del key.bin con header `x-am-media-id`, descifra con SHA-256/AES-CBC, y devuelve la key derivada. Fallback a `hex.decode(media_id)` si el fetch/decrypt falla.
 - Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
 
+### 🔧 Fix error 2000 tras cambio de CDN (05 Ago 2026) — get3.mediacache.cc
+- **Síntoma**: tras migrar el sitio de `api.uniquestream.net` a **`get3.mediacache.cc`**, los episodios daban `ERROR_CODE_IO_UNSPECIFIED (2000)` / "Enlaces no encontrados Error de fuente".
+- **Nuevo flujo del API de video** (`/episode/{id}/media/dash/{locale}` → 200):
+  - `hls.playlist` = `https://get3.mediacache.cc/episode/{serie}/{season}/{ep}/.../{media_id}_{locale}/master.m3u8?sign=...&expires=...` — **media_id CORTO** (ej. `534740`, 6 dígitos), NO 32-hex.
+  - Master (1 sola variante `v_1920x1080/playlist.m3u8?...` con su propio sign) → variante AES-128 con `URI="../keys/key.bin?expires=...&sign=..."` y segmentos `seg-N.png` **sin sign**.
+- **Verificado en PC (curl/python, sign firmado para mi IP)**:
+  - Master, variante y segmentos → **200 con solo User-Agent** (incluso `ExoPlayerLib/2.19.1`); sin headers → 403.
+  - `key.bin` **con** `x-am-media-id: 534740` → body base64 real → AES-CBC `key=SHA256("key534740")[:16]`, `iv=SHA256("iv534740")[:16]` → `740c6909a4c4d4792fc9ed7bfd183baa` (padding PKCS7 válido) → seg-0 descifra a TS válido (0x47 en 20133/20133 paquetes, IV=media sequence).
+  - `key.bin` **sin** `x-am-media-id` → 200 pero **señuelo distinto** (descifra a garbage `05dc9366...`) → ExoPlayer usaría key incorrecta.
+- **Causa raíz**: `keyRegex = /([0-9a-f]{32})_.../` exigía media_id de 32 hex → no matcheaba los IDs cortos (`534740`) → `mediaId = null` → el interceptor era no-op → ExoPlayer pedía key.bin sin `x-am-media-id` → key señuelo → fallo.
+- **Fix** en `getVideoInterceptor` (`UniquestreamProvider.kt:91`):
+  - `keyRegex` cambiado a `/([A-Za-z0-9]+)_[^/]+/master\.m3u8` (captura `534740`).
+  - Fallback adicional: extraer media_id de la propia URL de `key.bin` (`/([A-Za-z0-9]+)_[^/]+/keys/key\.bin`), primero del link y luego del request actual.
+  - Mantiene fallback legacy 32-hex y `hex.decode(media_id)`.
+- Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
+- ⏸️ **Pendiente**: probar en dispositivo `dv_1011` (The Hated Classmate) — ver log `Interceptando key.bin -> 740c6909... (derived=true)`.
+
 ### ✅ Funcional (antes del fix)
 - `getMainPage`: 9 secciones (Nuevos, Populares, Películas, Acción, Aventura, Comedia, Drama, Fantasía, Sci-Fi).
 - Posters `480x720`; películas `TvType.AnimeMovie`; descripción con `Audio:`/`Subtítulos:`.
