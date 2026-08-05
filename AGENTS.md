@@ -134,6 +134,17 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 | `MundodonghuaProvider` | 12 Jul | Rewrite v4.0.4 + search URL fix |
 | `DonghualifeProvider` | 12 Jul | Search fix + RumbleExtractor |
 | `PandramaProvider` | 12 Jul | Rewrite completo: channel model, episode URLs, loadLinks via page data |
+| `PrimevideoProvider` | 05 Ago | Posters lentos → proxy `wsrv.nl?w=500` |
+
+## 🔧 Fix posters lentos PrimeVideo (05 Ago 2026)
+- **Síntoma**: en el apartado PrimeVideo los posters tardan mucho en cargar y algunos parecen no tener poster; Netflix carga bien.
+- **Causa raíz (medido con curl/python)**:
+  - Netflix `imgcdn.kim/poster/v/{id}.jpg` → **22-62 KB**, carga en 0.6-0.8s.
+  - PrimeVideo `imgcdn.kim/pv/v/{id}.jpg` → **700KB-3.8MB** (imágenes full-size), carga en 1.7-5.4s → CloudStream se queda sin tiempo o tarda muchísimo.
+  - No existe ruta de thumbnail propia en imgcdn para pv (`/pv/t/`, `/pv/300/`, etc. → 404).
+- **Fix** en `PrimevideoProvider.kt:28`: `pvPoster(id)` ahora devuelve `buildVerticalPosterUrlWithProxy(id, "pv")` → `https://wsrv.nl/?url=...&w=500` → **37-80 KB**, carga en 0.6-1.4s. Aplica a main page, search, detalle y recomendaciones (todos usan `pvPoster`). `pvBg`/`pvEpPoster` sin cambios.
+- Compilación OK: `.\gradlew.bat :NetflixmirrorProvider:compileReleaseKotlin --console=plain -q`
+- ⏸️ Pendiente: probar en dispositivo que los posters pv cargan rápido.
 
 ## PandramaProvider — Estructura
 - **Arquitectura**: Laravel + Inertia.js (Vue SPA). Datos embedidos en `window.bootstrapData = {...}` dentro de `<script>`
