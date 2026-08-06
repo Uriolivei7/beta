@@ -177,24 +177,25 @@ class UniqueStreamProvider : MainAPI() {
                 Triple("Sci-Fi", "$apiUrl/browse?categories=sci-fi,popular&limit=20&type=all&slider=1", 8),
             )
 
-            val homeItems = mutableListOf<HomePageList>()
+            val homeItems = coroutineScope {
+                sections.map { section ->
+                    async {
+                        try {
+                            val response = app.get(
+                                section.second,
+                                headers = baseHeaders,
+                                timeout = 20L
+                            ).text
 
-            for (section in sections) {
-                try {
-                    val response = app.get(
-                        section.second,
-                        headers = baseHeaders,
-                        timeout = 30L
-                    ).text
-
-                    val items = AppUtils.parseJson<List<SeriesItem>>(response)
-                    val list = items.map { it.toSearchResponse() }
-                    if (list.isNotEmpty()) {
-                        homeItems.add(HomePageList(section.first, list))
+                            val items = AppUtils.parseJson<List<SeriesItem>>(response)
+                            val list = items.map { it.toSearchResponse() }
+                            if (list.isNotEmpty()) HomePageList(section.first, list) else null
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Sección '${section.first}' falló: ${e.message}")
+                            null
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Sección '${section.first}' falló: ${e.message}")
-                }
+                }.mapNotNull { it.await() }
             }
 
             Log.d(TAG, "Secciones cargadas: ${homeItems.size}")
@@ -228,7 +229,7 @@ class UniqueStreamProvider : MainAPI() {
         val seriesResponse = app.get(
             "$apiUrl/series/$cleanId",
             headers = baseHeaders,
-            timeout = 30L
+            timeout = 20L
         ).text
 
         val details = AppUtils.parseJson<DetailsResponse>(seriesResponse)
@@ -306,7 +307,7 @@ class UniqueStreamProvider : MainAPI() {
                 async {
                     try {
                         val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$page&limit=20&order_by=asc"
-                        val response = app.get(seasonUrl, headers = baseHeaders, timeout = 30L).text
+                        val response = app.get(seasonUrl, headers = baseHeaders, timeout = 20L).text
                         if (response.trim().startsWith("[")) {
                             AppUtils.parseJson<List<EpisodeItem>>(response)
                         } else {
@@ -333,7 +334,7 @@ class UniqueStreamProvider : MainAPI() {
             while (keepLoading) {
                 try {
                     val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$extraPage&limit=20&order_by=asc"
-                    val response = app.get(seasonUrl, headers = baseHeaders, timeout = 30L).text
+                    val response = app.get(seasonUrl, headers = baseHeaders, timeout = 20L).text
                     if (response.trim().startsWith("[")) {
                         val eps = AppUtils.parseJson<List<EpisodeItem>>(response)
                         if (eps.isEmpty()) {
