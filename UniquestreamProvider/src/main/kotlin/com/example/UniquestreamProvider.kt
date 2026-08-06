@@ -165,33 +165,40 @@ class UniqueStreamProvider : MainAPI() {
         return try {
             Log.d(TAG, "Cargando MainPage...")
 
+            // Triple(name, urlBase, páginas del API a fusionar por fila)
+            // Más páginas = más animes por sección. Los géneros fusionan 2 páginas (40 items).
             val sections = listOf(
-                Triple("Nuevos", "$apiUrl/videos/new?slider=1&limit=10", 0),
-                Triple("Populares", "$apiUrl/videos/popular?slider=1&limit=10", 1),
-                Triple("Películas", "$apiUrl/videos/movies?limit=6&sort=popular", 2),
-                Triple("Acción", "$apiUrl/browse?categories=action,popular&limit=20&type=all&slider=1", 3),
-                Triple("Aventura", "$apiUrl/browse?categories=adventure,popular&limit=20&type=all&slider=1", 4),
-                Triple("Comedia", "$apiUrl/browse?categories=comedy,popular&limit=20&type=all&slider=1", 5),
-                Triple("Drama", "$apiUrl/browse?categories=drama,popular&limit=20&type=all&slider=1", 6),
-                Triple("Fantasía", "$apiUrl/browse?categories=fantasy,popular&limit=20&type=all&slider=1", 7),
-                Triple("Sci-Fi", "$apiUrl/browse?categories=sci-fi,popular&limit=20&type=all&slider=1", 8),
+                Triple("Nuevos", "$apiUrl/videos/new?limit=20", 1),
+                Triple("Populares", "$apiUrl/videos/popular?limit=20", 1),
+                Triple("Películas", "$apiUrl/videos/movies?sort=popular&limit=20", 1),
+                Triple("Acción", "$apiUrl/browse?categories=action,popular&type=all&limit=20", 2),
+                Triple("Aventura", "$apiUrl/browse?categories=adventure,popular&type=all&limit=20", 2),
+                Triple("Comedia", "$apiUrl/browse?categories=comedy,popular&type=all&limit=20", 2),
+                Triple("Drama", "$apiUrl/browse?categories=drama,popular&type=all&limit=20", 2),
+                Triple("Fantasía", "$apiUrl/browse?categories=fantasy,popular&type=all&limit=20", 2),
+                Triple("Sci-Fi", "$apiUrl/browse?categories=sci-fi,popular&type=all&limit=20", 2),
             )
 
             val homeItems = coroutineScope {
-                sections.map { section ->
+                sections.map { (name, baseUrl, pages) ->
                     async {
                         try {
-                            val response = app.get(
-                                section.second,
-                                headers = baseHeaders,
-                                timeout = 20L
-                            ).text
-
-                            val items = AppUtils.parseJson<List<SeriesItem>>(response)
-                            val list = items.map { it.toSearchResponse() }
-                            if (list.isNotEmpty()) HomePageList(section.first, list) else null
+                            val allItems = (1..pages).flatMap { p ->
+                                try {
+                                    val url = if (p == 1) baseUrl else "$baseUrl&page=$p"
+                                    val response = app.get(url, headers = baseHeaders, timeout = 15L).text
+                                    AppUtils.parseJson<List<SeriesItem>>(response)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Página $p de '$name' falló: ${e.message}")
+                                    emptyList()
+                                }
+                            }
+                            val list = allItems
+                                .distinctBy { it.content_id }
+                                .map { it.toSearchResponse() }
+                            if (list.isNotEmpty()) HomePageList(name, list) else null
                         } catch (e: Exception) {
-                            Log.e(TAG, "Sección '${section.first}' falló: ${e.message}")
+                            Log.e(TAG, "Sección '$name' falló: ${e.message}")
                             null
                         }
                     }
@@ -199,7 +206,7 @@ class UniqueStreamProvider : MainAPI() {
             }
 
             Log.d(TAG, "Secciones cargadas: ${homeItems.size}")
-            newHomePageResponse(homeItems, homeItems.isNotEmpty())
+            newHomePageResponse(homeItems, false)
         } catch (e: Exception) {
             Log.e(TAG, "Error en getMainPage: ${e.message}")
             newHomePageResponse(emptyList(), false)
