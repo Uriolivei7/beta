@@ -322,3 +322,30 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ### Archivos
 - `UniquestreamProvider/src/main/kotlin/com/example/UniquestreamProvider.kt` (~570 líneas)
+
+---
+
+## AnimeAV1 — Fix error HLS 2004 (05 Ago 2026) — player.zilla-networks.com
+
+### ✅ Diagnóstico (verificado con Python desde PC)
+- El embed HLS de animeav1.com entrega `https://player.zilla-networks.com/play/{32-hex}` — es una **página HTML** (Vite+JWPlayer, 998 B), NO un m3u8. El JS del player (`/assets/index-b0y5A--O.js`) construye `file: "https://player.zilla-networks.com/m3u8/" + hash` y lo pasa a JWPlayer.
+- **Mapeo de rutas**:
+  - `/play/{hash}` → 403 sin Referer; 200 con Referer pero HTML (SPA) → alimentar a ExoPlayer daba `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)` o parse error.
+  - `/m3u8/{hash}` → **200 sin headers**, m3u8 VOD fMP4: `#EXT-X-MAP:URI=".../segs/{hash}/init.html"`, segmentos `000.html`, `001.html`, `#EXT-X-PLAYLIST-TYPE:VOD`.
+  - `/segs/{hash}/{n}.html` → **403 challenge de Cloudflare** ("Attention Required!") con UA solitario o incluso con Referer.
+- **Clave**: los segmentos pasan a **200** con set completo de headers de navegador (Accept `*/*`, Accept-Language, Origin+Referer `player.zilla-networks.com`, Sec-Fetch-Dest/Mode/Site, Priority). Funciona incluso con UA `ExoPlayerLib/2.19.1` y sin sec-ch-ua. No se guardan cookies en el flujo play→m3u8 (challenge es de headers, no de sesión).
+
+### Fix implementado en `Animeav1Provider.kt`
+1. **`loadCustomExtractor`** (`Animeav1Provider.kt:376`): si la URL es `player.zilla-networks.com/play/{hash}`, transforma a `/m3u8/{hash}` y emite `newExtractorLink` con `type=M3U8`, `quality=P1080`, `referer=https://player.zilla-networks.com/` y `headers=zillaHeaders`. Evita que ExoPlayer reciba la página HTML.
+2. **`getVideoInterceptor`** (`Animeav1Provider.kt:74`): interceptor OkHttp que inyecta `zillaHeaders` a TODA petición a `player.zilla-networks.com` (master + segmentos + init.html). Es el mecanismo probado en el repo (mismo patrón que UniqueStream).
+3. `zillaHeaders` (`Animeav1Provider.kt:63`): Accept, Accept-Language, Origin, Referer, Sec-Fetch-*, Priority.
+
+### Estado
+- Compilación OK: `.\gradlew.bat :Animeav1Provider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:Animeav1Provider:make` → `Animeav1Provider/build/Animeav1Provider.cs3` (27 KB)
+- ⏸️ **Pendiente**: instalar cs3 en dispositivo y probar Fullmetal Alchemist: Brotherhood EP1 (link "Subtitulado: HLS") — debería cargar master + segmentos sin 403. Si Cloudflare aun bloquea desde IP móvil, revisar si requiere sec-ch-ua/UA de navegador real en vez de ExoPlayerLib.
+
+### Scripts de verificación (`%TEMP%\opencode\`)
+- `check_av1.py`, `check_zilla.py`, `check_zilla2.py`, `check_js.py`, `check_js2.py`, `check_m3u8.py` (mapeo /play→/m3u8→/segs)
+- `check_segs.py`, `check_segs2.py`, `check_403.py` (403 Cloudflare con headers parciales)
+- `check_fullhdr.py` (**headers completos → 200**), `check_cookieflow.py` (no hay cookies), `check_exo.py` (UA ExoPlayer + full headers → 200)
