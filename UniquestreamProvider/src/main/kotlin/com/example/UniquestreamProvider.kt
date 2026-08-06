@@ -165,8 +165,6 @@ class UniqueStreamProvider : MainAPI() {
         return try {
             Log.d(TAG, "Cargando MainPage...")
 
-            // Triple(name, urlBase, páginas del API a fusionar por fila)
-            // Más páginas = más animes por sección. Los géneros fusionan 2 páginas (40 items).
             val sections = listOf(
                 Triple("Nuevos", "$apiUrl/videos/new?limit=20", 1),
                 Triple("Populares", "$apiUrl/videos/popular?limit=20", 1),
