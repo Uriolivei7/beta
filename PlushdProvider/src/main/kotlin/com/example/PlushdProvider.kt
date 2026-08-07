@@ -248,6 +248,8 @@ class PlushdProvider : MainAPI() {
                 val response = chain.proceed(newRequest)
 
                 if (!url.contains(".m3u8")) {
+                    val host = Regex("""https?://([^/]+)""").find(url)?.groupValues?.get(1) ?: "?"
+                    Log.d("PlushdProvider", "segmento ${response.code} host=$host ext=${url.substringAfterLast('.').take(12)}")
                     return response
                 }
 
@@ -518,10 +520,13 @@ class PlushdProvider : MainAPI() {
             val html = app.get(url, headers = headers).text
             val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""")
             var m3u8Url: String? = m3u8Regex.find(html)?.value
+            Log.d(tag, "HTML vidhide ${html.length} chars, m3u8 directo: ${m3u8Url != null}")
 
             if (m3u8Url == null) {
                 val evalRegex = Regex("""}\('(.*?)',(\d+),(\d+),'(.*?)'\.split""", RegexOption.DOT_MATCHES_ALL)
-                for (m in evalRegex.findAll(html)) {
+                val matches = evalRegex.findAll(html).toList()
+                Log.d(tag, "evals candidatos: ${matches.size}")
+                for (m in matches) {
                     try {
                         val p = m.groupValues[1]
                         val a = m.groupValues[2].toIntOrNull() ?: 36
@@ -534,20 +539,24 @@ class PlushdProvider : MainAPI() {
                         }
                         m3u8Url = m3u8Regex.find(decoded)?.value
                         if (m3u8Url != null) {
-                            Log.d(tag, "eval desempaquetado OK (a=$a c=$c p=${p.length} chars)")
+                            Log.d(tag, "eval OK (a=$a c=$c k=${k.size} p=${p.length}) → ${m3u8Url.take(90)}")
                             break
+                        } else {
+                            Log.d(tag, "eval sin m3u8 (a=$a c=$c k=${k.size} p=${p.length})")
                         }
                     } catch (_: Exception) { }
                 }
             }
 
             if (m3u8Url != null) {
-                Log.d(tag, "M3U8 encontrado: ${m3u8Url.take(100)}")
+                val host = Regex("""https?://([^/]+)""").find(m3u8Url)?.groupValues?.get(1) ?: "?"
+                Log.d(tag, "M3U8 final host=$host: ${m3u8Url.take(100)}")
                 callback(newExtractorLink("VidHide", "VidHide", m3u8Url, ExtractorLinkType.M3U8) {
                     this.referer = mainUrl
                 })
                 return true
             }
+            Log.w(tag, "No se encontró m3u8 en: $url")
         } catch (e: Exception) {
             Log.e(tag, "Error: ${e.message}")
         }
