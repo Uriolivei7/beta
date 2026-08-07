@@ -349,3 +349,26 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - `check_av1.py`, `check_zilla.py`, `check_zilla2.py`, `check_js.py`, `check_js2.py`, `check_m3u8.py` (mapeo /play→/m3u8→/segs)
 - `check_segs.py`, `check_segs2.py`, `check_403.py` (403 Cloudflare con headers parciales)
 - `check_fullhdr.py` (**headers completos → 200**), `check_cookieflow.py` (no hay cookies), `check_exo.py` (UA ExoPlayer + full headers → 200)
+
+## PlushdProvider (PlusHD) — Fix películas congeladas (07 Ago 2026)
+
+### ✅ Resuelto: películas ya no se congelan
+- **Síntoma**: las series reproducían fluido, pero las **películas** (vidhideplus.com) se congelaban cada ~5s.
+- **Causa raíz (2 bugs)**:
+  1. **Desempaquetador roto** en `tryVidHideExtraction` (`PlushdProvider.kt:~521`): buscaba el primer `eval(` de la página (que es el de **publicidad**, con `}\('` escapado) y luego `html.indexOf("}('")`. Como el eval real del player tiene `}('` pero aparece DESPUÉS del de ads, `callStart` daba -1 → desempaquetado fallaba siempre → el link lo emitía `loadExtractor` (extractor core de CloudStream).
+  2. **Extractor core devuelve hls3** (`master.txt` → segmentos `.woff2` en `breezewoodcreativeworks.cfd`), y el `getVideoInterceptor` solo inyectaba headers a `.m3u8`/`.ts` → los `.woff2` iban sin Referer → **403 Cloudflare → freeze cada ~5s**.
+- **Fix implementado**:
+  - `tryVidHideExtraction` reescrito con regex robusta que encuentra el eval correcto: `}\('(.*?)',(\d+),(\d+),'(.*?)'\.split` (DOT_MATCHES_ALL), itera todos los matches y desempaqueta hasta hallar un `.m3u8`. El m3u8 extraído es **hls2** (`dramiyos-cdn.com`, segmentos `.ts`) que funciona **sin headers** (verificado 200 en master/variante/segmentos).
+  - `getVideoInterceptor` gate ampliado: ahora también añade UA/Referer/Origin a URLs `.woff2` y `.txt` (cubre hls3 por si se usa).
+- **Verificado en PC (Python)**:
+  - hls2 (`dramiyos-cdn.com`) → master/variante/850 segmentos `.ts` → **200 sin headers**, Content-Type `video/MP2T`, syncTS OK.
+  - hls3 (`breezewoodcreativeworks.cfd`) → segmentos `.woff2` → **403 sin Referer**, 404 con UA ExoPlayer, **200 solo con UA + Referer vidhideplus**.
+  - El player JS real usa `links.hls4||links.hls3||links.hls2` → cae en hls3, pero nuestro extractor prefiere hls2 (más simple, no necesita headers).
+- Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (34.8 KB)
+
+### Scripts de verificación (`%TEMP%\opencode\`)
+- `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
+
+### ⏸️ Pendiente
+- Probar en dispositivo la película que congelaba (ej. `escuadron-letal`): ahora `tryVidHideExtraction` debería emitir el master de `dramiyos-cdn` y reproducir fluido como los episodios.

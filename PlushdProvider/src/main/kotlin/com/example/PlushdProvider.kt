@@ -235,7 +235,7 @@ class PlushdProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
-                if (!url.contains(".m3u8") && !url.contains(".ts")) {
+                if (!url.contains(".m3u8") && !url.contains(".ts") && !url.contains(".woff2") && !url.contains(".txt")) {
                     return chain.proceed(request)
                 }
 
@@ -248,6 +248,10 @@ class PlushdProvider : MainAPI() {
                 val response = chain.proceed(newRequest)
 
                 if (!url.contains(".m3u8")) {
+                    return response
+                }
+
+                if (url.contains(".woff2") || url.contains(".txt")) {
                     return response
                 }
 
@@ -512,48 +516,28 @@ class PlushdProvider : MainAPI() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             )
             val html = app.get(url, headers = headers).text
-            var m3u8Url: String? = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(html)?.value
+            val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""")
+            var m3u8Url: String? = m3u8Regex.find(html)?.value
 
             if (m3u8Url == null) {
-                val evalMarker = "eval(function(p,a,c,k,e,d){"
-                val evalStart = html.indexOf(evalMarker)
-                if (evalStart >= 0) {
-                    val callStart = html.indexOf("}('", evalStart)
-                    if (callStart >= 0) {
-                        var argIdx = callStart + 2
-                        if (argIdx < html.length && html[argIdx] == '\'') {
-                            argIdx++
-                            val pStart = argIdx
-                            while (argIdx < html.length && html[argIdx] != '\'') argIdx++
-                            if (argIdx < html.length) {
-                                val p = html.substring(pStart, argIdx)
-                                argIdx++
-                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
-                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
-                                val aStart = argIdx
-                                while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
-                                val a = html.substring(aStart, argIdx).toIntOrNull() ?: 36
-                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
-                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
-                                val cStart = argIdx
-                                while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
-                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
-                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
-                                if (argIdx < html.length && html[argIdx] == '\'') {
-                                    argIdx++
-                                    val kStart = argIdx
-                                    while (argIdx < html.length && html[argIdx] != '\'') argIdx++
-                                    val k = html.substring(kStart, argIdx).split("|")
-                                    var decoded = p
-                                    for (idx in k.indices.reversed()) {
-                                        if (k[idx].isBlank()) continue
-                                        decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
-                                    }
-                                    m3u8Url = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(decoded)?.value
-                                }
-                            }
+                val evalRegex = Regex("""}\('(.*?)',(\d+),(\d+),'(.*?)'\.split""", RegexOption.DOT_MATCHES_ALL)
+                for (m in evalRegex.findAll(html)) {
+                    try {
+                        val p = m.groupValues[1]
+                        val a = m.groupValues[2].toIntOrNull() ?: 36
+                        val c = m.groupValues[3].toIntOrNull() ?: 0
+                        val k = m.groupValues[4].split("|")
+                        var decoded = p
+                        for (idx in k.indices.reversed()) {
+                            if (k[idx].isBlank()) continue
+                            decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
                         }
-                    }
+                        m3u8Url = m3u8Regex.find(decoded)?.value
+                        if (m3u8Url != null) {
+                            Log.d(tag, "eval desempaquetado OK (a=$a c=$c p=${p.length} chars)")
+                            break
+                        }
+                    } catch (_: Exception) { }
                 }
             }
 
