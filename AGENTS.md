@@ -358,14 +358,22 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
   1. **Desempaquetador roto** en `tryVidHideExtraction` (`PlushdProvider.kt:~521`): buscaba el primer `eval(` de la página (que es el de **publicidad**, con `}\('` escapado) y luego `html.indexOf("}('")`. Como el eval real del player tiene `}('` pero aparece DESPUÉS del de ads, `callStart` daba -1 → desempaquetado fallaba siempre → el link lo emitía `loadExtractor` (extractor core de CloudStream).
   2. **Extractor core devuelve hls3** (`master.txt` → segmentos `.woff2` en `breezewoodcreativeworks.cfd`), y el `getVideoInterceptor` solo inyectaba headers a `.m3u8`/`.ts` → los `.woff2` iban sin Referer → **403 Cloudflare → freeze cada ~5s**.
 - **Fix implementado**:
-  - `tryVidHideExtraction` reescrito con regex robusta que encuentra el eval correcto: `}\('(.*?)',(\d+),(\d+),'(.*?)'\.split` (DOT_MATCHES_ALL), itera todos los matches y desempaqueta hasta hallar un `.m3u8`. El m3u8 extraído es **hls2** (`dramiyos-cdn.com`, segmentos `.ts`) que funciona **sin headers** (verificado 200 en master/variante/segmentos).
+  - `tryVidHideExtraction` reescrito con regex robusta que encuentra el eval correcto: `}[(]'(.*?)',(\d+),(\d+),'(.*?)'[.]split` (DOT_MATCHES_ALL), itera todos los matches y desempaqueta hasta hallar un `.m3u8`. El m3u8 extraído es **hls2** (`dramiyos-cdn.com`, segmentos `.ts`) que funciona **sin headers** (verificado 200 en master/variante/segmentos).
   - `getVideoInterceptor` gate ampliado: ahora también añade UA/Referer/Origin a URLs `.woff2` y `.txt` (cubre hls3 por si se usa).
 - **Verificado en PC (Python)**:
   - hls2 (`dramiyos-cdn.com`) → master/variante/850 segmentos `.ts` → **200 sin headers**, Content-Type `video/MP2T`, syncTS OK.
   - hls3 (`breezewoodcreativeworks.cfd`) → segmentos `.woff2` → **403 sin Referer**, 404 con UA ExoPlayer, **200 solo con UA + Referer vidhideplus**.
   - El player JS real usa `links.hls4||links.hls3||links.hls2` → cae en hls3, pero nuestro extractor prefiere hls2 (más simple, no necesita headers).
+
+### 🔧 Fix regex eval (07 Ago v2) — `\(`/`\.` rechazados por ICU de Android
+- **Síntoma**: las **series** reproducían fluido pero las **películas** seguían congelándose pese al fix anterior.
+- **Diagnóstico (logcat `PlushdProvider-VidHide`)**: `Error: Syntax error in regexp pattern near index 1` apuntando a `\(` en el `evalRegex`. El motor regex de Android (libcore/ICU) **rechaza** `\(`/`\.` en el patrón `}\('(.*?)'...` aunque JVM (Java estándar) lo compile OK — por eso el test en PC no lo detectó.
+- **Flujo real por tipo**:
+  - **Series**: el m3u8 directo aparece en el HTML → `m3u8Regex` (línea 521) lo encuentra ANTES de llegar al eval → `tryVidHideExtraction` emite hls2 → fluido. Nunca se tocaba el evalRegex.
+  - **Películas**: NO hay m3u8 directo → se llega al `evalRegex` (línea 526) → excepción de compilación → `tryVidHideExtraction` retorna `false` → el link lo emitía `loadExtractor` (extractor core) → **hls3 `.woff2`** → freeze.
+- **Fix**: `}\('(.*?)'` → `}[(]'(.*?)'` y `\.split` → `[.]split` (clases de caracteres, sin backslash-escapes ambiguos). Semántica idéntica.
 - Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
-- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (34.8 KB)
+- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.3 KB)
 
 ### Scripts de verificación (`%TEMP%\opencode\`)
 - `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
