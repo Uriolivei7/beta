@@ -168,13 +168,13 @@ class UniqueStreamProvider : MainAPI() {
             val sections = listOf(
                 Triple("Nuevos", "$apiUrl/videos/new?limit=20", 1),
                 Triple("Populares", "$apiUrl/videos/popular?limit=20", 1),
-                Triple("Películas", "$apiUrl/videos/movies?sort=popular&limit=20", 1),
                 Triple("Acción", "$apiUrl/browse?categories=action,popular&type=all&limit=20", 2),
                 Triple("Aventura", "$apiUrl/browse?categories=adventure,popular&type=all&limit=20", 2),
                 Triple("Comedia", "$apiUrl/browse?categories=comedy,popular&type=all&limit=20", 2),
                 Triple("Drama", "$apiUrl/browse?categories=drama,popular&type=all&limit=20", 2),
                 Triple("Fantasía", "$apiUrl/browse?categories=fantasy,popular&type=all&limit=20", 2),
                 Triple("Sci-Fi", "$apiUrl/browse?categories=sci-fi,popular&type=all&limit=20", 2),
+                Triple("Películas", "$apiUrl/videos/movies?sort=popular&limit=20", 1),
             )
 
             val homeItems = coroutineScope {
