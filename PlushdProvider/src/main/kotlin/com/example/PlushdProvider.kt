@@ -247,6 +247,10 @@ class PlushdProvider : MainAPI() {
 
                 val response = chain.proceed(newRequest)
 
+                if (!url.contains(".m3u8")) {
+                    return response
+                }
+
                 try {
                     val peek = response.peekBody(2097152L)
                     val html = peek.string()
@@ -255,7 +259,7 @@ class PlushdProvider : MainAPI() {
                         Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
                         return cloudflareKiller.intercept(chain)
                     }
-                    if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
+                    if (html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
                         val lines = html.lines()
                         val filtered = mutableListOf<String>()
                         var skip = false
