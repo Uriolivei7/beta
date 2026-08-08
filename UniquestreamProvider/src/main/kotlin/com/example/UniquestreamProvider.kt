@@ -385,7 +385,7 @@ class UniqueStreamProvider : MainAPI() {
         }
 
         if (hasFractional) {
-            return merged.map { it.copy(episode_number = (it.episode_number ?: 0.0) * 10) }
+            return merged.mapIndexed { i, ep -> ep.copy(episode_number = (i + 1).toDouble()) }
         }
         return merged
     }
