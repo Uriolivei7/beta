@@ -400,8 +400,20 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.5 KB)
 - ⏸️ **Pendiente**: probar en dispositivo que las series vuelven a reproducir fluido y ver si la película mejora algo.
 
+### 🔍 Veredicto final (07 Ago v6) — el congelamiento es del CDN, no del provider
+- **Síntoma**: con v5 instalado, el usuario reporta congelamiento **tanto en películas como en series**.
+- **Logs del dispositivo (v5)** confirman que la **extracción funciona perfectamente**: eval desempaquetado OK (a=36 c=602), m3u8 hls2 `{sub}.acek-cdn.com`, `linksFound=1`. El interceptor entrega master/variante con headers correctos.
+- **Medido en PC (mismo master/variante/segmentos que ve el dispositivo)**:
+  | Request | Status | Tiempo |
+  |---------|--------|--------|
+  | Master m3u8 | 200 | 3.6s |
+  | Variante | 200 | 4.7s |
+  | Segmento `.ts` | 200 (sync `0x47` OK) | 6-11s+ |
+  | 2ª tanda de segmentos | ERR/timeout | 20-60s |
+- **Causa raíz**: cada segmento contiene ~10s de video pero tarda **más** en descargar que su duración → ExoPlayer agota el buffer → freeze cada ~5s. Además el CDN hace **rate-limiting por IP** (2ª tandas fallaban incluso sin headers).
+- **Conclusión**: el plugin ya hace todo lo posible (extrae el m3u8 correcto, headers correctos, segmentos devuelven 200 con TS válido). El cuello de botella es el CDN `{sub}.acek-cdn.com` del servidor (lento/saturado) — **fuera de nuestro alcance**.
+- **Sugerencias al usuario**: probar otra película/serie (el rate-limit es por IP y momento), probar en otro horario, o comparar si el sitio web en navegador reproduce fluido en la misma red.
+- Estado final del plugin: **v5 (35.5 KB)** es la versión estable correcta — no hacer más cambios de código para este síntoma.
+
 ### Scripts de verificación (`%TEMP%\opencode\`)
 - `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
-
-### ⏸️ Pendiente
-- Probar en dispositivo la película que congelaba (ej. `escuadron-letal`): ahora `tryVidHideExtraction` debería emitir el master de `dramiyos-cdn` y reproducir fluido como los episodios.

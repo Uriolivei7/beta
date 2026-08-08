@@ -235,7 +235,7 @@ class PlushdProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
-                if (!url.contains(".m3u8") && !url.contains(".ts") && !url.contains(".woff2") && !url.contains(".txt")) {
+                if (!url.contains(".m3u8") && !url.contains(".ts")) {
                     return chain.proceed(request)
                 }
 
@@ -247,16 +247,6 @@ class PlushdProvider : MainAPI() {
 
                 val response = chain.proceed(newRequest)
 
-                if (!url.contains(".m3u8")) {
-                    val host = Regex("""https?://([^/]+)""").find(url)?.groupValues?.get(1) ?: "?"
-                    Log.d("PlushdProvider", "segmento ${response.code} host=$host ext=${url.substringAfterLast('.').take(12)}")
-                    return response
-                }
-
-                if (url.contains(".woff2") || url.contains(".txt")) {
-                    return response
-                }
-
                 try {
                     val peek = response.peekBody(2097152L)
                     val html = peek.string()
@@ -265,17 +255,17 @@ class PlushdProvider : MainAPI() {
                         Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
                         return cloudflareKiller.intercept(chain)
                     }
-                    if (html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
+                    if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
                         val lines = html.lines()
                         val filtered = mutableListOf<String>()
                         var skip = false
                         for (line in lines) {
                             if (line.contains("RESOLUTION=") && (
-                                    line.contains("1920x1080") ||
-                                    line.contains("1920x800") ||
-                                    line.contains("1080p") ||
-                                    line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
-                                )) {
+                                        line.contains("1920x1080") ||
+                                                line.contains("1920x800") ||
+                                                line.contains("1080p") ||
+                                                line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
+                                        )) {
                                 Log.d("PlushdProvider", "Filtering out 1080p variant: $line")
                                 skip = true
                                 continue
@@ -518,45 +508,58 @@ class PlushdProvider : MainAPI() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             )
             val html = app.get(url, headers = headers).text
-            val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""")
-            var m3u8Url: String? = m3u8Regex.find(html)?.value
-            Log.d(tag, "HTML vidhide ${html.length} chars, m3u8 directo: ${m3u8Url != null}")
+            var m3u8Url: String? = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(html)?.value
 
             if (m3u8Url == null) {
-                val evalRegex = Regex("""[(]'(.*?)',(\d+),(\d+),'(.*?)'[.]split""", RegexOption.DOT_MATCHES_ALL)
-                val matches = evalRegex.findAll(html).toList()
-                Log.d(tag, "evals candidatos: ${matches.size}")
-                for (m in matches) {
-                    try {
-                        val p = m.groupValues[1]
-                        val a = m.groupValues[2].toIntOrNull() ?: 36
-                        val c = m.groupValues[3].toIntOrNull() ?: 0
-                        val k = m.groupValues[4].split("|")
-                        var decoded = p
-                        for (idx in k.indices.reversed()) {
-                            if (k[idx].isBlank()) continue
-                            decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
+                val evalMarker = "eval(function(p,a,c,k,e,d){"
+                val evalStart = html.indexOf(evalMarker)
+                if (evalStart >= 0) {
+                    val callStart = html.indexOf("}('", evalStart)
+                    if (callStart >= 0) {
+                        var argIdx = callStart + 2
+                        if (argIdx < html.length && html[argIdx] == '\'') {
+                            argIdx++
+                            val pStart = argIdx
+                            while (argIdx < html.length && html[argIdx] != '\'') argIdx++
+                            if (argIdx < html.length) {
+                                val p = html.substring(pStart, argIdx)
+                                argIdx++
+                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
+                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
+                                val aStart = argIdx
+                                while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
+                                val a = html.substring(aStart, argIdx).toIntOrNull() ?: 36
+                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
+                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
+                                val cStart = argIdx
+                                while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
+                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
+                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
+                                if (argIdx < html.length && html[argIdx] == '\'') {
+                                    argIdx++
+                                    val kStart = argIdx
+                                    while (argIdx < html.length && html[argIdx] != '\'') argIdx++
+                                    val k = html.substring(kStart, argIdx).split("|")
+                                    var decoded = p
+                                    for (idx in k.indices.reversed()) {
+                                        if (k[idx].isBlank()) continue
+                                        decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
+                                    }
+                                    m3u8Url = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(decoded)?.value
+                                }
+                            }
                         }
-                        m3u8Url = m3u8Regex.find(decoded)?.value
-                        if (m3u8Url != null) {
-                            Log.d(tag, "eval OK (a=$a c=$c k=${k.size} p=${p.length}) → ${m3u8Url.take(90)}")
-                            break
-                        } else {
-                            Log.d(tag, "eval sin m3u8 (a=$a c=$c k=${k.size} p=${p.length})")
-                        }
-                    } catch (_: Exception) { }
+                    }
                 }
             }
 
             if (m3u8Url != null) {
-                val host = Regex("""https?://([^/]+)""").find(m3u8Url)?.groupValues?.get(1) ?: "?"
-                Log.d(tag, "M3U8 final host=$host: ${m3u8Url.take(100)}")
+                Log.d(tag, "M3U8 encontrado: ${m3u8Url.take(100)}")
                 callback(newExtractorLink("VidHide", "VidHide", m3u8Url, ExtractorLinkType.M3U8) {
-                    this.referer = if (host.contains("acek-cdn")) vidReferer else mainUrl
+                    this.referer = mainUrl
                 })
                 return true
             }
-            Log.w(tag, "No se encontró m3u8 en: $url")
         } catch (e: Exception) {
             Log.e(tag, "Error: ${e.message}")
         }
