@@ -382,6 +382,14 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
 - Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.3 KB)
 
+### 🔧 Fix referer segmentos (07 Ago v4) — el CDN puede rechazar referer tioplus
+- **Síntoma**: el plugin ya extrae el m3u8 hls2 correcto (`acek-cdn.com`) tras el fix v3, pero la película seguía congelándose.
+- **Diagnóstico (PC)**: el CDN `{sub}.acek-cdn.com` responde **200** a master/variante/segmentos `.ts` (Content-Type `video/MP2T`, sync byte `0x47` ok) pero con **latencia alta e inestable** (3-12s por request, rate-limiting por IP en tandas). Además, con `Referer=https://tioplus.app` los segmentos daban ERR, mientras `Referer=https://vidhideplus.com` → 200.
+- **Fix**: en `tryVidHideExtraction` el `ExtractorLink` ahora usa `referer = vidReferer` (el URL vidhideplus) en lugar de `mainUrl`. El `getVideoInterceptor` ahora usa `Origin = extractorLink.referer` (en vez de `mainUrl`), igual que un navegador.
+- Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.4 KB)
+- ⏸️ **Sospecha residual**: el CDN parece lento/inestable por sí mismo (timeouts desde PC incluso sin headers). Si persiste el freeze, es problema del servidor/CDN, no del provider.
+
 ### Scripts de verificación (`%TEMP%\opencode\`)
 - `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
 
