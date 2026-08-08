@@ -390,6 +390,16 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.4 KB)
 - ⏸️ **Sospecha residual**: el CDN parece lento/inestable por sí mismo (timeouts desde PC incluso sin headers). Si persiste el freeze, es problema del servidor/CDN, no del provider.
 
+### 🔧 Fix referer condicional (07 Ago v5) — revertir cambio global que ralentizó series
+- **Síntoma**: tras v4 (referer/Origin = extractorLink.referer global), las **series también** empezaron a tardar en reproducir.
+- **Causa**: el v4 cambió `Origin` del interceptor a `extractorLink.referer` para TODOS los links. Las series (dramiyos-cdn) funcionaban con `Origin=mainUrl` (tioplus) y el cambio global les afectó.
+- **Fix**: 
+  - Interceptor vuelve a `Origin = mainUrl` (global, como v3).
+  - El `ExtractorLink` solo usa `referer = vidReferer` si el host del m3u8 es `acek-cdn` (películas vidhide); si no (dramiyos-cdn, series), usa `mainUrl`.
+- Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.5 KB)
+- ⏸️ **Pendiente**: probar en dispositivo que las series vuelven a reproducir fluido y ver si la película mejora algo.
+
 ### Scripts de verificación (`%TEMP%\opencode\`)
 - `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
 

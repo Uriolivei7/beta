@@ -242,7 +242,7 @@ class PlushdProvider : MainAPI() {
                 val newRequest = request.newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
                     .header("Referer", extractorLink.referer)
-                    .header("Origin", extractorLink.referer)
+                    .header("Origin", mainUrl)
                     .build()
 
                 val response = chain.proceed(newRequest)
@@ -552,7 +552,7 @@ class PlushdProvider : MainAPI() {
                 val host = Regex("""https?://([^/]+)""").find(m3u8Url)?.groupValues?.get(1) ?: "?"
                 Log.d(tag, "M3U8 final host=$host: ${m3u8Url.take(100)}")
                 callback(newExtractorLink("VidHide", "VidHide", m3u8Url, ExtractorLinkType.M3U8) {
-                    this.referer = vidReferer
+                    this.referer = if (host.contains("acek-cdn")) vidReferer else mainUrl
                 })
                 return true
             }
