@@ -523,7 +523,7 @@ class PlushdProvider : MainAPI() {
             Log.d(tag, "HTML vidhide ${html.length} chars, m3u8 directo: ${m3u8Url != null}")
 
             if (m3u8Url == null) {
-                val evalRegex = Regex("""}[(]'(.*?)',(\d+),(\d+),'(.*?)'[.]split""", RegexOption.DOT_MATCHES_ALL)
+                val evalRegex = Regex("""[(]'(.*?)',(\d+),(\d+),'(.*?)'[.]split""", RegexOption.DOT_MATCHES_ALL)
                 val matches = evalRegex.findAll(html).toList()
                 Log.d(tag, "evals candidatos: ${matches.size}")
                 for (m in matches) {

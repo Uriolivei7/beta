@@ -375,6 +375,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
 - Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.3 KB)
 
+### 🔧 Fix regex eval (07 Ago v3) — el `}` inicial es inválido en ICU
+- **Síntoma**: tras el fix v2 (con `[(]`), las películas seguían congeladas. El logcat seguía mostrando `Error: Syntax error in regexp pattern near index 1` apuntando al `[` (posición 1), es decir al carácter INMEDIATO después del `}` inicial.
+- **Causa raíz real**: el motor regex de Android (libcore/ICU) trata el `}` suelto como cierre de cuantificador `{n,m}`; un `}` sin `{` previo es **error de sintaxis siempre**, sin importar qué escape/clase venga después. El problema no era `\(` ni `[(]`, era el **ancla `}` del inicio** del patrón. Por eso el error siempre apunta a index 1 (el char tras el `}`).
+- **Fix**: quitar el ancla `}` del patrón: `"""[(]'(.*?)',(\d+),(\d+),'(.*?)'[.]split"""`. Sin el `}` no hay error de compilación y el regex igual encuentra el eval correcto (verificado en PC: 1 match, a=36 c=602 → m3u8 hls2 `dramiyos-cdn.com`). El bucle ya itera todos los matches y solo acepta el que desempaqueta a un `.m3u8` (los evals de publicidad no producen m3u8 y se descartan).
+- Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (35.3 KB)
+
 ### Scripts de verificación (`%TEMP%\opencode\`)
 - `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
 
