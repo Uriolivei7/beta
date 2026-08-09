@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.*
 import okhttp3.Interceptor
@@ -16,6 +17,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Response
 import okhttp3.ResponseBody
 import java.io.File
+import java.util.concurrent.Semaphore
 
 class UniqueStreamProvider : MainAPI() {
     override var mainUrl = "https://anime.uniquestream.net"
@@ -26,6 +28,13 @@ class UniqueStreamProvider : MainAPI() {
 
     private val apiUrl = "https://anime.uniquestream.net/api/v1"
     private val TAG = "UniqueStream"
+
+    companion object {
+        private val apiSemaphore = Semaphore(6)
+        private val episodeCache = mutableMapOf<String, List<EpisodeItem>>()
+        private val seriesCache = mutableMapOf<String, DetailsResponse>()
+        private val mainPageCache = mutableMapOf<String, Pair<HomePageList, Long>>()
+    }
 
     private val baseHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -177,10 +186,26 @@ class UniqueStreamProvider : MainAPI() {
                 Triple("Películas", "$apiUrl/videos/movies?sort=popular&limit=20", false),
             )
 
+            val now = System.currentTimeMillis()
+            val cachedLists = sections.mapNotNull { (name, _, _) ->
+                val entry = mainPageCache[name] ?: return@mapNotNull null
+                val (list, timestamp) = entry
+                if (now - timestamp > 10 * 60 * 1000L) null else list
+            }
+            if (cachedLists.size == sections.size) {
+                Log.d(TAG, "MainPage desde caché (${cachedLists.size} secciones)")
+                return newHomePageResponse(cachedLists, false)
+            }
+
             val homeItems = coroutineScope {
                 sections.map { (name, baseUrl, secondPage) ->
                     async {
                         try {
+                            val cached = mainPageCache[name]?.let { (list, ts) ->
+                                if (now - ts > 10 * 60 * 1000L) null else list
+                            }
+                            if (cached != null) return@async cached
+
                             val urls = buildList {
                                 add(baseUrl)
                                 if (secondPage) add("$baseUrl&page=2")
@@ -193,7 +218,9 @@ class UniqueStreamProvider : MainAPI() {
                             val list = allItems
                                 .distinctBy { it.content_id }
                                 .map { it.toSearchResponse() }
-                            if (list.isNotEmpty()) HomePageList(name, list) else null
+                            val result = if (list.isNotEmpty()) HomePageList(name, list) else null
+                            if (result != null) mainPageCache[name] = result to now
+                            result
                         } catch (e: Exception) {
                             Log.e(TAG, "Sección '$name' falló: ${e.message}")
                             null
@@ -230,21 +257,25 @@ class UniqueStreamProvider : MainAPI() {
         val cleanId = url.split("/").lastOrNull { it.isNotBlank() } ?: url
         Log.d(TAG, "Cargando serie con ID: $cleanId")
 
-        var seriesResponse: String? = null
-        repeat(3) { i ->
-            try {
-                val response = app.get("$apiUrl/series/$cleanId", headers = baseHeaders, timeout = 30L)
-                if (response.isSuccessful) {
-                    seriesResponse = response.text
-                    return@repeat
+        var seriesText: String? = seriesCache[cleanId]?.let { null }
+        if (seriesText == null) {
+            repeat(3) { i ->
+                try {
+                    val response = app.get("$apiUrl/series/$cleanId", headers = baseHeaders, timeout = 30L)
+                    if (response.isSuccessful) {
+                        seriesText = response.text
+                        return@repeat
+                    }
+                    Log.w(TAG, "series HTTP ${response.code} (intento ${i + 1})")
+                } catch (e: Exception) {
+                    Log.w(TAG, "series fetch error (intento ${i + 1}): ${e.message}")
                 }
-                Log.w(TAG, "series HTTP ${response.code} (intento ${i + 1})")
-            } catch (e: Exception) {
-                Log.w(TAG, "series fetch error (intento ${i + 1}): ${e.message}")
+                if (i < 2) delay(1500L * (i + 1))
             }
         }
-        val seriesText = seriesResponse ?: throw Exception("No se pudo cargar la serie $cleanId")
-        val details = AppUtils.parseJson<DetailsResponse>(seriesText)
+        val details = seriesCache[cleanId] ?: seriesText?.let {
+            AppUtils.parseJson<DetailsResponse>(it).also { cached -> seriesCache[cleanId] = cached }
+        } ?: throw Exception("No se pudo cargar la serie $cleanId")
         val processedSeasonIds = mutableSetOf<String>()
 
         val orderedSeasons = (details.seasons ?: emptyList())
@@ -311,24 +342,40 @@ class UniqueStreamProvider : MainAPI() {
     ): String? {
         var lastError: Exception? = null
         repeat(attempts) { i ->
+            val permit = try {
+                apiSemaphore.acquire()
+                true
+            } catch (e: InterruptedException) {
+                lastError = e
+                false
+            }
             try {
-                val response = app.get(url, headers = baseHeaders, timeout = timeout)
-                if (response.isSuccessful) {
-                    val text = response.text
-                    if (text.trim().startsWith("[")) return text
-                } else {
-                    Log.w(TAG, "getWithRetry HTTP ${response.code} en $url (intento ${i + 1})")
+                if (permit) {
+                    val response = app.get(url, headers = baseHeaders, timeout = timeout)
+                    if (response.isSuccessful) {
+                        val text = response.text
+                        if (text.trim().startsWith("[")) return text
+                        Log.w(TAG, "getWithRetry respuesta no-JSON en $url (intento ${i + 1})")
+                    } else {
+                        Log.w(TAG, "getWithRetry HTTP ${response.code} en $url (intento ${i + 1})")
+                    }
                 }
             } catch (e: Exception) {
                 lastError = e
                 Log.w(TAG, "getWithRetry error en $url (intento ${i + 1}): ${e.message}")
+            } finally {
+                if (permit) apiSemaphore.release()
             }
+            if (i < attempts - 1) delay(1500L * (i + 1))
         }
         Log.e(TAG, "getWithRetry falló tras $attempts intentos: $url (${lastError?.message})")
         return null
     }
 
     private suspend fun loadSeasonEpisodes(season: SeasonItem): List<EpisodeItem> {
+        val seasonId = season.content_id
+        episodeCache[seasonId]?.let { return it }
+
         val episodeCount = season.episode_count ?: 0
         val totalPages = if (episodeCount > 0) {
             (episodeCount + 19) / 20
@@ -341,7 +388,7 @@ class UniqueStreamProvider : MainAPI() {
         coroutineScope {
             val jobs = (1..totalPages).map { page ->
                 async {
-                    val seasonUrl = "$apiUrl/season/${season.content_id}/episodes?page=$page&limit=20&order_by=asc"
+                    val seasonUrl = "$apiUrl/season/$seasonId/episodes?page=$page&limit=20&order_by=asc"
                     val text = getWithRetry(seasonUrl, attempts = 3, timeout = 45L)
                     if (text != null) {
                         AppUtils.parseJson<List<EpisodeItem>>(text)
@@ -355,7 +402,7 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        Log.d(TAG, "loadSeasonEpisodes(${season.content_id}): pages=$totalPages count=$episodeCount")
+        Log.d(TAG, "loadSeasonEpisodes($seasonId): pages=$totalPages count=$episodeCount")
 
         val allEps = pageResults.flatten().toMutableList()
 
@@ -406,8 +453,11 @@ class UniqueStreamProvider : MainAPI() {
         }
 
         if (hasFractional) {
-            return merged.mapIndexed { i, ep -> ep.copy(episode_number = (i + 1).toDouble()) }
+            val renumbered = merged.mapIndexed { i, ep -> ep.copy(episode_number = (i + 1).toDouble()) }
+            episodeCache[seasonId] = renumbered
+            return renumbered
         }
+        episodeCache[seasonId] = merged
         return merged
     }
 
