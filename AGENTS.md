@@ -323,6 +323,17 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 ### Archivos
 - `UniquestreamProvider/src/main/kotlin/com/example/UniquestreamProvider.kt` (~570 líneas)
 
+### 🔧 Fix timeout 120s en series grandes (One Piece) (09 Ago 2026)
+- **Síntoma**: One Piece (1216 eps, 68 páginas de API) daba `Timed out waiting for 120000 ms` en TODAS las peticiones de episodios; el log mostraba `getWithRetry error ... (intento 1): Timed out waiting for 120000 ms` y `StandaloneCoroutine was cancelled` en main page.
+- **Diagnóstico (decompilado)**: `APIRepository$load$2` envuelve el `load()` del provider en `withTimeout(getLoadTimeoutMs() ?: 120000L)`. El `getTimeout(null)` de APIRepository devuelve 120000ms con `coerceIn(5000, 480000)`. One Piece superaba los 120s → CloudStream cancelaba TODO el `load()` y mataba las peticiones en vuelo (ese mensaje es `TimeoutCancellationException` de kotlinx, NO el timeout de OkHttp).
+- **Fix**:
+  1. `override val loadTimeoutMs: Long? = 480_000L` (máximo permitido por coerceIn; el getter `getLoadTimeoutMs()` es ACC_PUBLIC sin ACC_FINAL → open val overrideable).
+  2. **Rethrow `CancellationException`** en `getWithRetry`, secciones de `getMainPage`, y loop de `load()` — ya no se loguea como error ni se reintenta tras cancelación.
+  3. Semáforo API 6 → **12** (en PC 20 concurrentes funcionaron sin Cloudflare).
+- Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:UniquestreamProvider:make` → `UniquestreamProvider/build/UniquestreamProvider.cs3` (75 KB)
+- ⏸️ **Pendiente**: instalar cs3 en dispositivo y abrir One Piece — la carga de episodios ya no debe morir a los 120s.
+
 ---
 
 ## AnimeAV1 — Fix error HLS 2004 (05 Ago 2026) — player.zilla-networks.com

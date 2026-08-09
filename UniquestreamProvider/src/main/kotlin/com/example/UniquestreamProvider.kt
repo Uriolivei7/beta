@@ -26,11 +26,13 @@ class UniqueStreamProvider : MainAPI() {
     override var lang = "en"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
+    override val loadTimeoutMs: Long? = 480_000L
+
     private val apiUrl = "https://anime.uniquestream.net/api/v1"
     private val TAG = "UniqueStream"
 
     companion object {
-        private val apiSemaphore = Semaphore(6)
+        private val apiSemaphore = Semaphore(12)
         private val episodeCache = mutableMapOf<String, List<EpisodeItem>>()
         private val seriesCache = mutableMapOf<String, DetailsResponse>()
         private val mainPageCache = mutableMapOf<String, Pair<HomePageList, Long>>()
@@ -221,6 +223,8 @@ class UniqueStreamProvider : MainAPI() {
                             val result = if (list.isNotEmpty()) HomePageList(name, list) else null
                             if (result != null) mainPageCache[name] = result to now
                             result
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.e(TAG, "Sección '$name' falló: ${e.message}")
                             null
@@ -231,6 +235,8 @@ class UniqueStreamProvider : MainAPI() {
 
             Log.d(TAG, "Secciones cargadas: ${homeItems.size}")
             newHomePageResponse(homeItems, false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error en getMainPage: ${e.message}")
             newHomePageResponse(emptyList(), false)
@@ -267,6 +273,8 @@ class UniqueStreamProvider : MainAPI() {
                         return@repeat
                     }
                     Log.w(TAG, "series HTTP ${response.code} (intento ${i + 1})")
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "series fetch error (intento ${i + 1}): ${e.message}")
                 }
@@ -360,6 +368,8 @@ class UniqueStreamProvider : MainAPI() {
                         Log.w(TAG, "getWithRetry HTTP ${response.code} en $url (intento ${i + 1})")
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 lastError = e
                 Log.w(TAG, "getWithRetry error en $url (intento ${i + 1}): ${e.message}")
