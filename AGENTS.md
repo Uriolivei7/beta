@@ -333,6 +333,20 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
 - Plugin empaquetado: `:UniquestreamProvider:make` → `UniquestreamProvider/build/UniquestreamProvider.cs3` (75 KB)
 - ⏸️ **Pendiente**: instalar cs3 en dispositivo y abrir One Piece — la carga de episodios ya no debe morir a los 120s.
+- ✅ **VERIFICADO en dispositivo (09 Ago 2026)**: One Piece carga **1216 episodios completos** en ~5.5 min (12:59:19 → 13:05:12). Ya no hay `Timed out waiting for 120000 ms` ni cancelación del `load()`. Quedan timeouts OkHttp puntuales por petición (vISRWU6Y p1, QLBXwRlT p1) que `getWithRetry` reintenta y completa. Sin Cloudflare. El tiempo es normal: 68 páginas API × 5-30s / 12 concurrentes. `episodeCache` en memoria (solo por sesión).
+
+### 🔧 Caché en disco de episodios y serie (09 Ago 2026)
+- **Motivo**: One Piece tarda ~5.5 min en cargar los 1216 episodios (68 páginas API). Con solo caché en memoria, re-abrir la serie dentro de la misma sesión es rápido pero tras reiniciar la app se re-descarga todo.
+- **Implementado** en `UniquestreamProvider.kt`:
+  - Directorio `context.filesDir/uniquestream_cache/` con archivos `season_{id}.json` (lista procesada de `EpisodeItem`) y `series_{id}.json` (raw JSON de `/series/{id}`).
+  - `readSeasonCache`/`writeSeasonCache` y `readSeriesCache`/`writeSeriesCache` — todo en `Dispatchers.IO`, TTL **24h** (`CACHE_TTL_MS`).
+  - `loadSeasonEpisodes()`: primero caché en memoria → disco → API; al completar escribe en disco.
+  - `load()`: serie leída de memoria → disco → API; al completar escribe en disco.
+  - `AppUtils.toJson`/`parseJson` (Jackson, mismas data classes que usa el provider). Nota: `toJson` es extensión `Any.toJson()` — requiere `import com.lagradost.cloudstream3.utils.AppUtils.toJson`.
+- **No afecta**: reproducción (`loadLinks`), interceptor de video ni key derivation — solo el catálogo de episodios.
+- Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:UniquestreamProvider:make` → `UniquestreamProvider/build/UniquestreamProvider.cs3` (79 KB)
+- ⏸️ **Pendiente**: instalar cs3 y verificar que re-abrir One Piece tras reiniciar la app carga los 1216 eps desde disco (rápido, sin 68 peticiones).
 
 ---
 

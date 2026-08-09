@@ -5,12 +5,15 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.*
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -36,6 +39,61 @@ class UniqueStreamProvider : MainAPI() {
         private val episodeCache = mutableMapOf<String, List<EpisodeItem>>()
         private val seriesCache = mutableMapOf<String, DetailsResponse>()
         private val mainPageCache = mutableMapOf<String, Pair<HomePageList, Long>>()
+        private val diskCacheDir: File by lazy {
+            File(context?.filesDir ?: File(System.getProperty("java.io.tmpdir")), "uniquestream_cache")
+        }
+        private const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
+    }
+
+    private fun seasonCacheFile(seasonId: String): File =
+        File(diskCacheDir, "season_$seasonId.json")
+
+    private fun seriesCacheFile(seriesId: String): File =
+        File(diskCacheDir, "series_$seriesId.json")
+
+    private suspend fun readSeasonCache(seasonId: String): List<EpisodeItem>? = withContext(Dispatchers.IO) {
+        try {
+            val f = seasonCacheFile(seasonId)
+            if (!f.exists()) return@withContext null
+            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return@withContext null
+            val parsed = AppUtils.parseJson<List<EpisodeItem>>(f.readText())
+            if (parsed.isNullOrEmpty()) null else parsed
+        } catch (e: Exception) {
+            Log.w(TAG, "readSeasonCache falló $seasonId: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun writeSeasonCache(seasonId: String, eps: List<EpisodeItem>) = withContext(Dispatchers.IO) {
+        try {
+            val f = seasonCacheFile(seasonId)
+            f.parentFile?.mkdirs()
+            f.writeText(eps.toJson())
+        } catch (e: Exception) {
+            Log.w(TAG, "writeSeasonCache falló $seasonId: ${e.message}")
+        }
+    }
+
+    private suspend fun readSeriesCache(seriesId: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val f = seriesCacheFile(seriesId)
+            if (!f.exists()) return@withContext null
+            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return@withContext null
+            f.readText()
+        } catch (e: Exception) {
+            Log.w(TAG, "readSeriesCache falló $seriesId: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun writeSeriesCache(seriesId: String, text: String) = withContext(Dispatchers.IO) {
+        try {
+            val f = seriesCacheFile(seriesId)
+            f.parentFile?.mkdirs()
+            f.writeText(text)
+        } catch (e: Exception) {
+            Log.w(TAG, "writeSeriesCache falló $seriesId: ${e.message}")
+        }
     }
 
     private val baseHeaders = mapOf(
@@ -265,11 +323,15 @@ class UniqueStreamProvider : MainAPI() {
 
         var seriesText: String? = seriesCache[cleanId]?.let { null }
         if (seriesText == null) {
+            seriesText = readSeriesCache(cleanId)
+        }
+        if (seriesText == null) {
             repeat(3) { i ->
                 try {
                     val response = app.get("$apiUrl/series/$cleanId", headers = baseHeaders, timeout = 30L)
                     if (response.isSuccessful) {
                         seriesText = response.text
+                        writeSeriesCache(cleanId, seriesText!!)
                         return@repeat
                     }
                     Log.w(TAG, "series HTTP ${response.code} (intento ${i + 1})")
@@ -385,6 +447,11 @@ class UniqueStreamProvider : MainAPI() {
     private suspend fun loadSeasonEpisodes(season: SeasonItem): List<EpisodeItem> {
         val seasonId = season.content_id
         episodeCache[seasonId]?.let { return it }
+        readSeasonCache(seasonId)?.let { cached ->
+            Log.d(TAG, "loadSeasonEpisodes($seasonId): desde disco (${cached.size})")
+            episodeCache[seasonId] = cached
+            return cached
+        }
 
         val episodeCount = season.episode_count ?: 0
         val totalPages = if (episodeCount > 0) {
@@ -465,9 +532,11 @@ class UniqueStreamProvider : MainAPI() {
         if (hasFractional) {
             val renumbered = merged.mapIndexed { i, ep -> ep.copy(episode_number = (i + 1).toDouble()) }
             episodeCache[seasonId] = renumbered
+            writeSeasonCache(seasonId, renumbered)
             return renumbered
         }
         episodeCache[seasonId] = merged
+        writeSeasonCache(seasonId, merged)
         return merged
     }
 
