@@ -141,7 +141,7 @@ class UniqueStreamProvider : MainAPI() {
         "en-US" -> "English (US)"
         "es-419" -> "Español (LATAM)"
         "es-ES" -> "Español (España)"
-        "ja-JP" -> "日本語"
+        "ja-JP" -> "Japonés"
         "pt-BR" -> "Português (BR)"
         "de-DE" -> "Deutsch"
         "fr-FR" -> "Français"
