@@ -7,13 +7,9 @@ import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.*
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -56,20 +52,20 @@ class UniqueStreamProvider : MainAPI() {
     private fun movieCacheFile(movieId: String): File =
         File(diskCacheDir, "movie_$movieId.json")
 
-    private suspend fun readSeasonCache(seasonId: String): List<EpisodeItem>? = withContext(Dispatchers.IO) {
+    private suspend fun readSeasonCache(seasonId: String): List<EpisodeItem>? {
         try {
             val f = seasonCacheFile(seasonId)
-            if (!f.exists()) return@withContext null
-            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return@withContext null
+            if (!f.exists()) return null
+            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return null
             val parsed = AppUtils.parseJson<List<EpisodeItem>>(f.readText())
-            if (parsed.isNullOrEmpty()) null else parsed
+            return if (parsed.isNullOrEmpty()) null else parsed
         } catch (e: Exception) {
             Log.w(TAG, "readSeasonCache falló $seasonId: ${e.message}")
-            null
+            return null
         }
     }
 
-    private suspend fun writeSeasonCache(seasonId: String, eps: List<EpisodeItem>) = withContext(Dispatchers.IO) {
+    private suspend fun writeSeasonCache(seasonId: String, eps: List<EpisodeItem>) {
         try {
             val f = seasonCacheFile(seasonId)
             f.parentFile?.mkdirs()
@@ -79,30 +75,30 @@ class UniqueStreamProvider : MainAPI() {
         }
     }
 
-    private suspend fun readSeriesCache(seriesId: String): String? = withContext(Dispatchers.IO) {
+    private suspend fun readSeriesCache(seriesId: String): String? {
         try {
             val f = seriesCacheFile(seriesId)
-            if (!f.exists()) return@withContext null
-            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return@withContext null
-            f.readText()
+            if (!f.exists()) return null
+            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return null
+            return f.readText()
         } catch (e: Exception) {
             Log.w(TAG, "readSeriesCache falló $seriesId: ${e.message}")
-            null
+            return null
         }
     }
 
-    private suspend fun readCacheFile(f: File): String? = withContext(Dispatchers.IO) {
+    private suspend fun readCacheFile(f: File): String? {
         try {
-            if (!f.exists()) return@withContext null
-            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return@withContext null
-            f.readText()
+            if (!f.exists()) return null
+            if (System.currentTimeMillis() - f.lastModified() > CACHE_TTL_MS) return null
+            return f.readText()
         } catch (e: Exception) {
             Log.w(TAG, "readCacheFile falló ${f.name}: ${e.message}")
-            null
+            return null
         }
     }
 
-    private suspend fun writeCacheFile(f: File, text: String) = withContext(Dispatchers.IO) {
+    private suspend fun writeCacheFile(f: File, text: String) {
         try {
             f.parentFile?.mkdirs()
             f.writeText(text)
@@ -111,7 +107,7 @@ class UniqueStreamProvider : MainAPI() {
         }
     }
 
-    private suspend fun writeSeriesCache(seriesId: String, text: String) = withContext(Dispatchers.IO) {
+    private suspend fun writeSeriesCache(seriesId: String, text: String) {
         try {
             val f = seriesCacheFile(seriesId)
             f.parentFile?.mkdirs()
