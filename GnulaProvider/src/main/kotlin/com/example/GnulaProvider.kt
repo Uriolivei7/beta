@@ -300,7 +300,7 @@ class GnulaProvider : MainAPI() {
 
         return if (!post.seasons.isNullOrEmpty()) {
             Log.d(TAG, "load: Es serie — ${post.seasons.size} temporadas")
-            val episodes = post.seasons.flatMap<Season, Episode> { season ->
+            val episodes = post.seasons.flatMap<GnulaSeason, Episode> { season ->
                 season.episodes.map { ep: SeasonEpisode ->
                     val sNum = ep.slug.season ?: season.number?.toString() ?: "1"
                     val eNum = ep.slug.episode ?: ep.number?.toString() ?: "1"
@@ -479,7 +479,7 @@ class GnulaProvider : MainAPI() {
         val titles: Titles = Titles(),
         val images: Images = Images(),
         val overview: String? = null,
-        val seasons: List<Season> = emptyList(),
+        val seasons: List<GnulaSeason> = emptyList(),
         val players: Players? = null,
         val releaseDate: String? = null,
         val genres: List<Genre>? = null,
@@ -503,7 +503,7 @@ class GnulaProvider : MainAPI() {
 
     @Serializable data class Slug(val name: String? = null)
     @Serializable data class Url(val slug: String? = null)
-    @Serializable data class Season(val number: Long? = null, val episodes: List<SeasonEpisode> = emptyList())
+    @Serializable data class GnulaSeason(val number: Long? = null, val episodes: List<SeasonEpisode> = emptyList())
 
     @Serializable data class Slug2(val name: String? = null, val season: String? = null, val episode: String? = null)
     @Serializable data class EpisodeData(val players: Players? = null)
