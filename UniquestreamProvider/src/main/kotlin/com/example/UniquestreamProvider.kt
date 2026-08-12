@@ -496,7 +496,7 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        return newMovieLoadResponse(details.title ?: "Sin Título", url, TvType.AnimeMovie, details.description ?: "") {
+        return newMovieLoadResponse(details.title ?: "Sin Título", url, TvType.AnimeMovie, url) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url?.upgradePoster()
             this.plot = plot
             this.tags = details.genre?.mapNotNull { it.name } ?: emptyList()
