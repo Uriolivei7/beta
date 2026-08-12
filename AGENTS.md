@@ -442,3 +442,45 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ### Scripts de verificación (`%TEMP%\opencode\`)
 - `plus_unpack4.py` (desempaquetado completo del eval vidhide), `plus_regex_test.py` (validación del regex Kotlin → encuentra eval correcto a=36 c=602), `plus_player_flow.py` (mapeo película→player page→vidhideplus), `plus_cdn_check*.py` (master→variante→segmentos), `plus_seg_hdr.py` (headers segmentos hls2 vs hls3), `plus_hls3*.py` (master.txt hls3)
+
+---
+
+## UniqueStreamProvider — Fix películas standalone (12 Ago 2026)
+
+### 🐛 Bug corregido
+- **Síntoma**: las películas standalone (no dentro de una serie) no cargaban información — salía error.
+- **Causa raíz (verificado con curl)**:
+  - `load()` solo llamaba `GET /api/v1/series/{id}` → **404 para TODAS las películas** (ej. `dv_575811` The Garden of Words, `stWMCKHO` Shinobi Girl: The Movie).
+  - `loadLinks()` solo llamaba `GET /api/v1/episode/{id}/media/dash/{locale}` → 404 para películas.
+  - El search API devuelve `movies[]` (con `type:"movie"`) pero el plugin solo parseaba `series[]`.
+
+### Endpoints correctos (verificados)
+| Endpoint | Uso | Status |
+|---|---|---|
+| `GET /api/v1/content/{id}` → `content_type:"movie"` | Detectar tipo | ✅ 200 movies, 404 series |
+| `GET /api/v1/movie/{id}` | Detalle película (title, images, duration_ms, year, studio, rating) | ✅ 200 |
+| `GET /api/v1/movie/{id}/media/dash/{locale}` | Playback master de película | ✅ 200 |
+| `GET /api/v1/series/{id}` | Detalle serie | ✅ 200 series, 404 movies |
+| `GET /api/v1/episode/{id}/media/dash/{locale}` | Playback de episodio | ✅ 200 |
+| `GET /api/v1/search?query=` → `movies[]` + `series[]` | Búsqueda | ✅ 200 |
+
+### Fix implementado en `UniquestreamProvider.kt`
+1. **Detección de películas**: set `movieIds` poblado en `toSearchResponse()` (main page + search) y `probeContentType()` que hace `GET /content/{id}` como respaldo (si `content_type` presente → movie).
+2. **`load()`**: si es movie → `loadMovie()` usa `GET /movie/{id}`, devuelve `newMovieLoadResponse(TvType.AnimeMovie)` con poster, plot (desc + año/estudio), duration, year, score. Sin episodios (es película).
+3. **`loadLinks()`**: si es movie → `GET /movie/{id}/media/dash/{locale}`; si no → `/episode/` (flujo anterior intacto).
+4. **`search()`**: ahora parsea `series[]` + `movies[]` (antes solo `series[]`).
+5. Master de movie: `get3.mediacache.cc/movie/{id}/{media_id}_{locale}/master.m3u8` — mismo `keyRegex`/interceptor de key (media_id corto tipo `575811` ya soportado).
+
+### Estado
+- Compilación OK: `.\gradlew.bat :UniquestreamProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:UniquestreamProvider:make` → `UniquestreamProvider/build/UniquestreamProvider.cs3` (89 KB)
+- ⏸️ **Pendiente**: instalar cs3 en dispositivo y probar The Garden of Words (`dv_575811`) — detalle + reproducción ja-JP/es-419.
+
+## UniqueStreamProvider — Diagnóstico freeze CDN (12 Ago 2026)
+- **Síntoma**: EP8 de Fate/strange Fake (ja-JP, content_id `kmRlqThD`) congelaba cada ~5s; pausa+espera solo fluido por unos minutos.
+- **Medido desde PC (master/variante/segmentos reales de `get3.mediacache.cc`)**:
+  - Solo **1 variante 1080p** (avg 5.5 Mbps). No hay 720p/480p (paths `v_1280x720` etc → 403, sign ligado a resolución; API ignora `?quality=`).
+  - Segmentos ~3.8s de duración tardan 1.8→10.4s en descargar. Sostenido **4.5 Mbps**, y con headers completos/keep-alive **3.3-4.4 Mbps**; paralelo 2 conexiones 2.6 Mbps.
+  - **Conclusión**: CDN throttleado por IP (igual veredicto que acek-cdn en Plushd). No hay fix de código — solo variante 1080p y CDN < bitrate. No confundir con cambios de catálogo (0.1.0-0.1.2) que NO tocan reproducción.
+- AnimeOnsen emite el mismo patrón (1 sola calidad) PERO su CDN entrega > bitrate → pausa llena buffer y se mantiene fluido. No hay feature que copiar; es ancho de banda.
+- Scripts: `fsf_speed.py`, `fsf_speed2.py`, `fsf_parallel.py`, `fsf_headers.py` en `%TEMP%\opencode\`.
