@@ -1,128 +1,111 @@
 package com.example
 
-import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.CheckBox
 import android.widget.CompoundButton
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.AppCompatEditText
 import androidx.appcompat.widget.AppCompatTextView
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.graphics.ColorUtils
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 
 class SyncSettings(private val plugin: SyncPlugin) {
 
-    private fun resolveColor(ctx: Context, attr: Int): Int {
-        val tv = TypedValue()
-        return if (ctx.theme.resolveAttribute(attr, tv, true)) tv.data else 0xFF000000.toInt()
-    }
+    private fun dpToPx(ctx: android.content.Context, dp: Int): Int =
+        (dp * ctx.resources.displayMetrics.density).toInt()
 
-    private fun isDarkTheme(ctx: Context): Boolean =
-        ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+    private fun isDarkTheme(ctx: android.content.Context): Boolean =
+        (ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES
 
-    private fun inputBackground(ctx: Context, accent: Int, corner: Float): GradientDrawable {
-        val base = resolveColor(ctx, android.R.attr.colorBackground)
-        val fill = ColorUtils.setAlphaComponent(
-            base,
-            if (isDarkTheme(ctx)) 0x2E else 0x66, // ~18% / ~40% alfa sobre el fondo del diálogo
-        )
-        val stroke = ColorUtils.setAlphaComponent(accent, 0x59) // ~35% acento
+    private fun alphaOf(color: Int, alpha: Int): Int =
+        color and 0x00FFFFFF or (alpha shl 24)
+
+    private fun inputBackground(ctx: android.content.Context, corner: Float): GradientDrawable {
+        val isDark = isDarkTheme(ctx)
+        val fill = ContextCompat.getColor(ctx, android.R.color.white)
+        val strokeColor = if (isDark) alphaOf(fill, 0x33) else alphaOf(0xFF000000.toInt(), 0x26)
         return GradientDrawable().apply {
             cornerRadius = corner
-            setColor(fill)
-            setStroke(dpToPx(ctx, 1), stroke)
+            setColor(if (isDark) alphaOf(fill, 0x1F) else alphaOf(0xFF000000.toInt(), 0x0D))
+            setStroke(dpToPx(ctx, 1), strokeColor)
         }
     }
 
-    private fun dpToPx(ctx: Context, dp: Int): Int =
-        (dp * ctx.resources.displayMetrics.density).toInt()
-
     fun show(activity: AppCompatActivity) {
-        val appContext = activity.applicationContext
-        val primary = resolveColor(appContext, android.R.attr.textColorPrimary)
-        val secondary = resolveColor(appContext, android.R.attr.textColorSecondary)
-        val accent = resolveColor(appContext, android.R.attr.colorAccent)
-        val corner = dpToPx(appContext, 12).toFloat()
-        val inputBg = inputBackground(appContext, accent, corner)
+        val ctx: android.content.Context = activity
+        val corner = dpToPx(ctx, 12).toFloat()
+        val inputBg = inputBackground(ctx, corner)
 
-        val scroll = ScrollView(appContext)
-        val root = LinearLayout(appContext).apply {
+        val scroll = ScrollView(ctx)
+        val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dpToPx(appContext, 20), dpToPx(appContext, 12), dpToPx(appContext, 20), dpToPx(appContext, 12))
+            setPadding(dpToPx(ctx, 20), dpToPx(ctx, 12), dpToPx(ctx, 20), dpToPx(ctx, 12))
         }
         scroll.addView(root)
 
         fun addSectionTitle(text: String) {
-            root.addView(AppCompatTextView(appContext).apply {
+            root.addView(AppCompatTextView(ctx).apply {
                 this.text = text
-                setTextColor(primary)
                 setTypeface(null, Typeface.BOLD)
                 textSize = 16f
-                setPadding(0, dpToPx(appContext, 16), 0, dpToPx(appContext, 6))
+                setPadding(0, dpToPx(ctx, 16), 0, dpToPx(ctx, 6))
             })
         }
 
         fun addBody(text: String, size: Float = 13f) {
-            root.addView(AppCompatTextView(appContext).apply {
+            root.addView(AppCompatTextView(ctx).apply {
                 this.text = text
-                setTextColor(secondary)
                 textSize = size
                 setLineSpacing(0f, 1.15f)
-                setPadding(0, dpToPx(appContext, 2), 0, dpToPx(appContext, 2))
+                setPadding(0, dpToPx(ctx, 2), 0, dpToPx(ctx, 2))
             })
         }
 
         fun addFieldLabel(text: String) {
-            root.addView(AppCompatTextView(appContext).apply {
+            root.addView(AppCompatTextView(ctx).apply {
                 this.text = text
-                setTextColor(primary)
                 setTypeface(null, Typeface.BOLD)
                 textSize = 13f
-                setPadding(0, dpToPx(appContext, 10), 0, dpToPx(appContext, 4))
+                setPadding(0, dpToPx(ctx, 10), 0, dpToPx(ctx, 4))
             })
         }
 
-        fun addSpace(h: Int) = root.addView(View(appContext).apply {
-            layoutParams = LinearLayout.LayoutParams(1, dpToPx(appContext, h))
+        fun addSpace(h: Int) = root.addView(View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(1, dpToPx(ctx, h))
         })
 
         addSectionTitle("CloudStream Sync")
         addBody("Sincroniza favoritos, progreso, historial, repos y ajustes entre tus dispositivos usando un proyecto GitHub (ProjectV2).")
-        addBody("Paso 1: crea un token en GitHub → Settings → Developer settings → Personal access tokens (classic) con permisos repo + read:org.", 12f)
+        addBody("Paso 1: crea un token en GitHub → Settings → Developer settings → Personal access tokens (classic) con permisos repo + read:org.")
 
-        // ---- Conexión ----
         addSectionTitle("Conexión")
 
         addFieldLabel("Token de GitHub")
-        val tokenInput = AppCompatEditText(appContext).apply {
+        val tokenInput = AppCompatEditText(ctx).apply {
             hint = "ghp_..."
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             transformationMethod = PasswordTransformationMethod.getInstance()
             isSingleLine = true
             setText(SyncStorage.token.orEmpty())
             background = inputBg
-            setPadding(dpToPx(appContext, 12), dpToPx(appContext, 10), dpToPx(appContext, 12), dpToPx(appContext, 10))
-            setHintTextColor(secondary)
-            setTextColor(primary)
+            setPadding(dpToPx(ctx, 12), dpToPx(ctx, 10), dpToPx(ctx, 12), dpToPx(ctx, 10))
         }
         root.addView(tokenInput)
 
-        val showToken = CheckBox(appContext).apply {
+        val showToken = CheckBox(ctx).apply {
             text = "Mostrar token"
             isChecked = false
             setOnCheckedChangeListener { _: CompoundButton?, checked: Boolean ->
@@ -134,24 +117,21 @@ class SyncSettings(private val plugin: SyncPlugin) {
         root.addView(showToken)
 
         addFieldLabel("Número de proyecto")
-        val projectNumInput = AppCompatEditText(appContext).apply {
+        val projectNumInput = AppCompatEditText(ctx).apply {
             hint = "Ej: 3"
             inputType = InputType.TYPE_CLASS_NUMBER
             isSingleLine = true
             imeOptions = EditorInfo.IME_ACTION_DONE
             setText(SyncStorage.projectNum.orEmpty())
             background = inputBg
-            setPadding(dpToPx(appContext, 12), dpToPx(appContext, 10), dpToPx(appContext, 12), dpToPx(appContext, 10))
-            setHintTextColor(secondary)
-            setTextColor(primary)
+            setPadding(dpToPx(ctx, 12), dpToPx(ctx, 10), dpToPx(ctx, 12), dpToPx(ctx, 10))
         }
         root.addView(projectNumInput)
 
-        addBody("Abre GitHub → Projects → tu proyecto, y mira la URL: el último número es el número de proyecto (ej: /projects/3).", 12f)
+        addBody("Abre GitHub → Projects → tu proyecto, y mira la URL: el último número es el número de proyecto (ej: /projects/3)")
 
         addSpace(6)
 
-        // ---- Categorías ----
         addSectionTitle("Categorías")
         val catCheckboxes = mutableMapOf<SyncCategory, Pair<CheckBox, CheckBox>>()
         for (cat in SyncCategory.entries) {
@@ -162,22 +142,21 @@ class SyncSettings(private val plugin: SyncPlugin) {
                 SyncCategory.SEARCH_HISTORY -> "Historial de búsqueda"
                 SyncCategory.EXTENSIONS -> "Repos de extensiones"
             }
-            val row = LinearLayout(appContext).apply {
+            val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dpToPx(appContext, 2), 0, dpToPx(appContext, 2))
+                setPadding(0, dpToPx(ctx, 2), 0, dpToPx(ctx, 2))
             }
-            row.addView(AppCompatTextView(appContext).apply {
+            row.addView(AppCompatTextView(ctx).apply {
                 text = title
-                setTextColor(primary)
                 textSize = 13f
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            val backupBox = CheckBox(appContext).apply {
+            val backupBox = CheckBox(ctx).apply {
                 text = "Backup"
                 isChecked = SyncStorage.isBackupEnabled(cat)
             }
-            val restoreBox = CheckBox(appContext).apply {
+            val restoreBox = CheckBox(ctx).apply {
                 text = "Restaurar"
                 isChecked = SyncStorage.isRestoreEnabled(cat)
             }
@@ -189,22 +168,24 @@ class SyncSettings(private val plugin: SyncPlugin) {
 
         addSpace(6)
 
-        // ---- Acciones ----
         addSectionTitle("Acciones")
         addBody("Sincroniza cada 30s mientras la app esté abierta. Los cambios locales se suben ~2s después de producirse.")
 
-        val save = AppCompatButton(appContext).apply {
+        val save = AppCompatButton(ctx).apply {
             text = "Guardar y sincronizar"
             isAllCaps = false
             textSize = 15f
-            setTextColor(0xFFFFFFFF.toInt())
-            backgroundTintList = ColorStateList.valueOf(accent)
+            setTextColor(android.graphics.Color.WHITE)
+            ViewCompat.setBackgroundTintList(
+                this,
+                ColorStateList.valueOf(ContextCompat.getColor(ctx, android.R.color.holo_blue_dark)),
+            )
             stateListAnimator = null
-            setPadding(dpToPx(appContext, 16), dpToPx(appContext, 12), dpToPx(appContext, 16), dpToPx(appContext, 12))
+            setPadding(dpToPx(ctx, 16), dpToPx(ctx, 12), dpToPx(ctx, 16), dpToPx(ctx, 12))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dpToPx(appContext, 16) }
+            ).apply { topMargin = dpToPx(ctx, 16) }
             setOnClickListener {
                 SyncStorage.token = tokenInput.text.toString().trim().ifEmpty { null }
                 SyncStorage.projectNum = projectNumInput.text.toString().trim().ifEmpty { null }

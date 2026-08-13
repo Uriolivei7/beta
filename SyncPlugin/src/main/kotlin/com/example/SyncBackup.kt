@@ -41,6 +41,7 @@ object SyncBackup {
         "home_api_used", "home_api", "user_selected_homepage_api",
         "last_sync_api_key", "home_pref_homepage", "library_sorting_mode",
         "results_sorting_mode", "viewpager_item_key",
+        "app_layout_key",
     )
 
     private fun String.isTransferable(): Boolean {
