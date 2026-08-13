@@ -8,6 +8,7 @@ import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.CheckBox
@@ -127,7 +128,7 @@ class SyncSettings(private val plugin: SyncPlugin) {
             setOnCheckedChangeListener { _: CompoundButton?, checked: Boolean ->
                 tokenInput.transformationMethod =
                     if (checked) null else PasswordTransformationMethod.getInstance()
-                tokenInput.setSelection(tokenInput.text.length)
+                tokenInput.setSelection(tokenInput.text?.length ?: 0)
             }
         }
         root.addView(showToken)
