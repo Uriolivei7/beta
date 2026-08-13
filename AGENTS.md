@@ -484,3 +484,40 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
   - **Conclusión**: CDN throttleado por IP (igual veredicto que acek-cdn en Plushd). No hay fix de código — solo variante 1080p y CDN < bitrate. No confundir con cambios de catálogo (0.1.0-0.1.2) que NO tocan reproducción.
 - AnimeOnsen emite el mismo patrón (1 sola calidad) PERO su CDN entrega > bitrate → pausa llena buffer y se mantiene fluido. No hay feature que copiar; es ancho de banda.
 - Scripts: `fsf_speed.py`, `fsf_speed2.py`, `fsf_parallel.py`, `fsf_headers.py` en `%TEMP%\opencode\`.
+
+## SyncPlugin (CloudStream Sync) — Sincronización entre dispositivos (13 Ago 2026)
+
+### ¿Qué hace?
+- Sincroniza datos de CloudStream entre dispositivos usando un **Proyecto de GitHub (ProjectV2)** sin servidor propio.
+- Cada dispositivo se guarda como un **DraftIssue** del proyecto; su body es un JSON comprimido (GZIP+Base64) con el backup.
+- 5 categorías: `bookmarks` (favoritos), `resume` (progreso de reproducción), `search_history`, `extensions_repos`, `settings`.
+
+### Archivos (SyncPlugin/src/main/kotlin/com/example/)
+| Archivo | Rol |
+|---------|-----|
+| `SyncPlugin.kt` | Orquestador: listeners de prefs + `bookmarksUpdatedEvent`, polling 30s, `runSync` (restore desde el dispositivo con `updatedAt` más reciente + push si hash cambió), debounce 2s por cambio |
+| `SyncBackup.kt` | Construye el backup (datastore + settings SharedPreferences), clasifica claves en categorías, MD5 hash, merge por timestamps, filtrado por categoría |
+| `SyncNetwork.kt` | GraphQL de GitHub (fetchProjectId, fetchDevices, registerDevice, updateDevice), GZIP+Base64 compress, `getDeviceId` = MD5(packageName+ANDROID_ID) |
+| `SyncStorage.kt` | Persistencia de token/números/proyecto/deviceId vía `AcraApplication.getKey/setKey` |
+| `SyncSettings.kt` | UI programática (AlertDialog): token, número de proyecto, checkboxes backup/restore por categoría, botón "Guardar y sincronizar" |
+| `SyncData.kt` | Modelos serializables (BackupFile, BackupVars, SyncDevice, GitHubGraphQLResponse...) |
+
+### Pontos clave del diseño
+- `isBackupEnabled`/`isRestoreEnabled` por categoría (flags "true"/"false" en AcraApplication keys).
+- Restore: coge el DraftIssue de OTRO dispositivo (`deviceId != propio`) con `updatedAt` más alto, hace merge por categoría comparando `categoryTimestamp` local vs `updatedAt` en epoch. `isRestoring=true` silencia los listeners durante el restore.
+- Push: solo si `computeHash(data) != lastPushedHash`.
+- `nonTransferableKeys` excluye cuentas/logins de terceros, rutas de descarga, keys propias del plugin, etc.
+- Resume watching vía `HomeViewModel.getResumeWatching()` (nullable → `?.also`) con cache.
+
+### 🔧 Fixes de compilación (13 Ago 2026)
+- **`DataStore.getSharedPrefs`/`getDefaultSharedPrefs` NO resuelven** en el compilador del plugin (el jar `jetified-cloudstream.jar` SÍ tiene los métodos JVM pero el metadata Kotlin `mv=[2,2,0]`/`xi=48` no los expone). **Fix**: acceso directo a los ficheros (verificado por bytecode):
+  - datastore → `context.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)` (el host usa exactamente ese nombre, confirmado con `javap -c`)
+  - settings → `context.getSharedPreferences(context.packageName + "_preferences", Context.MODE_PRIVATE)` (= `PreferenceManager.getDefaultSharedPreferences`)
+- `HomeViewModel.getResumeWatching()` devuelve `List<ResumeWatchingResult>?` → handle con `?.also` + caché.
+- `forceSync` no es suspend (lanza `scope.launch` internamente) → se puede llamar desde `setOnClickListener`.
+
+### Estado
+- ✅ Compilación OK: `.\gradlew.bat :SyncPlugin:compileReleaseKotlin --console=plain`
+- ✅ Plugin empaquetado: `:SyncPlugin:make` → `SyncPlugin/build/SyncPlugin.cs3` (60 KB, 13 Ago 2026)
+- ⏸️ **Pendiente**: probar en dispositivo — tiene que crear el project (ProjectV2), el token con scope, registrar un dispositivo como DraftIssue y verificar sync bidireccional.
+- ⏸️ Pendiente: verificar que `updatedAt` entre los DraftIssues de GitHub se actualiza correctamente tras `updateDevice`.
