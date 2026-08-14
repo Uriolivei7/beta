@@ -42,7 +42,9 @@ data class GitHubGraphQLError(
 data class GitHubGraphQLData(
     val viewer: GitHubViewer? = null,
     @SerialName("addProjectV2DraftIssue") val addDraft: AddDraftResult? = null,
-    @SerialName("updateProjectV2DraftIssue") val updateDraft: UpdateDraftResult? = null
+    @SerialName("updateProjectV2DraftIssue") val updateDraft: UpdateDraftResult? = null,
+    @SerialName("node") val node: GitHubContent? = null,
+    @SerialName("deleteProjectV2Item") val deleteItem: DeleteProjectV2ItemResult? = null
 )
 
 @Serializable
@@ -58,7 +60,14 @@ data class GitHubProject(
 
 @Serializable
 data class GitHubItems(
-    val nodes: List<GitHubNode>? = null
+    val nodes: List<GitHubNode>? = null,
+    val pageInfo: GitHubPageInfo? = null
+)
+
+@Serializable
+data class GitHubPageInfo(
+    val endCursor: String? = null,
+    val hasNextPage: Boolean = false
 )
 
 @Serializable
@@ -92,11 +101,17 @@ data class UpdateDraftResult(
     val draftIssue: GitHubContent? = null
 )
 
+@Serializable
+data class DeleteProjectV2ItemResult(
+    val deletedItemId: String? = null
+)
+
 data class SyncDevice(
     val name: String,
     val deviceId: String,
     val itemId: String,
     val updatedAt: Long,
-    val syncedData: String? = null,
+    val chunkIndex: Int = 0,
     val itemContentId: String? = null,
+    val gen: Long? = null,
 )

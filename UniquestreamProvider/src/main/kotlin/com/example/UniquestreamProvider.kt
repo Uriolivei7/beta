@@ -1,9 +1,9 @@
 package com.example
 
+import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.M3u8Helper
@@ -37,8 +37,9 @@ class UniqueStreamProvider : MainAPI() {
         private val movieCache = mutableMapOf<String, MovieDetails>()
         private val movieIds = mutableSetOf<String>()
         private val mainPageCache = mutableMapOf<String, Pair<HomePageList, Long>>()
+        var appContext: Context? = null
         private val diskCacheDir: File by lazy {
-            File(context?.filesDir ?: File(System.getProperty("java.io.tmpdir")), "uniquestream_cache")
+            File(appContext?.filesDir ?: File(System.getProperty("java.io.tmpdir")), "uniquestream_cache")
         }
         private const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
     }
@@ -224,11 +225,11 @@ class UniqueStreamProvider : MainAPI() {
                                 Log.w(TAG, "key.bin base64 error: ${e.message}")
                                 null
                             }
-                        if (encrypted != null) {
-                            val dek = sha256("key$theMediaId".toByteArray()).copyOfRange(0, 16)
-                            val div = sha256("iv$theMediaId".toByteArray()).copyOfRange(0, 16)
-                            aesCbcDecrypt(encrypted, dek, div)
-                        } else null
+                            if (encrypted != null) {
+                                val dek = sha256("key$theMediaId".toByteArray()).copyOfRange(0, 16)
+                                val div = sha256("iv$theMediaId".toByteArray()).copyOfRange(0, 16)
+                                aesCbcDecrypt(encrypted, dek, div)
+                            } else null
                         }
 
                         val realKey = derivedKey ?: fallbackKey
@@ -383,10 +384,10 @@ class UniqueStreamProvider : MainAPI() {
 
         val orderedSeasons = (details.seasons ?: emptyList())
             .filter { processedSeasonIds.add(it.content_id) }
-.sortedWith(
-                    compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
-                        .thenBy { it.season_number }
-                )
+            .sortedWith(
+                compareBy<SeasonItem> { it.season_seq_number ?: it.season_number }
+                    .thenBy { it.season_number }
+            )
 
         val seasonResults = mutableListOf<Pair<Int, List<EpisodeItem>>>()
 
@@ -443,7 +444,7 @@ class UniqueStreamProvider : MainAPI() {
         return try {
             val response = app.get("$apiUrl/content/$id", headers = baseHeaders, timeout = 20L)
             val isMovie = response.isSuccessful &&
-                Regex("\"content_type\"\\s*:\\s*\"movie\"").containsMatchIn(response.text)
+                    Regex("\"content_type\"\\s*:\\s*\"movie\"").containsMatchIn(response.text)
             if (isMovie) movieIds.add(id)
             isMovie
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -604,7 +605,7 @@ class UniqueStreamProvider : MainAPI() {
 
         val isSpecialFn: (EpisodeItem) -> Boolean = { ep ->
             ep.episode?.startsWith("SP", ignoreCase = true) == true ||
-                Regex("special\\s+\\d", RegexOption.IGNORE_CASE).containsMatchIn(ep.title ?: "")
+                    Regex("special\\s+\\d", RegexOption.IGNORE_CASE).containsMatchIn(ep.title ?: "")
         }
 
         val baseEps = allEps

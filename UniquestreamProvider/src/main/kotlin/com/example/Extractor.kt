@@ -27,7 +27,6 @@ class MediaCacheExtractor : ExtractorApi() {
         Log.d(TAG, "Referer: $referer")
 
         try {
-            // Headers necesarios para MediaCache
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept" to "*/*",
@@ -35,7 +34,6 @@ class MediaCacheExtractor : ExtractorApi() {
                 "Referer" to (referer ?: "https://anime.uniquestream.net/")
             )
 
-            // Descargar el master.m3u8
             val m3u8Response = app.get(url, headers = headers, timeout = 20L)
 
             if (m3u8Response.code != 200) {
@@ -46,7 +44,6 @@ class MediaCacheExtractor : ExtractorApi() {
             val m3u8Content = m3u8Response.text
             Log.d(TAG, "M3U8 descargado, parseando variantes...")
 
-            // Parsear variantes del master.m3u8
             val variants = parseM3U8Variants(m3u8Content, url)
 
             Log.d(TAG, "Encontradas ${variants.size} variantes")
@@ -58,7 +55,7 @@ class MediaCacheExtractor : ExtractorApi() {
                         source = this.name,
                         name = "$name - ${variant.quality}",
                         url = variant.url,
-                        type = ExtractorLinkType.M3U8,   // ← aquí va el tipo
+                        type = ExtractorLinkType.M3U8,
                     ) {
                         this.referer = referer ?: "https://anime.uniquestream.net/"
                         this.quality = variant.qualityValue
@@ -86,7 +83,6 @@ class MediaCacheExtractor : ExtractorApi() {
             val line = lines[i].trim()
 
             if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                // Extraer resolución
                 val resMatch = Regex("RESOLUTION=(\\d+)x(\\d+)").find(line)
                 if (resMatch != null) {
                     val width = resMatch.groupValues[1].toIntOrNull() ?: 0
@@ -102,16 +98,13 @@ class MediaCacheExtractor : ExtractorApi() {
                     }
                 }
 
-                // Extraer bandwidth
                 val bwMatch = Regex("BANDWIDTH=(\\d+)").find(line)
                 currentBandwidth = bwMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
             } else if (!line.startsWith("#") && line.isNotEmpty() && currentQuality.isNotEmpty()) {
-                // URL de la variante
                 val variantUrl = if (line.startsWith("http")) {
                     line
                 } else {
-                    // Construir URL absoluta
                     val base = baseUrl.substringBeforeLast("/")
                     "$base/$line"
                 }

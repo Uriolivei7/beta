@@ -6,7 +6,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
@@ -25,6 +24,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+//yeji
 class SoloLatinoProvider : MainAPI() {
     override var mainUrl = "https://sololatino.net"
     override var name = "SoloLatino"
@@ -476,15 +476,6 @@ class SoloLatinoProvider : MainAPI() {
                     }
                 }
 
-                fixedSrc.contains("voe") || fixedSrc.contains("yip.su") ||
-                    fixedSrc.contains("donaldlineelse") || fixedSrc.contains("charlestoughrace") ||
-                    fixedSrc.contains("tubelessceliolymph") || fixedSrc.contains("simpulumlamerop") ||
-                    fixedSrc.contains("urochsunloath") || fixedSrc.contains("nathanfromsubject") ||
-                    fixedSrc.contains("metagnathtuggers") || fixedSrc.contains("pamelachangemission") -> {
-                    Log.d("SoloLatino", "BRANCH: Voe extraction")
-                    loadExtractor(fixedSrc, targetUrl, subtitleCallback, callback)
-                }
-
                 fixedSrc.contains("xupalace.org") -> {
                     Log.d("SoloLatino", "BRANCH: xupalace.org")
                     val xupalaceHtml = app.get(fixedSrc, headers = baseHeaders).text
@@ -625,7 +616,6 @@ fun fixHostsLinks(url: String): String {
         .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
         .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
         .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
-        .replaceFirst("https://bysedikamoum.com", "https://filemoon.sx")
         .replaceFirst("https://filemoon.link", "https://filemoon.sx")
         .replaceFirst("https://sblona.com", "https://watchsb.com")
         .replaceFirst("https://lulu.st", "https://lulustream.com")

@@ -2,20 +2,14 @@ package com.example
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.lagradost.cloudstream3.ui.home.HomeViewModel
-import com.lagradost.cloudstream3.utils.DataStoreHelper
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.security.MessageDigest
 
 object SyncBackup {
 
-    private val resumeWatchingCache = mutableListOf<DataStoreHelper.ResumeWatchingResult>()
+    private const val ACCOUNTS_KEY = "data_store_helper/account"
 
-    suspend fun cachedResumeWatching(): List<DataStoreHelper.ResumeWatchingResult> =
-        try {
-            HomeViewModel.getResumeWatching()
-                ?.also { resumeWatchingCache.clear(); resumeWatchingCache.addAll(it) }
-            resumeWatchingCache
-        } catch (e: Exception) { resumeWatchingCache }
+    private val resumeMapper = ObjectMapper()
 
     val nonTransferableKeys = listOf(
         "anilist_unixtime", "anilist_token", "anilist_user", "anilist_cached_list",
@@ -26,6 +20,7 @@ object SyncBackup {
         "simkl_accounts", "simkl_active", "SIMKL_API_CACHE", "ANIWAVE_SIMKL_SYNC",
         "open_subtitles_user", "opensubtitles_accounts", "opensubtitles_active",
         "subdl_user", "subdl_accounts", "subdl_active",
+        "subtitle_settings", "subs_auto_select", "subs_auto_download", "chome_subtitle_settings",
         "biometric_key", "nginx_user",
         "download_path_key", "download_path_key_visual", "backup_path_key", "backup_dir_path_key",
         "cs3-votes", "last_sync_api", "last_click_action", "last_opened_id", "library_folder",
@@ -38,10 +33,11 @@ object SyncBackup {
         "data_store_helper/account_key_index", "VERSION_NAME", "FILES_TO_DELETE_KEY",
         "HAS_DONE_SETUP", "PLUGINS_KEY",
         "used_fstream_providers_v3", "fstream_version",
-        "home_api_used", "home_api", "user_selected_homepage_api",
+        "user_selected_homepage_api",
         "last_sync_api_key", "home_pref_homepage", "library_sorting_mode",
         "results_sorting_mode", "viewpager_item_key",
         "app_layout_key",
+        "auto_download_plugins_key2",
     )
 
     private fun String.isTransferable(): Boolean {
@@ -83,16 +79,16 @@ object SyncBackup {
 
     fun buildBackup(
         context: Context,
-        resumeWatching: List<DataStoreHelper.ResumeWatchingResult>?,
         enabled: Set<SyncCategory>,
     ): BackupFile {
+        val resumeIndex = buildResumeIndex(context.getSharedPrefs().all)
         val allData = context.getSharedPrefs().all.filter { entry ->
             entry.key.isTransferable() && classifyKey(entry.key) in enabled &&
-                isResumeRelevant(entry.key, resumeWatching)
+                isResumeRelevant(entry.key, resumeIndex)
         }
         val allSettings = context.getDefaultSharedPrefs().all.filter { entry ->
             entry.key.isTransferable() && classifyKey(entry.key) in enabled &&
-                isResumeRelevant(entry.key, resumeWatching)
+                isResumeRelevant(entry.key, resumeIndex)
         }
         return BackupFile(
             datastore = buildVars(allData),
@@ -100,25 +96,60 @@ object SyncBackup {
         )
     }
 
+    private class ResumeIndex(
+        val parentIds: Set<Int>,
+        val episodeIds: Set<Int>,
+    )
+
+    private fun buildResumeIndex(allData: Map<String, *>): Map<String, ResumeIndex> {
+        val parents = HashMap<String, MutableSet<Int>>()
+        val episodes = HashMap<String, MutableSet<Int>>()
+        for ((key, value) in allData) {
+            val parts = key.split("/")
+            if (parts.size != 3) continue
+            if (!parts[0].all { it.isDigit() }) continue
+            if (parts[1] != "result_resume_watching_2") continue
+            val parentId = parts[2].toIntOrNull() ?: continue
+            parents.getOrPut(parts[0]) { HashSet() }.add(parentId)
+            extractEpisodeId(value)?.let { episodes.getOrPut(parts[0]) { HashSet() }.add(it) }
+        }
+        return parents.keys.associateWith { account ->
+            ResumeIndex(
+                parentIds = parents[account] ?: emptySet(),
+                episodeIds = episodes[account] ?: emptySet(),
+            )
+        }
+    }
+
+    private fun extractEpisodeId(value: Any?): Int? {
+        if (value !is String) return null
+        return try {
+            resumeMapper.readTree(value).get("episodeId")?.asInt()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun isResumeRelevant(
         key: String,
-        resumeWatching: List<DataStoreHelper.ResumeWatchingResult>?,
+        resumeIndex: Map<String, ResumeIndex>,
     ): Boolean {
-        if (resumeWatching == null) return true
         val lowerKey = key.lowercase()
+        val parts = key.split("/")
+        val account = if (parts.size >= 2 && parts[0].all { it.isDigit() }) parts[0] else null
+        val index = account?.let { resumeIndex[it] }
+        if (index == null) return true
         if (lowerKey.contains("download_header_cache")) {
-            val id = key.split("/").getOrNull(1)?.toIntOrNull()
-            return id?.let { intId ->
-                resumeWatching.any { if (it.parentId != null) it.parentId == intId else it.id == intId }
-            } ?: false
+            val id = parts.getOrNull(1)?.toIntOrNull() ?: return false
+            return id in index.parentIds
         } else if (lowerKey.contains("video_pos_dur")) {
-            val id = key.split("/").getOrNull(2)?.toIntOrNull()
-            return id?.let { intId -> resumeWatching.any { it.id == intId } } ?: false
+            val id = parts.getOrNull(2)?.toIntOrNull() ?: return false
+            return id in index.episodeIds
         } else if (lowerKey.contains("result_season") || lowerKey.contains("result_dub") ||
             lowerKey.contains("result_episode")
         ) {
-            val id = key.split("/").getOrNull(2)?.toIntOrNull()
-            return id?.let { intId -> resumeWatching.any { it.parentId == intId } } ?: false
+            val id = parts.getOrNull(2)?.toIntOrNull() ?: return false
+            return id in index.parentIds
         }
         return true
     }
@@ -140,6 +171,8 @@ object SyncBackup {
     ) {
         restoreVars(context, backupFile.datastore, isSettings = false, enabled)
         restoreVars(context, backupFile.settings, isSettings = true, enabled)
+        context.getDefaultSharedPrefs().edit()
+            .putInt("auto_download_plugins_key2", 2).apply()
     }
 
     private fun restoreVars(
@@ -190,10 +223,9 @@ object SyncBackup {
         cloud: BackupFile,
         localCategoryTs: Long,
         cloudPayloadTs: Long,
-        isLocallyDirty: Boolean,
     ): BackupFile = BackupFile(
-        datastore = mergeVars(local.datastore, cloud.datastore, localCategoryTs, cloudPayloadTs, isLocallyDirty),
-        settings = mergeVars(local.settings, cloud.settings, localCategoryTs, cloudPayloadTs, isLocallyDirty),
+        datastore = mergeVars(local.datastore, cloud.datastore, localCategoryTs, cloudPayloadTs),
+        settings = mergeVars(local.settings, cloud.settings, localCategoryTs, cloudPayloadTs),
     )
 
     private fun mergeVars(
@@ -201,22 +233,22 @@ object SyncBackup {
         cloud: BackupVars,
         localCategoryTs: Long,
         cloudPayloadTs: Long,
-        isLocallyDirty: Boolean,
     ): BackupVars = BackupVars(
-        bool = mergeMap(local.bool, cloud.bool, localCategoryTs, cloudPayloadTs, isLocallyDirty),
-        int = mergeMap(local.int, cloud.int, localCategoryTs, cloudPayloadTs, isLocallyDirty),
-        float = mergeMap(local.float, cloud.float, localCategoryTs, cloudPayloadTs, isLocallyDirty),
-        long = mergeMap(local.long, cloud.long, localCategoryTs, cloudPayloadTs, isLocallyDirty),
-        string = mergeStringMap(local.string, cloud.string, localCategoryTs, cloudPayloadTs, isLocallyDirty),
-        stringSet = mergeMap(local.stringSet, cloud.stringSet, localCategoryTs, cloudPayloadTs, isLocallyDirty),
+        bool = mergeValueMap(local.bool, cloud.bool, local.string, cloud.string, localCategoryTs, cloudPayloadTs),
+        int = mergeValueMap(local.int, cloud.int, local.string, cloud.string, localCategoryTs, cloudPayloadTs),
+        float = mergeValueMap(local.float, cloud.float, local.string, cloud.string, localCategoryTs, cloudPayloadTs),
+        long = mergeValueMap(local.long, cloud.long, local.string, cloud.string, localCategoryTs, cloudPayloadTs),
+        string = mergeStringMap(local.string, cloud.string, localCategoryTs, cloudPayloadTs),
+        stringSet = mergeValueMap(local.stringSet, cloud.stringSet, local.string, cloud.string, localCategoryTs, cloudPayloadTs),
     )
 
-    private fun <T> mergeMap(
+    private fun <T> mergeValueMap(
         local: Map<String, T>?,
         cloud: Map<String, T>?,
+        localStrings: Map<String, String>?,
+        cloudStrings: Map<String, String>?,
         localCategoryTs: Long,
         cloudPayloadTs: Long,
-        isLocallyDirty: Boolean,
     ): Map<String, T>? {
         if (local == null && cloud == null) return null
         if (local == null) return cloud
@@ -228,7 +260,9 @@ object SyncBackup {
             if (cloudVal == null) {
                 merged[key] = localVal
             } else {
-                merged[key] = if (cloudPayloadTs > localCategoryTs && !isLocallyDirty) cloudVal else localVal
+                merged[key] = if (
+                    cloudValueWins(key, localStrings, cloudStrings, localCategoryTs, cloudPayloadTs)
+                ) cloudVal else localVal
             }
         }
         for ((key, cloudVal) in cloud) {
@@ -239,16 +273,51 @@ object SyncBackup {
         return merged
     }
 
+    /**
+     * video_pos_dur and other numeric resume keys carry no timestamp of their own,
+     * so they are resolved using the embedded updateTime of the sibling
+     * result_resume_watching_2 entry for the same parent. Only when no embedded
+     * timestamp exists on either side do we fall back to the draft-level timestamps.
+     */
+    private fun cloudValueWins(
+        key: String,
+        localStrings: Map<String, String>?,
+        cloudStrings: Map<String, String>?,
+        localCategoryTs: Long,
+        cloudPayloadTs: Long,
+    ): Boolean {
+        val localTs = resumeSiblingTs(key, localStrings)
+        val cloudTs = resumeSiblingTs(key, cloudStrings)
+        if (localTs > 0L || cloudTs > 0L) return cloudTs > localTs
+        return cloudPayloadTs > localCategoryTs
+    }
+
+    private fun resumeSiblingTs(key: String, stringMap: Map<String, String>?): Long {
+        if (stringMap == null) return 0L
+        val parts = key.split("/")
+        if (parts.size < 2) return 0L
+        val episodeId = parts[parts.size - 1].toIntOrNull() ?: return 0L
+        val account = if (parts[0].all { it.isDigit() }) parts[0] else ""
+        val resumeKey = if (account.isEmpty()) {
+            "result_resume_watching_2/$episodeId"
+        } else {
+            "$account/result_resume_watching_2/$episodeId"
+        }
+        return SyncTime.toEpochSeconds(SyncKeyPath.extractTimestamp(stringMap[resumeKey]))
+    }
+
     private fun mergeStringMap(
         local: Map<String, String>?,
         cloud: Map<String, String>?,
         localCategoryTs: Long,
         cloudPayloadTs: Long,
-        isLocallyDirty: Boolean,
     ): Map<String, String>? {
         if (local == null && cloud == null) return null
         if (local == null) return cloud
         if (cloud == null) return local
+
+        val localEpisodeTs = buildEpisodeTimestampIndex(local)
+        val cloudEpisodeTs = buildEpisodeTimestampIndex(cloud)
 
         val merged = HashMap<String, String>()
         for ((key, localVal) in local) {
@@ -256,12 +325,16 @@ object SyncBackup {
             if (cloudVal == null) {
                 merged[key] = localVal
             } else {
-                val localTs = SyncKeyPath.itemTimestamp(key, SyncCategory.SETTINGS, local)
-                val cloudTs = SyncKeyPath.itemTimestamp(key, SyncCategory.SETTINGS, cloud)
+                if (key == ACCOUNTS_KEY) {
+                    merged[key] = if (accountCount(cloudVal) >= accountCount(localVal)) cloudVal else localVal
+                    continue
+                }
+                val localTs = episodeTimestampFor(key, local, localEpisodeTs)
+                val cloudTs = episodeTimestampFor(key, cloud, cloudEpisodeTs)
                 if (localTs > 0L || cloudTs > 0L) {
                     merged[key] = if (cloudTs > localTs) cloudVal else localVal
                 } else {
-                    merged[key] = if (cloudPayloadTs > localCategoryTs && !isLocallyDirty) cloudVal else localVal
+                    merged[key] = if (cloudPayloadTs > localCategoryTs) cloudVal else localVal
                 }
             }
         }
@@ -272,6 +345,48 @@ object SyncBackup {
         }
         return merged
     }
+
+    /** Builds a map episodeId -> latest updateTime from all resume watching entries. */
+    private fun buildEpisodeTimestampIndex(stringMap: Map<String, String>): Map<Int, Long> {
+        val result = HashMap<Int, Long>()
+        for ((key, value) in stringMap) {
+            val parts = key.split("/")
+            if (parts.size != 3) continue
+            if (parts[1] != "result_resume_watching_2") continue
+            val updateTime = SyncKeyPath.extractTimestamp(value)
+            if (updateTime <= 0L) continue
+            val episodeId = resumeEpisodeId(value) ?: continue
+            val prev = result[episodeId]
+            if (prev == null || updateTime > prev) result[episodeId] = updateTime
+        }
+        return result
+    }
+
+    /**
+     * PosDur (video_pos_dur) has no timestamp of its own, so it is resolved using the
+     * updateTime of its sibling result_resume_watching_2 entry (which bumps on every
+     * progress change). Otherwise the merge would pick whichever device pushed last,
+     * silently reverting progress updates on other devices.
+     */
+    private fun episodeTimestampFor(
+        key: String,
+        stringMap: Map<String, String>,
+        episodeTs: Map<Int, Long>,
+    ): Long {
+        if (!key.lowercase().contains("video_pos_dur")) {
+            return SyncKeyPath.itemTimestamp(key, SyncCategory.SETTINGS, stringMap)
+        }
+        val parts = key.split("/")
+        val episodeId = parts.getOrNull(parts.lastIndex)?.toIntOrNull() ?: return 0L
+        return episodeTs[episodeId] ?: 0L
+    }
+
+    private fun resumeEpisodeId(json: String): Int? =
+        try {
+            "\"episodeId\":\\s*(\\d+)".toRegex().find(json)?.groupValues?.get(1)?.toIntOrNull()
+        } catch (_: Exception) {
+            null
+        }
 
     fun getBackupFileKeys(backupFile: BackupFile): Set<String> {
         val keys = mutableSetOf<String>()
@@ -288,6 +403,15 @@ object SyncBackup {
         backupFile.settings.stringSet?.keys?.let { keys.addAll(it) }
         backupFile.settings.string?.keys?.let { keys.addAll(it) }
         return keys
+    }
+
+    private fun accountCount(json: String?): Int {
+        if (json.isNullOrBlank()) return 0
+        return try {
+            resumeMapper.readTree(json).size()
+        } catch (_: Exception) {
+            0
+        }
     }
 
     private fun Context.getSharedPrefs(): SharedPreferences =

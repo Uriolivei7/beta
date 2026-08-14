@@ -516,8 +516,30 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - `HomeViewModel.getResumeWatching()` devuelve `List<ResumeWatchingResult>?` → handle con `?.also` + caché.
 - `forceSync` no es suspend (lanza `scope.launch` internamente) → se puede llamar desde `setOnClickListener`.
 
+### 🔧 CRITICAL: NO usar kotlinx-serialization en plugins (13 Ago 2026)
+- **Síntoma**: al instalar el plugin, CloudStream entra en "Modo seguro ACTIVADO" y el plugin crashea con:
+  `java.lang.AbstractMethodError: abstract method ... GeneratedSerializer.typeParametersSerializers()`
+  en `com.example.GitHubGraphQLError$$serializer` durante `decodeFromString`.
+- **Causa**: el plugin se compila contra kotlinx-serialization **1.11** (transitiva de cloudstream3-pre-release) pero el **APK runtime** del usuario usa una versión **más antigua** (sin `typeParametersSerializers()` en `GeneratedSerializer`). El metadata del plugin API jar NO empaqueta kotlinx-serialization; el mismatch de versiones es fatal en runtime (modo seguro).
+- **Fix definitivo**: migrar TODA la serialización a **Jackson vía `AppUtils`** (el patrón que ya usa `UniquestreamProvider` y funciona en dispositivo):
+  - `AppUtils.parseJson<T>(string)` → deserializa (TypeReference reified)
+  - `toPush.toJson()` → serializa (extensión `Any.toJson()`, importar `com.lagradost.cloudstream3.utils.AppUtils.toJson`)
+  - Data classes **sin `@Serializable`**; usar `com.fasterxml.jackson.annotation.JsonProperty` para nombres como `__typename`, `addProjectV2DraftIssue`, `updateProjectV2DraftIssue`.
+  - El mapper host (`MainAPIKt.getMapper()`) ya registra el módulo Kotlin (`kotlinModule`), confirmado por bytecode.
+- **Regla para futuros plugins en este repo**: compilar JSON con Jackson + `AppUtils`, NUNCA kotlinx-serialization (mismatch de versiones garantiza crash).
+
+### 🔧 UI SyncSettings (13 Ago 2026)
+- **Bug 1**: forzar `setTextColor` con `resolveColor(context, textColorPrimary)` daba negro sobre fondo oscuro (attributos de tema resueltos como resource no son Int color directo). **Fix**: crear vistas con `activity` (NO `applicationContext`) y **no** forzar colores de texto — heredan el tema del diálogo.
+- **Bug 2**: checkbox "Mostrar token" → `tokenInput.setSelection(tokenInput.text?.length ?: 0)` (`Editable?` nullable).
+- Botón: `AppCompatButton` + `ViewCompat.setBackgroundTintList(ColorStateList.valueOf(holo_blue_dark))` + texto blanco.
+- Campos: `GradientDrawable` redondeado semitransparente (blanco ~10% en dark / negro ~5% en light).
+
+### 🔧 Diseño por dispositivo excluido del backup (13 Ago 2026)
+- CloudStream guarda el modo de diseño (celular/TV/emulador/Automático) en **`app_layout_key`** (Int, `getInt/putInt` en settings, confirmado en `SetupFragmentLayout` con `R.string.app_layout_key`).
+- Añadida a `nonTransferableKeys` en `SyncBackup.kt` → **nunca** se sincroniza; cada dispositivo conserva su diseño aunque el backup venga de otro.
+
 ### Estado
 - ✅ Compilación OK: `.\gradlew.bat :SyncPlugin:compileReleaseKotlin --console=plain`
-- ✅ Plugin empaquetado: `:SyncPlugin:make` → `SyncPlugin/build/SyncPlugin.cs3` (60 KB, 13 Ago 2026)
-- ⏸️ **Pendiente**: probar en dispositivo — tiene que crear el project (ProjectV2), el token con scope, registrar un dispositivo como DraftIssue y verificar sync bidireccional.
+- ✅ Plugin empaquetado: `:SyncPlugin:make` → `SyncPlugin/build/SyncPlugin.cs3` (**48 KB**, 13 Ago 2026, con Jackson)
+- ⏸️ **Pendiente**: reinstalar el cs3 (fix Jackson) y probar en dispositivo — crear el project (ProjectV2), token classic con scope, registrar un dispositivo como DraftIssue y verificar sync bidireccional.
 - ⏸️ Pendiente: verificar que `updatedAt` entre los DraftIssues de GitHub se actualiza correctamente tras `updateDevice`.

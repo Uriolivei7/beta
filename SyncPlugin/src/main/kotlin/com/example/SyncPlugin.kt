@@ -1,9 +1,14 @@
 package com.example
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.MainActivity
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
@@ -16,22 +21,41 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @CloudstreamPlugin
 class SyncPlugin : Plugin() {
 
     var activity: AppCompatActivity? = null
+    private var appContext: Context? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val dirtyCategories = mutableSetOf<SyncCategory>()
     private var pollingJob: Job? = null
     private var debounceJob: Job? = null
     private var bookmarksObserver: (Boolean) -> Unit = {}
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private var lifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
 
     @Volatile private var isRestoring = false
-    private val pollMs = 30_000L
+    private val pollMs = 15_000L
+    private val syncMutex = Mutex()
+
+    @Volatile var lastStatus = "Sin sincronizar"
+    @Volatile var lastError: String? = null
+    @Volatile var isSyncing = false
+
+    private fun log(msg: String) {
+        Log.i(TAG, msg)
+    }
+
+    companion object {
+        private const val TAG = "SyncStream"
+    }
 
     override fun load(context: Context) {
+        appContext = context
+        SyncStorage.init(context)
         activity = context as? AppCompatActivity
         registerMainAPI(SyncProvider(this))
         openSettings = { ctx ->
@@ -39,6 +63,7 @@ class SyncPlugin : Plugin() {
             if (act != null) SyncSettings(this).show(act)
         }
         registerListeners()
+        registerLifecycle()
         startPolling()
         if (SyncStorage.isLoggedIn()) {
             scope.launch { runSync() }
@@ -49,21 +74,22 @@ class SyncPlugin : Plugin() {
         pollingJob?.cancel()
         debounceJob?.cancel()
         unregisterListeners()
+        unregisterLifecycle()
         scope.cancel()
     }
 
     /***************** listeners *****************/
 
     private fun registerListeners() {
-        val appContext = context ?: return
+        val appCtx = appContext ?: return
         prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (!isRestoring && key != null) {
                 markDirty(key)
             }
         }
-        appContext.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)
+        appCtx.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
-        appContext.getSharedPreferences(appContext.packageName + "_preferences", Context.MODE_PRIVATE)
+        appCtx.getSharedPreferences(appCtx.packageName + "_preferences", Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
 
         bookmarksObserver = { markDirty("0/result_favorites_state_data") }
@@ -71,11 +97,11 @@ class SyncPlugin : Plugin() {
     }
 
     private fun unregisterListeners() {
-        val appContext = context ?: return
+        val appCtx = appContext ?: return
         prefsListener?.let {
-            appContext.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)
+            appCtx.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(it)
-            appContext.getSharedPreferences(appContext.packageName + "_preferences", Context.MODE_PRIVATE)
+            appCtx.getSharedPreferences(appCtx.packageName + "_preferences", Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(it)
         }
         MainActivity.bookmarksUpdatedEvent -= bookmarksObserver
@@ -84,18 +110,49 @@ class SyncPlugin : Plugin() {
     private fun markDirty(key: String) {
         val cat = SyncBackup.classifyKey(key) ?: return
         synchronized(dirtyCategories) {
-            if (dirtyCategories.add(cat)) {
-                scheduleDebouncedSync()
-            }
+            dirtyCategories.add(cat)
         }
+        scheduleDebouncedSync()
     }
 
     private fun scheduleDebouncedSync() {
         debounceJob?.cancel()
         debounceJob = scope.launch {
             delay(2_000L)
-            if (SyncStorage.isLoggedIn()) runSync()
+            if (SyncStorage.isLoggedIn()) {
+                try { runSync() } catch (_: Exception) {}
+            }
         }
+    }
+
+    private fun registerLifecycle() {
+        val appCtx = appContext ?: return
+        val application = appCtx.applicationContext as? Application ?: return
+        lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                if (SyncStorage.isLoggedIn()) {
+                    debounceJob?.cancel()
+                    debounceJob = scope.launch {
+                        delay(1_500L)
+                        try { runSync() } catch (_: Exception) {}
+                    }
+                }
+            }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        }
+        application.registerActivityLifecycleCallbacks(lifecycleCallbacks)
+    }
+
+    private fun unregisterLifecycle() {
+        val appCtx = appContext ?: return
+        val application = appCtx.applicationContext as? Application ?: return
+        lifecycleCallbacks?.let { application.unregisterActivityLifecycleCallbacks(it) }
+        lifecycleCallbacks = null
     }
 
     private fun startPolling() {
@@ -113,66 +170,191 @@ class SyncPlugin : Plugin() {
     /***************** sync logic *****************/
 
     suspend fun runSync() {
-        if (isRestoring || !SyncStorage.isLoggedIn()) return
+        if (!SyncStorage.isLoggedIn()) return
+        syncMutex.withLock {
+            if (isRestoring) return@withLock
+            isSyncing = true
+            lastError = null
+            lastStatus = "Sincronizando..."
+            try {
+                runSyncInternal()
+            } catch (e: Exception) {
+                lastStatus = "Error de sync"
+                lastError = e.message ?: e.javaClass.simpleName
+                Log.e(TAG, "runSync", e)
+            } finally {
+                isSyncing = false
+            }
+        }
+    }
+
+    private suspend fun runSyncInternal() {
         val backupEnabled = SyncCategory.entries.any { SyncStorage.isBackupEnabled(it) }
         val restoreEnabled = SyncCategory.entries.any { SyncStorage.isRestoreEnabled(it) }
-        if (!backupEnabled && !restoreEnabled) return
+        if (!backupEnabled && !restoreEnabled) {
+            lastStatus = "Sin categorías activadas"
+            return
+        }
 
-        val appContext = context ?: return
+        val appCtx = appContext ?: return
         val token = SyncStorage.token ?: return
         val projectNum = SyncStorage.projectNum?.toIntOrNull() ?: return
         val deviceId = SyncStorage.deviceId
-            ?: SyncNetwork.getDeviceId(appContext.packageName, appContext).also {
+            ?: SyncNetwork.getDeviceId(appCtx.packageName, appCtx).also {
                 SyncStorage.deviceId = it
             }
 
         val projectId = SyncStorage.projectId
             ?: SyncNetwork.fetchProjectId(token, projectNum)?.also { SyncStorage.projectId = it }
-            ?: return
+            ?: run {
+                lastStatus = "No se encontró el proyecto $projectNum"
+                lastError = SyncNetwork.lastError ?: "Revisa el token y el número de proyecto"
+                return
+            }
 
         val devices = SyncNetwork.fetchDevices(token, projectNum)
-        val ownDevice = devices.firstOrNull { it.deviceId == deviceId }
-        if (ownDevice != null) {
+        if (devices == null) {
+            lastStatus = "No se pudo consultar el proyecto"
+            lastError = SyncNetwork.lastError
+            return
+        }
+        log("proyecto $projectId, ${devices.size} item(s), ${SyncNetwork.mainDrafts(devices).size} dispositivo(s)")
+
+        val ownDevice = SyncNetwork.mainDrafts(devices)
+            .filter { it.deviceId == deviceId }
+            .maxByOrNull { it.updatedAt }
+        if (ownDevice != null && !SyncStorage.forceReRegister) {
+            val ownChunks = devices.filter { it.deviceId == deviceId }
+            SyncStorage.ownChunkContentIds = ownChunks
+                .filter { it.itemContentId != null }
+                .groupBy { it.chunkIndex }
+                .mapValues { (_, ds) -> ds.maxByOrNull { it.updatedAt }!!.itemContentId!! }
             SyncStorage.ownItemId = ownDevice.itemId
             SyncStorage.ownContentId = ownDevice.itemContentId
+            log("draft propio encontrado: ${ownChunks.size} trozo(s)")
+        } else if (ownDevice == null) {
+            SyncStorage.ownItemId = null
+            SyncStorage.ownContentId = null
+            SyncStorage.ownChunkContentIds = emptyMap()
+            SyncStorage.forceReRegister = false
+            lastStatus = "Draft propio no encontrado; se creará uno nuevo"
+            log("draft propio NO encontrado -> se registrará uno nuevo")
         }
 
-        val resumeWatching = SyncBackup.cachedResumeWatching()
         val enabledBackup = SyncCategory.entries.filter { SyncStorage.isBackupEnabled(it) }.toSet()
         val enabledRestore = SyncCategory.entries.filter { SyncStorage.isRestoreEnabled(it) }.toSet()
 
-        val localBackup = SyncBackup.buildBackup(appContext, resumeWatching, enabledBackup)
+        val localBackup = SyncBackup.buildBackup(appCtx, enabledBackup)
 
         // --- restore from cloud ---
         if (restoreEnabled) {
-            val others = devices
-                .filter { it.deviceId != deviceId && !it.syncedData.isNullOrBlank() }
-                .maxByOrNull { it.updatedAt }
-            if (others != null) {
-                val cloudBackup = try {
-                    SyncNetwork.json.decodeFromString(BackupFile.serializer(), others.syncedData!!)
-                } catch (_: Exception) {
-                    null
+            val othersList = SyncNetwork.mainDrafts(devices)
+                .filter { it.deviceId != deviceId }
+                .sortedByDescending { it.updatedAt }
+            log("restore: otros dispositivos = ${othersList.map { "${it.name}@${it.updatedAt}" }}")
+            if (othersList.isNotEmpty()) {
+                val candidates = mutableMapOf<SyncCategory, MutableList<Pair<SyncDevice, BackupFile>>>()
+                for (other in othersList) {
+                    val payload = SyncNetwork.assemblePayload(token, devices, other.deviceId)
+                    val cloudBackup = if (payload == null) null else try {
+                        SyncNetwork.json.decodeFromString(
+                            BackupFile.serializer(),
+                            SyncNetwork.decompressData(payload)
+                        )
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (cloudBackup == null) continue
+                    for (cat in enabledRestore) {
+                        val cloudCat = filterBackup(cloudBackup, cat)
+                        if (SyncBackup.isEmpty(cloudCat)) continue
+                        candidates.getOrPut(cat) { mutableListOf() }.add(other to cloudCat)
+                    }
                 }
-                if (cloudBackup != null) {
-                    isRestoring = true
-                    try {
-                        for (cat in enabledRestore) {
-                            val localCat = filterBackup(localBackup, cat)
-                            val cloudCat = filterBackup(cloudBackup, cat)
-                            if (SyncBackup.isEmpty(cloudCat)) continue
-                            val isDirty = synchronized(dirtyCategories) { cat in dirtyCategories }
-                            val merged = SyncBackup.mergeBackupFiles(
-                                localCat, cloudCat,
-                                localCategoryTs = SyncStorage.categoryTimestamp(cat),
-                                cloudPayloadTs = others.updatedAt,
-                                isLocallyDirty = isDirty,
+                isRestoring = true
+                var restoredAny = false
+                var restoredSettings = false
+                var restoredExtensions = false
+                var restoredBookmarks = false
+                var restoredResume = false
+                val restoredSources = mutableMapOf<SyncCategory, SyncDevice>()
+                try {
+                    for (cat in enabledRestore) {
+                        val list = candidates[cat] ?: continue
+                        val best = list.maxWithOrNull(
+                            compareBy<Pair<SyncDevice, BackupFile>> {
+                                SyncBackup.getBackupFileKeys(it.second).size
+                            }.thenBy { it.first.updatedAt }
+                        )
+                        if (best == null) continue
+                        val (source, cloudCat) = best
+                        val localCat = filterBackup(localBackup, cat)
+                        val merged = SyncBackup.mergeBackupFiles(
+                            localCat, cloudCat,
+                            localCategoryTs = SyncStorage.categoryTimestamp(cat),
+                            cloudPayloadTs = source.updatedAt,
+                        )
+                        log(
+                            "merge $cat: local=${SyncBackup.getBackupFileKeys(localCat).size} " +
+                                "cloud=${SyncBackup.getBackupFileKeys(cloudCat).size} " +
+                                "localTs=${SyncStorage.categoryTimestamp(cat)} cloudTs=${source.updatedAt} " +
+                                "cambio=${merged != localCat}"
+                        )
+                        if (merged != localCat) {
+                            val localMaps = backupMaps(localCat)
+                            val cloudMaps = backupMaps(cloudCat)
+                            val allKeys = (localMaps.flatMap { it.keys } + cloudMaps.flatMap { it.keys }).toSet()
+                            val cloudOnly = mutableListOf<String>()
+                            val localOnly = mutableListOf<String>()
+                            val different = mutableListOf<String>()
+                            for (key in allKeys) {
+                                val lv = localMaps.firstNotNullOfOrNull { it[key] }
+                                val cv = cloudMaps.firstNotNullOfOrNull { it[key] }
+                                when {
+                                    cv == null -> localOnly.add(key)
+                                    lv == null -> cloudOnly.add(key)
+                                    lv != cv -> different.add(key)
+                                }
+                            }
+                            log(
+                                "    cambio $cat: cloudOnly=${cloudOnly.size} localOnly=${localOnly.size} " +
+                                    "distintos=${different.size}"
                             )
-                            SyncBackup.restore(appContext, merged, setOf(cat))
-                            SyncStorage.setCategoryTimestamp(cat, others.updatedAt)
+                            log("    cloudOnly: ${cloudOnly.take(3)}")
+                            log("    localOnly: ${localOnly.take(3)}")
+                            log("    distintos: ${different.take(3)}")
+                            SyncBackup.restore(appCtx, merged, setOf(cat))
+                            restoredAny = true
+                            when (cat) {
+                                SyncCategory.SETTINGS -> restoredSettings = true
+                                SyncCategory.EXTENSIONS -> restoredExtensions = true
+                                SyncCategory.BOOKMARKS -> restoredBookmarks = true
+                                SyncCategory.RESUME_WATCHING -> restoredResume = true
+                                else -> {}
+                            }
+                            SyncStorage.setCategoryTimestamp(cat, source.updatedAt)
+                            restoredSources[cat] = source
                         }
-                    } finally {
-                        isRestoring = false
+                    }
+                } finally {
+                    isRestoring = false
+                }
+                if (restoredAny) {
+                    lastStatus = "Restaurado desde ${restoredSources.values.map { it.name }.joinToString(",")}"
+                    log("restaurado: ${restoredSources.map { (cat, src) -> "${cat.key}:${src.name}" }.joinToString(", ")}")
+                    Handler(Looper.getMainLooper()).post {
+                        if (restoredSettings) {
+                            MainActivity.reloadHomeEvent(true)
+                            MainActivity.reloadAccountEvent(true)
+                        } else if (restoredExtensions) {
+                            MainActivity.reloadHomeEvent(true)
+                        }
+                        if (restoredResume) {
+                            MainActivity.reloadHomeEvent(true)
+                        }
+                        if (restoredBookmarks) {
+                            MainActivity.reloadLibraryEvent(true)
+                        }
                     }
                 }
             }
@@ -180,32 +362,88 @@ class SyncPlugin : Plugin() {
 
         // --- push to cloud ---
         if (backupEnabled) {
-            val toPush = SyncBackup.buildBackup(appContext, resumeWatching, enabledBackup)
+            val toPush = SyncBackup.buildBackup(appCtx, enabledBackup)
             if (!SyncBackup.isEmpty(toPush)) {
                 val data = SyncNetwork.json.encodeToString(BackupFile.serializer(), toPush)
                 val hash = SyncBackup.computeHash(data)
-                val contentId = SyncStorage.ownContentId
-                if (contentId == null) {
-                    val (itemId, newContentId) = SyncNetwork.registerDevice(token, projectId, deviceId, data)
-                    if (itemId != null && newContentId != null) {
-                        SyncStorage.ownItemId = itemId
-                        SyncStorage.ownContentId = newContentId
+                val chunks = SyncNetwork.splitChunks(SyncNetwork.compressData(data))
+                log("payload: ${data.length} chars -> ${chunks.size} trozo(s)")
+                val ownIds = SyncStorage.ownChunkContentIds
+                if (ownIds.isEmpty() || SyncStorage.forceReRegister) {
+                    val newGen = SyncTime.nowEpochSeconds()
+                    val ids = SyncNetwork.registerDevice(token, projectId, deviceId, chunks, newGen)
+                    if (ids != null) {
+                        SyncStorage.ownChunkContentIds = ids.mapIndexed { i, id -> i to id }.toMap()
+                        SyncStorage.ownContentId = ids.getOrNull(0)
+                        SyncStorage.ownItemId = null
+                        SyncStorage.syncGen = newGen
                         SyncStorage.lastPushedHash = hash
+                        SyncStorage.forceReRegister = false
+                        clearDirtyCategories()
+                        updateCategoryTimestamps(enabledBackup)
+                        lastStatus = "Draft(s) creado(s): sync OK (${ids.size} trozo/s)"
+                        log("nuevo draft registrado: ${ids.size} trozo(s)")
+                        SyncNetwork.cleanupStaleDrafts(token, projectId, deviceId, devices, removeAll = true)
+                    } else {
+                        lastStatus = "No se pudo crear el draft"
+                        lastError = SyncNetwork.lastError
                     }
                 } else if (hash != SyncStorage.lastPushedHash) {
-                    val ok = SyncNetwork.updateDevice(token, contentId, deviceId, data)
-                    if (ok) SyncStorage.lastPushedHash = hash
+                    val gen = SyncStorage.syncGen ?: SyncTime.nowEpochSeconds().also { SyncStorage.syncGen = it }
+                    val updated = SyncNetwork.updateDevice(token, projectId, deviceId, chunks, ownIds, gen)
+                    if (updated != null) {
+                        SyncStorage.ownChunkContentIds = updated
+                        SyncStorage.ownContentId = updated[0]
+                        SyncStorage.ownItemId = null
+                        SyncStorage.lastPushedHash = hash
+                        clearDirtyCategories()
+                        updateCategoryTimestamps(enabledBackup)
+                        lastStatus = "Draft(s) actualizado(s): sync OK (${updated.size} trozo/s)"
+                        log("draft actualizado: ${updated.size} trozo(s)")
+                        SyncNetwork.cleanupStaleDrafts(token, projectId, deviceId, devices)
+                    } else {
+                        SyncStorage.ownContentId = null
+                        SyncStorage.ownItemId = null
+                        SyncStorage.ownChunkContentIds = emptyMap()
+                        SyncStorage.forceReRegister = true
+                        lastStatus = "Fallo al actualizar el draft; se reintentará crearlo"
+                        lastError = SyncNetwork.lastError
+                    }
+                } else {
+                    lastStatus = "Sin cambios que subir"
                 }
+            } else {
+                lastStatus = "Backup vacío (nada que subir)"
             }
+        }
+
+        if (lastStatus == "Sincronizando...") {
+            lastStatus = "Sin cambios"
         }
     }
 
-    fun forceSync(showToastResult: Boolean) {
+    fun forceSync(showToastResult: Boolean, onDone: (() -> Unit)? = null) {
         scope.launch {
             runSync()
             if (showToastResult) {
                 showToast(if (SyncStorage.isLoggedIn()) "Sync completado" else "Configura el plugin primero")
             }
+            if (onDone != null) {
+                Handler(Looper.getMainLooper()).post { onDone() }
+            }
+        }
+    }
+
+    private fun clearDirtyCategories() {
+        synchronized(dirtyCategories) {
+            dirtyCategories.clear()
+        }
+    }
+
+    private fun updateCategoryTimestamps(categories: Set<SyncCategory>) {
+        val now = SyncTime.nowEpochSeconds()
+        for (cat in categories) {
+            SyncStorage.setCategoryTimestamp(cat, now)
         }
     }
 
@@ -223,4 +461,20 @@ class SyncPlugin : Plugin() {
             settings = filterVars(backup.settings),
         )
     }
+
+    private fun backupMaps(backup: BackupFile): List<Map<String, *>> =
+        listOf(
+            backup.datastore.bool,
+            backup.datastore.int,
+            backup.datastore.string,
+            backup.datastore.float,
+            backup.datastore.long,
+            backup.datastore.stringSet,
+            backup.settings.bool,
+            backup.settings.int,
+            backup.settings.string,
+            backup.settings.float,
+            backup.settings.long,
+            backup.settings.stringSet,
+        ).filterNotNull()
 }
