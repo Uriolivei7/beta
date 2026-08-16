@@ -264,12 +264,8 @@ class TokianimeProvider : MainAPI() {
                     }
 
                     entries.sortWith(compareBy<SeasonEntry> {
-                        when {
-                            it.name.contains("Temporada", ignoreCase = true) -> 0
-                            it.name.contains("Especial", ignoreCase = true) || it.name.contains("Special", ignoreCase = true) || it.name.contains("OVA", ignoreCase = true) -> 2
-                            else -> 1
-                        }
-                    }.thenBy { it.order })
+                        it.order
+                    })
                     for ((seasonNum, entry) in entries.withIndex()) {
                         val seasonEps = fetchEpisodes(entry.slug, seasonNum + 1)
                         episodes.addAll(seasonEps)

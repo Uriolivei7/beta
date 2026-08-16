@@ -33,20 +33,30 @@ class SyncPlugin : Plugin() {
     private val dirtyCategories = mutableSetOf<SyncCategory>()
     private var pollingJob: Job? = null
     private var debounceJob: Job? = null
+    private var stopSyncJob: Job? = null
     private var bookmarksObserver: (Boolean) -> Unit = {}
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private var lifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
 
     @Volatile private var isRestoring = false
-    private val pollMs = 15_000L
+    private val pollMs = 20_000L
     private val syncMutex = Mutex()
+
+    // Solo se consulta GitHub mientras hay actividad en primer plano.
+    @Volatile private var foregroundActivities = 0
 
     @Volatile var lastStatus = "Sin sincronizar"
     @Volatile var lastError: String? = null
     @Volatile var isSyncing = false
+    @Volatile private var lastResumeMs = 0L
 
     private fun log(msg: String) {
         Log.i(TAG, msg)
+    }
+
+    private fun toastSync(msg: String, onlyIfRecentlyResumed: Boolean = false) {
+        if (onlyIfRecentlyResumed && System.currentTimeMillis() - lastResumeMs > 10_000L) return
+        showToast(msg)
     }
 
     companion object {
@@ -73,6 +83,7 @@ class SyncPlugin : Plugin() {
     override fun beforeUnload() {
         pollingJob?.cancel()
         debounceJob?.cancel()
+        stopSyncJob?.cancel()
         unregisterListeners()
         unregisterLifecycle()
         scope.cancel()
@@ -82,10 +93,14 @@ class SyncPlugin : Plugin() {
 
     private fun registerListeners() {
         val appCtx = appContext ?: return
-        prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (!isRestoring && key != null) {
-                markDirty(key)
+        prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+            if (isRestoring || key == null) return@OnSharedPreferenceChangeListener
+            if (prefs.contains(key)) {
+                SyncBackup.removeTombstone(key)
+            } else {
+                SyncBackup.recordDeletion(key)
             }
+            markDirty(key)
         }
         appCtx.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
@@ -109,6 +124,7 @@ class SyncPlugin : Plugin() {
 
     private fun markDirty(key: String) {
         val cat = SyncBackup.classifyKey(key) ?: return
+        log("dirty: $key -> ${cat.key}")
         synchronized(dirtyCategories) {
             dirtyCategories.add(cat)
         }
@@ -130,6 +146,9 @@ class SyncPlugin : Plugin() {
         val application = appCtx.applicationContext as? Application ?: return
         lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
+                foregroundActivities++
+                lastResumeMs = System.currentTimeMillis()
+                stopSyncJob?.cancel()
                 if (SyncStorage.isLoggedIn()) {
                     debounceJob?.cancel()
                     debounceJob = scope.launch {
@@ -140,8 +159,19 @@ class SyncPlugin : Plugin() {
             }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
             override fun onActivityStarted(activity: Activity) {}
-            override fun onActivityPaused(activity: Activity) {}
-            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {
+                foregroundActivities = (foregroundActivities - 1).coerceAtLeast(0)
+            }
+            override fun onActivityStopped(activity: Activity) {
+                if (!SyncStorage.isLoggedIn()) return
+                // Push final al salir del reproductor o cerrar la app, para no perder
+                // el último cambio antes de que el proceso muera.
+                stopSyncJob?.cancel()
+                stopSyncJob = scope.launch {
+                    delay(2_000L)
+                    try { runSync() } catch (_: Exception) {}
+                }
+            }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
             override fun onActivityDestroyed(activity: Activity) {}
         }
@@ -160,7 +190,7 @@ class SyncPlugin : Plugin() {
         pollingJob = scope.launch {
             while (isActive) {
                 delay(pollMs)
-                if (SyncStorage.isLoggedIn()) {
+                if (SyncStorage.isLoggedIn() && foregroundActivities > 0) {
                     try { runSync() } catch (_: Exception) {}
                 }
             }
@@ -169,7 +199,7 @@ class SyncPlugin : Plugin() {
 
     /***************** sync logic *****************/
 
-    suspend fun runSync() {
+    suspend fun runSync(forceRestore: Boolean = false) {
         if (!SyncStorage.isLoggedIn()) return
         syncMutex.withLock {
             if (isRestoring) return@withLock
@@ -177,7 +207,7 @@ class SyncPlugin : Plugin() {
             lastError = null
             lastStatus = "Sincronizando..."
             try {
-                runSyncInternal()
+                runSyncInternal(forceRestore)
             } catch (e: Exception) {
                 lastStatus = "Error de sync"
                 lastError = e.message ?: e.javaClass.simpleName
@@ -188,7 +218,7 @@ class SyncPlugin : Plugin() {
         }
     }
 
-    private suspend fun runSyncInternal() {
+    private suspend fun runSyncInternal(forceRestore: Boolean = false) {
         val backupEnabled = SyncCategory.entries.any { SyncStorage.isBackupEnabled(it) }
         val restoreEnabled = SyncCategory.entries.any { SyncStorage.isRestoreEnabled(it) }
         if (!backupEnabled && !restoreEnabled) {
@@ -248,12 +278,15 @@ class SyncPlugin : Plugin() {
 
         // --- restore from cloud ---
         if (restoreEnabled) {
+            val consumed = SyncStorage.lastRestoredFrom
             val othersList = SyncNetwork.mainDrafts(devices)
                 .filter { it.deviceId != deviceId }
+                .filter { forceRestore || it.updatedAt > (consumed[it.deviceId] ?: 0L) }
                 .sortedByDescending { it.updatedAt }
             log("restore: otros dispositivos = ${othersList.map { "${it.name}@${it.updatedAt}" }}")
             if (othersList.isNotEmpty()) {
                 val candidates = mutableMapOf<SyncCategory, MutableList<Pair<SyncDevice, BackupFile>>>()
+                val consumedNow = mutableMapOf<String, Long>()
                 for (other in othersList) {
                     val payload = SyncNetwork.assemblePayload(token, devices, other.deviceId)
                     val cloudBackup = if (payload == null) null else try {
@@ -265,11 +298,17 @@ class SyncPlugin : Plugin() {
                         null
                     }
                     if (cloudBackup == null) continue
+                    consumedNow[other.deviceId] = other.updatedAt
                     for (cat in enabledRestore) {
                         val cloudCat = filterBackup(cloudBackup, cat)
                         if (SyncBackup.isEmpty(cloudCat)) continue
                         candidates.getOrPut(cat) { mutableListOf() }.add(other to cloudCat)
                     }
+                }
+                if (consumedNow.isNotEmpty()) {
+                    val mergedConsumed = HashMap(SyncStorage.lastRestoredFrom)
+                    consumedNow.forEach { (k, v) -> if (v > (mergedConsumed[k] ?: 0L)) mergedConsumed[k] = v }
+                    SyncStorage.lastRestoredFrom = mergedConsumed
                 }
                 isRestoring = true
                 var restoredAny = false
@@ -323,6 +362,14 @@ class SyncPlugin : Plugin() {
                             log("    cloudOnly: ${cloudOnly.take(3)}")
                             log("    localOnly: ${localOnly.take(3)}")
                             log("    distintos: ${different.take(3)}")
+                            for (k in different.take(3)) {
+                                val lv = localMaps.firstNotNullOfOrNull { it[k] }
+                                val cv = cloudMaps.firstNotNullOfOrNull { it[k] }
+                                log(
+                                    "      $k localTs=${SyncBackup.debugTs(lv)} " +
+                                        "cloudTs=${SyncBackup.debugTs(cv)} diffSecs=${SyncBackup.debugTs(cv) - SyncBackup.debugTs(lv)}"
+                                )
+                            }
                             SyncBackup.restore(appCtx, merged, setOf(cat))
                             restoredAny = true
                             when (cat) {
@@ -342,6 +389,7 @@ class SyncPlugin : Plugin() {
                 if (restoredAny) {
                     lastStatus = "Restaurado desde ${restoredSources.values.map { it.name }.joinToString(",")}"
                     log("restaurado: ${restoredSources.map { (cat, src) -> "${cat.key}:${src.name}" }.joinToString(", ")}")
+                    toastSync("Sincronizado: datos actualizados desde otro dispositivo")
                     Handler(Looper.getMainLooper()).post {
                         if (restoredSettings) {
                             MainActivity.reloadHomeEvent(true)
@@ -383,6 +431,7 @@ class SyncPlugin : Plugin() {
                         updateCategoryTimestamps(enabledBackup)
                         lastStatus = "Draft(s) creado(s): sync OK (${ids.size} trozo/s)"
                         log("nuevo draft registrado: ${ids.size} trozo(s)")
+                        toastSync("Sincronizado: cambios subidos", onlyIfRecentlyResumed = true)
                         SyncNetwork.cleanupStaleDrafts(token, projectId, deviceId, devices, removeAll = true)
                     } else {
                         lastStatus = "No se pudo crear el draft"
@@ -400,6 +449,7 @@ class SyncPlugin : Plugin() {
                         updateCategoryTimestamps(enabledBackup)
                         lastStatus = "Draft(s) actualizado(s): sync OK (${updated.size} trozo/s)"
                         log("draft actualizado: ${updated.size} trozo(s)")
+                        toastSync("Sincronizado: cambios subidos", onlyIfRecentlyResumed = true)
                         SyncNetwork.cleanupStaleDrafts(token, projectId, deviceId, devices)
                     } else {
                         SyncStorage.ownContentId = null
@@ -424,7 +474,7 @@ class SyncPlugin : Plugin() {
 
     fun forceSync(showToastResult: Boolean, onDone: (() -> Unit)? = null) {
         scope.launch {
-            runSync()
+            runSync(forceRestore = true)
             if (showToastResult) {
                 showToast(if (SyncStorage.isLoggedIn()) "Sync completado" else "Configura el plugin primero")
             }
@@ -459,6 +509,7 @@ class SyncPlugin : Plugin() {
         return BackupFile(
             datastore = filterVars(backup.datastore),
             settings = filterVars(backup.settings),
+            deletions = backup.deletions.filterKeys { SyncBackup.classifyKey(it) == cat },
         )
     }
 
