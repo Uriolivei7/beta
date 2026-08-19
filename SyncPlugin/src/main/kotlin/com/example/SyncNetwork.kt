@@ -6,6 +6,8 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Base64
 import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayInputStream
 import kotlinx.serialization.decodeFromString
@@ -52,7 +54,7 @@ object SyncNetwork {
     fun mainDrafts(devices: List<SyncDevice>): List<SyncDevice> =
         devices.filter { it.chunkIndex == 0 }
             .groupBy { it.deviceId }
-            .mapNotNull { (_, gens) -> gens.maxByOrNull { it.updatedAt } }
+            .mapNotNull { (_, gens) -> gens.maxByOrNull { it.gen ?: it.updatedAt } }
 
     suspend fun assemblePayload(token: String, devices: List<SyncDevice>, deviceId: String): String? {
         val drafts = devices.filter { it.deviceId == deviceId }
@@ -72,23 +74,110 @@ object SyncNetwork {
                 if (prev == null || d.updatedAt > prev.updatedAt) byIndex[d.chunkIndex] = d
             }
             val maxChunk = byIndex.keys.maxOrNull() ?: -1
-            val total = maxChunk + 1
-            if ((0 until total).any { byIndex[it] == null }) {
-                log("assemblePayload($deviceId): generación ${gen ?: "legacy"} incompleta, chunks=${byIndex.keys.sorted()}")
+            val listedTotal = maxChunk + 1
+            if ((0 until listedTotal).any { byIndex[it] == null }) {
+                log("[restore] $deviceId: gen ${gen ?: "?"} incompleta, chunks=${byIndex.keys.sorted()}")
                 continue
             }
+            val draft0 = byIndex[0] ?: continue
+            val chunkId0 = draft0.itemContentId ?: draft0.itemId
+            val body0 = fetchChunkBody(token, chunkId0)
+            if (body0 == null) {
+                log("[restore] $deviceId: chunk 0 fetch falló")
+                return null
+            }
+            val realTotal = parseChunkTotal(body0)
+            if (realTotal != null && realTotal != listedTotal) {
+                log("[restore] $deviceId: gen ${gen ?: "?"} mismatch listed=$listedTotal real=$realTotal")
+                continue
+            }
+            val total = realTotal ?: listedTotal
             val sb = StringBuilder()
-            for (i in 0 until total) {
-                val draft = byIndex[i] ?: return null
+            val data0 = stripChunkHeader(body0, 0, total)
+            if (data0 == null) {
+                log("[restore] $deviceId: chunk 0/$total formato inválido")
+                return null
+            }
+            sb.append(data0)
+            for (i in 1 until total) {
+                val draft = byIndex[i]
+                if (draft == null) {
+                    log("[restore] $deviceId: chunk $i/$total no existe")
+                    return null
+                }
                 val chunkId = draft.itemContentId ?: draft.itemId
-                val body = fetchChunkBody(token, chunkId) ?: return null
-                val data = stripChunkHeader(body, i, total) ?: return null
+                val body = fetchChunkBody(token, chunkId)
+                if (body == null) {
+                    log("[restore] $deviceId: chunk $i/$total fetch falló")
+                    return null
+                }
+                val data = stripChunkHeader(body, i, total)
+                if (data == null) {
+                    log("[restore] $deviceId: chunk $i/$total formato inválido")
+                    return null
+                }
                 sb.append(data)
             }
             return sb.toString()
         }
-        log("assemblePayload($deviceId): ninguna generación completa")
-        return null
+        log("[restore] $deviceId: ninguna gen completa, intentando best-effort")
+        return assembleBestEffort(token, drafts, deviceId)
+    }
+
+    private suspend fun assembleBestEffort(
+        token: String,
+        drafts: List<SyncDevice>,
+        deviceId: String
+    ): String? {
+        val latestChunk0 = drafts.filter { it.chunkIndex == 0 }
+            .maxByOrNull { it.gen ?: it.updatedAt } ?: return null
+        val body0 = fetchChunkBody(token, latestChunk0.itemContentId ?: latestChunk0.itemId)
+            ?: return null
+        val realTotal = parseChunkTotal(body0) ?: return null
+
+        val allByIndex = HashMap<Int, SyncDevice>()
+        for (d in drafts) {
+            val prev = allByIndex[d.chunkIndex]
+            if (prev == null) {
+                allByIndex[d.chunkIndex] = d
+            } else {
+                val dGen = d.gen ?: 0L
+                val prevGen = prev.gen ?: 0L
+                if (dGen > prevGen || (dGen == prevGen && d.updatedAt > prev.updatedAt)) {
+                    allByIndex[d.chunkIndex] = d
+                }
+            }
+        }
+
+        for (i in 0 until realTotal) {
+            if (allByIndex[i] == null) {
+                log("[restore] $deviceId: best-effort falta chunk $i/$realTotal")
+                return null
+            }
+        }
+
+        val sb = StringBuilder()
+        val data0 = stripChunkHeader(body0, 0, realTotal) ?: return null
+        sb.append(data0)
+        for (i in 1 until realTotal) {
+            val draft = allByIndex[i]!!
+            val chunkId = draft.itemContentId ?: draft.itemId
+            val body = fetchChunkBody(token, chunkId) ?: return null
+            val data = stripChunkHeader(body, i, realTotal) ?: return null
+            sb.append(data)
+        }
+
+        val result = sb.toString()
+        log("[restore] $deviceId: best-effort armado ok (${result.length} chars)")
+        return result
+    }
+
+    private fun parseChunkTotal(body: String): Int? {
+        if (!body.startsWith(CHUNK_PREFIX)) return null
+        val parts = body.split("|", limit = 3)
+        if (parts.size != 3) return null
+        val nums = parts[1].split("/")
+        return nums.getOrNull(1)?.toIntOrNull()
     }
 
     private suspend fun fetchChunkBody(token: String, itemId: String): String? {
@@ -96,7 +185,6 @@ object SyncNetwork {
         val resp = graphql(token, query)
         val body = resp?.data?.node?.bodyText
         if (body == null) err("fetchChunkBody($itemId): ${resp?.errors?.joinToString() { it.message ?: "" }}")
-        else log("chunk $itemId descargado (${body.length} chars)")
         return body
     }
 
@@ -134,32 +222,52 @@ object SyncNetwork {
         MessageDigest.getInstance("MD5").digest(input.toByteArray())
             .joinToString("") { "%02x".format(it) }
 
-    private suspend fun graphql(token: String, query: String): GitHubGraphQLResponse? {
+    private suspend fun graphql(
+        token: String,
+        query: String,
+        maxRetries: Int = 3
+    ): GitHubGraphQLResponse? {
         val headers = mapOf(
             "Content-Type" to "application/json",
             "Authorization" to "Bearer $token",
             "Accept" to "application/vnd.github+json",
         )
-        return try {
-            val res = app.post(API_URL, headers = headers, json = mapOf("query" to query))
-            if (res.isSuccessful) {
-                json.decodeFromString<GitHubGraphQLResponse>(res.text)
-            } else {
-                err("graphql HTTP ${res.code}")
+        for (attempt in 0..maxRetries) {
+            val resp = try {
+                val res = app.post(API_URL, headers = headers, json = mapOf("query" to query))
+                if (res.isSuccessful) {
+                    json.decodeFromString<GitHubGraphQLResponse>(res.text)
+                } else {
+                    if (res.code == 503 && attempt < maxRetries) {
+                        log("[sync] HTTP 503, retry ${attempt + 1}/$maxRetries")
+                        delay(3000L * (1 shl attempt))
+                        continue
+                    }
+                    err("graphql HTTP ${res.code}")
+                    null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (attempt < maxRetries) {
+                    log("[sync] graphql error, retry ${attempt + 1}/$maxRetries")
+                    delay(3000L * (1 shl attempt))
+                    continue
+                }
+                err("graphql failed: ${e.message}")
                 null
             }
-        } catch (e: Exception) {
-            err("graphql failed: ${e.message}")
-            null
+            return resp
         }
+        return null
     }
 
     suspend fun fetchProjectId(token: String, projectNum: Int): String? {
         val query = "query { viewer { projectV2(number: $projectNum) { id } } }"
         val resp = graphql(token, query)
         val id = resp?.data?.viewer?.projectV2?.id
-        if (id != null) log("Proyecto $projectNum -> $id")
-        else err("fetchProjectId: proyecto no accesible: ${resp?.errors?.joinToString() { it.message ?: "" }}")
+        if (id != null) log("[sync] project #$projectNum ok")
+        else err("fetchProjectId: no accesible")
         return id
     }
 
@@ -256,7 +364,7 @@ object SyncNetwork {
             }
             ids.add(contentId)
         }
-        log("registerDevice: ${chunks.size} trozo(s) creados")
+        log("[push] register: ${chunks.size} chunks")
         return ids
     }
 
@@ -277,7 +385,6 @@ object SyncNetwork {
         val itemId = resp?.data?.addDraft?.projectItem?.id
         val contentId = resp?.data?.addDraft?.projectItem?.content?.id
         if (itemId == null) err("register failed: ${resp?.errors?.joinToString() { it.message ?: "" }}")
-        else log("register: draft $contentId creado")
         return itemId to contentId
     }
 
@@ -302,7 +409,7 @@ object SyncNetwork {
                 result[i] = newId
             }
         }
-        log("updateDevice: ${chunks.size} trozo(s) sincronizados")
+        log("[push] update: ${chunks.size} chunks")
         return result
     }
 
@@ -336,8 +443,8 @@ object SyncNetwork {
         """.trimIndent()
         val resp = graphql(token, query)
         val ok = resp?.data?.deleteItem?.deletedItemId != null
-        if (!ok) err("deleteDraft($itemId) fallo: ${resp?.errors?.joinToString() { it.message ?: "" }}")
-        else log("draft $itemId eliminado")
+        if (!ok) err("deleteDraft($itemId) fallo")
+        else log("[push] draft eliminado")
         return ok
     }
 
@@ -365,7 +472,7 @@ object SyncNetwork {
         }
         val stale = drafts.filter { it.itemId !in keep }
         if (stale.isEmpty()) return
-        log("limpieza: ${stale.size} trozo(s) obsoleto(s) del dispositivo $deviceId -> eliminando")
+        log("[push] cleanup: ${stale.size} stale drafts de $deviceId")
         for (draft in stale) {
             deleteDraft(token, projectId, draft.itemId)
         }

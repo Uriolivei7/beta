@@ -543,3 +543,30 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - ✅ Plugin empaquetado: `:SyncPlugin:make` → `SyncPlugin/build/SyncPlugin.cs3` (**48 KB**, 13 Ago 2026, con Jackson)
 - ⏸️ **Pendiente**: reinstalar el cs3 (fix Jackson) y probar en dispositivo — crear el project (ProjectV2), token classic con scope, registrar un dispositivo como DraftIssue y verificar sync bidireccional.
 - ⏸️ Pendiente: verificar que `updatedAt` entre los DraftIssues de GitHub se actualiza correctamente tras `updateDevice`.
+
+## AnizoneProvider — Migración a items JSON en x-data (19 Ago 2026)
+
+### 🔧 Problema original
+- `search()` y `getMainPage()` devolvían **vacío**: el sitio anizone.to (Livewire 3 + Alpine) migró y los items ya NO están en `div[wire:key]` de la página. Ahora vienen como JSON en el atributo `x-data` de un `[x-data]` del componente `pages.anime-index`.
+
+### Nueva estructura (verificada en PC)
+- Main page/search: `<div x-data="{ items: JSON.parse('...'), nextCursor: '...', hasMore: true, ..., loadMore() { $wire.loadPage(this.nextCursor) } }">` dentro del componente con `wire:snapshot` de `pages.anime-index`.
+- **Decode**: el atributo HTML tiene doble escape JS+JSON (p.ej. `\\u0022`, `\\\/`). El replace naive `replace("\\u0022","\"")` **rompe títulos con comillas internas**. Fix: `unescapeJsString()` char-por-char (JS unescape primero: `\\`→`\`, `\/`→`/`, `\uXXXX`→char; luego `JSONArray` termina con los escapes restantes).
+- Campos del item JSON: `slug`, `url`, `cover`, `main_title` (con `"` literales), `title_list` (mapa `"1"`=EN, `"5"`=principal, `"8"`=JA), `type` ("TV Series"/"Movie"/"OVA"/"Web"), `start_year`, `episode_count`.
+- Search por URL filtra server-side: `$mainUrl/anime?search=query` → x-data con items (sin Livewire).
+
+### Paginación
+- **Main page**: método Livewire `loadPage` con `params=[nextCursor]` → los items de la página siguiente vienen en **`effects.dispatches[0].params`** (dispatch `name="items-loaded"`, keys `items`/`nextCursor`/`hasMore`), NO en `effects.html`.
+- **Episodios en `load()`**: el detail usa paginator Livewire `paginators.page` (36/página, Aikatsu 178 eps = 5 páginas). Update `{"paginators.page": "N"}` → los `li[x-data]` de esa página vienen en `effects.html`. El viejo `.h-12[x-intersect="$wire.loadMore()"]` ya no existe.
+
+### 🔧 Player (loadLinks) — cambiado a vidstackPlayer
+- El `media-player` + `<track>` + `span.truncate` ya no existen. El reproductor es `<div x-data="vidstackPlayer(JSON.parse('...'))">`.
+- El JSON contiene: `src` (master.m3u8), `subtitles[]` (title/format/language/default/forced/file), `storage`, `snapshot`, `storyboard`, `chapter`, `fonts`.
+- Fix: regex `vidstackPlayer\(JSON\.parse\('(.*?)'\)\)` (DOT_MATCHES_ALL) + `unescapeJsString` + `JSONObject` → `src` para el link, `subtitles[]` para `subtitleCallback`.
+- Fuente: `div:containsOwn(Source:)` → siguiente sibling (ej. "Web").
+- Master CDN: `https://suzaku.xin-cdn.xyz/{uuid}/master.m3u8` — responde 200, variantes 360/720/1080 + audio ja.
+
+### Estado
+- ✅ Compilación OK: `.\gradlew.bat :AnizoneProvider:compileReleaseKotlin --console=plain -q`
+- ✅ Helpers nuevos: `unescapeJsString`, `parseItemsJson`, `findItemsXData`, `extractNextCursor`, `extractHasMore`, `getItemsLoadedParams`, `toResult(JSONObject)`.
+- ⏸️ **Pendiente**: instalar cs3 en dispositivo y probar search, main page (paginación multi-página), load con muchos episodios (Aikatsu) y reproducción + subtítulos.
