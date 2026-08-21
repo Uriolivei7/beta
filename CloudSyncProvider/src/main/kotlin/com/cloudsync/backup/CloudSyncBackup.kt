@@ -33,6 +33,18 @@ object CloudSyncBackup {
         "used_fstream_providers_v3", "fstream_version", "home_api_used", "home_api", "user_selected_homepage_api",
         "last_sync_api_key", "home_pref_homepage", "library_sorting_mode", "results_sorting_mode", "viewpager_item_key",
         "app_layout_key",
+
+        "subtitle_font_size", "subtitle_text_size", "subtitle_scale",
+        "subtitle_position", "subtitle_offset", "subtitle_margin",
+        "subtitle_color", "subtitle_outline_color", "subtitle_background_color",
+        "subtitle_shadow_color", "subtitle_shadow_radius",
+        "subtitle_font_weight", "subtitle_font_style", "subtitle_font_family",
+        "subtitle_edge_type", "subtitle_window_color", "subtitle_window_enabled",
+        // Player visual
+        "player_brightness", "player_volume", "player_speed",
+        "swipe_brightness", "swipe_volume", "swipe_seek",
+        // Layout
+        "grid_columns", "card_aspect_ratio", "thumbnail_size",
     )
     
     fun isTransferable(key: String): Boolean {
