@@ -6,14 +6,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-repositories {
-    google()
-    mavenCentral()
-    maven("https://jitpack.io")
-}
-
 android {
-    namespace = "com.cloudsync"
+    namespace = "com.example"
     compileSdk = 35
 
     defaultConfig {
@@ -40,6 +34,8 @@ android {
     }
 }
 
+// NO pongas repositories {} aquí - vienen de settings.gradle.kts
+
 dependencies {
     implementation("com.google.firebase:firebase-database-ktx:20.3.0")
     implementation("com.google.firebase:firebase-auth:22.3.0")
@@ -47,8 +43,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.4")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.4")
-    val cloudstream by configurations
-    cloudstream("com.lagradost:cloudstream3:pre-release")
+    implementation(files("C:/Users/Ruth Riveiro/AndroidStudioProjects/beta/cloudstream-api.jar"))
 }
 
 tasks.register("packageCs3") {

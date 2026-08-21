@@ -1,9 +1,9 @@
-package com.cloudsync.backup
+package com.example.backup
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.cloudsync.model.*
-import com.cloudsync.storage.CloudSyncStorage
+import com.example.model.*
+import com.example.storage.CloudSyncStorage
 import com.lagradost.api.Log
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.security.MessageDigest

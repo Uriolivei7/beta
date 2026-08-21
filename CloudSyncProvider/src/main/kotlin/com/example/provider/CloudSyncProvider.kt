@@ -1,10 +1,9 @@
-package com.cloudsync.provider
+package com.example.provider
 
-import com.cloudsync.backup.CloudSyncBackup
-import com.cloudsync.model.*
-import com.cloudsync.storage.CloudSyncStorage
+import com.example.backup.CloudSyncBackup
+import com.example.model.*
+import com.example.storage.CloudSyncStorage
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.lagradost.api.Log
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.MainAPI
@@ -12,8 +11,6 @@ import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.newHomePageResponse
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 

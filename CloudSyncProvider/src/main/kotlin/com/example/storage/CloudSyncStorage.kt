@@ -1,9 +1,9 @@
-package com.cloudsync.storage
+package com.example.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.cloudsync.model.CloudSyncCreds
-import com.cloudsync.model.SyncCategory
+import com.example.model.CloudSyncCreds
+import com.example.model.SyncCategory
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 
 object CloudSyncStorage {

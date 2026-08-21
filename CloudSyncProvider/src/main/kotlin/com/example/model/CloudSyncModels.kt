@@ -1,4 +1,4 @@
-package com.cloudsync.model
+package com.example.model
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties

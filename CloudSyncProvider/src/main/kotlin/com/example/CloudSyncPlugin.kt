@@ -1,8 +1,8 @@
-package com.cloudsync
+package com.example
 
 import android.content.Context
-import com.cloudsync.provider.CloudSyncProvider
-import com.cloudsync.storage.CloudSyncStorage
+import com.example.provider.CloudSyncProvider
+import com.example.storage.CloudSyncStorage
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.CoroutineScope
