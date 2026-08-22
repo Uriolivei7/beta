@@ -139,11 +139,13 @@ object CloudSyncBackup {
         Log.d(TAG, "buildBackup ${category.key}: ds=${dsAll.size} set=${setAll.size} sample=${(dsAll.keys+setAll.keys).take(5)}")
         val dataStorePrefs = dsAll.filter { (k, _) -> isTransferable(k) && classifyKey(k) == category && isKeyBackupEnabled(k, category, creds) }.toMap() as Map<String, Any>
         val defaultPrefs = setAll.filter { (k, _) -> isTransferable(k) && classifyKey(k) == category && isKeyBackupEnabled(k, category, creds) }.toMap() as Map<String, Any>
-        Log.d(TAG, "buildBackup ${category.key}: matched ds=${dataStorePrefs.size} set=${defaultPrefs.size}")
-        if (dataStorePrefs.isEmpty() && defaultPrefs.isEmpty()) return null
+        val dels = CloudSyncStorage.tombstones().filterKeys { isTransferable(it) && classifyKey(it)==category }
+        Log.d(TAG, "buildBackup ${category.key}: matched ds=${dataStorePrefs.size} set=${defaultPrefs.size} dels=${dels.size}")
+        if (dataStorePrefs.isEmpty() && defaultPrefs.isEmpty() && dels.isEmpty()) return null
         return BackupFile(
             datastore = BackupVars.from(dataStorePrefs),
-            settings = BackupVars.from(defaultPrefs)
+            settings = BackupVars.from(defaultPrefs),
+            deletions = dels
         )
     }
     
