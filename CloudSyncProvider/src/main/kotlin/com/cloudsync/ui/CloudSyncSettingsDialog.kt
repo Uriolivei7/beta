@@ -239,13 +239,20 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     private fun saveAndSync() {
         Log.d("CloudSync", "saveAndSync: starting - creds.syncKey=${creds.syncKey}, loggedIn=${creds.isLoggedIn()}")
         showProgress("Sincronizando...")
-
-        val generatedSyncKey = syncKeyInput?.text.toString().trim().takeIf { it.isNotBlank() }
-            ?: java.util.UUID.randomUUID().toString()
-
+        
+        // Fix: solo generar UUID si el usuario NO ingresó nada Y no hay syncKey previo
+        val userEnteredSyncKey = syncKeyInput?.text.toString().trim()
+        val finalSyncKey = if (userEnteredSyncKey.isNotBlank()) {
+            userEnteredSyncKey                    // Usuario ingresó uno nuevo -> usarlo
+        } else if (creds.syncKey?.isNotBlank() == true) {
+            creds.syncKey!!                         // Usuario no tocó campo -> mantener el actual
+        } else {
+            java.util.UUID.randomUUID().toString() // No hay nada -> generar nuevo
+        }
+        
         var newCreds = creds.copyWith(
             firebaseUrl = firebaseUrlInput?.text.toString().trim().ifEmpty { creds.firebaseUrl },
-            syncKey = generatedSyncKey,
+            syncKey = finalSyncKey,
             deviceName = deviceNameInput?.text.toString().trim().ifEmpty { creds.deviceName },
         )
         
@@ -284,14 +291,14 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
                 else -> newCreds
             }
         }
-
+        
         creds = newCreds
         CloudSyncStorage.setCreds(creds)
         Log.d("CloudSync", "Settings saved - new syncKey=${creds.syncKey}")
-
+        
         activity.runOnUiThread {
-            val msg = if (creds.syncKey != null && creds.syncKey != creds.syncKey) {
-                "Sync Key generada: ${creds.syncKey}\nCópiala en el otro dispositivo"
+            val msg = if (creds.syncKey?.isNotBlank() == true) {
+                "Sync Key: ${creds.syncKey}\nCópiala en el otro dispositivo"
             } else {
                 "Guardando y sincronizando..."
             }
@@ -303,14 +310,16 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 Log.d("CloudSync", "Starting CloudSyncProvider().startSync()")
-                CloudSyncProvider().startSync(activity)
-                activity.runOnUiThread { 
-                    hideProgress()
-                    Toast.makeText(activity, "✅ Sincronización completada", Toast.LENGTH_LONG).show()
+                CloudSyncProvider().startSync(activity) { success, err ->
+                    activity.runOnUiThread {
+                        hideProgress()
+                        if (success) Toast.makeText(activity, "✅ Sincronización completada", Toast.LENGTH_LONG).show()
+                        else Toast.makeText(activity, "❌ Error: $err", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CloudSync", "Sync exception: ${e.message}")
-                activity.runOnUiThread { 
+                activity.runOnUiThread {
                     hideProgress()
                     Toast.makeText(activity, "❌ Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
