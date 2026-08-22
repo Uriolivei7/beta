@@ -35,18 +35,19 @@ class CloudSyncProvider : MainAPI() {
 
     fun startSync(context: android.content.Context) {
         val creds = CloudSyncStorage.getCreds()
-        if (creds == null || !creds.isLoggedIn()) return
+        Log.d("CloudSync", "startSync: creds=${if (creds != null) "present (syncKey=${creds.syncKey})" else "null"}, loggedIn=${creds?.isLoggedIn()}")
+        if (creds == null || !creds.isLoggedIn()) {
+            Log.w("CloudSync", "startSync: No creds or not logged in, aborting sync")
+            return
+        }
         
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             try {
-                if (!CloudSyncStorage.isDeviceRegistered()) {
-                    CloudSyncStorage.setDeviceRegistered(true)
-                }
-                
+                Log.d("CloudSync", "performFullSync starting for categories: ${SyncCategory.values().filter { creds.isBackupEnabled(it) }.joinToString { it.key }}")
                 performFullSync(context, creds)
-                
+                Log.d("CloudSync", "performFullSync completed")
             } catch (e: Exception) {
-                com.lagradost.api.Log.e("CloudSync", "Sync error: ${e.message}")
+                Log.e("CloudSync", "performFullSync exception: ${e.message}")
             }
         }
     }
@@ -56,28 +57,42 @@ class CloudSyncProvider : MainAPI() {
         
         for (category in categories) {
             val backupEnabled = creds.isBackupEnabled(category)
-            if (!backupEnabled) continue
+            val restoreEnabled = creds.isRestoreEnabled(category)
+            Log.d("CloudSync", "Category ${category.key}: backupEnabled=$backupEnabled, restoreEnabled=$restoreEnabled")
+            if (!backupEnabled && !restoreEnabled) continue
             
-            val backup = CloudSyncBackup.buildBackupForCategory(context, category, creds)
-            if (backup != null) {
-                pushCategory(category, backup)
+            if (backupEnabled) {
+                val backup = CloudSyncBackup.buildBackupForCategory(context, category, creds)
+                if (backup != null) {
+                    Log.d("CloudSync", "Pushing category ${category.key}")
+                    pushCategory(category, backup)
+                } else {
+                    Log.d("CloudSync", "No backup data for category ${category.key}")
+                }
             }
             
-            pullCategory(context, category, creds)
+            if (restoreEnabled) {
+                Log.d("CloudSync", "Pulling category ${category.key}")
+                pullCategory(context, category, creds)
+            }
         }
     }
     
     private fun pushCategory(category: SyncCategory, backup: BackupFile) {
         val json = mapper.writeValueAsString(backup)
         val hash = CloudSyncBackup.computeHash(json)
-        
-        if (hash != CloudSyncStorage.getCategoryHash(category)) {
+        val currentHash = CloudSyncStorage.getCategoryHash(category)
+        Log.d("CloudSync", "pushCategory ${category.key}: newHash=$hash, currentHash=$currentHash")
+        if (hash != currentHash) {
+            Log.d("CloudSync", "Pushing to Firebase for category ${category.key} (TODO: implement)")
             CloudSyncStorage.setCategoryHash(category, hash)
             CloudSyncStorage.setCategoryTimestamp(category, System.currentTimeMillis())
+        } else {
+            Log.d("CloudSync", "No changes for category ${category.key}, skipping push")
         }
     }
     
     private fun pullCategory(context: android.content.Context, category: SyncCategory, creds: CloudSyncCreds) {
-        // TODO: Pull from Firebase
+        Log.d("CloudSync", "pullCategory ${category.key} - TODO: implement Firebase pull")
     }
 }

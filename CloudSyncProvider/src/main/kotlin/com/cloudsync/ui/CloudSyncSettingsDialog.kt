@@ -118,15 +118,15 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     private fun addConnectionFields(layout: LinearLayout) {
         val firebaseUrl = mkInput("Firebase URL", creds.firebaseUrl, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
         firebaseUrlInput = firebaseUrl
-        layout.addView(mkLabeled("URL de la base de datos en tiempo real de Firebase:", firebaseUrl))
+        layout.addView(mkLabeled("Firebase Realtime Database URL:", firebaseUrl))
         
-        val syncKey = mkInput("Clave de sincronización", creds.syncKey ?: "", InputType.TYPE_CLASS_TEXT).apply { hint = "Dejar vacío para generar nuevo" }
+        val syncKey = mkInput("Sync Key", creds.syncKey ?: "", InputType.TYPE_CLASS_TEXT).apply { hint = "Leave empty to generate new" }
         syncKeyInput = syncKey
-        layout.addView(mkLabeled("Clave de sincronización (shared secret):", syncKey))
+        layout.addView(mkLabeled("Sync Key (shared secret):", syncKey))
         
-        val deviceName = mkInput("Nombre del dispositivo", creds.deviceName ?: "Device-${creds.deviceId.take(8)}", InputType.TYPE_CLASS_TEXT)
+        val deviceName = mkInput("Device Name", creds.deviceName ?: "Device-${creds.deviceId.take(8)}", InputType.TYPE_CLASS_TEXT)
         deviceNameInput = deviceName
-        layout.addView(mkLabeled("Nombre del dispositivo:", deviceName))
+        layout.addView(mkLabeled("Device Name:", deviceName))
     }
     
     private fun mkInput(hint: String, text: String, inputType: Int): EditText {
@@ -219,6 +219,7 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     }
     
     private fun showProgress(message: String) {
+        Log.d("CloudSync", "showProgress: $message")
         progressDialog?.dismiss()
         progressDialog = ProgressDialog(activity).apply {
             setMessage(message)
@@ -230,16 +231,21 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     }
     
     private fun hideProgress() {
+        Log.d("CloudSync", "hideProgress")
         progressDialog?.dismiss()
         progressDialog = null
     }
     
     private fun saveAndSync() {
+        Log.d("CloudSync", "saveAndSync: starting - creds.syncKey=${creds.syncKey}, loggedIn=${creds.isLoggedIn()}")
         showProgress("Sincronizando...")
-        
+
+        val generatedSyncKey = syncKeyInput?.text.toString().trim().takeIf { it.isNotBlank() }
+            ?: java.util.UUID.randomUUID().toString()
+
         var newCreds = creds.copyWith(
             firebaseUrl = firebaseUrlInput?.text.toString().trim().ifEmpty { creds.firebaseUrl },
-            syncKey = syncKeyInput?.text.toString().trim().takeIf { it.isNotBlank() },
+            syncKey = generatedSyncKey,
             deviceName = deviceNameInput?.text.toString().trim().ifEmpty { creds.deviceName },
         )
         
@@ -278,25 +284,32 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
                 else -> newCreds
             }
         }
-        
+
         creds = newCreds
         CloudSyncStorage.setCreds(creds)
-        com.lagradost.api.Log.d("CloudSync", "Settings saved")
-        
-        activity.runOnUiThread { 
-            Toast.makeText(activity, "Guardando y sincronizando...", Toast.LENGTH_SHORT).show()
+        Log.d("CloudSync", "Settings saved - new syncKey=${creds.syncKey}")
+
+        activity.runOnUiThread {
+            val msg = if (creds.syncKey != null && creds.syncKey != creds.syncKey) {
+                "Sync Key generada: ${creds.syncKey}\nCópiala en el otro dispositivo"
+            } else {
+                "Guardando y sincronizando..."
+            }
+            Toast.makeText(activity, msg, Toast.LENGTH_LONG).show()
         }
         
         showProgress("Sincronizando...")
         
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             try {
+                Log.d("CloudSync", "Starting CloudSyncProvider().startSync()")
                 CloudSyncProvider().startSync(activity)
                 activity.runOnUiThread { 
                     hideProgress()
                     Toast.makeText(activity, "✅ Sincronización completada", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
+                Log.e("CloudSync", "Sync exception: ${e.message}")
                 activity.runOnUiThread { 
                     hideProgress()
                     Toast.makeText(activity, "❌ Error: ${e.message}", Toast.LENGTH_LONG).show()
