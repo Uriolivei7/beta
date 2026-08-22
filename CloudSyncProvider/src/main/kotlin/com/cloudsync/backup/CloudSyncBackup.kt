@@ -1,9 +1,9 @@
-package com.example.backup
+package com.cloudsync.backup
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.model.*
-import com.example.storage.CloudSyncStorage
+import com.cloudsync.model.*
+import com.cloudsync.storage.CloudSyncStorage
 import com.lagradost.api.Log
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.security.MessageDigest
@@ -33,18 +33,6 @@ object CloudSyncBackup {
         "used_fstream_providers_v3", "fstream_version", "home_api_used", "home_api", "user_selected_homepage_api",
         "last_sync_api_key", "home_pref_homepage", "library_sorting_mode", "results_sorting_mode", "viewpager_item_key",
         "app_layout_key",
-
-        "subtitle_font_size", "subtitle_text_size", "subtitle_scale",
-        "subtitle_position", "subtitle_offset", "subtitle_margin",
-        "subtitle_color", "subtitle_outline_color", "subtitle_background_color",
-        "subtitle_shadow_color", "subtitle_shadow_radius",
-        "subtitle_font_weight", "subtitle_font_style", "subtitle_font_family",
-        "subtitle_edge_type", "subtitle_window_color", "subtitle_window_enabled",
-        // Player visual
-        "player_brightness", "player_volume", "player_speed",
-        "swipe_brightness", "swipe_volume", "swipe_seek",
-        // Layout
-        "grid_columns", "card_aspect_ratio", "thumbnail_size",
     )
     
     fun isTransferable(key: String): Boolean {
@@ -118,20 +106,13 @@ object CloudSyncBackup {
         return context.getSharedPreferences(PREF_SETTINGS, Context.MODE_PRIVATE)
     }
     
-    private fun filterPrefs(prefs: SharedPreferences, category: SyncCategory, creds: CloudSyncCreds): Map<String, Any> {
-        val map = mutableMapOf<String, Any>()
-        prefs.all.forEach { (k, v) ->
-            val key = k as String
-            if (isTransferable(key) && classifyKey(key) == category && isKeyBackupEnabled(key, category, creds)) {
-                map[key] = v as Any
-            }
-        }
-        return map
-    }
-    
     fun buildBackupForCategory(context: Context, category: SyncCategory, creds: CloudSyncCreds): BackupFile? {
-        val dataStorePrefs = filterPrefs(getDatastorePrefs(context), category, creds)
-        val defaultPrefs = filterPrefs(getSettingsPrefs(context), category, creds)
+        val dataStorePrefs = getDatastorePrefs(context).all
+            .filter { (k: String, _) -> isTransferable(k) && classifyKey(k) == category && isKeyBackupEnabled(k, category, creds) }
+            .toMap() as Map<String, Any>
+        val defaultPrefs = getSettingsPrefs(context).all
+            .filter { (k: String, _) -> isTransferable(k) && classifyKey(k) == category && isKeyBackupEnabled(k, category, creds) }
+            .toMap() as Map<String, Any>
         
         if (dataStorePrefs.isEmpty() && defaultPrefs.isEmpty()) return null
         

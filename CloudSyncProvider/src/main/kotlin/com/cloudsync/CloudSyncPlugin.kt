@@ -1,8 +1,10 @@
-package com.example
+package com.cloudsync
 
+import android.app.Activity
 import android.content.Context
-import com.example.provider.CloudSyncProvider
-import com.example.storage.CloudSyncStorage
+import com.cloudsync.provider.CloudSyncProvider
+import com.cloudsync.storage.CloudSyncStorage
+import com.cloudsync.ui.CloudSyncSettingsDialog
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +20,12 @@ class CloudSyncPlugin : Plugin() {
     override fun load(context: Context) {
         CloudSyncStorage.init(context)
         registerMainAPI(CloudSyncProvider())
+        
+        openSettings = { ctx ->
+            if (ctx is androidx.appcompat.app.AppCompatActivity) {
+                CloudSyncSettingsDialog(ctx).show()
+            }
+        }
         
         val creds = CloudSyncStorage.getCreds()
         if (creds != null && creds.isLoggedIn()) {

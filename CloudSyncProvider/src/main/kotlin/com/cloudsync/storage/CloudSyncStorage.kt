@@ -1,9 +1,9 @@
-package com.example.storage
+package com.cloudsync.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.model.CloudSyncCreds
-import com.example.model.SyncCategory
+import com.cloudsync.model.CloudSyncCreds
+import com.cloudsync.model.SyncCategory
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 
 object CloudSyncStorage {
@@ -65,36 +65,36 @@ object CloudSyncStorage {
     }
     
     fun getCategoryTimestamp(category: SyncCategory): Long {
-        return getLong("cloudsync_ts_${category.key}", 0)
+        return getLong("$PREFIX_TS${category.key}", 0)
     }
     
     fun setCategoryTimestamp(category: SyncCategory, timestamp: Long) {
-        putLong("cloudsync_ts_${category.key}", timestamp)
+        putLong("$PREFIX_TS${category.key}", timestamp)
     }
     
     fun getCategoryHash(category: SyncCategory): String? {
-        return get("cloudsync_hash_${category.key}")
+        return get("$PREFIX_HASH${category.key}")
     }
     
     fun setCategoryHash(category: SyncCategory, hash: String) {
-        set("cloudsync_hash_${category.key}", hash)
+        set("$PREFIX_HASH${category.key}", hash)
     }
     
     fun getSyncedKeys(category: SyncCategory): Set<String> {
-        return getSet("cloudsync_keys_${category.key}") ?: emptySet()
+        return getSet("$PREFIX_SYNCED_KEYS${category.key}") ?: emptySet()
     }
     
     fun setSyncedKeys(category: SyncCategory, keys: Set<String>) {
-        putSet("cloudsync_keys_${category.key}", keys)
+        putSet("$PREFIX_SYNCED_KEYS${category.key}", keys)
     }
     
     fun clearAll() {
         set(KEY_CREDS, null)
         set(KEY_DEVICE_REGISTERED, null)
         SyncCategory.values().forEach { cat ->
-            set("cloudsync_ts_${cat.key}", null)
-            set("cloudsync_hash_${cat.key}", null)
-            set("cloudsync_keys_${cat.key}", null)
+            set("$PREFIX_TS${cat.key}", null)
+            set("$PREFIX_HASH${cat.key}", null)
+            set("$PREFIX_SYNCED_KEYS${cat.key}", null)
         }
     }
 }

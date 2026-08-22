@@ -1,12 +1,14 @@
-package com.example.provider
+package com.cloudsync.provider
 
-import com.example.backup.CloudSyncBackup
-import com.example.model.*
-import com.example.storage.CloudSyncStorage
+import com.cloudsync.backup.CloudSyncBackup
+import com.cloudsync.model.*
+import com.cloudsync.storage.CloudSyncStorage
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.lagradost.api.Log
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.MainPageData
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.newHomePageResponse
@@ -35,8 +37,7 @@ class CloudSyncProvider : MainAPI() {
         val creds = CloudSyncStorage.getCreds()
         if (creds == null || !creds.isLoggedIn()) return
         
-        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
-        scope.launch {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 if (!CloudSyncStorage.isDeviceRegistered()) {
                     CloudSyncStorage.setDeviceRegistered(true)

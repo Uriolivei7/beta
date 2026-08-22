@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example"
+    namespace = "com.cloudsync"
     compileSdk = 35
 
     defaultConfig {
@@ -35,6 +35,8 @@ android {
 }
 
 dependencies {
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.core:core-ktx:1.12.0")
     implementation("com.google.firebase:firebase-database-ktx:20.3.0")
     implementation("com.google.firebase:firebase-auth:22.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
