@@ -30,7 +30,7 @@ object CloudSyncBackup {
         "prerelease_update", "stable_update", "inappupdater",
         "data_store_helper/account_key_index", "VERSION_NAME", "FILES_TO_DELETE_KEY", "HAS_DONE_SETUP",
         "cloudsync_creds", "cloudsync_device_registered",
-        "used_fstream_providers_v3", "fstream_version", "home_api_used", "home_api", "user_selected_homepage_api",
+        "used_fstream_providers_v3", "fstream_version",
         "last_sync_api_key", "home_pref_homepage", "library_sorting_mode", "results_sorting_mode", "viewpager_item_key",
         "app_layout_key",
     )
@@ -97,8 +97,7 @@ object CloudSyncBackup {
         return MessageDigest.getInstance("MD5").digest(data.toByteArray())
             .joinToString("") { "%02x".format(it) }
     }
-    
-    // Firebase no permite . $ # [ ] / en keys → sanitizar
+
     fun sanitizeKey(key: String): String = key
         .replace(".", "__DOT__").replace("$", "__DOL__").replace("#", "__HASH__")
         .replace("[", "__LB__").replace("]", "__RB__").replace("/", "__SLASH__")
@@ -107,14 +106,14 @@ object CloudSyncBackup {
         .replace("__HASH__", "#").replace("__DOL__", "$").replace("__DOT__", ".")
 
     private fun getDatastorePrefs(context: Context): SharedPreferences {
-        // 1) Intenta via DataStore API oficial (soporta prerelease/debug)
+
         try {
             val dsClass = Class.forName("com.lagradost.cloudstream3.utils.DataStore")
             val inst = dsClass.getDeclaredField("INSTANCE").get(null)
             val m = inst.javaClass.getMethod("getSharedPrefs", Context::class.java)
             return m.invoke(inst, context) as SharedPreferences
         } catch (_: Exception) {}
-        // 2) Fallback archivos directos
+
         return context.getSharedPreferences(PREF_DATASTORE, Context.MODE_PRIVATE)
     }
 
@@ -125,7 +124,7 @@ object CloudSyncBackup {
             val m = inst.javaClass.getMethod("getDefaultSharedPrefs", Context::class.java)
             return m.invoke(inst, context) as SharedPreferences
         } catch (_: Exception) {}
-        // fallback dinámico según packageName (prerelease vs release)
+
         val fallbackName = context.packageName + "_preferences"
         try {
             val prefs = context.getSharedPreferences(fallbackName, Context.MODE_PRIVATE)
