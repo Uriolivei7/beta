@@ -1,6 +1,7 @@
 package com.cloudsync.ui
 
 import android.app.AlertDialog
+import android.app.ProgressDialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -17,8 +18,13 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.cloudsync.model.*
+import com.cloudsync.provider.CloudSyncProvider
 import com.cloudsync.storage.CloudSyncStorage
 import com.lagradost.api.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     
@@ -31,6 +37,8 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     private val categoryRestoreSwitches = mutableMapOf<SyncCategory, Switch>()
     private val subCategorySwitches = mutableMapOf<SettingsSubCategory, Switch>()
     private val subCategoryRestoreSwitches = mutableMapOf<SettingsSubCategory, Switch>()
+    
+    private var progressDialog: ProgressDialog? = null
     
     fun show() {
         val scrollView = ScrollView(activity)
@@ -56,17 +64,26 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
         mainLayout.addView(mkSection("Settings Subcategories (Restore)"))
         addSubCategoryToggles(mainLayout, false)
         
+        // Botones: Cancel (izquierda) | Save & Sync (derecha)
         val buttonLayout = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, 32, 0, 0)
+            weightSum = 2f
         }
         
-        val saveButton = mkButton("Save & Sync") { saveAndSync() }
         val cancelButton = mkButton("Cancel") { }
+        cancelButton.layoutParams = LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        ).apply { gravity = Gravity.LEFT }
         
-        buttonLayout.addView(saveButton)
+        val saveButton = mkButton("Save & Sync") { saveAndSync() }
+        saveButton.layoutParams = LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        ).apply { gravity = Gravity.RIGHT }
+        
         buttonLayout.addView(cancelButton)
+        buttonLayout.addView(saveButton)
         mainLayout.addView(buttonLayout)
         
         val dialog = AlertDialog.Builder(activity)
@@ -99,14 +116,17 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
     }
     
     private fun addConnectionFields(layout: LinearLayout) {
-        firebaseUrlInput = mkInput("Firebase URL", creds.firebaseUrl, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
-        layout.addView(mkLabeled("Firebase Realtime Database URL:", firebaseUrlInput!!))
+        val firebaseUrl = mkInput("Firebase URL", creds.firebaseUrl, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        firebaseUrlInput = firebaseUrl
+        layout.addView(mkLabeled("URL de la base de datos en tiempo real de Firebase:", firebaseUrl))
         
-        syncKeyInput = mkInput("Sync Key", creds.syncKey ?: "", InputType.TYPE_CLASS_TEXT).apply { hint = "Leave empty to generate new" }
-        layout.addView(mkLabeled("Sync Key (shared secret):", syncKeyInput!!))
+        val syncKey = mkInput("Clave de sincronización", creds.syncKey ?: "", InputType.TYPE_CLASS_TEXT).apply { hint = "Dejar vacío para generar nuevo" }
+        syncKeyInput = syncKey
+        layout.addView(mkLabeled("Clave de sincronización (shared secret):", syncKey))
         
-        deviceNameInput = mkInput("Device Name", creds.deviceName ?: "Device-${creds.deviceId.take(8)}", InputType.TYPE_CLASS_TEXT)
-        layout.addView(mkLabeled("Device Name:", deviceNameInput!!))
+        val deviceName = mkInput("Nombre del dispositivo", creds.deviceName ?: "Device-${creds.deviceId.take(8)}", InputType.TYPE_CLASS_TEXT)
+        deviceNameInput = deviceName
+        layout.addView(mkLabeled("Nombre del dispositivo:", deviceName))
     }
     
     private fun mkInput(hint: String, text: String, inputType: Int): EditText {
@@ -198,7 +218,25 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
         }
     }
     
+    private fun showProgress(message: String) {
+        progressDialog?.dismiss()
+        progressDialog = ProgressDialog(activity).apply {
+            setMessage(message)
+            setCancelable(false)
+            setProgressStyle(ProgressDialog.STYLE_SPINNER)
+            setIndeterminate(true)
+        }
+        progressDialog?.show()
+    }
+    
+    private fun hideProgress() {
+        progressDialog?.dismiss()
+        progressDialog = null
+    }
+    
     private fun saveAndSync() {
+        showProgress("Sincronizando...")
+        
         var newCreds = creds.copyWith(
             firebaseUrl = firebaseUrlInput?.text.toString().trim().ifEmpty { creds.firebaseUrl },
             syncKey = syncKeyInput?.text.toString().trim().takeIf { it.isNotBlank() },
@@ -245,8 +283,25 @@ class CloudSyncSettingsDialog(private val activity: AppCompatActivity) {
         CloudSyncStorage.setCreds(creds)
         com.lagradost.api.Log.d("CloudSync", "Settings saved")
         
-        activity.runOnUiThread(Runnable { 
-            Toast.makeText(activity, "Settings saved", Toast.LENGTH_SHORT).show()
-        })
+        activity.runOnUiThread { 
+            Toast.makeText(activity, "Guardando y sincronizando...", Toast.LENGTH_SHORT).show()
+        }
+        
+        showProgress("Sincronizando...")
+        
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                CloudSyncProvider().startSync(activity)
+                activity.runOnUiThread { 
+                    hideProgress()
+                    Toast.makeText(activity, "✅ Sincronización completada", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread { 
+                    hideProgress()
+                    Toast.makeText(activity, "❌ Error: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 }
