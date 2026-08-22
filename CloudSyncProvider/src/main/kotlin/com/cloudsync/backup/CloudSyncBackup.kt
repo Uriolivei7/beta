@@ -173,13 +173,15 @@ object CloudSyncBackup {
         
         restoreBackupVars(context, editor, backup.datastore, category, creds, false)
         restoreBackupVars(context, defaultEditor, backup.settings, category, creds, true)
-        
-        editor.apply()
-        defaultEditor.apply()
-        
+
         CloudSyncStorage.setSyncedKeys(category, backup.allKeys())
     }
-    
+
+    private fun resumePosition(json: String?): Double {
+        if (json == null) return -1.0
+        return try { "\"position\":\\s*([\\d.]+)".toRegex().find(json)?.groupValues?.get(1)?.toDouble() ?: -1.0 } catch (_:Exception){ -1.0 }
+    }
+
     private fun restoreBackupVars(
         context: Context,
         editor: SharedPreferences.Editor,
@@ -188,6 +190,9 @@ object CloudSyncBackup {
         creds: CloudSyncCreds,
         isSettings: Boolean
     ) {
+
+        com.cloudsync.CloudSyncPlugin.isRestoringGlobal = true
+        try {
         vars.bool?.forEach { (k, v) ->
             if (isTransferable(k) && isKeyRestoreEnabled(k, category, creds)) {
                 editor.putBoolean(k, v)
@@ -214,6 +219,18 @@ object CloudSyncBackup {
             if (isKeyRestoreEnabled(k, category, creds)) {
                 val prefs = if (isSettings) getSettingsPrefs(context) else getDatastorePrefs(context)
                 val localVal = prefs.getString(k, null)
+
+                val lower = k.lowercase(Locale.ROOT)
+                val isResumePos = lower.contains("video_pos_dur") || lower.contains("result_resume_watching")
+                if (isResumePos && localVal != null) {
+                    val localPos = resumePosition(localVal)
+                    val cloudPos = resumePosition(v)
+                    if (localPos >=0 && cloudPos >=0 && kotlin.math.abs(cloudPos - localPos) > 2.0) {
+                        if (cloudPos > localPos) editor.putString(k, v)
+
+                        return@forEach
+                    }
+                }
                 val cloudTs = extractTimestamp(v)
                 val localTs = localVal?.let { extractTimestamp(it) } ?: 0L
                 if (localVal == null || (cloudTs == 0L && localTs == 0L) || cloudTs > localTs) {
@@ -225,6 +242,15 @@ object CloudSyncBackup {
             if (isTransferable(k) && isKeyRestoreEnabled(k, category, creds)) {
                 editor.putStringSet(k, v)
             }
+        }
+        } finally {
+
+            editor.apply()
+
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                com.cloudsync.CloudSyncPlugin.isRestoringGlobal = false
+            }, 500)
+            return
         }
     }
     
