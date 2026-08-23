@@ -60,68 +60,6 @@ class ReanimeProvider : MainAPI() {
         private fun b64decode(s: String): ByteArray =
             Base64.decode(s.trim(), Base64.DEFAULT)
 
-        /** Convierte subtítulos ASS/SSA a SRT plano */
-        private fun assToSrt(ass: String): String? {
-            val out = StringBuilder()
-            var inEvents = false
-            var startIdx = 1  // orden estándar: Layer,Start,End,...
-            var endIdx = 2
-            var textIdx = 9
-            var cueCount = 0
-
-            fun assTimeToSrt(t: String): String? {
-                val m = Regex("""(\d+):(\d+):(\d+)[.,](\d{1,3})""").find(t.trim()) ?: return null
-                val (h, mi, s, cs) = m.destructured
-                val millis = cs.padEnd(3, '0')
-                return "%02d:%02d:%02d,%s".format(
-                    h.toIntOrNull() ?: 0,
-                    mi.toIntOrNull() ?: 0,
-                    s.toIntOrNull() ?: 0,
-                    millis
-                )
-            }
-
-            for (raw in ass.lineSequence()) {
-                val line = raw.trim()
-                if (line.startsWith("[")) {
-                    inEvents = line.equals("[Events]", ignoreCase = true) ||
-                        line.equals("[V4+ Styles]", ignoreCase = true) && false
-                    continue
-                }
-                if (!inEvents) continue
-                when {
-                    line.startsWith("Format:", ignoreCase = true) -> {
-                        val fields = line.substringAfter(":").split(",").map { it.trim().lowercase() }
-                        startIdx = fields.indexOf("start").takeIf { it >= 0 } ?: startIdx
-                        endIdx = fields.indexOf("end").takeIf { it >= 0 } ?: endIdx
-                        textIdx = fields.indexOf("text").takeIf { it >= 0 } ?: textIdx
-                    }
-                    line.startsWith("Dialogue:", ignoreCase = true) -> {
-                        val body = line.substringAfter(":")
-                        val parts = body.split(",", limit = textIdx + 1)
-                        if (parts.size <= textIdx) continue
-                        val start = assTimeToSrt(parts[startIdx]) ?: continue
-                        val end = assTimeToSrt(parts[endIdx]) ?: continue
-                        val text = parts[textIdx]
-                            .replace(Regex("\\{[^}]*\\}"), "")
-                            .replace("\\N", "\n")
-                            .replace("\\n", "\n")
-                            .trim()
-                        if (text.isEmpty()) continue
-                        cueCount++
-                        out.append(cueCount).append('\n')
-                        out.append(start).append(" --> ").append(end).append('\n')
-                        out.append(text).append("\n\n")
-                    }
-                }
-            }
-            return if (cueCount > 0) out.toString() else null
-        }
-
-        private fun toDataUri(content: String): String =
-            "data:text/vtt;charset=utf-8;base64," +
-                Base64.encodeToString(content.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-
         /**
          * Intérprete mínimo del subset WASM usado por flixcloud.
          * El módulo tiene 3 funciones (_s/_r/_c), memoria lineal y 1 global mutable.
@@ -694,24 +632,12 @@ class ReanimeProvider : MainAPI() {
 
                 for ((lang, subUrl) in resolved.subtitles) {
                     if (!emittedSubs.add(subUrl)) continue
-                    try {
-                        val subHeaders = browserHeaders + mapOf("Referer" to FLIX_REFERER)
-                        val raw = app.get(subUrl, headers = subHeaders).text
-                        val srt = if (subUrl.endsWith(".ass", true) || subUrl.endsWith(".ssa", true)) {
-                            assToSrt(raw)
-                        } else {
-                            raw
-                        }
-                        if (srt.isNullOrBlank()) {
-                            Log.w("Reanime", "sub '$lang' vacío tras conversión")
-                            continue
-                        }
-                        subtitleCallback(newSubtitleFile(lang, toDataUri(srt)))
-                        Log.d("Reanime", "sub '$lang' emitido (${srt.length} chars)")
-                    } catch (e: Exception) {
-                        Log.w("Reanime", "sub '$lang' fallo: ${e.message}")
-                    }
+                    val subHeaders = browserHeaders + mapOf("Referer" to FLIX_REFERER)
+                    subtitleCallback(newSubtitleFile(lang, subUrl) {
+                        this.headers = subHeaders
+                    })
                 }
+                Log.d("Reanime", "loadLinks $label: ${resolved.subtitles.size} subs emitidos")
             }
 
         if (!any) Log.w("Reanime", "loadLinks ep $ep: ningún servidor resolvió")
@@ -742,55 +668,36 @@ class ReanimeProvider : MainAPI() {
                 if (url.contains("flixcloud.cc") && url.contains(".m3u8")) {
                     val response = chain.proceed(request)
                     return try {
-                        val bodyText = response.peekBody(2L * 1024 * 1024).string()
-                        val urlTail = url.substringAfterLast("/").take(50)
-                        if (bodyText.trimStart().startsWith("#EXTM3U")) {
-                            Log.d("Reanime", "interceptor $urlTail: plain (${response.code})")
-                            return response
-                        }
+                    val bodyText = response.peekBody(2L * 1024 * 1024).string()
+                    if (bodyText.trimStart().startsWith("#EXTM3U")) return response
 
-                        val clean = bodyText.trim().replace(Regex("[^A-Za-z0-9+/=]"), "")
-                        if (clean.length < 16) {
-                            Log.w("Reanime", "interceptor $urlTail: no b64 (code=${response.code})")
-                            return response
-                        }
-                        val raw = Base64.decode(clean, Base64.DEFAULT)
+                    val clean = bodyText.trim().replace(Regex("[^A-Za-z0-9+/=]"), "")
+                    if (clean.length < 16) {
+                        Log.w("Reanime", "interceptor m3u8: no b64 (code=${response.code})")
+                        return response
+                    }
+                    val raw = Base64.decode(clean, Base64.DEFAULT)
 
-                        var decodedBody: String? = null
-                        val pks = synchronized(activePks) { activePks.toList() }
-                        for ((idx, pk) in pks.withIndex()) {
-                            val dec = ByteArray(raw.size) { i ->
-                                (raw[i].toInt() xor pk[i % pk.size].toInt()).toByte()
-                            }
-                            if (String(dec, 0, 7, Charsets.UTF_8) == "#EXTM3U") {
-                                Log.d("Reanime", "interceptor $urlTail: decodificado con PK#$idx (${raw.size}B)")
-                                decodedBody = String(dec, Charsets.UTF_8)
-                                break
-                            }
+                    var decodedBody: String? = null
+                    val pks = synchronized(activePks) { activePks.toList() }
+                    for (pk in pks) {
+                        val dec = ByteArray(raw.size) { i ->
+                            (raw[i].toInt() xor pk[i % pk.size].toInt()).toByte()
                         }
-                        if (decodedBody == null) {
-                            Log.w("Reanime", "interceptor $urlTail: ningun PK valido (pks=${pks.size})")
-                            return response
+                        if (String(dec, 0, 7, Charsets.UTF_8) == "#EXTM3U") {
+                            decodedBody = String(dec, Charsets.UTF_8)
+                            break
                         }
+                    }
+                    if (decodedBody == null) {
+                        Log.w("Reanime", "interceptor m3u8: ningun PK valido (pks=${pks.size})")
+                        return response
+                    }
 
-                        // Diagnóstico de variantes (no master)
-                        if (!urlTail.startsWith("master")) {
-                            val headerLines = decodedBody.lineSequence()
-                                .takeWhile { it.startsWith("#") || it.isBlank() }
-                                .filter { it.isNotBlank() }
-                                .joinToString(" | ")
-                            val firstUrls = decodedBody.lineSequence()
-                                .filter { it.isNotBlank() && !it.startsWith("#") }
-                                .take(2)
-                                .joinToString(" | ")
-                            Log.d("Reanime", "PLAYLIST $urlTail headers=$headerLines")
-                            Log.d("Reanime", "PLAYLIST $urlTail primerasURLs=$firstUrls")
-                        }
-
-                        val contentType = response.body?.contentType()
-                        response.newBuilder()
-                            .body(okhttp3.ResponseBody.create(contentType, decodedBody))
-                            .build()
+                    val contentType = response.body?.contentType()
+                    response.newBuilder()
+                        .body(okhttp3.ResponseBody.create(contentType, decodedBody))
+                        .build()
                     } catch (e: Exception) {
                         Log.w("Reanime", "interceptor m3u8 error: ${e.message}")
                         response
@@ -818,7 +725,6 @@ class ReanimeProvider : MainAPI() {
                     val transformed = if (payload.isNotEmpty() && payload[0] == 0x47.toByte()) {
                         payload // TS plano tras la firma
                     } else {
-                        Log.d("Reanime", "segmento ${url.substringAfterLast('/').take(30)}: XOR descifrado (${payload.size}B)")
                         ByteArray(payload.size) { i ->
                             (payload[i].toInt() xor SEG_XOR_KEY[i and 15].toInt()).toByte()
                         }
