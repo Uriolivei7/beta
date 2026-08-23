@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.nodes.Element
@@ -80,111 +81,106 @@ class DanimadosProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val url = if (request.data == "/") {
-            mainUrl
-        } else {
-            "${mainUrl}${request.data.removeSuffix("/")}/page/$page/"
+        return try {
+            val url = if (request.data == "/") {
+                mainUrl
+            } else {
+                "${mainUrl}${request.data.removeSuffix("/")}/page/$page/"
+            }
+            val doc = app.get(url, headers = browserHeaders).document
+            val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
+            if (items.isEmpty()) {
+                Log.w("Danimados", "getMainPage '${request.name}' p$page: 0 items (html=${doc.html().length})")
+            }
+            newHomePageResponse(
+                list = HomePageList(request.name, items),
+                hasNext = items.size >= 20
+            )
+        } catch (e: Exception) {
+            Log.e("Danimados", "getMainPage '${request.name}' p$page fallo: ${e.message}")
+            null
         }
-        Log.d("Danimados", "getMainPage: name=${request.name}, url=$url, page=$page")
-        val resp = app.get(url, headers = browserHeaders)
-        Log.d("Danimados", "getMainPage: code=${resp.code}, html.len=${resp.text.length}")
-        val doc = resp.document
-        Log.d("Danimados", "getMainPage: title=${doc.title()}")
-
-        val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
-        Log.d("Danimados", "getMainPage: found ${items.size} items")
-        if (items.isEmpty()) {
-            Log.d("Danimados", "getMainPage: NO ITEMS - checking raw selectors...")
-            Log.d("Danimados", "getMainPage: article.tvshows=${doc.select("article.item").size}")
-            Log.d("Danimados", "getMainPage: any article=${doc.select("article").size}")
-            Log.d("Danimados", "getMainPage: body length=${doc.html().length}")
-            return null
-        }
-
-        return newHomePageResponse(
-            list = HomePageList(request.name, items),
-            hasNext = items.size >= 20
-        )
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        Log.d("Danimados", "search: query=$query")
-        val resp = app.get("$BASE_URL/?s=$query", headers = browserHeaders)
-        Log.d("Danimados", "search: code=${resp.code}, html.len=${resp.text.length}")
-        val doc = resp.document
-        Log.d("Danimados", "search: title=${doc.title()}")
-        Log.d("Danimados", "search: article.item=${doc.select("article.item").size}")
-        Log.d("Danimados", "search: article=${doc.select("article").size}")
-        Log.d("Danimados", "search: .item=${doc.select(".item").size}")
-        Log.d("Danimados", "search: .result-item=${doc.select(".result-item").size}")
-
-        val results = mutableListOf<SearchResponse>()
-        for (selector in listOf("article.item.tvshows", "article.item", ".result-item", ".search-item")) {
-            val found = doc.select(selector).mapNotNull { it.toSearchResponse() }
-            results.addAll(found)
-            if (results.isNotEmpty()) break
-        }
-
-        if (results.isEmpty()) {
-            for (article in doc.select("article")) {
-                val link = article.select(".data h3 a[href*='/series/']").first()
-                    ?: article.select("h3 a[href*='/series/']").first()
-                    ?: article.select("a[href*='/series/']").first() ?: continue
-                val href = link.attr("abs:href")
-                val title = link.text().trim()
-                if (title.isBlank() || !href.contains("/series/")) continue
-                val poster = article.select("img").first()?.attr("src")?.let { fixUrl(it) }
-                results.add(newMovieSearchResponse(title, href, TvType.Cartoon) { this.posterUrl = poster })
+        return try {
+            val doc = app.get("$BASE_URL/?s=$query", headers = browserHeaders).document
+            val results = mutableListOf<SearchResponse>()
+            for (selector in listOf("article.item.tvshows", "article.item", ".result-item", ".search-item")) {
+                val found = doc.select(selector).mapNotNull { it.toSearchResponse() }
+                results.addAll(found)
+                if (results.isNotEmpty()) break
             }
-        }
 
-        Log.d("Danimados", "search: found ${results.size} items")
-        return results.ifEmpty { null }
+            if (results.isEmpty()) {
+                for (article in doc.select("article")) {
+                    val link = article.select(".data h3 a[href*='/series/']").first()
+                        ?: article.select("h3 a[href*='/series/']").first()
+                        ?: article.select("a[href*='/series/']").first() ?: continue
+                    val href = link.attr("abs:href")
+                    val title = link.text().trim()
+                    if (title.isBlank() || !href.contains("/series/")) continue
+                    val poster = article.select("img").first()?.attr("src")?.let { fixUrl(it) }
+                    results.add(newMovieSearchResponse(title, href, TvType.Cartoon) { this.posterUrl = poster })
+                }
+            }
+
+            if (results.isEmpty()) Log.w("Danimados", "search '$query': sin resultados")
+            results.ifEmpty { null }
+        } catch (e: Exception) {
+            Log.e("Danimados", "search '$query' fallo: ${e.message}")
+            null
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        Log.d("Danimados", "load: url=$url")
-        val resp = app.get(url, headers = browserHeaders)
-        Log.d("Danimados", "load: code=${resp.code}, html.len=${resp.text.length}")
-        val doc = resp.document
-        Log.d("Danimados", "load: title=${doc.title()}")
+        return try {
+            val doc = app.get(url, headers = browserHeaders).document
 
-        val title = doc.selectFirst(".sheader .data h1")?.text()
-            ?: doc.selectFirst("title")?.text()?.substringBefore(" –")?.substringBefore(" -")?.trim()
-        Log.d("Danimados", "load: parsed title=$title")
-        if (title == null) return null
-
-        val poster = doc.selectFirst(".sheader .poster img")?.attr("src")
-            ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: ""
-        Log.d("Danimados", "load: poster=$poster")
-
-        val description = doc.selectFirst(".hero-overview, .wp-content p")?.text()
-            ?: doc.selectFirst("meta[name='description']")?.attr("content")
-
-        val year = doc.selectFirst(".sheader .data .meta-top span")?.text()?.let { extractYear(it) }
-
-        val rating = doc.selectFirst("#repimdb strong")?.text()?.toDoubleOrNull()
-
-        val episodes = extractEpisodes(doc)
-        Log.d("Danimados", "load: ${episodes.size} episodes")
-
-        if (episodes.isNotEmpty()) {
-            return newTvSeriesLoadResponse(title, url, TvType.Cartoon, episodes) {
-                this.posterUrl = fixUrl(poster)
-                this.plot = description
-                this.year = year
-                this.score = rating?.let { Score.from10(it) }
+            val title = doc.selectFirst(".sheader .data h1")?.text()
+                ?: doc.selectFirst("title")?.text()?.substringBefore(" –")?.substringBefore(" -")?.trim()
+            if (title == null) {
+                Log.w("Danimados", "load $url: sin título")
+                return null
             }
-        }
 
-        return newMovieLoadResponse(title, url, TvType.Cartoon, url) {
-            this.posterUrl = fixUrl(poster)
-            this.plot = description
-            this.year = year
-            this.score = rating?.let { Score.from10(it) }
+            val poster = doc.selectFirst(".sheader .poster img")?.attr("src")
+                ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: ""
+
+            val description = doc.selectFirst(".hero-overview, .wp-content p")?.text()
+                ?: doc.selectFirst("meta[name='description']")?.attr("content")
+
+            val year = doc.selectFirst(".sheader .data .meta-top span")?.text()?.let { extractYear(it) }
+
+            val rating = doc.selectFirst("#repimdb strong")?.text()?.toDoubleOrNull()
+
+            val episodes = extractEpisodes(doc)
+            Log.d("Danimados", "load '$title': ${episodes.size} eps")
+
+            if (episodes.isNotEmpty()) {
+                newTvSeriesLoadResponse(title, url, TvType.Cartoon, episodes) {
+                    this.posterUrl = fixUrl(poster)
+                    this.plot = description
+                    this.year = year
+                    this.score = rating?.let { Score.from10(it) }
+                }
+            } else {
+                newMovieLoadResponse(title, url, TvType.Cartoon, url) {
+                    this.posterUrl = fixUrl(poster)
+                    this.plot = description
+                    this.year = year
+                    this.score = rating?.let { Score.from10(it) }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Danimados", "load $url fallo: ${e.message}")
+            null
         }
     }
+
+    // Hosts con página challenge JS que loadExtractor ya maneja; fetch directo es inútil
+    private val challengeHosts = listOf("voe.", "hglink", "streamwish", "johnbeyondnation")
 
     override suspend fun loadLinks(
         data: String,
@@ -192,29 +188,22 @@ class DanimadosProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("Danimados", "loadLinks: data=$data")
-        val resp = app.get(data, headers = browserHeaders)
-        Log.d("Danimados", "loadLinks: code=${resp.code}, html.len=${resp.text.length}")
+        val resp = try {
+            app.get(data, headers = browserHeaders)
+        } catch (e: Exception) {
+            Log.e("Danimados", "loadLinks $data fallo: ${e.message}")
+            return false
+        }
         val doc = resp.document
 
-        val ajaxScript = doc.selectFirst("#dt_main_ajax-js-extra")
-        val ajaxUrl = if (ajaxScript != null) {
-            val html = ajaxScript.html()
-            Log.d("Danimados", "loadLinks: dtAjax script found, len=${html.length}")
-            val match = Regex("""url["']?\s*:\s*["']([^"']+)""").find(html)
-            val url = match?.groupValues?.get(1)
-            Log.d("Danimados", "loadLinks: ajax url from script=$url")
-            url?.let { fixRelativeUrl(it) } ?: "$BASE_URL/wp-admin/admin-ajax.php"
-        } else {
-            Log.d("Danimados", "loadLinks: dtAjax script NOT found!")
-            "$BASE_URL/wp-admin/admin-ajax.php"
-        }
-        Log.d("Danimados", "loadLinks: resolved ajaxUrl=$ajaxUrl")
+        val ajaxUrl = doc.selectFirst("#dt_main_ajax-js-extra")?.html()?.let { html ->
+            Regex("""url["']?\s*:\s*["']([^"']+)""").find(html)?.groupValues?.get(1)
+                ?.let { fixRelativeUrl(it) }
+        } ?: "$BASE_URL/wp-admin/admin-ajax.php"
 
         val playerOptions = doc.select(".dooplay_player_option")
-        Log.d("Danimados", "loadLinks: player options count=${playerOptions.size}")
         if (playerOptions.isEmpty()) {
-            Log.d("Danimados", "loadLinks: NO player options found")
+            Log.w("Danimados", "loadLinks $data: sin player options")
             return false
         }
 
@@ -223,29 +212,29 @@ class DanimadosProvider : MainAPI() {
             val postId = option.attr("data-post")
             val nume = option.attr("data-nume").toIntOrNull() ?: 1
             val type = option.attr("data-type").ifBlank { "tv" }
-            Log.d("Danimados", "loadLinks: trying player nume=$nume postId=$postId type=$type")
 
-            val playerResp = app.post(
-                ajaxUrl,
-                headers = mapOf(
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Accept" to "*/*",
-                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                    "Referer" to data,
-                ),
-                data = mapOf(
-                    "action" to "doo_player_ajax",
-                    "post" to postId,
-                    "nume" to nume.toString(),
-                    "type" to type,
-                )
-            ).parsedSafe<PlayerResponse>()
-            if (playerResp == null) {
-                Log.d("Danimados", "loadLinks: player nume=$nume returned null response")
-                continue
+            val playerResp = try {
+                app.post(
+                    ajaxUrl,
+                    headers = mapOf(
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Accept" to "*/*",
+                        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                        "Referer" to data,
+                    ),
+                    data = mapOf(
+                        "action" to "doo_player_ajax",
+                        "post" to postId,
+                        "nume" to nume.toString(),
+                        "type" to type,
+                    )
+                ).parsedSafe<PlayerResponse>()
+            } catch (e: Exception) {
+                Log.e("Danimados", "loadLinks ajax nume=$nume fallo: ${e.message}")
+                null
             }
+            if (playerResp == null) continue
             val embedHtml = playerResp.embedUrl ?: continue
-            Log.d("Danimados", "loadLinks: embedHtml (nume=$nume)=${embedHtml.take(400)}")
 
             val videoUrl = if (embedHtml.startsWith("http://") || embedHtml.startsWith("https://")) {
                 embedHtml
@@ -253,7 +242,6 @@ class DanimadosProvider : MainAPI() {
                 Regex("""src=["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
             }
             if (videoUrl.isNullOrBlank()) continue
-            Log.d("Danimados", "loadLinks: trying videoUrl=$videoUrl")
 
             val embedLabel = when {
                 videoUrl.contains("callistanise.com") || videoUrl.contains("minochinos.com") -> "VidHide"
@@ -265,17 +253,23 @@ class DanimadosProvider : MainAPI() {
                 videoUrl.contains("voe.sx") || videoUrl.contains("voe.") -> "VOE"
                 else -> "Server$nume"
             }
+            Log.d("Danimados", "loadLinks $embedLabel: $videoUrl")
 
-            val extracted = loadExtractor(videoUrl, data, subtitleCallback, callback)
-            Log.d("Danimados", "loadLinks: loadExtractor returned $extracted for nume=$nume")
+            val extracted = try {
+                loadExtractor(videoUrl, data, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e("Danimados", "loadLinks $embedLabel extractor fallo: ${e.message}")
+                false
+            }
             if (extracted) anySuccess = true
 
-            Log.d("Danimados", "loadLinks: trying direct fetch of $videoUrl")
+            // Fetch directo solo si no es host challenge (VOE/HgLink tienen gate JS)
+            if (challengeHosts.any { videoUrl.contains(it) }) continue
+
             try {
                 if (videoUrl.contains("cubeembed.rpmvid.com") || videoUrl.contains("cubeembed.")) {
                     val hash = videoUrl.substringAfterLast("#").substringAfter("/")
                     val baseUrl = "https://cubeembed.rpmvid.com"
-                    Log.d("Danimados", "loadLinks: CubeEmbed detected, hash=$hash baseUrl=$baseUrl")
                     val cubeHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
                     val encrypted = try {
                         app.get("$baseUrl/api/v1/video?id=$hash", headers = cubeHeaders).text.trim()
@@ -288,7 +282,6 @@ class DanimadosProvider : MainAPI() {
                             catch (_: Exception) { null }
                         }
                         if (decryptedText != null) {
-                            Log.d("Danimados", "loadLinks: CubeEmbed decrypted OK")
                             val cubeLinkName = "Danimados ($embedLabel)"
                             val subtitleSection = Regex("\"subtitle\":\\{(.*?)\\}").find(decryptedText)?.groupValues?.get(1)
                             subtitleSection?.let { section ->
@@ -306,7 +299,6 @@ class DanimadosProvider : MainAPI() {
                                 ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
                             if (source.isNotEmpty()) {
                                 val sourceHttp = source.replaceFirst("https://", "http://")
-                                Log.d("Danimados", "loadLinks: CubeEmbed source M3U8: $sourceHttp")
                                 callback.invoke(ExtractorLink(
                                     source = cubeLinkName, name = cubeLinkName,
                                     url = sourceHttp,
@@ -318,11 +310,9 @@ class DanimadosProvider : MainAPI() {
                             val hlsTiktok = Regex("\"hlsVideoTiktok\":\"(.*?)\"").find(decryptedText)
                                 ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
                             if (hlsTiktok.isNotEmpty()) {
-                                val tiktokUrl = "$baseUrl$hlsTiktok"
-                                Log.d("Danimados", "loadLinks: CubeEmbed TikTok M3U8: $tiktokUrl")
                                 callback.invoke(ExtractorLink(
                                     source = cubeLinkName, name = cubeLinkName,
-                                    url = tiktokUrl,
+                                    url = "$baseUrl$hlsTiktok",
                                     type = ExtractorLinkType.M3U8, quality = 720,
                                     referer = data,
                                 ))
@@ -337,14 +327,10 @@ class DanimadosProvider : MainAPI() {
                     "Referer" to data,
                     "Accept" to "*/*",
                 ))
-                Log.d("Danimados", "loadLinks: embed page code=${embedResp.code}, len=${embedResp.text.length}")
-                Log.d("Danimados", "loadLinks: embed html=${embedResp.text.take(1000)}")
 
                 val unpacked = unpackPackedJs(embedResp.text)
                 val allVideoCandidates = mutableListOf<String>()
                 if (unpacked != null) {
-                    Log.d("Danimados", "loadLinks: unpacked JS, len=${unpacked.length}")
-
                     allVideoCandidates.addAll(
                         Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").findAll(unpacked)
                             .map { it.value }.distinct()
@@ -353,28 +339,22 @@ class DanimadosProvider : MainAPI() {
                     val fileUrls = Regex(""""file"\s*:\s*"(https?://[^"]+)""").findAll(unpacked)
                         .map { it.groupValues[1] }.filter { !it.contains(".m3u8") && !it.contains(".mp4") }.toList()
                     allVideoCandidates.addAll(fileUrls)
-                    Log.d("Danimados", "loadLinks: video candidates from unpacked: $allVideoCandidates")
 
                     val urlsetUrls = Regex("""urlset\s*['=]\s*'(https?://[^']+)'""").findAll(unpacked)
                         .map { it.groupValues[1] }.distinct().toList()
                     for (urlsetUrl in urlsetUrls) {
                         try {
-                            Log.d("Danimados", "loadLinks: following urlset: $urlsetUrl")
                             val resolvedResp = app.get(urlsetUrl,
                                 headers = browserHeaders + mapOf("Referer" to data))
                             val bodyText = resolvedResp.text
-                            Log.d("Danimados", "loadLinks: urlset response code=${resolvedResp.code} body=${bodyText.take(300)}")
                             val m3u8FromRedirect = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(bodyText)?.value
                             if (m3u8FromRedirect != null) {
-                                Log.d("Danimados", "loadLinks: found M3U8 from urlset: $m3u8FromRedirect")
                                 allVideoCandidates.add(0, m3u8FromRedirect)
                             }
                             if (bodyText.trimStart().startsWith("#EXTM3U")) {
                                 allVideoCandidates.add(0, urlsetUrl)
                             }
-                        } catch (e: Exception) {
-                            Log.d("Danimados", "loadLinks: urlset follow failed: ${e.message}")
-                        }
+                        } catch (_: Exception) { }
                     }
                 }
 
@@ -385,35 +365,41 @@ class DanimadosProvider : MainAPI() {
                 }
 
                 val linkLabel = "Danimados ($embedLabel)"
-                for (candidate in allVideoCandidates) {
+                for (candidate in allVideoCandidates.distinct()) {
                     val fullUrl = if (candidate.startsWith("http")) candidate else "https:$candidate"
+
+                    var probeType: ExtractorLinkType? = null
                     try {
                         val headCall = app.get(fullUrl, headers = browserHeaders + mapOf("Referer" to data))
                         val headBuf = ByteArray(100)
                         val headRead = headCall.body.byteStream().use { s -> s.read(headBuf) }
                         val headStr = if (headRead > 0) String(headBuf, 0, headRead) else ""
-                        val linkType = when {
+                        probeType = when {
                             headStr.trimStart().startsWith("#EXTM3U") -> ExtractorLinkType.M3U8
                             headStr.contains("ftyp") -> ExtractorLinkType.VIDEO
                             else -> null
                         }
-                        if (linkType != null) {
-                            Log.d("Danimados", "loadLinks: validated video candidate: $fullUrl type=$linkType")
-                            callback.invoke(ExtractorLink(
-                                source = linkLabel,
-                                name = linkLabel,
-                                url = fullUrl,
-                                type = linkType,
-                                quality = 720,
-                                referer = data,
-                            ))
-                            anySuccess = true
-                        } else {
-                            Log.d("Danimados", "loadLinks: candidate not video: ${headStr.take(40)}")
-                        }
                     } catch (e: Exception) {
-                        Log.d("Danimados", "loadLinks: candidate failed: $fullUrl - ${e.message}")
+                        Log.w("Danimados", "loadLinks $embedLabel validación falló (${e.message ?: "error"}), emitiendo fallback")
                     }
+                    val validated = probeType != null
+                    
+                    val linkType = probeType ?: when {
+                        fullUrl.contains(".m3u8") -> ExtractorLinkType.M3U8
+                        fullUrl.contains(".mp4") -> ExtractorLinkType.VIDEO
+                        else -> null
+                    }
+                    if (linkType == null) continue
+
+                    callback.invoke(ExtractorLink(
+                        source = linkLabel,
+                        name = linkLabel + if (validated) "" else " ⚠",
+                        url = fullUrl,
+                        type = linkType,
+                        quality = if (validated) 720 else Qualities.Unknown.value,
+                        referer = data,
+                    ))
+                    anySuccess = true
                 }
                 val b64Match = Regex("""(?:src|file|source|url)\s*[=:]\s*["']([A-Za-z0-9+/=]{20,})["']""",
                     RegexOption.IGNORE_CASE).find(embedResp.text)
@@ -422,7 +408,6 @@ class DanimadosProvider : MainAPI() {
                         String(android.util.Base64.decode(b64Match.groupValues[1], android.util.Base64.DEFAULT))
                     } catch (_: Exception) { null }
                     if (decoded?.contains("m3u8") == true || decoded?.contains("mp4") == true) {
-                        Log.d("Danimados", "loadLinks: found base64 source $decoded")
                         callback.invoke(ExtractorLink(
                             source = linkLabel,
                             name = linkLabel,
@@ -435,25 +420,21 @@ class DanimadosProvider : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                Log.d("Danimados", "loadLinks: direct fetch failed: ${e.message}")
+                Log.e("Danimados", "loadLinks $embedLabel fetch directo fallo: ${e.message}")
             }
         }
 
-        Log.d("Danimados", "loadLinks: anySuccess=$anySuccess (${playerOptions.size} players tried)")
+        Log.d("Danimados", "loadLinks fin: success=$anySuccess (${playerOptions.size} players)")
         return anySuccess
     }
 
     private fun extractEpisodes(doc: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        Log.d("Danimados", "extractEpisodes: #seasons size=${doc.select("#seasons").size}")
-        Log.d("Danimados", "extractEpisodes: .se-c size=${doc.select("#seasons > .se-c").size}")
-
         val seasonContainers = doc.select("#seasons > .se-c")
         if (seasonContainers.isNotEmpty()) {
             for (seasonContainer in seasonContainers) {
                 val seasonNum = seasonContainer.selectFirst(".se-q .se-t")?.text()?.toIntOrNull() ?: continue
-                Log.d("Danimados", "extractEpisodes: season $seasonNum")
                 val episodeItems = seasonContainer.select(".se-a ul.episodios > li")
                 for ((epIdx, li) in episodeItems.withIndex()) {
                     val link = li.selectFirst(".episodiotitle a") ?: continue
@@ -500,24 +481,17 @@ class DanimadosProvider : MainAPI() {
         val titleEl = select(".data h3 a[href*='/series/']").first()
             ?: select("h3 a[href*='/series/']").first()
             ?: select(".title").first()
-        if (titleEl == null) {
-            Log.d("Danimados", "toSearchResponse: no title element in ${this.className()} #${this.id()}")
-            return null
-        }
+        if (titleEl == null) return null
         val linkEl = if (titleEl.tagName() == "a") titleEl
             else titleEl.selectFirst("a[href*='/series/']") ?: titleEl.closest("a[href*='/series/']")
         val href = linkEl?.attr("abs:href") ?: titleEl.attr("abs:href")
         val title = titleEl.text().trim()
-        if (title.isBlank()) {
-            Log.d("Danimados", "toSearchResponse: blank title for href=$href")
-            return null
-        }
+        if (title.isBlank()) return null
         if (!href.contains("/series/")) return null
         val poster = select("img").first()?.attr("src")?.let { fixUrl(it) }
         val year = select(".data span, .year, span.date").first()?.text()?.let { extractYear(it) }
         val rating = select(".rating").first()?.text()?.toDoubleOrNull()
 
-        Log.d("Danimados", "toSearchResponse: title=$title href=$href")
         return newMovieSearchResponse(title, href, TvType.Cartoon) {
             this.posterUrl = poster
             this.year = year
