@@ -301,7 +301,7 @@ class ReanimeProvider : MainAPI() {
             Log.d("Reanime", "getMainPage: code=${resp.code} title='${doc.title()}' anchors=${anchors.size}")
 
             val items = anchors.mapNotNull { el ->
-                val href = el.attr("abs:href")
+                val href = el.attr("href") ?: return@mapNotNull null
                 val slug = Regex("""/watch/([a-z0-9\-_]+)""").find(href)?.groupValues?.get(1)
                     ?: return@mapNotNull null
                 val img = el.selectFirst("img")
@@ -651,6 +651,15 @@ class ReanimeProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
+
+                // Subtítulos (vault94.slopnet.site): exigen User-Agent de navegador
+                if (url.contains("slopnet.site")) {
+                    val newReq = request.newBuilder()
+                        .header("User-Agent", browserHeaders["User-Agent"]!!)
+                        .header("Referer", FLIX_REFERER)
+                        .build()
+                    return chain.proceed(newReq)
+                }
 
                 // Playlists flixcloud: b64 (+XOR con PK si viene cifrado)
                 if (url.contains("flixcloud.cc") && url.contains(".m3u8")) {
