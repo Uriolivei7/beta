@@ -6,6 +6,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Response
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -456,6 +457,74 @@ class ReanimeProvider : MainAPI() {
         // Claves XOR activas de los playlists (una por resolve de embed)
         private val activePks = mutableListOf<ByteArray>()
 
+        // Subtítulos ya convertidos a SRT, servidos por el interceptor sin red
+        private val subCache = HashMap<Int, String>()
+        private var subCounter = 0
+        private val FAKE_SUB_PREFIX = "$FLIX_BASE/__sub/"
+
+        /** Convierte subtítulos ASS/SSA a SRT plano */
+        private fun assToSrt(ass: String): String? {
+            val out = StringBuilder()
+            var inEvents = false
+            var startIdx = 1
+            var endIdx = 2
+            var textIdx = 9
+            var cueCount = 0
+
+            fun assTimeToSrt(t: String): String? {
+                val m = Regex("""(\d+):(\d+):(\d+)[.,](\d{1,3})""").find(t.trim()) ?: return null
+                val (h, mi, s, cs) = m.destructured
+                return "%02d:%02d:%02d,%s".format(
+                    h.toIntOrNull() ?: 0,
+                    mi.toIntOrNull() ?: 0,
+                    s.toIntOrNull() ?: 0,
+                    cs.padEnd(3, '0')
+                )
+            }
+
+            for (raw in ass.lineSequence()) {
+                val line = raw.trim()
+                if (line.startsWith("[")) {
+                    inEvents = line.equals("[Events]", ignoreCase = true)
+                    continue
+                }
+                if (!inEvents) continue
+                when {
+                    line.startsWith("Format:", ignoreCase = true) -> {
+                        val fields = line.substringAfter(":").split(",").map { it.trim().lowercase() }
+                        startIdx = fields.indexOf("start").takeIf { it >= 0 } ?: startIdx
+                        endIdx = fields.indexOf("end").takeIf { it >= 0 } ?: endIdx
+                        textIdx = fields.indexOf("text").takeIf { it >= 0 } ?: textIdx
+                    }
+                    line.startsWith("Dialogue:", ignoreCase = true) -> {
+                        val parts = line.substringAfter(":").split(",", limit = textIdx + 1)
+                        if (parts.size <= textIdx) continue
+                        val start = assTimeToSrt(parts[startIdx]) ?: continue
+                        val end = assTimeToSrt(parts[endIdx]) ?: continue
+                        val text = parts[textIdx]
+                            .replace(Regex("\\{[^}]*\\}"), "")
+                            .replace("\\N", "\n")
+                            .replace("\\n", "\n")
+                            .trim()
+                        if (text.isEmpty()) continue
+                        cueCount++
+                        out.append(cueCount).append('\n')
+                        out.append(start).append(" --> ").append(end).append('\n')
+                        out.append(text).append("\n\n")
+                    }
+                }
+            }
+            return if (cueCount > 0) out.toString() else null
+        }
+
+        /** Registra SRT y devuelve URL falsa .srt servida por el interceptor */
+        @Synchronized
+        private fun registerSrt(content: String): String {
+            val idx = subCounter++
+            subCache[idx] = content
+            return "${FAKE_SUB_PREFIX}$idx.srt"
+        }
+
         // Clave XOR fija de segmentos (del hls.js parcheado de flixcloud)
         private val SEG_XOR_KEY = byteArrayOf(
             0x9d.toByte(), 0x2a.toByte(), 0xf1.toByte(), 0x47,
@@ -632,10 +701,22 @@ class ReanimeProvider : MainAPI() {
 
                 for ((lang, subUrl) in resolved.subtitles) {
                     if (!emittedSubs.add(subUrl)) continue
-                    val subHeaders = browserHeaders + mapOf("Referer" to FLIX_REFERER)
-                    subtitleCallback(newSubtitleFile(lang, subUrl) {
-                        this.headers = subHeaders
-                    })
+                    try {
+                        val subHeaders = browserHeaders + mapOf("Referer" to FLIX_REFERER)
+                        val raw = app.get(subUrl, headers = subHeaders).text
+                        val srt = if (subUrl.endsWith(".ass", true) || subUrl.endsWith(".ssa", true)) {
+                            assToSrt(raw)
+                        } else {
+                            raw
+                        }
+                        if (srt.isNullOrBlank()) {
+                            Log.w("Reanime", "sub '$lang' vacío tras conversión")
+                            continue
+                        }
+                        subtitleCallback(newSubtitleFile(lang, registerSrt(srt)))
+                    } catch (e: Exception) {
+                        Log.w("Reanime", "sub '$lang' fallo: ${e.message}")
+                    }
                 }
                 Log.d("Reanime", "loadLinks $label: ${resolved.subtitles.size} subs emitidos")
             }
@@ -654,6 +735,22 @@ class ReanimeProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
+
+                // Subtítulos convertidos servidos localmente (URLs falsas .srt)
+                if (url.startsWith(FAKE_SUB_PREFIX)) {
+                    val idx = url.substringAfterLast("/").substringBefore(".").toIntOrNull()
+                    val content = idx?.let { synchronized(subCache) { subCache[it] } }
+                    return Response.Builder()
+                        .request(request)
+                        .protocol(okhttp3.Protocol.HTTP_1_1)
+                        .code(if (content != null) 200 else 404)
+                        .message(if (content != null) "OK" else "Not Found")
+                        .body(okhttp3.ResponseBody.create(
+                            "application/x-subrip".toMediaTypeOrNull(),
+                            content ?: ""
+                        ))
+                        .build()
+                }
 
                 // Subtítulos (vault94.slopnet.site): exigen User-Agent de navegador
                 if (url.contains("slopnet.site")) {
