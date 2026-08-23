@@ -306,7 +306,10 @@ class ReanimeProvider : MainAPI() {
                     ?: return@mapNotNull null
                 val img = el.selectFirst("img")
                 val title = img?.attr("alt")?.trim().takeUnless { it.isNullOrBlank() }
-                    ?: el.attr("title").trim().takeUnless { it.isNullOrBlank() }
+                    ?: img?.attr("title")?.trim().takeUnless { it.isNullOrBlank() }
+                    ?: el.attr("title")?.trim().takeUnless { it.isNullOrBlank() }
+                    ?: el.attr("aria-label")?.trim().takeUnless { it.isNullOrBlank() }
+                    ?: el.text().trim().takeUnless { it.isNullOrBlank() }
                     ?: return@mapNotNull null
                 newAnimeSearchResponse(title, "$mainUrl/anime/$slug", TvType.Anime) {
                     this.posterUrl = img?.attr("src")?.takeIf { it.isNotBlank() }
@@ -314,7 +317,11 @@ class ReanimeProvider : MainAPI() {
                 }
             }.distinctBy { it.url }
             if (items.isEmpty()) {
-                Log.w("Reanime", "getMainPage: 0 items (html=${doc.html().length})")
+                // diagnóstico: por qué se descartaron los anchors
+                val sample = anchors.take(3).mapIndexed { i, el ->
+                    "[$i] href=${el.attr("href").take(40)} text='${el.text().take(30)}' imgAlt='${el.selectFirst("img")?.attr("alt")?.take(30)}'"
+                }
+                Log.w("Reanime", "getMainPage: 0 items. sample=$sample")
             }
             newHomePageResponse(listOf(HomePageList(request.name, items)), hasNext = false)
         } catch (e: Exception) {
@@ -448,6 +455,14 @@ class ReanimeProvider : MainAPI() {
 
         // Claves XOR activas de los playlists (una por resolve de embed)
         private val activePks = mutableListOf<ByteArray>()
+
+        // Clave XOR fija de segmentos (del hls.js parcheado de flixcloud)
+        private val SEG_XOR_KEY = byteArrayOf(
+            0x9d.toByte(), 0x2a.toByte(), 0xf1.toByte(), 0x47,
+            0xb3.toByte(), 0x8e.toByte(), 0x5c.toByte(), 0x70.toByte(),
+            0xa6.toByte(), 0x19.toByte(), 0xe4.toByte(), 0x3b.toByte(),
+            0xd8.toByte(), 0x62.toByte(), 0x0f.toByte(), 0xc5.toByte(),
+        )
 
     private fun extractField(html: String, name: String): String? =
         Regex("\"$name\":\"([^\"]*)\"").find(html)?.groupValues?.get(1)
@@ -635,58 +650,99 @@ class ReanimeProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                val response = chain.proceed(request)
                 val url = request.url.toString()
 
-                if (!url.contains("flixcloud.cc") || !url.contains(".m3u8")) return response
-
-                return try {
-                    val bodyText = response.peekBody(2L * 1024 * 1024).string()
-                    val urlTail = url.substringAfterLast("/").take(50)
-                    val code = response.code
-                    if (bodyText.trimStart().startsWith("#EXTM3U")) {
-                        Log.d("Reanime", "interceptor $urlTail: plain ($code, ${bodyText.length}B)")
-                        return response
-                    }
-
-                    val clean = bodyText.trim().replace(Regex("[^A-Za-z0-9+/=]"), "")
-                    if (clean.length < 16) {
-                        Log.w("Reanime", "interceptor $urlTail: no b64 (code=$code, head=${bodyText.take(60)})")
-                        return response
-                    }
-                    val raw = Base64.decode(clean, Base64.DEFAULT)
-
-                    // Probar cada PK activo: contenido = b64 -> XOR con PK de 32B
-                    val pks = synchronized(activePks) { activePks.toList() }
-                    for ((idx, pk) in pks.withIndex()) {
-                        val dec = ByteArray(raw.size) { i ->
-                            (raw[i].toInt() xor pk[i % pk.size].toInt()).toByte()
+                // Playlists flixcloud: b64 (+XOR con PK si viene cifrado)
+                if (url.contains("flixcloud.cc") && url.contains(".m3u8")) {
+                    val response = chain.proceed(request)
+                    return try {
+                        val bodyText = response.peekBody(2L * 1024 * 1024).string()
+                        val urlTail = url.substringAfterLast("/").take(50)
+                        if (bodyText.trimStart().startsWith("#EXTM3U")) {
+                            Log.d("Reanime", "interceptor $urlTail: plain (${response.code})")
+                            return response
                         }
-                        if (String(dec, 0, 7, Charsets.UTF_8) == "#EXTM3U") {
-                            Log.d("Reanime", "interceptor $urlTail: decodificado con PK#$idx (${raw.size}B)")
-                            // DIAGNOSTICO: volcar estructura del playlist decodificado
-                            if (!urlTail.startsWith("master")) {
-                                val headerLines = String(dec, Charsets.UTF_8).lineSequence()
-                                    .takeWhile { it.startsWith("#") || it.isBlank() }
-                                    .filter { it.isNotBlank() }
-                                    .joinToString(" | ")
-                                val firstUrls = String(dec, Charsets.UTF_8).lineSequence()
-                                    .filter { it.isNotBlank() && !it.startsWith("#") }
-                                    .take(2)
-                                    .joinToString(" | ")
-                                Log.d("Reanime", "PLAYLIST $urlTail headers=$headerLines")
-                                Log.d("Reanime", "PLAYLIST $urlTail primerasURLs=$firstUrls")
+
+                        val clean = bodyText.trim().replace(Regex("[^A-Za-z0-9+/=]"), "")
+                        if (clean.length < 16) {
+                            Log.w("Reanime", "interceptor $urlTail: no b64 (code=${response.code})")
+                            return response
+                        }
+                        val raw = Base64.decode(clean, Base64.DEFAULT)
+
+                        var decodedBody: String? = null
+                        val pks = synchronized(activePks) { activePks.toList() }
+                        for ((idx, pk) in pks.withIndex()) {
+                            val dec = ByteArray(raw.size) { i ->
+                                (raw[i].toInt() xor pk[i % pk.size].toInt()).toByte()
                             }
-                            val contentType = response.body?.contentType()
-                            return response.newBuilder()
-                                .body(okhttp3.ResponseBody.create(contentType, String(dec, Charsets.UTF_8)))
-                                .build()
+                            if (String(dec, 0, 7, Charsets.UTF_8) == "#EXTM3U") {
+                                Log.d("Reanime", "interceptor $urlTail: decodificado con PK#$idx (${raw.size}B)")
+                                decodedBody = String(dec, Charsets.UTF_8)
+                                break
+                            }
+                        }
+                        if (decodedBody == null) {
+                            Log.w("Reanime", "interceptor $urlTail: ningun PK valido (pks=${pks.size})")
+                            return response
+                        }
+
+                        // Diagnóstico de variantes (no master)
+                        if (!urlTail.startsWith("master")) {
+                            val headerLines = decodedBody.lineSequence()
+                                .takeWhile { it.startsWith("#") || it.isBlank() }
+                                .filter { it.isNotBlank() }
+                                .joinToString(" | ")
+                            val firstUrls = decodedBody.lineSequence()
+                                .filter { it.isNotBlank() && !it.startsWith("#") }
+                                .take(2)
+                                .joinToString(" | ")
+                            Log.d("Reanime", "PLAYLIST $urlTail headers=$headerLines")
+                            Log.d("Reanime", "PLAYLIST $urlTail primerasURLs=$firstUrls")
+                        }
+
+                        val contentType = response.body?.contentType()
+                        response.newBuilder()
+                            .body(okhttp3.ResponseBody.create(contentType, decodedBody))
+                            .build()
+                    } catch (e: Exception) {
+                        Log.w("Reanime", "interceptor m3u8 error: ${e.message}")
+                        response
+                    }
+                }
+
+                // Segmentos disfrazados (.png/.webp): firma PNG/RIFF + TS plano o XOR con clave fija
+                val response = chain.proceed(request)
+                return try {
+                    val bytes = response.body?.bytes() ?: return response
+                    if (bytes.size < 12) return response
+
+                    val isPng = bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+                        bytes[2] == 0x4e.toByte() && bytes[3] == 0x47.toByte()
+                    val isRiffWebp = bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() &&
+                        bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() &&
+                        bytes[8] == 0x57.toByte() && bytes[9] == 0x45.toByte() &&
+                        bytes[10] == 0x42.toByte() && bytes[11] == 0x50.toByte()
+
+                    if (!isPng && !isRiffWebp) return response
+
+                    val skip = if (isRiffWebp) 12 else 8
+                    val payload = bytes.copyOfRange(skip, bytes.size)
+
+                    val transformed = if (payload.isNotEmpty() && payload[0] == 0x47.toByte()) {
+                        payload // TS plano tras la firma
+                    } else {
+                        Log.d("Reanime", "segmento ${url.substringAfterLast('/').take(30)}: XOR descifrado (${payload.size}B)")
+                        ByteArray(payload.size) { i ->
+                            (payload[i].toInt() xor SEG_XOR_KEY[i and 15].toInt()).toByte()
                         }
                     }
-                    Log.w("Reanime", "interceptor $urlTail: ningun PK valido (pks=${pks.size}, raw=${raw.size}B, head=${raw.take(16).joinToString("") { "%02x".format(it) }})")
-                    response
+
+                    response.newBuilder()
+                        .body(okhttp3.ResponseBody.create(response.body?.contentType(), transformed))
+                        .build()
                 } catch (e: Exception) {
-                    Log.w("Reanime", "interceptor error: ${e.message}")
+                    Log.w("Reanime", "interceptor segmento error: ${e.message}")
                     response
                 }
             }

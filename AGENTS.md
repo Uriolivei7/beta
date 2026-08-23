@@ -612,3 +612,10 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - `ReanimeProvider/src/main/kotlin/com/example/ReanimeProvider.kt` — provider completo + MiniWasm interpreter
 - Compilación OK: `.\gradlew.bat :ReanimeProvider:make --console=plain -q`
 - ⏸️ Pendiente: probar en dispositivo (home/search/load/playback + subtítulos ASS)
+### FIX segmentos cifrados (23 Ago 2026 v2)
+- Los segmentos `seg-N-f1-v1-a0.png`/`.webp` (CDNs atomic4cdn.top/stronghole.site) traen: firma PNG falsa (8B) o RIFF-WEBP (12B) + contenido **XOR-cifrado**
+- Clave XOR FIJA de 16B encontrada en el fetch-loader del hls.js parcheado (`flix_hls.js`): `[9d,2a,f1,47,b3,8e,5c,70,a6,19,e4,3b,d8,62,0f,c5]`
+- Lógica exacta del JS: si tras saltar la firma el byte NO es 0x47 (sync TS) → XOR cíclico key[i&15]
+- Implementado en getVideoInterceptor (aplica a TODAS las responses del link con esas firmas)
+- Verificado en PC: 100/100 sync bytes TS tras descifrar
+- stronghole.site (HD-1) da 403 a todo sin sesión de navegador → HD-2 (vault-96.atomic4cdn.top) es el servidor que funciona
