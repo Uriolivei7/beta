@@ -108,7 +108,8 @@ open class PlutotvProvider : MainAPI() {
         return newHomePageResponse(
             listOf(
                 HomePageList("Live", channels)
-            ) + categories
+            ) + categories,
+            hasNext = false
         )
     }
 
