@@ -838,5 +838,19 @@
     "iconUrl": "https://img.icons8.com/?size=120&id=zcBXpGIDbcLi&format=png",
     "language": "mx",
     "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/ReanimeProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "Re:ANIME",
+    "internalName": "ReanimeProvider",
+    "authors": ["Ranita"],
+    "description": "https://reanime.to/",
+    "tvTypes": ["Anime"],
+    "iconUrl": "https://reanime.to/favicon-32x32.png",
+    "language": "en",
+    "fileSize": 20000
   }
 ]

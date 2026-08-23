@@ -383,7 +383,7 @@ class DanimadosProvider : MainAPI() {
                         Log.w("Danimados", "loadLinks $embedLabel validación falló (${e.message ?: "error"}), emitiendo fallback")
                     }
                     val validated = probeType != null
-                    
+
                     val linkType = probeType ?: when {
                         fullUrl.contains(".m3u8") -> ExtractorLinkType.M3U8
                         fullUrl.contains(".mp4") -> ExtractorLinkType.VIDEO

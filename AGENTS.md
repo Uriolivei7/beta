@@ -570,3 +570,45 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - ✅ Compilación OK: `.\gradlew.bat :AnizoneProvider:compileReleaseKotlin --console=plain -q`
 - ✅ Helpers nuevos: `unescapeJsString`, `parseItemsJson`, `findItemsXData`, `extractNextCursor`, `extractHasMore`, `getItemsLoadedParams`, `toResult(JSONObject)`.
 - ⏸️ **Pendiente**: instalar cs3 en dispositivo y probar search, main page (paginación multi-página), load con muchos episodios (Aikatsu) y reproducción + subtítulos.
+
+---
+
+## ReanimeProvider — Estado (23 Ago 2026)
+
+### Arquitectura del sitio (reanime.to)
+- SvelteKit SPA, catálogo basado en AniList (covers de s4.anilist.co)
+- APIs JSON limpias:
+  - `GET /api/v1/search?q=` → `{results:[{anime_id, anilist_id, title{english}, cover_image{large}}]}`
+  - `GET /api/v1/anime/{slug}` → metadata completa (anilist_id, description, genres, average_score 0-100, status)
+  - `GET /api/v1/anime/{slug}/episodes?limit=2000` → `{data:[{episode_number, title, subbed, dubbed}]}`
+- **Streams**: `GET /api/flix/{anilist_id}/{episode}` → `{success, servers:[{serverName:"HD-1"/"HD-2", dataLink:"https://flixcloud.cc/e/{hash}?v=N"}]}`
+  - Preferencia del sitio: HD-2 → HD-1 → primero. v=1=sub v=2=dub aprox
+  - Variante TMDB: `/api/flix/0/{ep}?tmdb={id}&season={n}`
+
+### Cadena de descifrado flixcloud (REVERSED y validado end-to-end)
+1. GET embed `flixcloud.cc/e/{hash}?v=N` con UA+Referer → HTML contiene estado SvelteKit serializado
+2. Extraer: `obfuscation_seed`, `w_payload` (WASM b64), bloque `obfuscated_crypto_data` (kf_/ivf_), tokenField, keyFrag2Field
+3. **Field mapping** (nombres de campos ofuscados): `e=seed; x3: e=SHA256(e+"0|1|2")`; luego segunda cadena idéntica desde e final:
+   - tokenField = `${e[48:64]}_${e[56:64]}`, keyFrag2Field = `${s[0:16]}_${s[16:24]}`, kf/ivf = prefijos de la primera cadena
+   - Los campos aparecen a veces CON comillas y a veces SIN (probar ambos regex)
+4. `GET flixcloud.cc/api/m3u8/{token}` → JSON; claves: `sha256(token+"vid")[:10]` = enc_url b64, `sha256(token+"key")[:10]` = keymat b64
+5. **WASM** (~350B, constantes/ops RANDOMIZADAS por carga): `_s(seedInt)` setea global; `_r(A,B,C,out,k)` computa por byte mezcla de A^B^C con adds/xors/shs y `(global + i*M)&255`; out=P (32B). `_c()` devuelve PK=mem[2064..2096]
+   - SOLUCIÓN: mini-intérprete WASM embebido en el provider (clase MiniWasm) — parsea secciones export/code/DATA y ejecuta el subset de opcodes. Validado contra wasmtime con inputs aleatorios en múltiples payloads
+   - IMPORTANTE: escribir A/B/C en mem[1000/1032/1064] ANTES de _r (offsets como el JS: C=1e3,I=C+k,q=I+k,et=q+k). La data-section inicializa mem[2000..2064] con 64 bytes = clave PK (PK=data[0:32]^data[32:64])
+6. `PBKDF2-HMAC-SHA256(P, salt=seed_utf8, 1000 iter, 32B)` → XOR byte a byte con seed → SHA-256 = **clave AES-256-CBC**
+7. `AES-CBC-decrypt(clave, iv=ivf_b64, ct=enc_url)` → **master.m3u8 URL** (JWT con client_ip binding)
+8. GET master con header Referer `https://flixcloud.cc/` → body es BASE64; decodificar → si no empieza con #EXTM3U → XOR con PK → playlist real
+
+### Detalles críticos descubiertos
+- **El body de los playlists viene cifrado (b64+XOR con PK)**: el hls.js parcheado de flixcloud (`/artplayer-new/hls.js?v=103`) lo descifra en onSuccess leyendo `window.__pk` (generado por `_c()`). Implementado en `getVideoInterceptor`: probar cada PK activo hasta que el decode empiece con #EXTM3U
+- El cifrado del playlist es OPCIONAL por archivo (One Piece E1 llegó plano una vez, Frieren cifrado siempre) → el interceptor debe manejar ambos casos
+- Audio dual INTEGRADO en el HLS: `#EXT-X-MEDIA TYPE=AUDIO LANGUAGE="jpn"/"eng"` — ExoPlayer lo maneja nativo
+- Subtítulos EXTERNOS `.ass`/`.srt` listados en el embed (`subtitles:[{url,language,format,default}]`) → subtitleCallback
+- Páginas degradadas intermitentes (falta frag2/token): reintentar con carga fresca (resolveFlix reintenta 3x)
+- Headers Sec-Fetch completos reducen páginas degradadas
+- VOE/HgLink en otros sitios usan gates ALTCHA-PBKDF2/JS challenge → NO resolubles sin WebView
+
+### Archivos
+- `ReanimeProvider/src/main/kotlin/com/example/ReanimeProvider.kt` — provider completo + MiniWasm interpreter
+- Compilación OK: `.\gradlew.bat :ReanimeProvider:make --console=plain -q`
+- ⏸️ Pendiente: probar en dispositivo (home/search/load/playback + subtítulos ASS)
