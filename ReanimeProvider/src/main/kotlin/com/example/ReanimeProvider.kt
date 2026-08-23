@@ -664,6 +664,19 @@ class ReanimeProvider : MainAPI() {
                         }
                         if (String(dec, 0, 7, Charsets.UTF_8) == "#EXTM3U") {
                             Log.d("Reanime", "interceptor $urlTail: decodificado con PK#$idx (${raw.size}B)")
+                            // DIAGNOSTICO: volcar estructura del playlist decodificado
+                            if (!urlTail.startsWith("master")) {
+                                val headerLines = String(dec, Charsets.UTF_8).lineSequence()
+                                    .takeWhile { it.startsWith("#") || it.isBlank() }
+                                    .filter { it.isNotBlank() }
+                                    .joinToString(" | ")
+                                val firstUrls = String(dec, Charsets.UTF_8).lineSequence()
+                                    .filter { it.isNotBlank() && !it.startsWith("#") }
+                                    .take(2)
+                                    .joinToString(" | ")
+                                Log.d("Reanime", "PLAYLIST $urlTail headers=$headerLines")
+                                Log.d("Reanime", "PLAYLIST $urlTail primerasURLs=$firstUrls")
+                            }
                             val contentType = response.body?.contentType()
                             return response.newBuilder()
                                 .body(okhttp3.ResponseBody.create(contentType, String(dec, Charsets.UTF_8)))
