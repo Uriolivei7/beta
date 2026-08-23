@@ -295,19 +295,27 @@ class ReanimeProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         return try {
-            val doc = app.get("$mainUrl/home", headers = browserHeaders).document
-            val items = doc.select("a[href*='/watch/']").mapNotNull { el ->
+            val resp = app.get("$mainUrl/home", headers = browserHeaders)
+            val doc = resp.document
+            val anchors = doc.select("a[href*='/watch/']")
+            Log.d("Reanime", "getMainPage: code=${resp.code} title='${doc.title()}' anchors=${anchors.size}")
+
+            val items = anchors.mapNotNull { el ->
                 val href = el.attr("abs:href")
                 val slug = Regex("""/watch/([a-z0-9\-_]+)""").find(href)?.groupValues?.get(1)
                     ?: return@mapNotNull null
                 val img = el.selectFirst("img")
                 val title = img?.attr("alt")?.trim().takeUnless { it.isNullOrBlank() }
+                    ?: el.attr("title").trim().takeUnless { it.isNullOrBlank() }
                     ?: return@mapNotNull null
                 newAnimeSearchResponse(title, "$mainUrl/anime/$slug", TvType.Anime) {
                     this.posterUrl = img?.attr("src")?.takeIf { it.isNotBlank() }
+                        ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
                 }
             }.distinctBy { it.url }
-            if (items.isEmpty()) Log.w("Reanime", "getMainPage: 0 items")
+            if (items.isEmpty()) {
+                Log.w("Reanime", "getMainPage: 0 items (html=${doc.html().length})")
+            }
             newHomePageResponse(listOf(HomePageList(request.name, items)), hasNext = false)
         } catch (e: Exception) {
             Log.e("Reanime", "getMainPage fallo: ${e.message}")
@@ -599,7 +607,11 @@ class ReanimeProvider : MainAPI() {
 
             callback(newExtractorLink(name, label, resolved.masterUrl, ExtractorLinkType.M3U8) {
                 this.referer = FLIX_REFERER
-                this.headers = browserHeaders + mapOf("Referer" to FLIX_REFERER)
+                this.headers = browserHeaders + mapOf(
+                    "Referer" to FLIX_REFERER,
+                    "Origin" to FLIX_BASE,
+                    "Accept" to "*/*",
+                )
                 this.quality = Qualities.P1080.value
             })
 
@@ -630,26 +642,38 @@ class ReanimeProvider : MainAPI() {
 
                 return try {
                     val bodyText = response.peekBody(2L * 1024 * 1024).string()
-                    if (bodyText.trimStart().startsWith("#EXTM3U")) return response
+                    val urlTail = url.substringAfterLast("/").take(50)
+                    val code = response.code
+                    if (bodyText.trimStart().startsWith("#EXTM3U")) {
+                        Log.d("Reanime", "interceptor $urlTail: plain ($code, ${bodyText.length}B)")
+                        return response
+                    }
 
                     val clean = bodyText.trim().replace(Regex("[^A-Za-z0-9+/=]"), "")
+                    if (clean.length < 16) {
+                        Log.w("Reanime", "interceptor $urlTail: no b64 (code=$code, head=${bodyText.take(60)})")
+                        return response
+                    }
                     val raw = Base64.decode(clean, Base64.DEFAULT)
 
                     // Probar cada PK activo: contenido = b64 -> XOR con PK de 32B
                     val pks = synchronized(activePks) { activePks.toList() }
-                    for (pk in pks) {
+                    for ((idx, pk) in pks.withIndex()) {
                         val dec = ByteArray(raw.size) { i ->
                             (raw[i].toInt() xor pk[i % pk.size].toInt()).toByte()
                         }
                         if (String(dec, 0, 7, Charsets.UTF_8) == "#EXTM3U") {
+                            Log.d("Reanime", "interceptor $urlTail: decodificado con PK#$idx (${raw.size}B)")
                             val contentType = response.body?.contentType()
                             return response.newBuilder()
                                 .body(okhttp3.ResponseBody.create(contentType, String(dec, Charsets.UTF_8)))
                                 .build()
                         }
                     }
+                    Log.w("Reanime", "interceptor $urlTail: ningun PK valido (pks=${pks.size}, raw=${raw.size}B, head=${raw.take(16).joinToString("") { "%02x".format(it) }})")
                     response
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    Log.w("Reanime", "interceptor error: ${e.message}")
                     response
                 }
             }
