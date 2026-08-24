@@ -525,6 +525,7 @@ class ReanimeProvider : MainAPI() {
             var inStyles = false
             var si = 1; var ei = 2; var ti = 9; var sti = 3
             var nameI = 0; var alignI = 14
+            var playResY = 720f
             var cueCount = 0
             val out = StringBuilder("WEBVTT\n\n")
 
@@ -551,6 +552,30 @@ class ReanimeProvider : MainAPI() {
                 else -> "" // 2 = abajo-centro (default)
             }
 
+            // Deriva alineación numérica desde coordenadas \pos/\move proporcionales
+            fun alignFromXY(rawText: String): Int? {
+                val m = Regex("""\\(?:pos|move)\(([^)]*)\)""").find(rawText) ?: return null
+                val coords = m.groupValues[1].split(",").map { it.trim().toFloatOrNull() }
+                if (coords.size < 2) return null
+                val x = coords[0] ?: return null
+                val y = (if (m.value.startsWith("\\move", true) && coords.size >= 4) coords[3] else coords[1])
+                    ?: return null
+                if (playResY <= 0f) return null
+                val yr = y / playResY
+                val xr = x / 1280f // referencia horizontal aproximada
+                val row = when {
+                    yr < 0.32f -> 7   // fila superior
+                    yr < 0.68f -> 4   // fila media
+                    else -> 1         // fila inferior
+                }
+                val col = when {
+                    xr < 0.32f -> 0
+                    xr > 0.68f -> 2
+                    else -> 1
+                }
+                return row + col
+            }
+
             for (raw in ass.lineSequence()) {
                 val line = raw.trim()
                 if (line.startsWith("[")) {
@@ -559,8 +584,12 @@ class ReanimeProvider : MainAPI() {
                     inStyles = section.startsWith("[V4", ignoreCase = true)
                     continue
                 }
+                if (!inEvents && !inStyles) continue
                 val lower = line.lowercase()
                 when {
+                    lower.startsWith("playresy:") -> {
+                        playResY = line.substringAfter(":").trim().toFloatOrNull() ?: playResY
+                    }
                     inStyles && lower.startsWith("format:") -> {
                         val f = line.substringAfter(":").split(",").map { it.trim().lowercase() }
                         nameI = f.indexOfFirst { it == "name" }.takeIf { it >= 0 } ?: 0
@@ -586,11 +615,12 @@ class ReanimeProvider : MainAPI() {
                         val end = vttTime(parts[ei]) ?: continue
 
                         val rawText = parts[ti]
-                        // \anN dentro del texto tiene prioridad sobre el estilo
-                        val anOverride = Regex("""\\an(\d)""", RegexOption.IGNORE_CASE).find(rawText)
-                            ?.groupValues?.get(1)?.toIntOrNull()
                         val styleName = parts.getOrNull(sti)?.trim()?.lowercase() ?: ""
-                        val alignment = anOverride
+
+                        // Prioridad: \anN > \pos/\move proporcional > estilo
+                        val alignment = Regex("""\\an(\d)""", RegexOption.IGNORE_CASE).find(rawText)
+                            ?.groupValues?.get(1)?.toIntOrNull()
+                            ?: alignFromXY(rawText)
                             ?: styleAlign[styleName]
                             ?: styleAlign.entries.firstOrNull { styleName.contains(it.key) }?.value
                             ?: 2
@@ -611,6 +641,9 @@ class ReanimeProvider : MainAPI() {
                         out.append('\n').append(text).append("\n\n")
                     }
                 }
+            }
+            if (cueCount > 0) {
+                Log.d("Reanime", "ASS: ${styleAlign.size} estilos, playResY=${playResY.toInt()}, ${cueCount} cues")
             }
             return if (cueCount > 0) out.toString() else null
         }
