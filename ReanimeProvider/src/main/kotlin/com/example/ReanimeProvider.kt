@@ -632,13 +632,12 @@ class ReanimeProvider : MainAPI() {
                             .trim()
                         if (text.isEmpty()) continue
 
-                        // Marcador nativo de CS3: {anN} en el texto -> fixSubtitleAlignment posiciona
-                        val finalText = if (alignment in 1..9 && alignment != 2) "{an$alignment}$text" else text
-
                         cueCount++
                         out.append(cueCount).append('\n')
                         out.append(start).append(" --> ").append(end)
-                        out.append('\n').append(finalText).append("\n\n")
+                        val settings = cueSettings(alignment)
+                        if (settings.isNotEmpty()) out.append(' ').append(settings)
+                        out.append('\n').append(text).append("\n\n")
                     }
                 }
             }
@@ -813,11 +812,13 @@ class ReanimeProvider : MainAPI() {
         }
 
             val emittedSubs = mutableSetOf<String>()
-            var any = false
-            for ((srvName, embedLink) in preferred) {
-                val resolved = resolveFlix(embedLink) ?: continue
-                any = true
-                val label = "Re:ANIME $srvName"
+        var any = false
+        var subsEmitted = false
+        for ((srvName, embedLink) in preferred) {
+            val resolved = resolveFlix(embedLink) ?: continue
+            any = true
+            if (subsEmitted) continue  // subs ya emitidos por el primer servidor que resolvió
+            val label = "Re:ANIME $srvName"
                 Log.d("Reanime", "loadLinks $label OK")
 
                 callback(newExtractorLink(name, label, resolved.masterUrl, ExtractorLinkType.M3U8) {
@@ -849,6 +850,7 @@ class ReanimeProvider : MainAPI() {
                         Log.w("Reanime", "sub '$lang' fallo: ${e.message}")
                     }
                 }
+                subsEmitted = true
                 Log.d("Reanime", "loadLinks $label: ${resolved.subtitles.size} subs emitidos")
             }
 
