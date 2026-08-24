@@ -617,7 +617,7 @@ class ReanimeProvider : MainAPI() {
                         val rawText = parts[ti]
                         val styleName = parts.getOrNull(sti)?.trim()?.lowercase() ?: ""
 
-                        // Prioridad: \anN > \pos/\move proporcional > estilo
+                        // Prioridad: \anN > \pos/\move proporcional > estilo > 2
                         val alignment = Regex("""\\an(\d)""", RegexOption.IGNORE_CASE).find(rawText)
                             ?.groupValues?.get(1)?.toIntOrNull()
                             ?: alignFromXY(rawText)
@@ -629,16 +629,16 @@ class ReanimeProvider : MainAPI() {
                             .replace(Regex("\\{[^}]*\\}"), "")
                             .replace("\\N", "\n")
                             .replace("\\n", "\n")
-                            .replace(Regex("\\s+$"), "")
                             .trim()
                         if (text.isEmpty()) continue
+
+                        // Marcador nativo de CS3: {anN} en el texto -> fixSubtitleAlignment posiciona
+                        val finalText = if (alignment in 1..9 && alignment != 2) "{an$alignment}$text" else text
 
                         cueCount++
                         out.append(cueCount).append('\n')
                         out.append(start).append(" --> ").append(end)
-                        val settings = cueSettings(alignment)
-                        if (settings.isNotEmpty()) out.append(' ').append(settings)
-                        out.append('\n').append(text).append("\n\n")
+                        out.append('\n').append(finalText).append("\n\n")
                     }
                 }
             }

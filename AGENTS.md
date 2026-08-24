@@ -627,3 +627,9 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Emitidos como URLs falsas `flixcloud.cc/__sub/{n}.vtt` servidas por el interceptor (sin red)
 - Extensión .vtt → ExoPlayer infiere TEXT_VTT nativo
 - Validado: One Piece E1 → 26 cues arriba (canciones/signos), resto abajo
+### FIX definitivo posiciones (24 Ago 2026 v9) — marcador nativo {anN}
+- **CS3 tiene fixSubtitleAlignment nativo** (CustomDecoder.Companion): `locationRegex = "\{\an(\d+)\}"` busca el marcador `{anN}` EN EL TEXTO del cue → setLineAnchor/setLine/setPosition según numpad SSA y ELIMINA el tag al renderizar
+- Por eso AnimeParadise funcionaba sin hacer nada: sus VTT traen `{anN}` residual en el texto
+- Mi conversor ahora emite el marcador: si alignment!=2 → prefija texto con `{anN}` (derivado de \an override > \pos proporcional > estilo)
+- Los settings line:/align: de VTT se QUITARON (CS3 los ignoraba/sobrescribía con su default)
+- Prioridad conversión: \anN > \pos(X,Y)→numpad por proporción Y/PlayResY,X/1280 > estilo > 2
