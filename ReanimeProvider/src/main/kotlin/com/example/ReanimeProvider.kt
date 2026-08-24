@@ -517,12 +517,110 @@ class ReanimeProvider : MainAPI() {
             return if (cueCount > 0) out.toString() else null
         }
 
-        /** Registra SRT y devuelve URL falsa .srt servida por el interceptor */
+        /** Convierte subtítulos ASS/SSA a VTT conservando posiciones (top/medio/bottom, izq/centro/der) */
+        private fun assToVtt(ass: String): String? {
+            val styleAlign = HashMap<String, Int>()
+            var section = ""
+            var inEvents = false
+            var inStyles = false
+            var si = 1; var ei = 2; var ti = 9; var sti = 3
+            var nameI = 0; var alignI = 14
+            var cueCount = 0
+            val out = StringBuilder("WEBVTT\n\n")
+
+            fun vttTime(t: String): String? {
+                val m = Regex("""(\d+):(\d+):(\d+)[.,](\d{1,3})""").find(t.trim()) ?: return null
+                val (h, mi, s, cs) = m.destructured
+                return "%02d:%02d:%02d.%s".format(
+                    h.toIntOrNull() ?: 0,
+                    mi.toIntOrNull() ?: 0,
+                    s.toIntOrNull() ?: 0,
+                    cs.padEnd(3, '0')
+                )
+            }
+
+            fun cueSettings(alignment: Int): String = when (alignment.coerceIn(1, 9)) {
+                1 -> "align:left"
+                3 -> "align:right"
+                4 -> "line:50% align:left"
+                5 -> "line:50%"
+                6 -> "line:50% align:right"
+                7 -> "line:0 align:left"
+                8 -> "line:0"
+                9 -> "line:0 align:right"
+                else -> "" // 2 = abajo-centro (default)
+            }
+
+            for (raw in ass.lineSequence()) {
+                val line = raw.trim()
+                if (line.startsWith("[")) {
+                    section = line
+                    inEvents = section.equals("[Events]", ignoreCase = true)
+                    inStyles = section.startsWith("[V4", ignoreCase = true)
+                    continue
+                }
+                val lower = line.lowercase()
+                when {
+                    inStyles && lower.startsWith("format:") -> {
+                        val f = line.substringAfter(":").split(",").map { it.trim().lowercase() }
+                        nameI = f.indexOfFirst { it == "name" }.takeIf { it >= 0 } ?: 0
+                        alignI = f.indexOfFirst { it == "alignment" }.takeIf { it >= 0 } ?: 14
+                    }
+                    inStyles && lower.startsWith("style:") -> {
+                        val parts = line.substringAfter(":").split(",")
+                        val name = parts.getOrNull(nameI)?.trim()?.lowercase() ?: ""
+                        val al = parts.getOrNull(alignI)?.trim()?.toIntOrNull()
+                        if (name.isNotBlank() && al != null) styleAlign[name] = al
+                    }
+                    inEvents && lower.startsWith("format:") -> {
+                        val f = line.substringAfter(":").split(",").map { it.trim().lowercase() }
+                        si = f.indexOfFirst { it == "start" }.takeIf { it >= 0 } ?: si
+                        ei = f.indexOfFirst { it == "end" }.takeIf { it >= 0 } ?: ei
+                        ti = f.indexOfFirst { it == "text" }.takeIf { it >= 0 } ?: ti
+                        sti = f.indexOfFirst { it == "style" }.takeIf { it >= 0 } ?: sti
+                    }
+                    inEvents && lower.startsWith("dialogue:") -> {
+                        val parts = line.substringAfter(":").split(",", limit = ti + 1)
+                        if (parts.size <= ti) continue
+                        val start = vttTime(parts[si]) ?: continue
+                        val end = vttTime(parts[ei]) ?: continue
+
+                        val rawText = parts[ti]
+                        // \anN dentro del texto tiene prioridad sobre el estilo
+                        val anOverride = Regex("""\\an(\d)""", RegexOption.IGNORE_CASE).find(rawText)
+                            ?.groupValues?.get(1)?.toIntOrNull()
+                        val styleName = parts.getOrNull(sti)?.trim()?.lowercase() ?: ""
+                        val alignment = anOverride
+                            ?: styleAlign[styleName]
+                            ?: styleAlign.entries.firstOrNull { styleName.contains(it.key) }?.value
+                            ?: 2
+
+                        val text = rawText
+                            .replace(Regex("\\{[^}]*\\}"), "")
+                            .replace("\\N", "\n")
+                            .replace("\\n", "\n")
+                            .replace(Regex("\\s+$"), "")
+                            .trim()
+                        if (text.isEmpty()) continue
+
+                        cueCount++
+                        out.append(cueCount).append('\n')
+                        out.append(start).append(" --> ").append(end)
+                        val settings = cueSettings(alignment)
+                        if (settings.isNotEmpty()) out.append(' ').append(settings)
+                        out.append('\n').append(text).append("\n\n")
+                    }
+                }
+            }
+            return if (cueCount > 0) out.toString() else null
+        }
+
+        /** Registra subtítulo y devuelve URL falsa .vtt servida por el interceptor */
         @Synchronized
-        private fun registerSrt(content: String): String {
+        private fun registerSub(content: String): String {
             val idx = subCounter++
             subCache[idx] = content
-            return "${FAKE_SUB_PREFIX}$idx.srt"
+            return "${FAKE_SUB_PREFIX}$idx.vtt"
         }
 
         // Clave XOR fija de segmentos (del hls.js parcheado de flixcloud)
@@ -705,7 +803,7 @@ class ReanimeProvider : MainAPI() {
                         val subHeaders = browserHeaders + mapOf("Referer" to FLIX_REFERER)
                         val raw = app.get(subUrl, headers = subHeaders).text
                         val srt = if (subUrl.endsWith(".ass", true) || subUrl.endsWith(".ssa", true)) {
-                            assToSrt(raw)
+                            assToVtt(raw)
                         } else {
                             raw
                         }
@@ -713,7 +811,7 @@ class ReanimeProvider : MainAPI() {
                             Log.w("Reanime", "sub '$lang' vacío tras conversión")
                             continue
                         }
-                        subtitleCallback(newSubtitleFile(lang, registerSrt(srt)))
+                        subtitleCallback(newSubtitleFile(lang, registerSub(srt)))
                     } catch (e: Exception) {
                         Log.w("Reanime", "sub '$lang' fallo: ${e.message}")
                     }

@@ -619,3 +619,11 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Implementado en getVideoInterceptor (aplica a TODAS las responses del link con esas firmas)
 - Verificado en PC: 100/100 sync bytes TS tras descifrar
 - stronghole.site (HD-1) da 403 a todo sin sesión de navegador → HD-2 (vault-96.atomic4cdn.top) es el servidor que funciona
+### FIX subtítulos con posición (24 Ago 2026 v7)
+- Subtítulos ahora se convierten **ASS→VTT** (no SRT) conservando POSICIONES:
+  - [V4+ Styles] → map styleName→Alignment (numpad 1-9)
+  - Override `\anN` en el texto tiene prioridad sobre el estilo
+  - Mapeo a WebVTT cue settings: bottom=default, middle=`line:50%`, top=`line:0`; odd/even → `align:left/right`
+- Emitidos como URLs falsas `flixcloud.cc/__sub/{n}.vtt` servidas por el interceptor (sin red)
+- Extensión .vtt → ExoPlayer infiere TEXT_VTT nativo
+- Validado: One Piece E1 → 26 cues arriba (canciones/signos), resto abajo
