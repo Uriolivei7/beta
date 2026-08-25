@@ -188,15 +188,27 @@ class TokianimeProvider : MainAPI() {
             val html = app.get(pageUrl, headers = headers).text
             val doc = Jsoup.parse(html)
 
+            val h1Title = doc.selectFirst("h1")?.text()?.trim().takeUnless { it.isNullOrBlank() }
             val titleRaw = doc.selectFirst("meta[property='og:title']")?.attr("content")
-                ?: doc.selectFirst("h1")?.text()
+                ?: h1Title
                 ?: slug.replace("-", " ").replaceFirstChar { it.uppercase() }
-            val title = titleRaw.replace(Regex("""\s*(Sub Español Online HD|Sub Español|Online HD)\s*$"""), "").trim()
+
+            val audioInfo = Regex(
+                """(Sub\s*Espa[ñn]ol(?:\s*(?:y|e)\s*Audio\s*Latino)?|Audio\s*Latino|Sub\s*Espa[ñn]ol|Sin\s*Censura)""",
+                RegexOption.IGNORE_CASE
+            ).findAll(titleRaw)
+                .map { it.value.trim().replace(Regex("\\s+"), " ") }
+                .distinct()
+                .joinToString(", ")
+
+            val title = h1Title
+                ?: titleRaw.replace(Regex("""\s*(Sub\s+Espa[ñn]ol(\s+y\s+Audio\s+Latino)?|Audio\s+Latino|Sin\s+Censura|Online\s+HD)\s*$"""), "").trim()
             Log.i("Tokianime", "load: title='$title' (raw='$titleRaw')")
 
             val poster = doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
-            val description = doc.selectFirst("meta[property='og:description']")?.attr("content")
+            val descriptionBase = doc.selectFirst("meta[property='og:description']")?.attr("content")
                 ?: doc.selectFirst("meta[name='description']")?.attr("content") ?: ""
+            val description = if (audioInfo.isNotBlank()) "$descriptionBase\n\n🎙️ $audioInfo".trim() else descriptionBase
 
             val scoreText = doc.select("div:contains(Puntuación)").firstOrNull()
                 ?.text()?.substringAfter("Puntuación")?.substringBefore("/")?.trim()
