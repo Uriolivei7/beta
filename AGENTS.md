@@ -633,3 +633,10 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Mi conversor ahora emite el marcador: si alignment!=2 → prefija texto con `{anN}` (derivado de \an override > \pos proporcional > estilo)
 - Los settings line:/align: de VTT se QUITARON (CS3 los ignoraba/sobrescribía con su default)
 - Prioridad conversión: \anN > \pos(X,Y)→numpad por proporción Y/PlayResY,X/1280 > estilo > 2
+### FIX posters PV rotos (24 Ago 2026)
+- **Síntoma**: en el home de PrimeVideo muchos posters no cargaban
+- **Causa**: wsrv.nl (proxy de resize) devuelve 404 en ~50% de las imágenes — el fetch saliente del proxy hacia imgcdn.kim falla intermitentemente para muchas imágenes. NO es caché negativa ni rate-limit: images.weserv.nl igual (404), nonce no ayuda, statically.io bloqueado por imgcdn (403 total)
+- **Origen directo imgcdn.kim: 20/20 OK** (~1.1MB promedio por poster, hasta 2.1MB)
+- **Fix**: `buildVerticalPosterUrlWithProxy` vuelve a devolver la URL directa sin proxy
+- Tradeoff: posters pesados otra vez, pero un poster lento es mejor que uno que no carga
+- `?w=500` en imgcdn se ignora (devuelve tamaño original) — no hay resize nativo
