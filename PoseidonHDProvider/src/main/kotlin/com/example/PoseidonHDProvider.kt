@@ -128,27 +128,32 @@ class PoseidonHDProvider : MainAPI() {
             val plot = serieObj.optString("overview")
             val year = serieObj.optString("firstAirDate")?.substringBefore("-")?.toIntOrNull()
                 ?: serieObj.optString("releaseDate")?.substringBefore("-")?.toIntOrNull()
-            val seasonsArr = props.optJSONArray("seasons") ?: props.optJSONArray("temporadas")
+            val seasonsArr = serieObj.optJSONArray("seasons") ?: props.optJSONArray("seasons") ?: props.optJSONArray("temporadas")
             val episodes = mutableListOf<Episode>()
             if (seasonsArr != null) {
                 for (i in 0 until seasonsArr.length()) {
                     val s = seasonsArr.optJSONObject(i) ?: continue
-                    val seasonNum = s.optInt("season_number", s.optInt("number", 1))
+                    val seasonNum = s.optInt("number", s.optInt("season_number", i))
+                    if (seasonNum == 0) continue
                     val eps = s.optJSONArray("episodes") ?: s.optJSONArray("capitulos") ?: continue
                     for (j in 0 until eps.length()) {
                         val ep = eps.optJSONObject(j) ?: continue
-                        val epNum = ep.optInt("episode_number", ep.optInt("number", j+1))
-                        val epTitle = ep.optString("name").ifBlank { "Episodio $epNum" }
-                        val epId = ep.optString("id", "${seasonNum}x$epNum")
-                        episodes.add(newEpisode("$url/temporada/$seasonNum/episodio/$epNum") {
+                        val epNum = ep.optInt("number", ep.optInt("episode_number", j+1))
+                        val epTitle = ep.optString("title").ifBlank { ep.optString("name").ifBlank { "Episodio $epNum" } }
+                        val epThumb = ep.optString("image")
+
+                        val epSlug = ep.optJSONObject("url")?.optString("slug")
+                        val epUrl = if (!epSlug.isNullOrBlank()) "$mainUrl/${epSlug.replaceFirst("series/","serie/")}" else "$url/temporada/$seasonNum/episodio/$epNum"
+                        episodes.add(newEpisode(epUrl) {
                             this.name = epTitle
                             this.season = seasonNum
                             this.episode = epNum
+                            this.posterUrl = epThumb
                         })
                     }
                 }
             }
-            // fallback: si no hay seasons, al menos 1 ep
+
             if (episodes.isEmpty()) {
                 episodes.add(newEpisode(url) { this.name = title })
             }
@@ -159,7 +164,7 @@ class PoseidonHDProvider : MainAPI() {
                 this.year = year
             }
         }
-        // fallback genérico
+
         val doc = Jsoup.parse(html, mainUrl)
         val title = doc.selectFirst("h1")?.text() ?: return null
         return newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -176,7 +181,7 @@ class PoseidonHDProvider : MainAPI() {
         val html = app.get(data).text
         val json = parseNextData(html)
         val props = json?.optJSONObject("props")?.optJSONObject("pageProps")
-        // videos: thisMovie.videos o serie episodio videos
+        
         val videoObj = props?.optJSONObject("thisMovie") ?: props?.optJSONObject("serie") ?: props?.optJSONObject("episode")
         val videos = videoObj?.optJSONObject("videos") ?: props?.optJSONObject("videos")
         if (videos != null) {
