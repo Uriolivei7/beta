@@ -37,11 +37,44 @@ class FuegoCineProvider : MainAPI() {
     }
 
     /**
+     * Extract poster per-entry from Blogger feed JSON.
+     * Each entry has content.$t with HTML containing <img src="TMDB_URL"/>
+     * Returns map of URL slug -> poster URL.
+     */
+    private fun extractPostersFromFeed(json: String): Map<String, String> {
+        val unescaped = json.replace("\\/", "/").replace("\\u003C", "<").replace("\\u003E", ">")
+        val result = mutableMapOf<String, String>()
+        val tmdbRegex = Regex("""<img src="(https?://media\.themoviedb\.org/[^"]+)"""")
+        val linkRegex = Regex(""""href":"(https://www\.fuegocine\.com/[^"]+\.html)"""")
+
+        // For each content block, find the nearest preceding link
+        val allLinks = linkRegex.findAll(unescaped).toList()
+        val allTmdbs = tmdbRegex.findAll(unescaped).toList()
+
+        // Match each TMDB URL to its nearest preceding post URL
+        for (tmdbMatch in allTmdbs) {
+            val tmdbUrl = tmdbMatch.groupValues[1]
+            // Find the last link before this TMDB URL
+            val nearestLink = allLinks.lastOrNull { it.range.first < tmdbMatch.range.first }
+            if (nearestLink != null) {
+                val slug = nearestLink.groupValues[1].substringAfterLast("/").substringBefore(".html")
+                result[slug] = tmdbUrl
+            }
+        }
+        Log.d("FuegoCine", "extractPosters: ${result.size} posters from feed")
+        return result
+    }
+
+    /** Find poster for a URL from the pre-parsed poster map */
+    private fun findPoster(url: String, posterMap: Map<String, String>): String? {
+        val slug = url.substringAfterLast("/").substringBefore(".html")
+        return posterMap[slug]
+    }
+
+    /**
      * Detect if a title looks like a series episode: "Name NxM" or "Name NxM - Title"
-     * Returns: (seriesName, season, episode) or null if not an episode.
      */
     private fun parseEpisodeTitle(title: String): Triple<String, Int, Int>? {
-        // Match patterns like "Silo 3x8", "Tu amigo y vecino Spider-Man 1x10"
         val epRegex = Regex("""(.+?)\s+(\d+)x(\d+)(?:\s+.*)?""", RegexOption.IGNORE_CASE)
         val match = epRegex.find(title) ?: return null
         val seriesName = match.groupValues[1].trim()
@@ -54,6 +87,77 @@ class FuegoCineProvider : MainAPI() {
     private fun slugToTitle(url: String): String {
         return url.substringAfterLast("/").substringBefore(".html")
             .replace("-", " ").replaceFirstChar { it.uppercase() }
+    }
+
+    /**
+     * Normalize a series name for comparison: lowercase, remove accents, special chars.
+     */
+    private fun normalizeSeriesName(name: String): String {
+        return name.lowercase()
+            .replace(Regex("[áà]"), "a").replace(Regex("[éè]"), "e")
+            .replace(Regex("[íì]"), "i").replace(Regex("[óò]"), "o")
+            .replace(Regex("[úù]"), "u").replace(Regex("[ñ]"), "n")
+            .replace(Regex("[^a-z0-9 ]"), "")
+            .replace(Regex("\\s+"), " ").trim()
+    }
+    
+    private fun groupItems(links: List<String>, posterMap: Map<String, String> = emptyMap()): List<SearchResponse> {
+        data class EpisodeEntry(val url: String, val seriesName: String, val season: Int, val episode: Int)
+
+        val movies = mutableListOf<Pair<String, String>>() // (title, url)
+        val episodesBySeries = mutableMapOf<String, MutableList<EpisodeEntry>>()
+
+        for (link in links) {
+            val rawTitle = slugToTitle(link)
+            val epInfo = parseEpisodeTitle(rawTitle)
+            if (epInfo != null) {
+                val (seriesName, season, episode) = epInfo
+                episodesBySeries.getOrPut(seriesName) { mutableListOf() }
+                    .add(EpisodeEntry(link, seriesName, season, episode))
+            } else {
+                movies.add(rawTitle to link)
+            }
+        }
+
+        // Build series items: prefer the landing page URL if available
+        val seriesItems = mutableListOf<SearchResponse>()
+        for ((seriesName, entries) in episodesBySeries) {
+            entries.sortWith(compareBy({ it.season }, { it.episode }))
+
+            // Check if there's a matching landing page in movies (non-NxM URL for same series)
+            val normSeries = normalizeSeriesName(seriesName)
+            val landingPage = movies.firstOrNull { (title, _) ->
+                val normTitle = normalizeSeriesName(title)
+                // Match if the landing page title contains or closely matches the series name
+                normTitle.contains(normSeries) || normSeries.contains(normTitle)
+            }
+
+            val seriesUrl = landingPage?.second ?: entries.first().url
+            val poster = findPoster(seriesUrl, posterMap)
+
+            seriesItems.add(
+                newMovieSearchResponse(seriesName, seriesUrl, TvType.TvSeries) {
+                    this.posterUrl = poster
+                }
+            )
+        }
+
+        // Remove movies that were absorbed into series
+        val seriesNormNames = episodesBySeries.keys.map { normalizeSeriesName(it) }
+        val filteredMovies = movies.filter { (title, _) ->
+            val norm = normalizeSeriesName(title)
+            seriesNormNames.none { sn -> norm.contains(sn) || sn.contains(norm) }
+        }
+
+        val movieItems = filteredMovies.map { (title, url) ->
+            val poster = findPoster(url, posterMap)
+            newMovieSearchResponse(title, url, TvType.Movie) {
+                this.posterUrl = poster
+            }
+        }
+
+        // Series first, then movies
+        return seriesItems + movieItems
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -74,19 +178,18 @@ class FuegoCineProvider : MainAPI() {
                 return newHomePageResponse(emptyList(), false)
             }
             val links = parseBloggerFeed(rawJson)
-            Log.d("FuegoCine", "getMainPage: ${request.data} -> ${links.size} links")
+            val posterMap = extractPostersFromFeed(rawJson)
+            Log.d("FuegoCine", "getMainPage: ${request.data} -> ${links.size} links, ${posterMap.size} posters")
             if (links.isNotEmpty()) Log.d("FuegoCine", "getMainPage: first=${links.first()}")
 
-            // Group results: detect episodes and group by series name
-            val items = groupItems(links)
-            Log.d("FuegoCine", "getMainPage: ${items.size} grouped items from ${links.size} links")
+            val items = groupItems(links, posterMap)
+            Log.d("FuegoCine", "getMainPage: ${items.size} items (after grouping)")
             if (items.isNotEmpty()) {
                 return newHomePageResponse(HomePageList(request.name, items), hasNext = links.size >= 20)
             }
             Log.w("FuegoCine", "getMainPage: 0 items from feed, falling back to HTML")
         }
 
-        // HTML fallback
         val doc = try {
             app.get(if (url.contains("alt=json")) mainUrl else url).document
         } catch (e: Exception) {
@@ -99,48 +202,6 @@ class FuegoCineProvider : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, items), hasNext = items.size >= 18)
     }
 
-    private fun groupItems(links: List<String>): List<SearchResponse> {
-        // First pass: separate movies and episodes
-        data class EpisodeEntry(
-            val url: String,
-            val seriesName: String,
-            val season: Int,
-            val episode: Int
-        )
-
-        val movies = mutableListOf<SearchResponse>()
-        val episodesBySeries = mutableMapOf<String, MutableList<EpisodeEntry>>()
-
-        for (link in links) {
-            val rawTitle = slugToTitle(link)
-            val epInfo = parseEpisodeTitle(rawTitle)
-            if (epInfo != null) {
-                val (seriesName, season, episode) = epInfo
-                episodesBySeries.getOrPut(seriesName) { mutableListOf() }
-                    .add(EpisodeEntry(link, seriesName, season, episode))
-            } else {
-                movies.add(
-                    newMovieSearchResponse(rawTitle, link, TvType.Movie) { }
-                )
-            }
-        }
-
-        val seriesItems = mutableListOf<SearchResponse>()
-        for ((seriesName, entries) in episodesBySeries) {
-            entries.sortWith(compareBy({ it.season }, { it.episode }))
-
-            // Use the first episode's URL as the series URL (load() will detect episodes from it)
-            val firstEntry = entries.first()
-            // Note: poster will be loaded when user clicks into the series (via load())
-            seriesItems.add(
-                newMovieSearchResponse(seriesName, firstEntry.url, TvType.TvSeries) { }
-            )
-        }
-
-        // Combine: series first, then movies
-        return seriesItems + movies
-    }
-
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/feeds/posts/default?alt=json&q=${java.net.URLEncoder.encode(query, "UTF-8")}&max-results=40"
         Log.d("FuegoCine", "search: query=$query")
@@ -151,11 +212,11 @@ class FuegoCineProvider : MainAPI() {
             return emptyList()
         }
         val links = parseBloggerFeed(rawJson)
-        Log.d("FuegoCine", "search: ${links.size} links found")
+        val posterMap = extractPostersFromFeed(rawJson)
+        Log.d("FuegoCine", "search: ${links.size} links found, ${posterMap.size} posters")
 
-        // Group by series name
-        val items = groupItems(links)
-        Log.d("FuegoCine", "search: ${items.size} grouped items from ${links.size} links")
+        val items = groupItems(links, posterMap)
+        Log.d("FuegoCine", "search: ${items.size} items (after grouping from ${links.size} links)")
         return items
     }
 
@@ -183,23 +244,42 @@ class FuegoCineProvider : MainAPI() {
         Log.d("FuegoCine", "load: title=$title isSerie=$isSerie typeAttr=$typeAttr")
 
         val episodes = mutableListOf<Episode>()
+
         if (isSerie) {
-            // Look for episode links in the page (links containing NxM pattern)
+            // Try to find episode links in the page (NxM pattern in href)
             val epLinks = doc.select("a[href*='.html']").map { it.attr("href") }
                 .filter { it.contains("fuegocine.com") && it != url && it.contains(Regex("""\d+x\d+""")) }
                 .distinct()
-            var idx = 1
-            for (epUrl in epLinks) {
-                val fixedUrl = fixUrl(epUrl) ?: continue
-                val epTitle = slugToTitle(epUrl)
-                val epInfo = parseEpisodeTitle(epTitle)
-                episodes.add(newEpisode(fixedUrl) {
-                    this.name = if (epInfo != null) "T${epInfo.second}E${epInfo.third}" else "Episodio $idx"
-                    this.season = epInfo?.second ?: 1
-                    this.episode = epInfo?.third ?: idx
-                })
-                idx++
-                if (idx > 100) break
+
+            if (epLinks.isNotEmpty()) {
+                // Episodes found on the page directly
+                var idx = 1
+                for (epUrl in epLinks) {
+                    val fixedUrl = fixUrl(epUrl) ?: continue
+                    val epTitle = slugToTitle(epUrl)
+                    val epInfo = parseEpisodeTitle(epTitle)
+                    episodes.add(newEpisode(fixedUrl) {
+                        this.name = if (epInfo != null) "T${epInfo.second}E${epInfo.third}" else "Episodio $idx"
+                        this.season = epInfo?.second ?: 1
+                        this.episode = epInfo?.third ?: idx
+                    })
+                    idx++
+                }
+            } else {
+                // No episode links on page — query Blogger feed to find NxM posts for this series
+                val seriesName = title.replace(Regex("""\s*\(\d{4}.*\)\s*$"""), "").trim()
+                Log.d("FuegoCine", "load: no episodes on page, searching feed for '$seriesName'")
+                val feedEpisodes = findEpisodesFromFeed(seriesName)
+                if (feedEpisodes.isNotEmpty()) {
+                    Log.d("FuegoCine", "load: found ${feedEpisodes.size} episodes from feed")
+                    for ((epUrl, season, episode) in feedEpisodes) {
+                        episodes.add(newEpisode(epUrl) {
+                            this.name = "T${season}E${episode}"
+                            this.season = season
+                            this.episode = episode
+                        })
+                    }
+                }
             }
         }
         Log.d("FuegoCine", "load: ${episodes.size} episodes found")
@@ -212,7 +292,6 @@ class FuegoCineProvider : MainAPI() {
                 this.year = year
             }
         } else if (isSerie) {
-            // Single series episode loaded directly — treat as one episode
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, listOf(newEpisode(url) { this.name = title })) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -229,6 +308,33 @@ class FuegoCineProvider : MainAPI() {
         }
     }
 
+    /**
+     * Search the Blogger feed for episode posts matching a series name (NxM pattern).
+     * Returns list of (url, season, episode) sorted.
+     */
+    private suspend fun findEpisodesFromFeed(seriesName: String): List<Triple<String, Int, Int>> {
+        val encoded = java.net.URLEncoder.encode(seriesName, "UTF-8")
+        val feedUrl = "$mainUrl/feeds/posts/default?alt=json&q=$encoded&max-results=50"
+        val rawJson = try {
+            app.get(feedUrl).text
+        } catch (e: Exception) {
+            Log.e("FuegoCine", "findEpisodesFromFeed: error", e)
+            return emptyList()
+        }
+        val links = parseBloggerFeed(rawJson)
+        val results = mutableListOf<Triple<String, Int, Int>>()
+        for (link in links) {
+            val title = slugToTitle(link)
+            val epInfo = parseEpisodeTitle(title)
+            if (epInfo != null) {
+                val fixedUrl = fixUrl(link) ?: continue
+                results.add(Triple(fixedUrl, epInfo.second, epInfo.third))
+            }
+        }
+        results.sortWith(compareBy({ it.second }, { it.third }))
+        return results
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -243,7 +349,6 @@ class FuegoCineProvider : MainAPI() {
             return false
         }
 
-        // PRIMARY: Parse _SV_LINKS JavaScript variable from <script> tags
         val svLinks = parseSVLinks(doc)
         if (svLinks.isNotEmpty()) {
             Log.d("FuegoCine", "loadLinks: found ${svLinks.size} _SV_LINKS entries")
@@ -261,10 +366,6 @@ class FuegoCineProvider : MainAPI() {
         return false
     }
 
-    /**
-     * Parse the _SV_LINKS JavaScript array from the page.
-     * Format: const _SV_LINKS = [{ lang: "lat", name: "FC✅", url: "...", tagVideo: false }, ...]
-     */
     private fun parseSVLinks(doc: org.jsoup.nodes.Document): List<Map<String, String>> {
         val results = mutableListOf<Map<String, String>>()
         val scripts = doc.select("script")
@@ -277,7 +378,6 @@ class FuegoCineProvider : MainAPI() {
             val bracketEnd = text.indexOf("]", bracketStart)
             if (bracketStart == -1 || bracketEnd == -1) continue
             val arrayContent = text.substring(bracketStart + 1, bracketEnd)
-            // Parse each { ... } block
             val objectRegex = Regex("""\{[^{}]*\}""")
             for (match in objectRegex.findAll(arrayContent)) {
                 val obj = match.value
