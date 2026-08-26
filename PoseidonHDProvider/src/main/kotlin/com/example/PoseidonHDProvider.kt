@@ -218,14 +218,18 @@ class PoseidonHDProvider : MainAPI() {
                     val o = arr.optJSONObject(i) ?: continue
                     val link = o.optString("result")
                     if (link.contains("player.poseidonhd2.co")) {
-
                         try {
-                            val pDoc = app.get(link).document
-                            val iframe = pDoc.selectFirst("iframe[src]")?.attr("src")
-                            val finalUrl = fixUrl(iframe ?: link) ?: link
-                            loadExtractor(finalUrl, data, subtitleCallback, callback)
+                            val playerHtml = app.get(link).text
+                            val realUrl = Regex("""var url = '([^']+)';?""").find(playerHtml)?.groupValues?.get(1)
+                            if (realUrl != null) {
+                                Log.d("PoseidonHD", "loadLinks: resolved -> $realUrl")
+                                loadExtractor(realUrl, data, subtitleCallback, callback)
+                            } else {
+                                Log.w("PoseidonHD", "loadLinks: no url found in $link")
+                                loadExtractor(link, data, subtitleCallback, callback)
+                            }
                         } catch (e: Exception) {
-                            Log.w("PoseidonHD", "loadLinks: iframe error $link: ${e.message}")
+                            Log.w("PoseidonHD", "loadLinks: player error $link: ${e.message}")
                             loadExtractor(link, data, subtitleCallback, callback)
                         }
                     } else if (link.isNotBlank()) {
