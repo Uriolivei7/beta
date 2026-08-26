@@ -852,5 +852,33 @@
     "iconUrl": "https://reanime.to/favicon-32x32.png",
     "language": "en",
     "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/FuegoCineProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "FuegoCine",
+    "internalName": "FuegoCineProvider",
+    "authors": ["Ranita"],
+    "description": "https://www.fuegocine.com/",
+    "tvTypes": ["TvSeries", "Movie"],
+    "iconUrl": "https://www.fuegocine.com/favicon.ico",
+    "language": "mx",
+    "fileSize": 20000
+  },
+  {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PoseidonHDProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "PoseidonHD2",
+    "internalName": "PoseidonHDProvider",
+    "authors": ["Ranita"],
+    "description": "https://www.poseidonhd2.co/",
+    "tvTypes": ["TvSeries", "Movie"],
+    "iconUrl": "https://www.poseidonhd2.co/favicon-32x32.png",
+    "language": "mx",
+    "fileSize": 20000
   }
 ]
