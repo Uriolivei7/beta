@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
@@ -32,14 +33,17 @@ class PoseidonHDProvider : MainAPI() {
             val m = Regex("""<script id="__NEXT_DATA__"[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
                 ?: return null
             JSONObject(m.groupValues[1])
-        } catch (_: Exception) { null }
+        } catch (e: Exception) { Log.w("PoseidonHD", "parseNextData: ${e.message}"); null }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (page > 1) return newHomePageResponse(emptyList(), false)
         val url = if (request.data == "/") mainUrl else mainUrl + request.data
-        val html = app.get(url).text
+        Log.d("PoseidonHD", "getMainPage: url=$url page=$page")
+        val html = try { app.get(url).text } catch (e: Exception) { Log.e("PoseidonHD", "getMainPage: error $url", e); return newHomePageResponse(emptyList(), false) }
+        Log.d("PoseidonHD", "getMainPage: html=${html.length}")
         val json = parseNextData(html)
+        if (json == null) Log.w("PoseidonHD", "getMainPage: __NEXT_DATA__ null url=$url")
         val pageProps = json?.optJSONObject("props")?.optJSONObject("pageProps")
         val items = mutableListOf<SearchResponse>()
 
@@ -64,6 +68,7 @@ class PoseidonHDProvider : MainAPI() {
         }
 
         if (items.isEmpty()) {
+            Log.w("PoseidonHD", "getMainPage: 0 items url=$url keys=${pageProps?.keys()?.let { it.asSequence().joinToString() } ?: "null"}")
             val doc = Jsoup.parse(html, mainUrl)
             doc.select("a[href*='/pelicula/'], a[href*='/serie/']").forEach { a ->
                 val href = fixUrl(a.attr("href")) ?: return@forEach
@@ -76,15 +81,22 @@ class PoseidonHDProvider : MainAPI() {
                 }
             }
         }
+        Log.d("PoseidonHD", "getMainPage: ${request.data} -> ${items.size} items")
         return newHomePageResponse(HomePageList(request.name, items.distinctBy { it.url }.take(30)), false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d("PoseidonHD", "search: query=$query")
         val url = "$mainUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val html = app.get(url).text
+        val html = try { app.get(url).text } catch (e: Exception) { Log.e("PoseidonHD", "search: error $url", e); return emptyList() }
         val json = parseNextData(html)
+        if (json == null) Log.w("PoseidonHD", "search: parseNextData null query=$query")
         val props = json?.optJSONObject("props")?.optJSONObject("pageProps")
-        val arr = props?.optJSONArray("movies") ?: return emptyList()
+        val arr = props?.optJSONArray("movies")
+        if (arr == null) {
+            Log.w("PoseidonHD", "search: movies null query=$query")
+            return emptyList()
+        }
         val res = mutableListOf<SearchResponse>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -97,13 +109,16 @@ class PoseidonHDProvider : MainAPI() {
             val type = if (isMovie) TvType.Movie else TvType.TvSeries
             res.add(newMovieSearchResponse(title, link, type) { this.posterUrl = poster })
         }
+        Log.d("PoseidonHD", "search: $query -> ${res.size} resultados")
         return res
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val html = app.get(url).text
-        val json = parseNextData(html) ?: return null
-        val props = json.optJSONObject("props")?.optJSONObject("pageProps") ?: return null
+        Log.d("PoseidonHD", "load: url=$url")
+        val html = try { app.get(url).text } catch (e: Exception) { Log.e("PoseidonHD", "load: error $url", e); return null }
+        Log.d("PoseidonHD", "load: html=${html.length} hasNextData=${html.contains("__NEXT_DATA__")}")
+        val json = parseNextData(html) ?: run { Log.w("PoseidonHD", "load: parseNextData null url=$url"); return null }
+        val props = json.optJSONObject("props")?.optJSONObject("pageProps") ?: run { Log.w("PoseidonHD", "load: pageProps null url=$url"); return null }
 
         val movieObj = props.optJSONObject("thisMovie")
         val serieObj = props.optJSONObject("serie") ?: props.optJSONObject("thisSerie")
@@ -123,6 +138,7 @@ class PoseidonHDProvider : MainAPI() {
             }
         } else if (serieObj != null) {
             val title = serieObj.optJSONObject("titles")?.optString("name") ?: serieObj.optString("name") ?: return null
+            Log.d("PoseidonHD", "load: serie=$title seasons=${serieObj.optJSONArray("seasons")?.length() ?: 0}")
             val poster = serieObj.optJSONObject("images")?.optString("poster")
             val back = serieObj.optJSONObject("images")?.optString("backdrop")
             val plot = serieObj.optString("overview")
@@ -155,8 +171,10 @@ class PoseidonHDProvider : MainAPI() {
             }
 
             if (episodes.isEmpty()) {
+                Log.w("PoseidonHD", "load: 0 episodios url=$url")
                 episodes.add(newEpisode(url) { this.name = title })
             }
+            Log.d("PoseidonHD", "load: serie $title -> ${episodes.size} episodios")
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = back
@@ -178,26 +196,32 @@ class PoseidonHDProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val html = app.get(data).text
+        Log.d("PoseidonHD", "loadLinks: data=$data")
+        val html = try { app.get(data).text } catch (e: Exception) { Log.e("PoseidonHD", "loadLinks: error $data", e); return false }
+        Log.d("PoseidonHD", "loadLinks: html=${html.length} hasNextData=${html.contains("__NEXT_DATA__")}")
         val json = parseNextData(html)
+        if (json == null) Log.w("PoseidonHD", "loadLinks: parseNextData null")
         val props = json?.optJSONObject("props")?.optJSONObject("pageProps")
-        
+
         val videoObj = props?.optJSONObject("thisMovie") ?: props?.optJSONObject("serie") ?: props?.optJSONObject("episode")
         val videos = videoObj?.optJSONObject("videos") ?: props?.optJSONObject("videos")
+        Log.d("PoseidonHD", "loadLinks: videoObj=${videoObj != null} videos=${videos?.length() ?: "null"} keys=${videos?.keys()?.asSequence()?.joinToString() ?: "null"}")
         if (videos != null) {
             for (key in listOf("latino","spanish","english")) {
                 val arr = videos.optJSONArray(key) ?: continue
+                Log.d("PoseidonHD", "loadLinks: $key -> ${arr.length()} links")
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
                     val link = o.optString("result")
                     if (link.contains("player.poseidonhd2.co")) {
-                        // player.php?h=... -> seguir redirect o extraer iframe
+
                         try {
                             val pDoc = app.get(link).document
                             val iframe = pDoc.selectFirst("iframe[src]")?.attr("src")
                             val finalUrl = fixUrl(iframe ?: link) ?: link
                             loadExtractor(finalUrl, data, subtitleCallback, callback)
-                        } catch (_: Exception) {
+                        } catch (e: Exception) {
+                            Log.w("PoseidonHD", "loadLinks: iframe error $link: ${e.message}")
                             loadExtractor(link, data, subtitleCallback, callback)
                         }
                     } else if (link.isNotBlank()) {
@@ -207,14 +231,17 @@ class PoseidonHDProvider : MainAPI() {
             }
             return true
         }
-        // fallback: buscar iframes directos
+        Log.w("PoseidonHD", "loadLinks: videos null, buscando iframes data=$data")
         val doc = Jsoup.parse(html, mainUrl)
         var found = false
         doc.select("iframe[src]").forEach {
             val src = fixUrl(it.attr("src")) ?: return@forEach
+            Log.d("PoseidonHD", "loadLinks: iframe $src")
             loadExtractor(src, data, subtitleCallback, callback)
             found = true
         }
+        if (!found) Log.w("PoseidonHD", "loadLinks: 0 iframes html=${html.length}")
+        Log.d("PoseidonHD", "loadLinks: found=$found")
         return found
     }
 }
