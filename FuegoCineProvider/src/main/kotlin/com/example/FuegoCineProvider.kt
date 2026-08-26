@@ -36,47 +36,18 @@ class FuegoCineProvider : MainAPI() {
         return linkRegex.findAll(unescaped).map { it.groupValues[1] }.distinct().toList()
     }
 
-    /** Extract poster image URLs from Blogger feed entries. Returns map of post URL -> poster. */
-    private fun extractPostersFromFeed(json: String): Map<String, String> {
-        val unescaped = json.replace("\\/", "/")
-        val posterMap = mutableMapOf<String, String>()
-        // Split by entry boundaries using title as delimiter
-        // Each entry has: "title":{"type":"text","$t":"POST_TITLE"}
-        val entrySplits = unescaped.split("\"title\":{\"type\":\"text\",\"\$t\":\"")
-        val tmdbRegex = Regex("""(https?://media\.themoviedb\.org/[^"\\]+)""")
-        val htmlImgRegex = Regex("""<img src=\"(https?://[^\"]+)\"""")
-        for (i in 1 until entrySplits.size) {
-            val chunk = entrySplits[i]
-            val titleEnd = chunk.indexOf('"')
-            if (titleEnd == -1) continue
-            val title = chunk.substring(0, titleEnd)
-            val titleSlug = title.lowercase().replace(" ", "-")
-            // Find TMDB poster in this entry's content
-            val tmdbMatch = tmdbRegex.find(chunk)
-            val htmlMatch = htmlImgRegex.find(chunk)
-            val poster = tmdbMatch?.groupValues?.get(1) ?: htmlMatch?.groupValues?.get(1)
-            if (poster != null) {
-                // Store under multiple possible URL patterns for matching
-                posterMap[titleSlug] = poster
-            }
-        }
-        return posterMap
-    }
-
-    /** Find poster for a given post URL from the pre-parsed poster map. */
-    private fun findPoster(url: String, posterMap: Map<String, String>): String? {
-        val slug = url.substringAfterLast("/").substringBefore(".html")
-        return posterMap[slug] ?: posterMap.values.firstOrNull()
-    }
-
-    /** Detect if a title looks like a series episode: "Name NxM" or "Name NxM - Title" */
-    private fun detectEpisodeInfo(title: String): Pair<String, Pair<Int, Int>?> {
+    /**
+     * Detect if a title looks like a series episode: "Name NxM" or "Name NxM - Title"
+     * Returns: (seriesName, season, episode) or null if not an episode.
+     */
+    private fun parseEpisodeTitle(title: String): Triple<String, Int, Int>? {
+        // Match patterns like "Silo 3x8", "Tu amigo y vecino Spider-Man 1x10"
         val epRegex = Regex("""(.+?)\s+(\d+)x(\d+)(?:\s+.*)?""", RegexOption.IGNORE_CASE)
-        val match = epRegex.find(title) ?: return title to null
+        val match = epRegex.find(title) ?: return null
         val seriesName = match.groupValues[1].trim()
         val season = match.groupValues[2].toIntOrNull() ?: 1
         val episode = match.groupValues[3].toIntOrNull() ?: 1
-        return seriesName to (season to episode)
+        return Triple(seriesName, season, episode)
     }
 
     /** Build a clean display title from a URL slug */
@@ -103,23 +74,14 @@ class FuegoCineProvider : MainAPI() {
                 return newHomePageResponse(emptyList(), false)
             }
             val links = parseBloggerFeed(rawJson)
-            val posterMap = extractPostersFromFeed(rawJson)
-            Log.d("FuegoCine", "getMainPage: ${request.data} -> ${links.size} links, ${posterMap.size} posters")
+            Log.d("FuegoCine", "getMainPage: ${request.data} -> ${links.size} links")
             if (links.isNotEmpty()) Log.d("FuegoCine", "getMainPage: first=${links.first()}")
 
-            val items = links.map { link ->
-                val rawTitle = slugToTitle(link)
-                val (seriesName, epInfo) = detectEpisodeInfo(rawTitle)
-                val displayTitle = if (epInfo != null) "$seriesName - T${epInfo.first}E${epInfo.second}" else rawTitle
-                val type = if (epInfo != null) TvType.TvSeries else TvType.Movie
-                val poster = findPoster(link, posterMap)
-
-                newMovieSearchResponse(displayTitle, link, type) {
-                    this.posterUrl = poster
-                }
-            }
+            // Group results: detect episodes and group by series name
+            val items = groupItems(links)
+            Log.d("FuegoCine", "getMainPage: ${items.size} grouped items from ${links.size} links")
             if (items.isNotEmpty()) {
-                return newHomePageResponse(HomePageList(request.name, items), hasNext = items.size >= 20)
+                return newHomePageResponse(HomePageList(request.name, items), hasNext = links.size >= 20)
             }
             Log.w("FuegoCine", "getMainPage: 0 items from feed, falling back to HTML")
         }
@@ -137,8 +99,50 @@ class FuegoCineProvider : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, items), hasNext = items.size >= 18)
     }
 
+    private fun groupItems(links: List<String>): List<SearchResponse> {
+        // First pass: separate movies and episodes
+        data class EpisodeEntry(
+            val url: String,
+            val seriesName: String,
+            val season: Int,
+            val episode: Int
+        )
+
+        val movies = mutableListOf<SearchResponse>()
+        val episodesBySeries = mutableMapOf<String, MutableList<EpisodeEntry>>()
+
+        for (link in links) {
+            val rawTitle = slugToTitle(link)
+            val epInfo = parseEpisodeTitle(rawTitle)
+            if (epInfo != null) {
+                val (seriesName, season, episode) = epInfo
+                episodesBySeries.getOrPut(seriesName) { mutableListOf() }
+                    .add(EpisodeEntry(link, seriesName, season, episode))
+            } else {
+                movies.add(
+                    newMovieSearchResponse(rawTitle, link, TvType.Movie) { }
+                )
+            }
+        }
+
+        val seriesItems = mutableListOf<SearchResponse>()
+        for ((seriesName, entries) in episodesBySeries) {
+            entries.sortWith(compareBy({ it.season }, { it.episode }))
+
+            // Use the first episode's URL as the series URL (load() will detect episodes from it)
+            val firstEntry = entries.first()
+            // Note: poster will be loaded when user clicks into the series (via load())
+            seriesItems.add(
+                newMovieSearchResponse(seriesName, firstEntry.url, TvType.TvSeries) { }
+            )
+        }
+
+        // Combine: series first, then movies
+        return seriesItems + movies
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/feeds/posts/default?alt=json&q=${java.net.URLEncoder.encode(query, "UTF-8")}&max-results=20"
+        val url = "$mainUrl/feeds/posts/default?alt=json&q=${java.net.URLEncoder.encode(query, "UTF-8")}&max-results=40"
         Log.d("FuegoCine", "search: query=$query")
         val rawJson = try {
             app.get(url).text
@@ -147,18 +151,12 @@ class FuegoCineProvider : MainAPI() {
             return emptyList()
         }
         val links = parseBloggerFeed(rawJson)
-        val posterMap = extractPostersFromFeed(rawJson)
-        Log.d("FuegoCine", "search: ${links.size} links found, ${posterMap.size} posters")
-        return links.map { link ->
-            val rawTitle = slugToTitle(link)
-            val (seriesName, epInfo) = detectEpisodeInfo(rawTitle)
-            val displayTitle = if (epInfo != null) "$seriesName - T${epInfo.first}E${epInfo.second}" else rawTitle
-            val type = if (epInfo != null) TvType.TvSeries else TvType.Movie
-            val poster = findPoster(link, posterMap)
-            newMovieSearchResponse(displayTitle, link, type) {
-                this.posterUrl = poster
-            }
-        }
+        Log.d("FuegoCine", "search: ${links.size} links found")
+
+        // Group by series name
+        val items = groupItems(links)
+        Log.d("FuegoCine", "search: ${items.size} grouped items from ${links.size} links")
+        return items
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -184,10 +182,9 @@ class FuegoCineProvider : MainAPI() {
 
         Log.d("FuegoCine", "load: title=$title isSerie=$isSerie typeAttr=$typeAttr")
 
-        // For series: extract episode links from the page's eps-nav or post body links
         val episodes = mutableListOf<Episode>()
         if (isSerie) {
-            // Look for episode links in the page
+            // Look for episode links in the page (links containing NxM pattern)
             val epLinks = doc.select("a[href*='.html']").map { it.attr("href") }
                 .filter { it.contains("fuegocine.com") && it != url && it.contains(Regex("""\d+x\d+""")) }
                 .distinct()
@@ -195,11 +192,11 @@ class FuegoCineProvider : MainAPI() {
             for (epUrl in epLinks) {
                 val fixedUrl = fixUrl(epUrl) ?: continue
                 val epTitle = slugToTitle(epUrl)
-                val (_, epInfo) = detectEpisodeInfo(epTitle)
+                val epInfo = parseEpisodeTitle(epTitle)
                 episodes.add(newEpisode(fixedUrl) {
-                    this.name = if (epInfo != null) "T${epInfo.first}E${epInfo.second}" else "Episodio $idx"
-                    this.season = epInfo?.first ?: 1
-                    this.episode = epInfo?.second ?: idx
+                    this.name = if (epInfo != null) "T${epInfo.second}E${epInfo.third}" else "Episodio $idx"
+                    this.season = epInfo?.second ?: 1
+                    this.episode = epInfo?.third ?: idx
                 })
                 idx++
                 if (idx > 100) break
@@ -215,7 +212,7 @@ class FuegoCineProvider : MainAPI() {
                 this.year = year
             }
         } else if (isSerie) {
-            // Series episode page loaded directly — treat as single episode
+            // Single series episode loaded directly — treat as one episode
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, listOf(newEpisode(url) { this.name = title })) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -270,12 +267,10 @@ class FuegoCineProvider : MainAPI() {
      */
     private fun parseSVLinks(doc: org.jsoup.nodes.Document): List<Map<String, String>> {
         val results = mutableListOf<Map<String, String>>()
-        // Find all <script> tags
         val scripts = doc.select("script")
         for (script in scripts) {
             val text = script.html()
             if (!text.contains("_SV_LINKS")) continue
-            // Extract the array content between [ and ]
             val arrayStart = text.indexOf("_SV_LINKS")
             if (arrayStart == -1) continue
             val bracketStart = text.indexOf("[", arrayStart)
@@ -287,7 +282,6 @@ class FuegoCineProvider : MainAPI() {
             for (match in objectRegex.findAll(arrayContent)) {
                 val obj = match.value
                 val entry = mutableMapOf<String, String>()
-                // Extract key: value pairs (non-quoted and quoted)
                 val kvRegex = Regex("""(\w+)\s*:\s*(?:"([^"]*)"|([^,}\s]+))""")
                 for (kv in kvRegex.findAll(obj)) {
                     val value = (if (kv.groupValues[2].isNotEmpty()) kv.groupValues[2] else kv.groupValues[3])
@@ -299,7 +293,7 @@ class FuegoCineProvider : MainAPI() {
                     results.add(entry)
                 }
             }
-            break // Only need first _SV_LINKS
+            break
         }
         return results
     }
@@ -316,8 +310,8 @@ class FuegoCineProvider : MainAPI() {
         val img = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
             ?: selectFirst("img")?.attr("data-src")?.let { fixUrl(it) }
         val rawTitle = slugToTitle(href)
-        val (seriesName, epInfo) = detectEpisodeInfo(rawTitle)
-        val displayTitle = if (epInfo != null) "$seriesName - T${epInfo.first}E${epInfo.second}" else rawTitle
+        val epInfo = parseEpisodeTitle(rawTitle)
+        val displayTitle = if (epInfo != null) "${epInfo.first} - T${epInfo.second}E${epInfo.third}" else rawTitle
         val type = if (epInfo != null) TvType.TvSeries else TvType.Movie
         return newMovieSearchResponse(displayTitle, href, type) {
             this.posterUrl = img
