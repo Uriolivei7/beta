@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
@@ -28,8 +29,14 @@ class FuegoCineProvider : MainAPI() {
         }
     }
 
+    /** Parse Blogger feed JSON, fixing escaped slashes */
+    private fun parseBloggerFeed(json: String): List<String> {
+        val unescaped = json.replace("\\/", "/")
+        val linkRegex = Regex(""""href":"(https://www\.fuegocine\.com/[^"]+\.html)"""")
+        return linkRegex.findAll(unescaped).map { it.groupValues[1] }.distinct().toList()
+    }
+
     private fun Element.toSearchResult(): SearchResponse? {
-        // Blogger feed o HTML: buscar link del post
         val a = selectFirst("a[href*='.html']") ?: selectFirst("a") ?: return null
         val href = fixUrl(a.attr("href")) ?: return null
         if (!href.contains("fuegocine.com") && !href.startsWith("http")) return null
@@ -37,10 +44,9 @@ class FuegoCineProvider : MainAPI() {
         if (title.isBlank()) {
             title = selectFirst("h2,h3")?.text()?.trim() ?: return null
         }
-        // evitar entradas duplicadas de paginación
         if (href.contains("/search/")) return null
-        val img = selectFirst("img")?.attr("src")?.let { fixUrl(it) } ?: selectFirst("img")?.attr("data-src")?.let { fixUrl(it) }
-        // tipo por label o url
+        val img = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+            ?: selectFirst("img")?.attr("data-src")?.let { fixUrl(it) }
         val isSerie = href.contains("/todas-las-temporadas") || text().contains("Temporada", true)
         val type = if (isSerie) TvType.TvSeries else TvType.Movie
         return newMovieSearchResponse(title, href, type) {
@@ -58,44 +64,59 @@ class FuegoCineProvider : MainAPI() {
             else -> "$mainUrl${request.data}"
         }
 
-        // Si es feed json, parsearlo
         if (url.contains("alt=json")) {
-            val json = app.get(url).text
-            // Blogger feed: feed.entry[]
-            val entryRegex = Regex("\"title\"\\s*:\\s*\\{\"\\\$t\"\\s*:\\s*\"(.*?)\"")
-            // Usar Jsoup sobre content.$t es más fiable: parsear con regex de links
-            val linkRegex = Regex("\"href\"\\s*:\\s*\"(https://www\\.fuegocine\\.com/[^\"]+\\.html)\"")
-            val links = linkRegex.findAll(json).map { it.groupValues[1] }.distinct().toList()
-            val items = links.mapNotNull { link ->
-                val title = link.substringAfterLast("/").replace(".html","").replace("-"," ").replaceFirstChar { it.uppercase() }
+            val rawJson = try { app.get(url).text } catch (e: Exception) {
+                Log.e("FuegoCine", "getMainPage: error fetching feed", e)
+                return newHomePageResponse(emptyList(), false)
+            }
+            val links = parseBloggerFeed(rawJson)
+            Log.d("FuegoCine", "getMainPage: ${request.data} -> ${links.size} links")
+            if (links.isNotEmpty()) Log.d("FuegoCine", "getMainPage: first=${links.first()}")
+            val items = links.map { link ->
+                val title = link.substringAfterLast("/").replace(".html", "").replace("-", " ")
+                    .replaceFirstChar { it.uppercase() }
                 newMovieSearchResponse(title, link, TvType.Movie) { this.posterUrl = null }
             }
-            // Intentar obtener poster/title real desde content si hay
-            // Fallback: si no hay links, usar HTML
             if (items.isNotEmpty()) {
                 return newHomePageResponse(HomePageList(request.name, items), hasNext = items.size >= 20)
             }
+            Log.w("FuegoCine", "getMainPage: 0 items from feed, falling back to HTML")
         }
 
-        val doc = app.get(if (url.contains("alt=json")) mainUrl else url).document
+        val doc = try {
+            app.get(if (url.contains("alt=json")) mainUrl else url).document
+        } catch (e: Exception) {
+            Log.e("FuegoCine", "getMainPage: error fetching HTML", e)
+            return newHomePageResponse(emptyList(), false)
+        }
         val items = doc.select("article, div.post").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
+        Log.d("FuegoCine", "getMainPage: HTML fallback -> ${items.size} items")
         return newHomePageResponse(HomePageList(request.name, items), hasNext = items.size >= 18)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/feeds/posts/default?alt=json&q=${java.net.URLEncoder.encode(query, "UTF-8")}&max-results=20"
-        val json = app.get(url).text
-        val linkRegex = Regex("\"href\"\\s*:\\s*\"(https://www\\.fuegocine\\.com/[^\"]+\\.html)\"")
-        val links = linkRegex.findAll(json).map { it.groupValues[1] }.distinct().toList()
-        return links.mapNotNull { link ->
-            val title = link.substringAfterLast("/").substringBefore(".html").replace("-"," ").replaceFirstChar { it.uppercase() }
+        Log.d("FuegoCine", "search: query=$query")
+        val rawJson = try { app.get(url).text } catch (e: Exception) {
+            Log.e("FuegoCine", "search: error", e)
+            return emptyList()
+        }
+        val links = parseBloggerFeed(rawJson)
+        Log.d("FuegoCine", "search: ${links.size} links found")
+        return links.map { link ->
+            val title = link.substringAfterLast("/").substringBefore(".html").replace("-", " ")
+                .replaceFirstChar { it.uppercase() }
             newMovieSearchResponse(title, link, TvType.Movie) { }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = app.get(url).document
+        Log.d("FuegoCine", "load: url=$url")
+        val doc = try { app.get(url).document } catch (e: Exception) {
+            Log.e("FuegoCine", "load: error", e)
+            return null
+        }
         val title = doc.selectFirst("h1")?.text()?.trim()
             ?: doc.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
             ?: return null
@@ -109,13 +130,12 @@ class FuegoCineProvider : MainAPI() {
             ?: Regex("""\b(19\d{2}|20\d{2})\b""").find(doc.text())?.groupValues?.get(1)?.toIntOrNull()
         val tags = doc.selectFirst("ul.post-details")?.attr("data-genres")?.split(",")?.map { it.trim() }
 
-        // Episodios: buscar dentro de #ocultar
+        Log.d("FuegoCine", "load: title=$title isSerie=$isSerie typeAttr=$typeAttr")
+
         val episodes = mutableListOf<Episode>()
         val ocultar = doc.selectFirst("div#ocultar")
         if (ocultar != null) {
-            // buscar enlaces a episodios
             val epLinks = ocultar.select("a[href*='.html']").map { it.attr("href") }.filter { it.contains(".html") }
-            // Si hay lista de temporadas, mapear
             var idx = 1
             for (link in epLinks.distinct()) {
                 val epUrl = fixUrl(link) ?: continue
@@ -130,6 +150,7 @@ class FuegoCineProvider : MainAPI() {
                 if (idx > 100) break
             }
         }
+        Log.d("FuegoCine", "load: ${episodes.size} episodes found")
 
         return if (isSerie && episodes.isNotEmpty()) {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
@@ -139,8 +160,7 @@ class FuegoCineProvider : MainAPI() {
                 this.year = year
             }
         } else if (isSerie) {
-            // Serie sin lista detectada: tratar como serie con episodio único (el mismo url)
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, listOf(newEpisode(url){ this.name = title })) {
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, listOf(newEpisode(url) { this.name = title })) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.tags = tags
@@ -162,31 +182,48 @@ class FuegoCineProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
+        Log.d("FuegoCine", "loadLinks: data=$data")
+        val doc = try { app.get(data).document } catch (e: Exception) {
+            Log.e("FuegoCine", "loadLinks: error", e)
+            return false
+        }
         val ocultar = doc.selectFirst("div#ocultar")
         val candidates = mutableListOf<String>()
+
+        // Buscar iframes dentro de #ocultar
         ocultar?.select("iframe[src]")?.forEach { candidates.add(it.attr("src")) }
+
+        // Buscar iframes con data-src (lazy load)
+        ocultar?.select("iframe[data-src]")?.forEach {
+            val ds = it.attr("data-src")
+            if (ds.startsWith("http")) candidates.add(ds)
+        }
+
+        // Buscar enlaces externos
         ocultar?.select("a[href]")?.forEach { href ->
             val u = href.attr("href")
             if (u.startsWith("http") && !u.contains("fuegocine.com")) candidates.add(u)
-            val dataSrc = href.attr("data-src")
-            if (dataSrc.startsWith("http")) candidates.add(dataSrc)
         }
-        // Fallback: buscar cualquier url http en el html de ocultar
+
+        // Fallback: regex en el HTML de ocultar
         if (candidates.isEmpty() && ocultar != null) {
-            Regex("""https?://[^\s"'<>]+""").findAll(ocultar.html()).forEach {
+            Regex("""https?://[^\\s"'<>]+""").findAll(ocultar.html()).forEach {
                 val u = it.value
                 if (u.contains("fuegocine.com")) return@forEach
-                if (u.endsWith(".jpg") || u.endsWith(".png")) return@forEach
+                if (u.endsWith(".jpg") || u.endsWith(".png") || u.endsWith(".css") || u.endsWith(".js")) return@forEach
                 candidates.add(u)
             }
         }
-        // También buscar en todo el doc si ocultar vacío
+
+        // Último fallback: iframes en todo el documento
         if (candidates.isEmpty()) {
             doc.select("iframe[src]").forEach { candidates.add(it.attr("src")) }
         }
+
+        Log.d("FuegoCine", "loadLinks: ${candidates.size} candidates")
         candidates.distinct().forEach { link ->
             val fixed = fixUrl(link) ?: return@forEach
+            Log.d("FuegoCine", "loadLinks: -> $fixed")
             loadExtractor(fixed, data, subtitleCallback, callback)
         }
         return candidates.isNotEmpty()
