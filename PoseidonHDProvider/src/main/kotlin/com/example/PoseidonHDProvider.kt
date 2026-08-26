@@ -159,7 +159,11 @@ class PoseidonHDProvider : MainAPI() {
                         val epThumb = ep.optString("image")
 
                         val epSlug = ep.optJSONObject("url")?.optString("slug")
-                        val epUrl = if (!epSlug.isNullOrBlank()) "$mainUrl/${epSlug.replaceFirst("series/","serie/")}" else "$url/temporada/$seasonNum/episodio/$epNum"
+                        val epUrl = if (!epSlug.isNullOrBlank()) {
+                            val parts = epSlug.split("/")
+                            if (parts.size >= 7) "$mainUrl/serie/${parts[1]}/${parts[2]}/temporada/${parts[4]}/episodio/${parts[6]}"
+                            else "$mainUrl/${epSlug.replaceFirst("series/","serie/")}"
+                        } else "$url/temporada/$seasonNum/episodio/$epNum"
                         episodes.add(newEpisode(epUrl) {
                             this.name = epTitle
                             this.season = seasonNum
@@ -203,7 +207,7 @@ class PoseidonHDProvider : MainAPI() {
         if (json == null) Log.w("PoseidonHD", "loadLinks: parseNextData null")
         val props = json?.optJSONObject("props")?.optJSONObject("pageProps")
 
-        val videoObj = props?.optJSONObject("thisMovie") ?: props?.optJSONObject("serie") ?: props?.optJSONObject("episode")
+        val videoObj = props?.optJSONObject("thisMovie") ?: props?.optJSONObject("episode") ?: props?.optJSONObject("serie")
         val videos = videoObj?.optJSONObject("videos") ?: props?.optJSONObject("videos")
         Log.d("PoseidonHD", "loadLinks: videoObj=${videoObj != null} videos=${videos?.length() ?: "null"} keys=${videos?.keys()?.asSequence()?.joinToString() ?: "null"}")
         if (videos != null) {
