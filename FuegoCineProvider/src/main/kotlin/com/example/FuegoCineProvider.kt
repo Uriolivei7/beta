@@ -42,7 +42,12 @@ class FuegoCineProvider : MainAPI() {
      * Returns map of URL slug -> poster URL.
      */
     private fun extractPostersFromFeed(json: String): Map<String, String> {
-        val unescaped = json.replace("\\/", "/").replace("\\u003C", "<").replace("\\u003E", ">")
+        // Raw JSON has literal \u003C, \u003E, \/, \" as escape sequences
+        val unescaped = json
+            .replace("\\/", "/")
+            .replace("\\\"", "\"")
+            .replace("\\u003C", "<")
+            .replace("\\u003E", ">")
         val result = mutableMapOf<String, String>()
         val tmdbRegex = Regex("""<img src="(https?://media\.themoviedb\.org/[^"]+)"""")
         val linkRegex = Regex(""""href":"(https://www\.fuegocine\.com/[^"]+\.html)"""")
@@ -100,7 +105,7 @@ class FuegoCineProvider : MainAPI() {
             .replace(Regex("[^a-z0-9 ]"), "")
             .replace(Regex("\\s+"), " ").trim()
     }
-    
+
     private fun groupItems(links: List<String>, posterMap: Map<String, String> = emptyMap()): List<SearchResponse> {
         data class EpisodeEntry(val url: String, val seriesName: String, val season: Int, val episode: Int)
 
@@ -267,7 +272,10 @@ class FuegoCineProvider : MainAPI() {
                 }
             } else {
                 // No episode links on page — query Blogger feed to find NxM posts for this series
-                val seriesName = title.replace(Regex("""\s*\(\d{4}.*\)\s*$"""), "").trim()
+                val seriesName = title
+                    .replace(Regex("""\s*\(\d{4}.*\)\s*$"""), "")
+                    .replace(Regex("""\s+\d+x\d+.*$"""), "")
+                    .trim()
                 Log.d("FuegoCine", "load: no episodes on page, searching feed for '$seriesName'")
                 val feedEpisodes = findEpisodesFromFeed(seriesName)
                 if (feedEpisodes.isNotEmpty()) {
@@ -313,7 +321,11 @@ class FuegoCineProvider : MainAPI() {
      * Returns list of (url, season, episode) sorted.
      */
     private suspend fun findEpisodesFromFeed(seriesName: String): List<Triple<String, Int, Int>> {
-        val encoded = java.net.URLEncoder.encode(seriesName, "UTF-8")
+        // Use the most distinctive words from the series name for better Blogger search
+        val words = seriesName.split(Regex("\\s+")).filter { it.length > 3 }
+        val searchQuery = words.joinToString(" ")
+        val encoded = java.net.URLEncoder.encode(searchQuery, "UTF-8")
+        Log.d("FuegoCine", "findEpisodesFromFeed: searching '$searchQuery' for '$seriesName'")
         val feedUrl = "$mainUrl/feeds/posts/default?alt=json&q=$encoded&max-results=50"
         val rawJson = try {
             app.get(feedUrl).text
@@ -322,13 +334,18 @@ class FuegoCineProvider : MainAPI() {
             return emptyList()
         }
         val links = parseBloggerFeed(rawJson)
+        val normTarget = normalizeSeriesName(seriesName)
         val results = mutableListOf<Triple<String, Int, Int>>()
         for (link in links) {
             val title = slugToTitle(link)
             val epInfo = parseEpisodeTitle(title)
             if (epInfo != null) {
-                val fixedUrl = fixUrl(link) ?: continue
-                results.add(Triple(fixedUrl, epInfo.second, epInfo.third))
+                // Only include if the series name from the episode matches
+                val normFound = normalizeSeriesName(epInfo.first)
+                if (normFound.contains(normTarget) || normTarget.contains(normFound)) {
+                    val fixedUrl = fixUrl(link) ?: continue
+                    results.add(Triple(fixedUrl, epInfo.second, epInfo.third))
+                }
             }
         }
         results.sortWith(compareBy({ it.second }, { it.third }))
