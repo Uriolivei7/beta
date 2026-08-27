@@ -207,6 +207,17 @@ class PoseidonHDProvider : MainAPI() {
         if (json == null) Log.w("PoseidonHD", "loadLinks: parseNextData null")
         val props = json?.optJSONObject("props")?.optJSONObject("pageProps")
 
+        val emitted = java.util.concurrent.atomic.AtomicInteger(0)
+        val countingCallback: (ExtractorLink) -> Unit = { link ->
+            emitted.incrementAndGet()
+            Log.d("PoseidonHD", "loadLinks EMIT -> ${link.source} ${link.url.take(90)} q=${link.quality}")
+            callback.invoke(link)
+        }
+        val countingSub: (SubtitleFile) -> Unit = { sub ->
+            Log.d("PoseidonHD", "loadLinks SUB -> ${sub.lang} ${sub.url.take(90)}")
+            subtitleCallback.invoke(sub)
+        }
+
         val videoObj = props?.optJSONObject("thisMovie") ?: props?.optJSONObject("episode") ?: props?.optJSONObject("serie")
         val videos = videoObj?.optJSONObject("videos") ?: props?.optJSONObject("videos")
         Log.d("PoseidonHD", "loadLinks: videoObj=${videoObj != null} videos=${videos?.length() ?: "null"} keys=${videos?.keys()?.asSequence()?.joinToString() ?: "null"}")
@@ -217,27 +228,36 @@ class PoseidonHDProvider : MainAPI() {
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
                     val link = o.optString("result")
+                    Log.d("PoseidonHD", "loadLinks: $key[$i] raw=${link.take(120)}")
+                    if (link.isBlank()) {
+                        Log.w("PoseidonHD", "loadLinks: $key[$i] empty result")
+                        continue
+                    }
                     if (link.contains("player.poseidonhd2.co")) {
                         try {
                             val playerHtml = app.get(link).text
+                            Log.d("PoseidonHD", "loadLinks: player html ${playerHtml.length}")
                             val realUrl = Regex("""var url = '([^']+)';?""").find(playerHtml)?.groupValues?.get(1)
+                                ?: Regex("""iframe[^>]+src=['"]([^'"]+)['"]""").find(playerHtml)?.groupValues?.get(1)
                             if (realUrl != null) {
                                 Log.d("PoseidonHD", "loadLinks: resolved -> $realUrl")
-                                loadExtractor(realUrl, data, subtitleCallback, callback)
+                                loadExtractor(realUrl, data, countingSub, countingCallback)
                             } else {
-                                Log.w("PoseidonHD", "loadLinks: no url found in $link")
-                                loadExtractor(link, data, subtitleCallback, callback)
+                                Log.w("PoseidonHD", "loadLinks: no url found in $link html=${playerHtml.take(200)}")
+                                loadExtractor(link, data, countingSub, countingCallback)
                             }
                         } catch (e: Exception) {
                             Log.w("PoseidonHD", "loadLinks: player error $link: ${e.message}")
-                            loadExtractor(link, data, subtitleCallback, callback)
+                            loadExtractor(link, data, countingSub, countingCallback)
                         }
-                    } else if (link.isNotBlank()) {
-                        loadExtractor(link, data, subtitleCallback, callback)
+                    } else {
+                        loadExtractor(link, data, countingSub, countingCallback)
                     }
                 }
             }
-            return true
+            Log.d("PoseidonHD", "loadLinks: FIN videos path emitidos=${emitted.get()}")
+            if (emitted.get() == 0) Log.e("PoseidonHD", "loadLinks: 0 links emitidos -> 'enlaces no encontrados' videosKeys=${videos.keys().asSequence().joinToString()} html=${html.take(500)}")
+            return emitted.get() > 0
         }
         Log.w("PoseidonHD", "loadLinks: videos null, buscando iframes data=$data")
         val doc = Jsoup.parse(html, mainUrl)
@@ -245,11 +265,12 @@ class PoseidonHDProvider : MainAPI() {
         doc.select("iframe[src]").forEach {
             val src = fixUrl(it.attr("src")) ?: return@forEach
             Log.d("PoseidonHD", "loadLinks: iframe $src")
-            loadExtractor(src, data, subtitleCallback, callback)
+            loadExtractor(src, data, countingSub, countingCallback)
             found = true
         }
-        if (!found) Log.w("PoseidonHD", "loadLinks: 0 iframes html=${html.length}")
-        Log.d("PoseidonHD", "loadLinks: found=$found")
-        return found
+        if (!found) Log.w("PoseidonHD", "loadLinks: 0 iframes html=${html.length} hasNext=${html.contains("__NEXT_DATA__")}")
+        Log.d("PoseidonHD", "loadLinks: FIN iframe path emitidos=${emitted.get()} found=$found")
+        if (emitted.get() == 0) Log.e("PoseidonHD", "loadLinks: 0 links emitidos (iframe fallback) -> 'enlaces no encontrados'")
+        return emitted.get() > 0
     }
 }

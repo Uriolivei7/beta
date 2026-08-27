@@ -405,6 +405,16 @@ class SoloLatinoProvider : MainAPI() {
         }
 
         Log.d("SoloLatino", "loadLinks - Total servidores detectados: ${serverUrls.size}")
+        val emitted = java.util.concurrent.atomic.AtomicInteger(0)
+        val countingCallback: (ExtractorLink) -> Unit = { link ->
+            emitted.incrementAndGet()
+            Log.d("SoloLatino", "loadLinks EMIT -> ${link.source} ${link.url.take(90)} q=${link.quality}")
+            callback.invoke(link)
+        }
+        val countingSub: (SubtitleFile) -> Unit = { sub ->
+            Log.d("SoloLatino", "loadLinks SUB -> ${sub.lang} ${sub.url.take(90)}")
+            subtitleCallback.invoke(sub)
+        }
 
         serverUrls.distinct().amap { rawUrl ->
             val fixedSrc = fixUrl(rawUrl)
@@ -469,7 +479,9 @@ class SoloLatinoProvider : MainAPI() {
                                 val decryptedUrl = decryptAESLocal(encrypted, aesKey)
                                 if (decryptedUrl != null) {
                                     Log.d("SoloLatino", "embed69 - decrypted: ${decryptedUrl.take(100)}")
-                                    loadSourceNameExtractor(langTag, fixHostsLinks(decryptedUrl), fixedSrc, subtitleCallback, callback)
+                                    loadSourceNameExtractor(langTag, fixHostsLinks(decryptedUrl), fixedSrc, countingSub, countingCallback)
+                                } else {
+                                    Log.w("SoloLatino", "embed69 - decrypt null para $encrypted")
                                 }
                             }
                         } ?: Log.e("SoloLatino", "embed69 - No se pudo parsear dataLink JSON")
@@ -485,7 +497,7 @@ class SoloLatinoProvider : MainAPI() {
                     if (foundLinks.isNotEmpty()) {
                         Log.d("SoloLatino", "xupalace - ${foundLinks.size} links por go_to_playerVast")
                         foundLinks.amap { link ->
-                            loadExtractor(fixHostsLinks(fixUrl(link)), fixedSrc, subtitleCallback, callback)
+                            loadExtractor(fixHostsLinks(fixUrl(link)), fixedSrc, countingSub, countingCallback)
                         }
                     } else {
                         val docX = Jsoup.parse(xupalaceHtml)
@@ -494,7 +506,7 @@ class SoloLatinoProvider : MainAPI() {
                             Regex("'([^']+)'").find(clickAttr)?.groupValues?.get(1)
                         }
                         Log.d("SoloLatino", "xupalace - ${liLinks.size} links por li onclick")
-                        liLinks.amap { loadExtractor(fixHostsLinks(fixUrl(it)), fixedSrc, subtitleCallback, callback) }
+                        liLinks.amap { loadExtractor(fixHostsLinks(fixUrl(it)), fixedSrc, countingSub, countingCallback) }
                     }
                 }
 
@@ -509,16 +521,19 @@ class SoloLatinoProvider : MainAPI() {
                             val iframeSrc = iframe.attr("src")
                             if (iframeSrc.isNotBlank()) {
                                 Log.d("SoloLatino", "generic - iframe encontrado: $iframeSrc")
-                                loadExtractor(fixUrl(iframeSrc), targetUrl, subtitleCallback, callback)
+                                loadExtractor(fixUrl(iframeSrc), targetUrl, countingSub, countingCallback)
                             }
                         }
                     } catch (e: Exception) {
                         Log.e("SoloLatino", "generic - error: ${e.message}")
                     }
-                    loadExtractor(cleanUrl, targetUrl, subtitleCallback, callback)
+                    Log.d("SoloLatino", "generic - loadExtractor direct $cleanUrl")
+                    loadExtractor(cleanUrl, targetUrl, countingSub, countingCallback)
                 }
             }
         }
+        Log.d("SoloLatino", "loadLinks FIN total emitidos=${emitted.get()} servidores=${serverUrls.size}")
+        if (emitted.get() == 0) Log.e("SoloLatino", "loadLinks 0 links emitidos -> 'enlaces no encontrados'")
 
         return true
     }
@@ -590,9 +605,14 @@ suspend fun loadSourceNameExtractor(
     referer: String? = null,
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit,
-) {
+) = kotlinx.coroutines.coroutineScope {
+    var count = 0
+    // loadExtractor expects non-suspend callback; we need to bridge suspend callback.invoke via child launch
+    val outerScope = this
     loadExtractor(url, referer, subtitleCallback) { link ->
-        CoroutineScope(Dispatchers.IO).launch {
+        count++
+        Log.d("SoloLatino", "loadSourceNameExtractor [$source] -> ${link.source} ${link.url.take(80)} q=${link.quality} type=${link.type}")
+        outerScope.launch {
             callback.invoke(
                 newExtractorLink("$source[${link.source}]", "$source[${link.source}]", link.url) {
                     this.quality = link.quality
@@ -603,6 +623,17 @@ suspend fun loadSourceNameExtractor(
                 }
             )
         }
+    }
+    // coroutineScope will await all launches before returning, so counting is accurate after
+    // We log after a small delay to ensure launches completed (they are children)
+    // Use a separate launch to log after children finish: just check after scope
+    // Note: count is captured before launches, so we log immediately after loadExtractor returns
+    // but before child launches complete. To get accurate log, we launch a final check
+    launch {
+        // wait a bit for children (they are siblings, not children of this launch, so need to join)
+        // Instead, just log count here; actual emit count is tracked via outer countingCallback
+        if (count == 0) Log.w("SoloLatino", "loadSourceNameExtractor [$source] 0 links para $url")
+        else Log.d("SoloLatino", "loadSourceNameExtractor [$source] $count links para $url (emit async)")
     }
 }
 
