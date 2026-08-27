@@ -187,9 +187,10 @@ class SoloStreamWish : ExtractorApi() {
         try {
             val resp = app.get(url, headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Referer" to (referer ?: url),
             ), timeout = 20000L)
-            Log.d("SoloLatino", "[SW] HTTP ${resp.code} len=${resp.text.length} snippet=${resp.text.take(400).replace("\n"," ")}")
+            Log.d("SoloLatino", "[SW] HTTP ${resp.code} len=${resp.text.length} snippet=${resp.text.take(1000).replace("\n"," ")}")
             val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
             val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|m4v)[^"'\s<>]*)""")
             val fileRegex = Regex("""file\s*:\s*["'](https?://[^"']+)["']""")
@@ -264,32 +265,62 @@ class SoloVidHide : ExtractorApi() {
         try {
             val resp = app.get(url, headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Referer" to (referer ?: url),
             ), timeout = 20000L)
-            Log.d("SoloLatino", "[VH] HTTP ${resp.code} len=${resp.text.length} snippet=${resp.text.take(400).replace("\n"," ")}")
+            Log.d("SoloLatino", "[VH] HTTP ${resp.code} len=${resp.text.length} snippet=${resp.text.take(600).replace("\n"," ")}")
             val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
             val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|m4v)[^"'\s<>]*)""")
             val fileRegex = Regex("""file\s*:\s*["'](https?://[^"']+)["']""")
             var found = false
-            for (m in m3u8Regex.findAll(resp.text)) {
-                Log.d("SoloLatino", "[VH] M3U8: ${m.value.take(120)}")
-                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
-                found = true
-            }
-            if (!found) for (m in fileRegex.findAll(resp.text)) {
-                val f = m.groupValues[1]
-                if (f.contains(".m3u8") || f.contains(".mp4")) {
-                    Log.d("SoloLatino", "[VH] file: $f")
-                    callback.invoke(newExtractorLink(name, name, f) { this.referer = mainUrl })
+            suspend fun tryExtract(text: String, tag: String) {
+                for (m in m3u8Regex.findAll(text)) {
+                    Log.d("SoloLatino", "[VH] $tag M3U8: ${m.value.take(120)}")
+                    callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                    found = true
+                }
+                if (!found) for (m in fileRegex.findAll(text)) {
+                    val f = m.groupValues[1]
+                    if (f.contains(".m3u8") || f.contains(".mp4") || f.contains(".ts")) {
+                        Log.d("SoloLatino", "[VH] $tag file: $f")
+                        callback.invoke(newExtractorLink(name, name, f) { this.referer = mainUrl })
+                        found = true
+                    }
+                }
+                if (!found) for (m in mp4Regex.findAll(text)) {
+                    Log.d("SoloLatino", "[VH] $tag MP4: ${m.value.take(120)}")
+                    callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
                     found = true
                 }
             }
-            if (!found) for (m in mp4Regex.findAll(resp.text)) {
-                Log.d("SoloLatino", "[VH] MP4: ${m.value.take(120)}")
-                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
-                found = true
+            tryExtract(resp.text, "direct")
+            if (!found) {
+                // eval packer: eval(function(p,a,c,k,e,d){...})
+                val evalRegex = Regex("""eval\s*\(function\(p,a,c,k,e,d\).*?\)\)""", RegexOption.DOT_MATCHES_ALL)
+                for (em in evalRegex.findAll(resp.text)) {
+                    val evalBlock = em.value
+                    // Quick unpack: find p,a,c,k parts like }('...',36,XX,'...'.split('|'))
+                    val argsMatch = Regex("""\}\('(.*)',(\d+),(\d+),'(.*)'\.split""", RegexOption.DOT_MATCHES_ALL).find(evalBlock)
+                    if (argsMatch != null) {
+                        try {
+                            val p = argsMatch.groupValues[1]
+                            val a = argsMatch.groupValues[2].toIntOrNull() ?: 36
+                            val c = argsMatch.groupValues[3].toIntOrNull() ?: 0
+                            val kRaw = argsMatch.groupValues[4]
+                            val kList = kRaw.split('|')
+                            var decoded = p
+                            for (i in kList.indices.reversed()) {
+                                if (kList[i].isBlank()) continue
+                                decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), kList[i])
+                            }
+                            Log.d("SoloLatino", "[VH] eval decoded snippet=${decoded.take(400).replace("\n"," ")}")
+                            tryExtract(decoded, "eval")
+                            if (found) break
+                        } catch (_: Exception) {}
+                    }
+                }
             }
-            if (!found) Log.w("SoloLatino", "[VH] No video found hasEval=${resp.text.contains("eval(")}")
+            if (!found) Log.w("SoloLatino", "[VH] No video found hasEval=${resp.text.contains("eval(")} hasPacker=${resp.text.contains("function(p,a,c,k")}")
         } catch (e: Exception) {
             Log.e("SoloLatino", "[VH] Error: ${e.message}", e)
         }
