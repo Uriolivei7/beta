@@ -20,6 +20,7 @@ class SoloLatinoPlugin : Plugin() {
         registerExtractorAPI(VoeMetagnath())
         registerExtractorAPI(VoePamelachangemission())
         registerExtractorAPI(SoloStreamWish())
+        registerExtractorAPI(SoloVidHide())
         registerExtractorAPI(SoloFileMoon())
     }
 }
