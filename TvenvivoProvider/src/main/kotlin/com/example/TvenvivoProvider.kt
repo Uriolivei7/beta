@@ -287,7 +287,7 @@ class TvenvivoProvider : MainAPI() {
             val channelCookies = channelPageResp?.cookies ?: emptyMap()
             Log.d("Tvenvivo", "channelPageResp: ${channelPageResp?.code ?: "null"} cookies: ${channelCookies.size}")
             if (channelCookies.isEmpty()) {
-                Log.w("Tvenvivo", "channel page no cookies, will use live/core.php cookies per option")
+                Log.w("Tvenvivo", "channel page no cookies, will try live/core.php")
             }
 
             return coroutineScope {
@@ -381,30 +381,58 @@ class TvenvivoProvider : MainAPI() {
 
                     // 3. Pedir stream.php CON headers/cookies correctos
                     val iframeUrl = fixUrl(internalIframe)
-                    val iframeHeaders = mainHeaders.toMutableMap().apply {
-                        put("Referer", targetUrl)
-                        put("Origin", "https://www.tvenvivo2.com")
-                        put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                        put("Accept-Language", "es-ES,es;q=0.9")
-                        put("Sec-Fetch-Site", "cross-site")
-                        put("Sec-Fetch-Mode", "navigate")
-                        put("Sec-Fetch-Dest", "iframe")
-                        put("Upgrade-Insecure-Requests", "1")
+
+                    // Función para intentar un dominio
+                    suspend fun tryIframeDomain(domainUrl: String): String? {
+                        val iframeHeaders = mainHeaders.toMutableMap().apply {
+                            put("Referer", targetUrl)
+                            put("Origin", "https://www.tvenvivo2.com")
+                            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                            put("Accept-Language", "es-ES,es;q=0.9")
+                            put("Sec-Fetch-Site", "cross-site")
+                            put("Sec-Fetch-Mode", "navigate")
+                            put("Sec-Fetch-Dest", "iframe")
+                            put("Upgrade-Insecure-Requests", "1")
+                        }
+                        val iframeResp = withTimeoutOrNull(25000L) {
+                            app.get(
+                                domainUrl,
+                                timeout = 25000L,
+                                headers = mainHeaders.toMutableMap().apply {
+                                    put("Referer", targetUrl)
+                                    put("Origin", "https://www.tvenvivo2.com")
+                                    put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                                    put("Accept-Language", "es-ES,es;q=0.9")
+                                    put("Sec-Fetch-Site", "cross-site")
+                                    put("Sec-Fetch-Mode", "navigate")
+                                    put("Sec-Fetch-Dest", "iframe")
+                                    put("Upgrade-Insecure-Requests", "1")
+                                },
+                                cookies = playerCookies,
+                                interceptor = cfKiller
+                            )
+                        }
+                        return if (iframeResp != null && iframeResp.isSuccessful) iframeResp.text else null
                     }
-                    val iframeResp = withTimeoutOrNull(25000L) {
-                        app.get(
-                            iframeUrl,
-                            timeout = 25000L,
-                            headers = iframeHeaders,
-                            cookies = playerCookies,
-                            interceptor = cfKiller
-                        )
+
+                    // Intentar dominio principal primero
+                    var iframeHtml = tryIframeDomain(iframeUrl)
+                    
+                    // Si falla, probar dominio alternativo (deportes.ksdjugfssddeports.com)
+                    if (iframeHtml == null && internalIframe.contains("regionales.saohgdassregions")) {
+                        val altUrl = internalIframe.replace("regionales.saohgdassregions.com", "deportes.ksdjugfssddeports.com")
+                        Log.d("Tvenvivo", "Trying alt domain: $altUrl")
+                        val altHtml = tryIframeDomain(altUrl)
+                        if (altHtml != null) {
+                            Log.d("Tvenvivo", "Alt domain succeeded")
+                            iframeHtml = altHtml
+                        }
                     }
-                    if (iframeResp == null || !iframeResp.isSuccessful) {
-                        Log.w("Tvenvivo", "iframe request failed: ${iframeResp?.code ?: "timeout/null"} url=$iframeUrl")
+
+                    if (iframeHtml == null) {
+                        Log.w("Tvenvivo", "iframe request failed on all domains url=$iframeUrl")
                         return@withTimeout false
                     }
-                    val iframeHtml = iframeResp.text
                     Log.d("Tvenvivo", "iframeHtml len=${iframeHtml.length}")
 
                     // 4. Parsear var src = "playlist.php?id=...&sig=..." del JS ofuscado
