@@ -348,22 +348,27 @@ class TvenvivoProvider : MainAPI() {
 
                     val finalHtml = if (internalIframe != null && internalIframe.isNotBlank()) {
                         val iframeUrl = fixUrl(internalIframe)
-                        val iframeResp = withTimeoutOrNull(20000L) {
+                        val iframeResp = withTimeoutOrNull(25000L) {
                             app.get(
                                 iframeUrl,
-                                timeout = 20000L,
+                                timeout = 25000L,
                                 headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) },
                                 cookies = mainCookies,
                                 interceptor = cfKiller
                             )
                         }
-                        if (iframeResp == null || !iframeResp.isSuccessful) return@withTimeout false
-                        iframeResp.text
+                        if (iframeResp == null || !iframeResp.isSuccessful) {
+                            Log.w("Tvenvivo", "iframe request failed: ${iframeResp?.code ?: "timeout/null"} url=$iframeUrl")
+                            // Try fallback domain before giving up
+                            "" // will trigger fallback below
+                        } else {
+                            iframeResp.text
+                        }
                     } else {
                         playerHtml
                     }
 
-                    val m3u8Url = extractM3u8FromHtml(finalHtml)
+                    val m3u8Url = if (finalHtml.isNotBlank()) extractM3u8FromHtml(finalHtml) else null
                     Log.d("Tvenvivo", "extractM3u8FromHtml returned: ${m3u8Url ?: "null"}")
                     // Fallback: probar mirror conocido que funcionó (deportes.ksdjugfssddeports.com)
                     var finalM3u8 = m3u8Url
