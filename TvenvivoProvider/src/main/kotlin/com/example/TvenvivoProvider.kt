@@ -341,9 +341,10 @@ class TvenvivoProvider : MainAPI() {
                         return@withTimeout false
                     }
 
-                    // Genérico: cualquier iframe (ahora deportes.ksdjugfssddeports.com, antes regionales.saohgdasregions.fun)
+// Genérico: cualquier iframe (ahora deportes.ksdjugfssddeports.com, antes regionales.saohgdasregions.fun)
                     val internalIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(playerHtml)?.groupValues?.get(1)
-                        ?.let { it.replace("&amp;", "&") }
+                        ?.let { it.replace("&", "&") }
+                    Log.d("Tvenvivo", "internalIframe detected: ${internalIframe ?: "null"}")
 
                     val finalHtml = if (internalIframe != null && internalIframe.isNotBlank()) {
                         val iframeUrl = fixUrl(internalIframe)
@@ -363,20 +364,33 @@ class TvenvivoProvider : MainAPI() {
                     }
 
                     val m3u8Url = extractM3u8FromHtml(finalHtml)
+                    Log.d("Tvenvivo", "extractM3u8FromHtml returned: ${m3u8Url ?: "null"}")
                     // Fallback: probar mirror conocido que funcionó (deportes.ksdjugfssddeports.com)
                     var finalM3u8 = m3u8Url
-                    if (finalM3u8 == null && internalIframe != null && internalIframe.contains("regionales.saohgdassregions")) {
-                        val altUrl = internalIframe.replace("regionales.saohgdassregions.com", "deportes.ksdjugfssddeports.com")
-                        val altResp = withTimeoutOrNull(15000L) {
-                            app.get(altUrl, timeout = 15000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }, cookies = mainCookies, interceptor = cfKiller)
+                    if (finalM3u8 == null && internalIframe != null) {
+                        val altUrl = if (internalIframe.contains("regionales.saohgdassregions")) {
+                            internalIframe.replace("regionales.saohgdassregions.com", "deportes.ksdjugfssddeports.com")
+                        } else if (internalIframe.contains("deportes.ksdjugfssddeports")) {
+                            internalIframe // ya es el alt
+                        } else {
+                            null
                         }
-                        if (altResp != null && altResp.isSuccessful) {
-                            finalM3u8 = extractM3u8FromHtml(altResp.text)
+                        if (altUrl != null) {
+                            Log.d("Tvenvivo", "Trying alt domain: $altUrl")
+                            val altResp = withTimeoutOrNull(15000L) {
+                                app.get(altUrl, timeout = 15000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }, cookies = mainCookies, interceptor = cfKiller)
+                            }
+                            if (altResp != null && altResp.isSuccessful) {
+                                finalM3u8 = extractM3u8FromHtml(altResp.text)
+                                Log.d("Tvenvivo", "Alt domain extractM3u8: ${finalM3u8 ?: "null"}")
+                            } else {
+                                Log.w("Tvenvivo", "Alt domain request failed: ${altResp?.code ?: "null"}")
+                            }
                         }
                     }
 
                     if (!finalM3u8.isNullOrEmpty()) {
-                        Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
+                        Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $finalM3u8")
 
                         val iframeDomain = try { java.net.URL(internalIframe ?: playerUrl).host } catch (_: Exception) { "" }
                         val streamingHeaders = mapOf(
