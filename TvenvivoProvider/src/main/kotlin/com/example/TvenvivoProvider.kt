@@ -396,7 +396,6 @@ class TvenvivoProvider : MainAPI() {
 
                     val finalHtml = if (internalIframe != null && internalIframe.isNotBlank()) {
                         val iframeUrl = fixUrl(internalIframe)
-                        Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
                         val iframeResp = withTimeoutOrNull(20000L) {
                             app.get(
                                 iframeUrl,
@@ -406,19 +405,13 @@ class TvenvivoProvider : MainAPI() {
                                 interceptor = cfKiller
                             )
                         }
-                        if (iframeResp == null || !iframeResp.isSuccessful) {
-                            Log.w("Tvenvivo", "Logs: Iframe HTTP ${iframeResp?.code ?: "null"}")
-                            return@withTimeout false
-                        }
-                        val html = iframeResp.text
-                        Log.d("Tvenvivo", "Logs: Iframe HTML len=${html.length} snippet=${html.take(500).replace("\n"," ")}")
-                        html
+                        if (iframeResp == null || !iframeResp.isSuccessful) return@withTimeout false
+                        iframeResp.text
                     } else {
                         playerHtml
                     }
 
                     val m3u8Url = extractM3u8FromHtml(finalHtml)
-                    Log.d("Tvenvivo", "Logs: extractM3u8FromHtml returned=${m3u8Url ?: "null"}")
 
                     if (!m3u8Url.isNullOrEmpty()) {
                         Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
@@ -484,37 +477,50 @@ class TvenvivoProvider : MainAPI() {
             val match = Regex(pattern, RegexOption.IGNORE_CASE).find(html)
             if (match != null) {
                 val found = match.groupValues[1].replace("\\/", "/")
-                Log.d("Tvenvivo", "extractM3u8: pattern '$pattern' -> $found")
                 return found
             }
         }
-        // Intentar decodificar window['xxx']='BASE64' que contiene m3u8 (tvenvivo2 usa obfuscación)
+        // Buscar en window['xxx']='BASE64' - decodificar y buscar m3u8 en el decoded
         try {
-            val b64Regex = Regex("""window\[['"][^'"]+['"]\]\s*=\s*['"]([A-Za-z0-9+/=]{80,})['"]""")
-            var foundB64 = false
+            val b64Regex = Regex("""window\[['"][^'"]+['"]\]\s*=\s*['"]([A-Za-z0-9+/=]{100,})['"]""")
             for (m in b64Regex.findAll(html)) {
-                foundB64 = true
                 val b64 = m.groupValues[1]
-                Log.d("Tvenvivo", "extractM3u8: found window var b64 len=${b64.length}")
                 try {
                     val decoded = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                    Log.d("Tvenvivo", "extractM3u8: decoded len=${decoded.length} snippet=${decoded.take(300).replace("\n"," ")}")
-                    if (decoded.contains(".m3u8")) {
-                        // buscar m3u8 dentro del decoded
-                        val inner = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(decoded)?.groupValues?.get(1)
-                            ?: Regex("""['"]([^"']+\.m3u8[^"']*)['"]""").find(decoded)?.groupValues?.get(1)
-                        if (inner != null) {
-                            Log.d("Tvenvivo", "extractM3u8: decoded window var -> $inner")
-                            return inner.replace("\\/", "/")
+                    // Buscar m3u8 en el JS decodificado
+                    val innerPatterns = listOf(
+                        """(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""",
+                        """['"]([^"']*\.m3u8[^"']*)['"]""",
+                        """\.m3u8""",
+                    )
+                    for (ip in innerPatterns) {
+                        val im = Regex(ip, RegexOption.IGNORE_CASE).find(decoded)
+                        if (im != null) {
+                            val found = if (ip.contains("https")) im.groupValues[1] else {
+                                val ctxStart = maxOf(0, im.range.first - 100)
+                                val ctxEnd = minOf(decoded.length, im.range.last + 100)
+                                val ctx = decoded.substring(ctxStart, ctxEnd)
+                                Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(ctx)?.groupValues?.get(1)
+                            }
+                            if (found != null) return found.replace("\\/", "/")
                         }
                     }
-                } catch (e: Exception) {
-                    Log.w("Tvenvivo", "extractM3u8: b64 decode error: ${e.message}")
-                }
+                } catch (_: Exception) {}
             }
-            if (!foundB64) Log.d("Tvenvivo", "extractM3u8: no window var b64 found in html")
-        } catch (e: Exception) {
-            Log.w("Tvenvivo", "extractM3u8: window var search error: ${e.message}")
+        } catch (_: Exception) {}
+        // Buscar patrones de API/endpoint
+        val apiPatterns = listOf(
+            """/api/[^"'\s]*\.m3u8[^"'\s]*""",
+            """/stream/[^"'\s]*\.m3u8[^"'\s]*""",
+            """/live/[^"'\s]*\.m3u8[^"'\s]*""",
+        )
+        for (ap in apiPatterns) {
+            val m = Regex(ap, RegexOption.IGNORE_CASE).find(html)
+            if (m != null) {
+                val found = m.value
+                if (found.startsWith("/")) return "https://regionales.saohgdassregions.com$found"
+                if (found.startsWith("http")) return found
+            }
         }
         return null
     }
