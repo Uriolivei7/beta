@@ -16,7 +16,7 @@ import java.net.URL
 
 class Tvporinternet2Provider : MainAPI() {
     override var mainUrl = "https://www.tvporinternet2.com"
-    override var name = "TVporInternet 2"
+    override var name = "TVporInternet2"
 
     override val supportedTypes = setOf(
         TvType.Live
@@ -159,6 +159,30 @@ class Tvporinternet2Provider : MainAPI() {
                 }
             }
             if (channels.isNotEmpty()) break
+        }
+
+        // Parsear variable JS showChannels (canales Regionales cargados dinámicamente)
+        val showChannelsRegex = Regex("""const\s+showChannels\s*=\s*`([\s\S]*?)`;""")
+        val match = showChannelsRegex.find(html)
+        if (match != null) {
+            val showHtml = match.groupValues[1]
+            val showDoc = Jsoup.parse(showHtml)
+            showDoc.select("a.channel-card").forEach { channelCard ->
+                val link = channelCard.attr("href")
+                if (link.isBlank() || !seen.add(link)) return@forEach
+                val imgElement = channelCard.selectFirst("img")
+                val pElement = channelCard.selectFirst("p")
+                val titleRaw = when {
+                    imgElement?.attr("alt")?.isNotBlank() == true -> imgElement.attr("alt")
+                    pElement?.text()?.isNotBlank() == true -> pElement.text()
+                    else -> ""
+                }
+                val img = imgElement?.attr("src") ?: ""
+                if (titleRaw.isNotBlank() && link.isNotBlank()) {
+                    channels.add(Triple(titleRaw, link, img))
+                }
+            }
+            Log.d("Tvporinternet2", "Extraídos ${showDoc.select("a.channel-card").size} canales de showChannels")
         }
 
         return channels
