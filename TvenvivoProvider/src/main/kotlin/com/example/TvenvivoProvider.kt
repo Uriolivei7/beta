@@ -138,22 +138,29 @@ class TvenvivoProvider : MainAPI() {
         val channels = mutableListOf<Triple<String, String, String>>()
         val doc = Jsoup.parse(html)
 
-        doc.select("a.channel-card").forEach { channelCard ->
-            val link = channelCard.attr("href")
-            val imgElement = channelCard.selectFirst("img")
-            val pElement = channelCard.selectFirst("p")
-            val titleRaw = if (imgElement?.attr("alt")?.isNotBlank() == true) {
-                imgElement.attr("alt")
-            } else if (pElement?.text()?.isNotBlank() == true) {
-                pElement.text()
-            } else {
-                ""
+        // Nuevo HTML usa a.channel con div.channel-name e img alt; mantener fallback a a.channel-card
+        val selectors = listOf("a.channel", "a.channel-card", "a[class*=channel]")
+        val seen = mutableSetOf<String>()
+        for (sel in selectors) {
+            doc.select(sel).forEach { channelCard ->
+                val link = channelCard.attr("href")
+                if (link.isBlank() || !seen.add(link)) return@forEach
+                val imgElement = channelCard.selectFirst("img")
+                val nameDiv = channelCard.selectFirst("div.channel-name")?.text()?.trim()
+                val pElement = channelCard.selectFirst("p")
+                val titleRaw = when {
+                    imgElement?.attr("alt")?.isNotBlank() == true -> imgElement.attr("alt")
+                    !nameDiv.isNullOrBlank() -> nameDiv
+                    pElement?.text()?.isNotBlank() == true -> pElement.text()
+                    channelCard.attr("aria-label").isNotBlank() -> channelCard.attr("aria-label").replace(" en vivo", "", true).trim()
+                    else -> ""
+                }
+                val img = imgElement?.attr("src") ?: ""
+                if (titleRaw.isNotBlank() && link.isNotBlank()) {
+                    channels.add(Triple(titleRaw, link, img))
+                }
             }
-            val img = imgElement?.attr("src") ?: ""
-
-            if (titleRaw.isNotBlank() && link.isNotBlank()) {
-                channels.add(Triple(titleRaw, link, img))
-            }
+            if (channels.isNotEmpty()) break
         }
 
         return channels
@@ -295,26 +302,35 @@ class TvenvivoProvider : MainAPI() {
                 return true
             }
 
-            var optionLinks = doc.select("a[href*=/live], iframe[name=player], iframe[src*=/live]")
-                .mapNotNull { if (it.tagName() == "iframe") it.attr("src") else it.attr("href") }
-                .filter { it.isNotBlank() && !it.contains("facebook") }
-                .distinct()
+            val optionLinksBuilder = mutableListOf<String>()
+            // Nuevo: botones con data-src (live/core.php, live2/core.php, etc.)
+            doc.select("button[data-src], a[data-src], [data-src]").forEach {
+                val ds = it.attr("data-src")
+                if (ds.isNotBlank()) optionLinksBuilder.add(ds)
+            }
+            // Fallback viejo: a href / iframe src
+            doc.select("a[href*=/live], iframe[name=player], iframe[src*=/live], iframe#playerFrame").forEach {
+                val v = if (it.tagName() == "iframe") it.attr("src") else it.attr("href")
+                if (v.isNotBlank()) optionLinksBuilder.add(v)
+            }
+            val optionLinks = optionLinksBuilder.filter { it.isNotBlank() && !it.contains("facebook") }.distinct()
+            Log.d("Tvenvivo", "Logs: optionLinks raw=${optionLinks.joinToString()}")
 
             val cachedUrl = successfulOptionUrl[targetUrl]
-            if (cachedUrl != null) {
+            val finalLinks = if (cachedUrl != null) {
                 val cachedIdx = optionLinks.indexOf(cachedUrl)
                 if (cachedIdx > 0) {
                     val link = optionLinks[cachedIdx]
-                    optionLinks = listOf(link) + optionLinks.filterIndexed { i, _ -> i != cachedIdx }
-                }
-            }
+                    listOf(link) + optionLinks.filterIndexed { i, _ -> i != cachedIdx }
+                } else optionLinks
+            } else optionLinks
 
-            Log.d("Tvenvivo", "Logs: Opciones detectadas: ${optionLinks.size}")
+            Log.d("Tvenvivo", "Logs: Opciones detectadas: ${finalLinks.size}")
 
-            if (optionLinks.isEmpty()) return false
+            if (finalLinks.isEmpty()) return false
 
             return coroutineScope {
-                for ((displayIdx, rawUrl) in optionLinks.withIndex()) {
+                for ((displayIdx, rawUrl) in finalLinks.withIndex()) {
                     if (tryLoadOption(targetUrl, rawUrl, displayIdx, mainHeaders, mainCookies, callback)) {
                         return@coroutineScope true
                     }
@@ -374,9 +390,11 @@ class TvenvivoProvider : MainAPI() {
                         return@withTimeout false
                     }
 
-                    val internalIframe = Regex("""iframe.*src=["']([^"']*saohgdasregions\.fun[^"']*)["']""").find(playerHtml)?.groupValues?.get(1)
+                    // Genérico: cualquier iframe (ahora deportes.ksdjugfssddeports.com, antes regionales.saohgdasregions.fun)
+                    val internalIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(playerHtml)?.groupValues?.get(1)
+                        ?.let { it.replace("&amp;", "&") }
 
-                    val finalHtml = if (internalIframe != null) {
+                    val finalHtml = if (internalIframe != null && internalIframe.isNotBlank()) {
                         val iframeUrl = fixUrl(internalIframe)
                         Log.d("Tvenvivo", "Logs: Iframe interno: $iframeUrl")
                         withTimeoutOrNull(20000L) {
@@ -397,11 +415,13 @@ class TvenvivoProvider : MainAPI() {
                     if (!m3u8Url.isNullOrEmpty()) {
                         Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
 
+                        val iframeDomain = try { java.net.URL(internalIframe ?: playerUrl).host } catch (_: Exception) { "" }
                         val streamingHeaders = mapOf(
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://regionales.saohgdasregions.fun",
-                            "Referer" to "https://regionales.saohgdasregions.fun/"
+                            "Origin" to if (iframeDomain.isNotBlank()) "https://$iframeDomain" else "https://www.tvenvivo2.com",
+                            "Referer" to if (internalIframe != null) fixUrl(internalIframe) else playerUrl
                         )
+                        Log.d("Tvenvivo", "Logs: streamingHeaders=$streamingHeaders")
 
                         callback(
                             newExtractorLink(
@@ -459,6 +479,25 @@ class TvenvivoProvider : MainAPI() {
                 return found
             }
         }
+        // Intentar decodificar window['xxx']='BASE64' que contiene m3u8 (tvenvivo2 usa obfuscación)
+        try {
+            val b64Regex = Regex("""window\[['"][^'"]+['"]\]\s*=\s*['"]([A-Za-z0-9+/=]{80,})['"]""")
+            for (m in b64Regex.findAll(html)) {
+                val b64 = m.groupValues[1]
+                try {
+                    val decoded = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                    if (decoded.contains(".m3u8")) {
+                        // buscar m3u8 dentro del decoded
+                        val inner = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(decoded)?.groupValues?.get(1)
+                            ?: Regex("""['"]([^"']+\.m3u8[^"']*)['"]""").find(decoded)?.groupValues?.get(1)
+                        if (inner != null) {
+                            Log.d("Tvenvivo", "extractM3u8: decoded window var -> $inner")
+                            return inner.replace("\\/", "/")
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
         return null
     }
 
