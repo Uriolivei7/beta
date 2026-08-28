@@ -348,11 +348,19 @@ class TvenvivoProvider : MainAPI() {
 
                     val finalHtml = if (internalIframe != null && internalIframe.isNotBlank()) {
                         val iframeUrl = fixUrl(internalIframe)
+                        // Headers correctos para stream.php: Referer = página del canal (targetUrl), Origin = tvenvivo2.com
+                        val iframeHeaders = mainHeaders.toMutableMap().apply {
+                            put("Referer", targetUrl)
+                            put("Origin", "https://www.tvenvivo2.com")
+                            put("Sec-Fetch-Site", "cross-site")
+                            put("Sec-Fetch-Mode", "navigate")
+                            put("Sec-Fetch-Dest", "iframe")
+                        }
                         val iframeResp = withTimeoutOrNull(25000L) {
                             app.get(
                                 iframeUrl,
                                 timeout = 25000L,
-                                headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) },
+                                headers = iframeHeaders,
                                 cookies = mainCookies,
                                 interceptor = cfKiller
                             )
@@ -382,8 +390,15 @@ class TvenvivoProvider : MainAPI() {
                         }
                         if (altUrl != null) {
                             Log.d("Tvenvivo", "Trying alt domain: $altUrl")
+                            val altHeaders = mainHeaders.toMutableMap().apply {
+                                put("Referer", targetUrl)
+                                put("Origin", "https://www.tvenvivo2.com")
+                                put("Sec-Fetch-Site", "cross-site")
+                                put("Sec-Fetch-Mode", "navigate")
+                                put("Sec-Fetch-Dest", "iframe")
+                            }
                             val altResp = withTimeoutOrNull(15000L) {
-                                app.get(altUrl, timeout = 15000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }, cookies = mainCookies, interceptor = cfKiller)
+                                app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = mainCookies, interceptor = cfKiller)
                             }
                             if (altResp != null && altResp.isSuccessful) {
                                 finalM3u8 = extractM3u8FromHtml(altResp.text)
