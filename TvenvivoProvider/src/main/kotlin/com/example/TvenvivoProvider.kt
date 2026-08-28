@@ -280,9 +280,16 @@ class TvenvivoProvider : MainAPI() {
 
             if (finalLinks.isEmpty()) return false
 
+            // Obtener cookies de la página del canal (targetUrl) para el iframe
+            val channelPageResp = withTimeoutOrNull(20000L) {
+                app.get(targetUrl, headers = mainHeaders, interceptor = cfKiller)
+            }
+            val channelCookies = channelPageResp?.cookies ?: emptyMap()
+            Log.d("Tvenvivo", "channelCookies: ${channelCookies.size}")
+
             return coroutineScope {
                 for ((displayIdx, rawUrl) in finalLinks.withIndex()) {
-                    if (tryLoadOption(targetUrl, rawUrl, displayIdx, mainHeaders, mainCookies, callback)) {
+                    if (tryLoadOption(targetUrl, rawUrl, displayIdx, mainHeaders, channelCookies, callback)) {
                         return@coroutineScope true
                     }
                 }
@@ -315,7 +322,7 @@ class TvenvivoProvider : MainAPI() {
             val requestTimeout = if (isPhpUrl) 30000L else 20000L
             try {
                 withTimeout(requestTimeout) {
-                    val playerResponse = if (isPhpUrl) {
+val playerResponse = if (isPhpUrl) {
                         app.get(
                             playerUrl,
                             timeout = requestTimeout,
@@ -341,7 +348,7 @@ class TvenvivoProvider : MainAPI() {
                         return@withTimeout false
                     }
 
-// Genérico: cualquier iframe (ahora deportes.ksdjugfssddeports.com, antes regionales.saohgdasregions.fun)
+                    // Genérico: cualquier iframe (ahora deportes.ksdjugfssddeports.com, antes regionales.saohgdasregions.fun)
                     val internalIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(playerHtml)?.groupValues?.get(1)
                         ?.let { it.replace("&", "&") }
                     Log.d("Tvenvivo", "internalIframe detected: ${internalIframe ?: "null"}")
@@ -352,9 +359,12 @@ class TvenvivoProvider : MainAPI() {
                         val iframeHeaders = mainHeaders.toMutableMap().apply {
                             put("Referer", targetUrl)
                             put("Origin", "https://www.tvenvivo2.com")
+                            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                            put("Accept-Language", "es-ES,es;q=0.9")
                             put("Sec-Fetch-Site", "cross-site")
                             put("Sec-Fetch-Mode", "navigate")
                             put("Sec-Fetch-Dest", "iframe")
+                            put("Upgrade-Insecure-Requests", "1")
                         }
                         val iframeResp = withTimeoutOrNull(25000L) {
                             app.get(
@@ -393,9 +403,12 @@ class TvenvivoProvider : MainAPI() {
                             val altHeaders = mainHeaders.toMutableMap().apply {
                                 put("Referer", targetUrl)
                                 put("Origin", "https://www.tvenvivo2.com")
+                                put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                                put("Accept-Language", "es-ES,es;q=0.9")
                                 put("Sec-Fetch-Site", "cross-site")
                                 put("Sec-Fetch-Mode", "navigate")
                                 put("Sec-Fetch-Dest", "iframe")
+                                put("Upgrade-Insecure-Requests", "1")
                             }
                             val altResp = withTimeoutOrNull(15000L) {
                                 app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = mainCookies, interceptor = cfKiller)
