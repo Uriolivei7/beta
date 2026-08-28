@@ -341,11 +341,23 @@ val isPhpUrl = playerUrl.contains(".php")
                             interceptor = cfKiller
                         )
                     }
-                    // Capturar cookies del live/core.php para el iframe
+                    // Capturar cookies del live/core.php (incluyendo Set-Cookie headers crudos)
                     val playerCookies = if (playerResponse.cookies.isNotEmpty()) {
                         mainCookies + playerResponse.cookies
-                    } else mainCookies
-                    Log.d("Tvenvivo", "playerResponse: ${playerResponse.code} cookies: ${playerResponse.cookies.size} -> combined: ${playerCookies.size}")
+                    } else {
+                        // Intentar extraer Set-Cookie headers manualmente
+                        val setCookieHeaders = playerResponse.headers?.names()?.filter { it.lowercase() == "set-cookie" }
+                            ?.flatMap { name -> playerResponse.headers.values(name) } ?: emptyList()
+                        if (setCookieHeaders.isNotEmpty()) {
+                            Log.d("Tvenvivo", "Found Set-Cookie headers: ${setCookieHeaders.size}")
+                            val parsed = setCookieHeaders.associate { 
+                                val parts = it.split(";")[0].split("=")
+                                parts[0] to parts[1]
+                            }
+                            mainCookies + parsed
+                        } else mainCookies
+                    }
+                    Log.d("Tvenvivo", "playerResponse: ${playerResponse.code} cookies: ${playerResponse.cookies.size} setCookieHeaders: ${playerResponse.headers?.names()?.filter { it.lowercase() == "set-cookie" }?.size ?: 0} -> combined: ${playerCookies.size}")
                     val playerHtml = playerResponse.text
 
                     if (playerHtml.isBlank()) return@withTimeout false
