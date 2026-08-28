@@ -16,7 +16,7 @@ import java.net.URL
 
 class Tvporinternet2Provider : MainAPI() {
     override var mainUrl = "https://www.tvporinternet2.com"
-    override var name = "TV por Internet 2"
+    override var name = "TVporInternet 2"
 
     override val supportedTypes = setOf(
         TvType.Live
@@ -447,9 +447,9 @@ class Tvporinternet2Provider : MainAPI() {
                     // 5. Pedir playlist.php (¡este SÍ devuelve el m3u8 real!)
                     val playlistHeaders = mainHeaders.toMutableMap().apply {
                         put("Referer", iframeUrl)
-                        put("Origin", "https://www.tvporinternet2.com")
                         put("Accept", "*/*")
-                        put("Sec-Fetch-Site", "cross-site")
+                        put("Accept-Language", "es-ES,es;q=0.5")
+                        put("Sec-Fetch-Site", "same-origin")
                         put("Sec-Fetch-Mode", "cors")
                         put("Sec-Fetch-Dest", "empty")
                     }

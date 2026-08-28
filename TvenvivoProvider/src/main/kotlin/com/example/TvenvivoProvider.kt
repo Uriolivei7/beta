@@ -448,9 +448,9 @@ class TvenvivoProvider : MainAPI() {
                     // 5. Pedir playlist.php (¡este SÍ devuelve el m3u8 real!)
                     val playlistHeaders = mainHeaders.toMutableMap().apply {
                         put("Referer", iframeUrl)
-                        put("Origin", "https://www.tvenvivo2.com")
                         put("Accept", "*/*")
-                        put("Sec-Fetch-Site", "cross-site")
+                        put("Accept-Language", "es-ES,es;q=0.5")
+                        put("Sec-Fetch-Site", "same-origin")
                         put("Sec-Fetch-Mode", "cors")
                         put("Sec-Fetch-Dest", "empty")
                     }
