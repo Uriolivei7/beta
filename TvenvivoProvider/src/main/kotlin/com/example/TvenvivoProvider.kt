@@ -113,14 +113,10 @@ class TvenvivoProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val html = safeAppGet(mainUrl) ?: return null
-        Log.d("Tvenvivo", "getMainPage: HTML ${html.length} chars")
+        val html = safeAppGet(mainUrl) ?: run { Log.e("Tvenvivo", "getMainPage: failed to get HTML"); return null }
         val channels = extractChannelsFromHtml(html)
-        Log.d("Tvenvivo", "getMainPage: ${channels.size} canales extraídos")
-
+        if (channels.isEmpty()) Log.w("Tvenvivo", "getMainPage: 0 canales extraídos (selectors changed?)")
         val uniqueChannels = channels.distinctBy { (_, link, _) -> link }
-        Log.d("Tvenvivo", "getMainPage: ${uniqueChannels.size} únicos")
-
         val channelResults = uniqueChannels.mapNotNull { (titleRaw, link, img) ->
             val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
             if (nowAllowed.any { title.contains(it, ignoreCase = true) }) return@mapNotNull null
@@ -129,8 +125,7 @@ class TvenvivoProvider : MainAPI() {
                 this.posterUrl = fixUrl(img)
             }
         }
-
-        Log.d("Tvenvivo", "getMainPage: ${channelResults.size} resultados finales")
+        Log.d("Tvenvivo", "getMainPage: ${channelResults.size} canales")
         return newHomePageResponse(listOf(HomePageList("Todos los Canales", channelResults)), false)
     }
 
@@ -168,85 +163,41 @@ class TvenvivoProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d("Tvenvivo", "Search: query='$query'")
-        val html = safeAppGet(mainUrl) ?: run {
-            Log.d("Tvenvivo", "Search: failed to get HTML")
-            return emptyList()
-        }
-        
+        val html = safeAppGet(mainUrl) ?: run { Log.e("Tvenvivo", "Search: failed to get HTML"); return emptyList() }
         val channels = extractChannelsFromHtml(html)
-        Log.d("Tvenvivo", "Search: found ${channels.size} channels")
-        
-        if (query.isBlank()) {
-            Log.d("Tvenvivo", "Search: query is blank, returning empty")
-            return emptyList()
-        }
-
+        if (channels.isEmpty()) Log.w("Tvenvivo", "Search: 0 canales (getMainPage also failing?)")
+        if (query.isBlank()) return emptyList()
         val filtered = channels.filterNot { (titleRaw, _, _) ->
             val shouldFilter = nowAllowed.any { titleRaw.contains(it, ignoreCase = true) } || titleRaw.isBlank()
-            if (shouldFilter) Log.d("Tvenvivo", "Search: filtering out '$titleRaw'")
             shouldFilter
         }
-        
         val matched = filtered.filter { (titleRaw, _, _) ->
-            val matches = titleRaw.contains(query, ignoreCase = true)
-            Log.d("Tvenvivo", "Search: '$titleRaw' matches '$query' = $matches")
-            matches
+            titleRaw.contains(query, ignoreCase = true)
         }
-        
-        Log.d("Tvenvivo", "Search: matched ${matched.size} channels")
-        
+        Log.d("Tvenvivo", "Search: ${matched.size} resultados para '$query'")
         return matched.mapNotNull { (titleRaw, linkRaw, imgRaw) ->
             val title = titleRaw.replace("Ver ", "").replace(" en vivo", "").trim()
-            newLiveSearchResponse(
-                name = title,
-                url = fixUrl(linkRaw),
-                type = TvType.Live
-            ) {
+            newLiveSearchResponse(name = title, url = fixUrl(linkRaw), type = TvType.Live) {
                 this.posterUrl = fixUrl(imgRaw)
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val html = safeAppGet(url) ?: return null
+        val html = safeAppGet(url) ?: run { Log.e("Tvenvivo", "load: failed to get HTML $url"); return null }
         val doc = Jsoup.parse(html)
-
         val title = doc.selectFirst("h1.font-bold")?.text()
             ?: doc.selectFirst("h1")?.text()
             ?: doc.selectFirst("meta[property='og:title']")?.attr("content")
             ?: doc.selectFirst("title")?.text()
-            ?: "Canal Desconocido"
-
-        val cleanTitle = title
-            .replace(Regex("""(?i)\bVer\s+"""), "")
-            .replace(Regex("""(?i)\s*en\s+vivo(\s*hd)?"""), "")
-            .replace(Regex("""\s*\|\s*.*"""), "")
-            .trim()
-
-        val poster = doc.selectFirst("div.info-logo img")?.attr("src")
-            ?: doc.selectFirst("meta[name='og:image']")?.attr("content")
-            ?: doc.selectFirst("section img[src*='/imge/']")?.attr("src")
-            ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: ""
-
-        val description = doc.selectFirst("section.info div.info-card")?.text()
-            ?: doc.selectFirst("meta[property='og:description']")?.attr("content")
-            ?: doc.selectFirst("meta[name=description]")?.attr("content")
-            ?: ""
-
-        val episodes = listOf(
-            newEpisode(data = url) {
-                this.name = "En Vivo"
-                this.posterUrl = fixUrlNull(poster)
-            }
-        )
-
-        return newTvSeriesLoadResponse(
-            name = cleanTitle,
-            url = url,
-            type = TvType.Live,
-            episodes = episodes
-        ) {
+            ?: run { Log.w("Tvenvivo", "load: title not found $url"); "Canal Desconocido" }
+        val cleanTitle = title.replace(Regex("""(?i)\bVer\s+"""), "").replace(Regex("""(?i)\s*en\s+vivo(\s*hd)?"""), "").replace(Regex("""\s*\|\s*.*"""), "").trim()
+        val poster = doc.selectFirst("div.info-logo img")?.attr("src") ?: doc.selectFirst("meta[name='og:image']")?.attr("content") ?: doc.selectFirst("section img[src*='/imge/']")?.attr("src") ?: doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
+        val description = doc.selectFirst("section.info div.info-card")?.text() ?: doc.selectFirst("meta[property='og:description']")?.attr("content") ?: doc.selectFirst("meta[name=description]")?.attr("content") ?: ""
+        if (poster.isBlank()) Log.w("Tvenvivo", "load: poster not found for $cleanTitle")
+        Log.d("Tvenvivo", "load: $cleanTitle")
+        val episodes = listOf(newEpisode(data = url) { this.name = "En Vivo"; this.posterUrl = fixUrlNull(poster) })
+        return newTvSeriesLoadResponse(name = cleanTitle, url = url, type = TvType.Live, episodes = episodes) {
             this.posterUrl = fixUrlNull(poster)
             this.backgroundPosterUrl = fixUrlNull(poster)
             this.plot = description
@@ -412,8 +363,19 @@ class TvenvivoProvider : MainAPI() {
                     }
 
                     val m3u8Url = extractM3u8FromHtml(finalHtml)
+                    // Fallback: probar mirror conocido que funcionó (deportes.ksdjugfssddeports.com)
+                    var finalM3u8 = m3u8Url
+                    if (finalM3u8 == null && internalIframe != null && internalIframe.contains("regionales.saohgdassregions")) {
+                        val altUrl = internalIframe.replace("regionales.saohgdassregions.com", "deportes.ksdjugfssddeports.com")
+                        val altResp = withTimeoutOrNull(15000L) {
+                            app.get(altUrl, timeout = 15000L, headers = playerHeaders.toMutableMap().apply { put("Referer", playerUrl) }, cookies = mainCookies, interceptor = cfKiller)
+                        }
+                        if (altResp != null && altResp.isSuccessful) {
+                            finalM3u8 = extractM3u8FromHtml(altResp.text)
+                        }
+                    }
 
-                    if (!m3u8Url.isNullOrEmpty()) {
+                    if (!finalM3u8.isNullOrEmpty()) {
                         Log.d("Tvenvivo", "Logs: ¡Éxito! M3U8: $m3u8Url")
 
                         val iframeDomain = try { java.net.URL(internalIframe ?: playerUrl).host } catch (_: Exception) { "" }
@@ -428,7 +390,7 @@ class TvenvivoProvider : MainAPI() {
                             newExtractorLink(
                                 source = this@TvenvivoProvider.name,
                                 name = "${this@TvenvivoProvider.name} - Opción ${displayIndex + 1}",
-                                url = m3u8Url,
+                                url = finalM3u8,
                                 type = ExtractorLinkType.M3U8
                             ) {
                                 this.headers = streamingHeaders
