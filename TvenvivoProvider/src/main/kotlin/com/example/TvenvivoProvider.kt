@@ -398,14 +398,28 @@ class TvenvivoProvider : MainAPI() {
                             put("sec-ch-ua-mobile", "?0")
                             put("sec-ch-ua-platform", "\"Windows\"")
                         }
-                        val iframeResp = withTimeoutOrNull(15000L) {
+                        // Primero SIN cfKiller (puede romper TLS con este dominio)
+                        var iframeResp = withTimeoutOrNull(15000L) {
                             app.get(
                                 domainUrl,
                                 timeout = 15000L,
                                 headers = iframeHeaders,
-                                cookies = playerCookies,
-                                interceptor = cfKiller
+                                cookies = playerCookies
                             )
+                        }
+                        Log.d("Tvenvivo", "stream.php (no cfKiller): code=${iframeResp?.code ?: "null"} len=${iframeResp?.text?.length ?: 0} url=$domainUrl")
+                        if (iframeResp == null || !iframeResp.isSuccessful) {
+                            // Fallback CON cfKiller
+                            iframeResp = withTimeoutOrNull(15000L) {
+                                app.get(
+                                    domainUrl,
+                                    timeout = 15000L,
+                                    headers = iframeHeaders,
+                                    cookies = playerCookies,
+                                    interceptor = cfKiller
+                                )
+                            }
+                            Log.d("Tvenvivo", "stream.php (cfKiller): code=${iframeResp?.code ?: "null"} len=${iframeResp?.text?.length ?: 0}")
                         }
                         return if (iframeResp != null && iframeResp.isSuccessful) iframeResp.text else null
                     }
@@ -496,8 +510,16 @@ class TvenvivoProvider : MainAPI() {
                                 put("sec-ch-ua-mobile", "?0")
                                 put("sec-ch-ua-platform", "\"Windows\"")
                             }
-                            val altResp = withTimeoutOrNull(15000L) {
-                                app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = playerCookies, interceptor = cfKiller)
+                            // Primero SIN cfKiller
+                            var altResp = withTimeoutOrNull(15000L) {
+                                app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = playerCookies)
+                            }
+                            Log.d("Tvenvivo", "alt stream.php (no cfKiller): code=${altResp?.code ?: "null"} len=${altResp?.text?.length ?: 0}")
+                            if (altResp == null || !altResp.isSuccessful) {
+                                altResp = withTimeoutOrNull(15000L) {
+                                    app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = playerCookies, interceptor = cfKiller)
+                                }
+                                Log.d("Tvenvivo", "alt stream.php (cfKiller): code=${altResp?.code ?: "null"} len=${altResp?.text?.length ?: 0}")
                             }
                             if (altResp != null && altResp.isSuccessful) {
                                 val altM3u8 = extractM3u8FromHtml(altResp.text)
