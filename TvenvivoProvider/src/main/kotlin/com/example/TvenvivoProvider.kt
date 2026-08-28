@@ -280,12 +280,15 @@ class TvenvivoProvider : MainAPI() {
 
             if (finalLinks.isEmpty()) return false
 
-            // Obtener cookies de la página del canal (targetUrl) para el iframe
-            val channelPageResp = withTimeoutOrNull(20000L) {
+            // Obtener cookies de la página del canal (targetUrl)
+            val channelPageResp = withTimeoutOrNull(25000L) {
                 app.get(targetUrl, headers = mainHeaders, interceptor = cfKiller)
             }
             val channelCookies = channelPageResp?.cookies ?: emptyMap()
-            Log.d("Tvenvivo", "channelCookies: ${channelCookies.size}")
+            Log.d("Tvenvivo", "channelPageResp: ${channelPageResp?.code ?: "null"} cookies: ${channelCookies.size}")
+            if (channelCookies.isEmpty()) {
+                Log.w("Tvenvivo", "channel page no cookies, will use live/core.php cookies per option")
+            }
 
             return coroutineScope {
                 for ((displayIdx, rawUrl) in finalLinks.withIndex()) {
@@ -318,11 +321,11 @@ class TvenvivoProvider : MainAPI() {
                 put("Sec-Fetch-Site", "same-origin")
             }
 
-            val isPhpUrl = playerUrl.contains(".php")
+val isPhpUrl = playerUrl.contains(".php")
             val requestTimeout = if (isPhpUrl) 30000L else 20000L
             try {
                 withTimeout(requestTimeout) {
-val playerResponse = if (isPhpUrl) {
+                    val playerResponse = if (isPhpUrl) {
                         app.get(
                             playerUrl,
                             timeout = requestTimeout,
@@ -338,6 +341,11 @@ val playerResponse = if (isPhpUrl) {
                             interceptor = cfKiller
                         )
                     }
+                    // Capturar cookies del live/core.php para el iframe
+                    val playerCookies = if (playerResponse.cookies.isNotEmpty()) {
+                        mainCookies + playerResponse.cookies
+                    } else mainCookies
+                    Log.d("Tvenvivo", "playerResponse: ${playerResponse.code} cookies: ${playerResponse.cookies.size} -> combined: ${playerCookies.size}")
                     val playerHtml = playerResponse.text
 
                     if (playerHtml.isBlank()) return@withTimeout false
@@ -371,7 +379,7 @@ val playerResponse = if (isPhpUrl) {
                                 iframeUrl,
                                 timeout = 25000L,
                                 headers = iframeHeaders,
-                                cookies = mainCookies,
+                                cookies = playerCookies,
                                 interceptor = cfKiller
                             )
                         }
@@ -411,7 +419,7 @@ val playerResponse = if (isPhpUrl) {
                                 put("Upgrade-Insecure-Requests", "1")
                             }
                             val altResp = withTimeoutOrNull(15000L) {
-                                app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = mainCookies, interceptor = cfKiller)
+                                app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = playerCookies, interceptor = cfKiller)
                             }
                             if (altResp != null && altResp.isSuccessful) {
                                 finalM3u8 = extractM3u8FromHtml(altResp.text)
