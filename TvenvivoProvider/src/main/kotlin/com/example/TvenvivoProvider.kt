@@ -321,10 +321,11 @@ class TvenvivoProvider : MainAPI() {
                 put("Sec-Fetch-Site", "same-origin")
             }
 
-val isPhpUrl = playerUrl.contains(".php")
+            val isPhpUrl = playerUrl.contains(".php")
             val requestTimeout = if (isPhpUrl) 30000L else 20000L
             try {
                 withTimeout(requestTimeout) {
+                    // 1. Pedir live/core.php (u otro) CON cookies de la página del canal
                     val playerResponse = if (isPhpUrl) {
                         app.get(
                             playerUrl,
@@ -350,7 +351,7 @@ val isPhpUrl = playerUrl.contains(".php")
                             ?.flatMap { name -> playerResponse.headers.values(name) } ?: emptyList()
                         if (setCookieHeaders.isNotEmpty()) {
                             Log.d("Tvenvivo", "Found Set-Cookie headers: ${setCookieHeaders.size}")
-                            val parsed = setCookieHeaders.associate { 
+                            val parsed = setCookieHeaders.associate {
                                 val parts = it.split(";")[0].split("=")
                                 parts[0] to parts[1]
                             }
@@ -368,56 +369,94 @@ val isPhpUrl = playerUrl.contains(".php")
                         return@withTimeout false
                     }
 
-                    // Genérico: cualquier iframe (ahora deportes.ksdjugfssddeports.com, antes regionales.saohgdasregions.fun)
+                    // 2. Extraer iframe src del live/core.php (apunta a stream.php)
                     val internalIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(playerHtml)?.groupValues?.get(1)
                         ?.let { it.replace("&", "&") }
                     Log.d("Tvenvivo", "internalIframe detected: ${internalIframe ?: "null"}")
 
-                    val finalHtml = if (internalIframe != null && internalIframe.isNotBlank()) {
-                        val iframeUrl = fixUrl(internalIframe)
-                        // Headers correctos para stream.php: Referer = página del canal (targetUrl), Origin = tvenvivo2.com
-                        val iframeHeaders = mainHeaders.toMutableMap().apply {
-                            put("Referer", targetUrl)
-                            put("Origin", "https://www.tvenvivo2.com")
-                            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                            put("Accept-Language", "es-ES,es;q=0.9")
-                            put("Sec-Fetch-Site", "cross-site")
-                            put("Sec-Fetch-Mode", "navigate")
-                            put("Sec-Fetch-Dest", "iframe")
-                            put("Upgrade-Insecure-Requests", "1")
-                        }
-                        val iframeResp = withTimeoutOrNull(25000L) {
-                            app.get(
-                                iframeUrl,
-                                timeout = 25000L,
-                                headers = iframeHeaders,
-                                cookies = playerCookies,
-                                interceptor = cfKiller
-                            )
-                        }
-                        if (iframeResp == null || !iframeResp.isSuccessful) {
-                            Log.w("Tvenvivo", "iframe request failed: ${iframeResp?.code ?: "timeout/null"} url=$iframeUrl")
-                            // Try fallback domain before giving up
-                            "" // will trigger fallback below
-                        } else {
-                            iframeResp.text
-                        }
-                    } else {
-                        playerHtml
+                    if (internalIframe == null || internalIframe.isBlank()) {
+                        Log.w("Tvenvivo", "No iframe found in playerHtml len=${playerHtml.length}")
+                        return@withTimeout false
                     }
 
-                    val m3u8Url = if (finalHtml.isNotBlank()) extractM3u8FromHtml(finalHtml) else null
-                    Log.d("Tvenvivo", "extractM3u8FromHtml returned: ${m3u8Url ?: "null"}")
-                    // Fallback: probar mirror conocido que funcionó (deportes.ksdjugfssddeports.com)
+                    // 3. Pedir stream.php CON headers/cookies correctos
+                    val iframeUrl = fixUrl(internalIframe)
+                    val iframeHeaders = mainHeaders.toMutableMap().apply {
+                        put("Referer", targetUrl)
+                        put("Origin", "https://www.tvenvivo2.com")
+                        put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                        put("Accept-Language", "es-ES,es;q=0.9")
+                        put("Sec-Fetch-Site", "cross-site")
+                        put("Sec-Fetch-Mode", "navigate")
+                        put("Sec-Fetch-Dest", "iframe")
+                        put("Upgrade-Insecure-Requests", "1")
+                    }
+                    val iframeResp = withTimeoutOrNull(25000L) {
+                        app.get(
+                            iframeUrl,
+                            timeout = 25000L,
+                            headers = iframeHeaders,
+                            cookies = playerCookies,
+                            interceptor = cfKiller
+                        )
+                    }
+                    if (iframeResp == null || !iframeResp.isSuccessful) {
+                        Log.w("Tvenvivo", "iframe request failed: ${iframeResp?.code ?: "timeout/null"} url=$iframeUrl")
+                        return@withTimeout false
+                    }
+                    val iframeHtml = iframeResp.text
+                    Log.d("Tvenvivo", "iframeHtml len=${iframeHtml.length}")
+
+                    // 4. Parsear var src = "playlist.php?id=...&sig=..." del JS ofuscado
+                    val playlistUrl = Regex("""var\s+src\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
+                        .find(iframeHtml)?.groupValues?.get(1)
+                        ?.replace("\\/", "/")
+                    if (playlistUrl == null) {
+                        Log.w("Tvenvivo", "playlist.php URL not found in iframeHtml snippet=${iframeHtml.take(500)}")
+                        return@withTimeout false
+                    }
+                    Log.d("Tvenvivo", "playlist.php URL: $playlistUrl")
+
+                    // 5. Pedir playlist.php (¡este SÍ devuelve el m3u8 real!)
+                    val playlistHeaders = mainHeaders.toMutableMap().apply {
+                        put("Referer", iframeUrl)
+                        put("Origin", "https://www.tvenvivo2.com")
+                        put("Accept", "*/*")
+                        put("Sec-Fetch-Site", "cross-site")
+                        put("Sec-Fetch-Mode", "cors")
+                        put("Sec-Fetch-Dest", "empty")
+                    }
+                    val playlistResp = withTimeoutOrNull(20000L) {
+                        app.get(
+                            fixUrl(playlistUrl),
+                            timeout = 20000L,
+                            headers = playlistHeaders,
+                            cookies = playerCookies,
+                            interceptor = cfKiller
+                        )
+                    }
+                    if (playlistResp == null || !playlistResp.isSuccessful) {
+                        Log.w("Tvenvivo", "playlist.php request failed: ${playlistResp?.code ?: "timeout/null"} url=$playlistUrl")
+                        return@withTimeout false
+                    }
+                    val m3u8Content = playlistResp.text
+                    Log.d("Tvenvivo", "playlist.php response len=${m3u8Content.length} isM3U8=${m3u8Content.contains("#EXTM3U")}")
+
+                    // La respuesta de playlist.php YA ES el m3u8
+                    if (!m3u8Content.contains("#EXTM3U")) {
+                        Log.w("Tvenvivo", "playlist.php no devolvió m3u8 válido snippet=${m3u8Content.take(200)}")
+                        return@withTimeout false
+                    }
+                    val m3u8Url = fixUrl(playlistUrl)
+
+                    // Fallback: probar mirror conocido (deportes.ksdjugfssddeports.com)
                     var finalM3u8 = m3u8Url
                     if (finalM3u8 == null && internalIframe != null) {
                         val altUrl = if (internalIframe.contains("regionales.saohgdassregions")) {
                             internalIframe.replace("regionales.saohgdassregions.com", "deportes.ksdjugfssddeports.com")
                         } else if (internalIframe.contains("deportes.ksdjugfssddeports")) {
-                            internalIframe // ya es el alt
-                        } else {
-                            null
-                        }
+                            internalIframe
+                        } else null
                         if (altUrl != null) {
                             Log.d("Tvenvivo", "Trying alt domain: $altUrl")
                             val altHeaders = mainHeaders.toMutableMap().apply {
@@ -434,8 +473,9 @@ val isPhpUrl = playerUrl.contains(".php")
                                 app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = playerCookies, interceptor = cfKiller)
                             }
                             if (altResp != null && altResp.isSuccessful) {
-                                finalM3u8 = extractM3u8FromHtml(altResp.text)
-                                Log.d("Tvenvivo", "Alt domain extractM3u8: ${finalM3u8 ?: "null"}")
+                                val altM3u8 = extractM3u8FromHtml(altResp.text)
+                                if (altM3u8 != null) finalM3u8 = altM3u8
+                                Log.d("Tvenvivo", "Alt domain extractM3u8: ${altM3u8 ?: "null"}")
                             } else {
                                 Log.w("Tvenvivo", "Alt domain request failed: ${altResp?.code ?: "null"}")
                             }
