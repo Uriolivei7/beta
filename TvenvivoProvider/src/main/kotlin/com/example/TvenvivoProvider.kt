@@ -386,28 +386,23 @@ class TvenvivoProvider : MainAPI() {
                     suspend fun tryIframeDomain(domainUrl: String): String? {
                         val iframeHeaders = mainHeaders.toMutableMap().apply {
                             put("Referer", targetUrl)
-                            put("Origin", "https://www.tvenvivo2.com")
                             put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                            put("Accept-Language", "es-ES,es;q=0.9")
+                            put("Accept-Language", "es-ES,es;q=0.5")
                             put("Sec-Fetch-Site", "cross-site")
                             put("Sec-Fetch-Mode", "navigate")
                             put("Sec-Fetch-Dest", "iframe")
+                            put("Sec-Fetch-Storage-Access", "none")
+                            put("Sec-GPC", "1")
                             put("Upgrade-Insecure-Requests", "1")
+                            put("sec-ch-ua", "\"Chromium\";v=\"152\", \"Not?A_Brand\";v=\"24\", \"Brave\";v=\"152\"")
+                            put("sec-ch-ua-mobile", "?0")
+                            put("sec-ch-ua-platform", "\"Windows\"")
                         }
-                        val iframeResp = withTimeoutOrNull(25000L) {
+                        val iframeResp = withTimeoutOrNull(15000L) {
                             app.get(
                                 domainUrl,
-                                timeout = 25000L,
-                                headers = mainHeaders.toMutableMap().apply {
-                                    put("Referer", targetUrl)
-                                    put("Origin", "https://www.tvenvivo2.com")
-                                    put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                                    put("Accept-Language", "es-ES,es;q=0.9")
-                                    put("Sec-Fetch-Site", "cross-site")
-                                    put("Sec-Fetch-Mode", "navigate")
-                                    put("Sec-Fetch-Dest", "iframe")
-                                    put("Upgrade-Insecure-Requests", "1")
-                                },
+                                timeout = 15000L,
+                                headers = iframeHeaders,
                                 cookies = playerCookies,
                                 interceptor = cfKiller
                             )
@@ -489,13 +484,17 @@ class TvenvivoProvider : MainAPI() {
                             Log.d("Tvenvivo", "Trying alt domain: $altUrl")
                             val altHeaders = mainHeaders.toMutableMap().apply {
                                 put("Referer", targetUrl)
-                                put("Origin", "https://www.tvenvivo2.com")
                                 put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                                put("Accept-Language", "es-ES,es;q=0.9")
+                                put("Accept-Language", "es-ES,es;q=0.5")
                                 put("Sec-Fetch-Site", "cross-site")
                                 put("Sec-Fetch-Mode", "navigate")
                                 put("Sec-Fetch-Dest", "iframe")
+                                put("Sec-Fetch-Storage-Access", "none")
+                                put("Sec-GPC", "1")
                                 put("Upgrade-Insecure-Requests", "1")
+                                put("sec-ch-ua", "\"Chromium\";v=\"152\", \"Not?A_Brand\";v=\"24\", \"Brave\";v=\"152\"")
+                                put("sec-ch-ua-mobile", "?0")
+                                put("sec-ch-ua-platform", "\"Windows\"")
                             }
                             val altResp = withTimeoutOrNull(15000L) {
                                 app.get(altUrl, timeout = 15000L, headers = altHeaders, cookies = playerCookies, interceptor = cfKiller)
