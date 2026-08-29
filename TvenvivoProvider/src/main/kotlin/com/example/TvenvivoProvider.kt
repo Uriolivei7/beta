@@ -353,33 +353,34 @@ class TvenvivoProvider : MainAPI() {
                     "Sec-Fetch-Dest" to "empty"
                 )
 
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist.php → $playlistUrl")
+                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → $playlistUrl")
                 val plResp = withTimeoutOrNull(15000L) {
                     app.get(playlistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies)
                 }
+                val plBody = plResp?.text
+                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → ${plResp?.code ?: "null"} len=${plBody?.length ?: 0} m3u8=${plBody?.contains("#EXTM3U") ?: false}")
 
-                if (plResp != null && plResp.isSuccessful) {
-                    val body = plResp.text
-                    if (body.contains("#EXTM3U")) {
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 OK! (${body.length} bytes)")
+                if (plResp != null && plResp.isSuccessful && plBody != null) {
+                    if (plBody.contains("#EXTM3U")) {
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 OK! (${plBody.length} bytes)")
                         emitLink(displayIndex, playlistUrl, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
                     }
-                    val embeddedM3u8 = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(body)?.groupValues?.get(1)
+                    val embeddedM3u8 = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(plBody)?.groupValues?.get(1)
                     if (embeddedM3u8 != null) {
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido: $embeddedM3u8")
                         emitLink(displayIndex, embeddedM3u8, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
                     }
-                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist respondió pero sin m3u8: ${body.take(200)}")
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist sin m3u8: ${plBody.take(300)}")
                 } else {
-                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist.php ${plResp?.code ?: "timeout"}")
+                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo falló ${plResp?.code ?: "timeout"}")
                 }
 
-                // 5. FALLBACK: stream.php directo (funciona en Latam)
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: fallback stream.php")
+                // 5. FALLBACK: stream.php → capture cookies + JS playlist
+                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php")
                 val streamHeaders = mainHeaders.toMutableMap().apply {
                     put("Referer", targetUrl)
                     put("Sec-Fetch-Site", "cross-site")
@@ -391,8 +392,17 @@ class TvenvivoProvider : MainAPI() {
                 }
                 if (streamResp != null && streamResp.isSuccessful) {
                     val streamHtml = streamResp.text
+                    // Capture cookies from stream.php (Set-Cookie headers)
+                    val streamCookies = streamResp.cookies
+                    val rawSetCookies = streamResp.headers?.names()?.filter { it.lowercase() == "set-cookie" }
+                        ?.flatMap { name -> streamResp.headers.values(name) }
+                        ?.associate {
+                            val kv = it.split(";")[0].split("=", limit = 2)
+                            kv[0].trim() to (kv.getOrNull(1)?.trim() ?: "")
+                        } ?: emptyMap()
+                    val streamAllCookies = allCookies + streamCookies + rawSetCookies
+                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php OK (${streamHtml.length} bytes) cookies=${streamCookies.size} rawSetCookie=${rawSetCookies.size}")
 
-                    // Check if stream.php itself is the m3u8
                     if (streamHtml.contains("#EXTM3U")) {
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php es m3u8 directo")
                         emitLink(displayIndex, streamUrl, streamUrl, callback)
@@ -408,23 +418,61 @@ class TvenvivoProvider : MainAPI() {
 
                     if (playlistFromJs != null) {
                         val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist de JS → $fullPlaylistUrl")
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
+
+                        // Try with stream.php cookies + same-origin Referer
+                        val jsPlaylistHeaders = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to streamUrl,
+                            "Origin" to streamOrigin,
+                            "Accept" to "*/*",
+                            "Sec-Fetch-Site" to "same-origin",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Dest" to "empty"
+                        )
                         val pl2Resp = withTimeoutOrNull(15000L) {
-                            app.get(fullPlaylistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies)
+                            app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
                         }
-                        if (pl2Resp != null && pl2Resp.isSuccessful && pl2Resp.text.contains("#EXTM3U")) {
-                            Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 desde JS playlist!")
-                            emitLink(displayIndex, fullPlaylistUrl, streamUrl, callback)
+                        val pl2Body = pl2Resp?.text
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → ${pl2Resp?.code ?: "null"} len=${pl2Body?.length ?: 0} m3u8=${pl2Body?.contains("#EXTM3U") ?: false}")
+                        if (pl2Resp != null && pl2Resp.isSuccessful && pl2Body != null) {
+                            if (pl2Body.contains("#EXTM3U")) {
+                                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 desde JS playlist!")
+                                emitLink(displayIndex, fullPlaylistUrl, streamUrl, callback)
+                                successfulOptionUrl[targetUrl] = rawPlayerUrl
+                                return@withTimeout true
+                            }
+                            val embedded = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(pl2Body)?.groupValues?.get(1)
+                            if (embedded != null) {
+                                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido en playlist: $embedded")
+                                emitLink(displayIndex, embedded, streamUrl, callback)
+                                successfulOptionUrl[targetUrl] = rawPlayerUrl
+                                return@withTimeout true
+                            }
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS sin m3u8: ${pl2Body.take(300)}")
+                        } else {
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS falló ${pl2Resp?.code ?: "null"}")
+                        }
+
+                        // Also try original playlist.php format with stream.php cookies
+                        val origPlUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original con stream cookies → $origPlUrl")
+                        val pl3Resp = withTimeoutOrNull(15000L) {
+                            app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
+                        }
+                        val pl3Body = pl3Resp?.text
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original → ${pl3Resp?.code ?: "null"} len=${pl3Body?.length ?: 0} m3u8=${pl3Body?.contains("#EXTM3U") ?: false}")
+                        if (pl3Resp != null && pl3Resp.isSuccessful && pl3Body != null && pl3Body.contains("#EXTM3U")) {
+                            emitLink(displayIndex, origPlUrl, streamUrl, callback)
                             successfulOptionUrl[targetUrl] = rawPlayerUrl
                             return@withTimeout true
                         }
                     }
 
-                    // Try extracting m3u8 directly from stream.php HTML
                     val m3u8FromStream = extractM3u8FromHtml(streamHtml, strict = false)
                     if (m3u8FromStream != null) {
                         val fullM3u8 = if (m3u8FromStream.startsWith("http")) m3u8FromStream else "$streamOrigin/$m3u8FromStream"
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: m3u8 de stream.php HTML: $fullM3u8")
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: m3u8 de HTML: $fullM3u8")
                         emitLink(displayIndex, fullM3u8, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
