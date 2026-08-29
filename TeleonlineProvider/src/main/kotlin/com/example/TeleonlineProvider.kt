@@ -130,19 +130,36 @@ class TeleonlineProvider : MainAPI() {
             val html = safeGet(url, 20000L) ?: return null
             val doc = Jsoup.parse(html)
 
+            // Log all title candidates for debugging
+            val ogTitle = doc.selectFirst("meta[property='og:title']")?.attr("content")
+            val twitterTitle = doc.selectFirst("meta[name='twitter:title']")?.attr("content")
+            val tituloManual = doc.selectFirst(".titulo-canal-manual")?.text()
+            val h1EntryTitle = doc.selectFirst("h1.entry-title")?.text()
+            val h1Text = doc.selectFirst("h1")?.text()
+            val pageTitle = doc.selectFirst("title")?.text()
+
+            Log.d("Teleonline", "load: url=$url")
+            Log.d("Teleonline", "  og:title=$ogTitle")
+            Log.d("Teleonline", "  twitter:title=$twitterTitle")
+            Log.d("Teleonline", "  .titulo-canal-manual=$tituloManual")
+            Log.d("Teleonline", "  h1.entry-title=$h1EntryTitle")
+            Log.d("Teleonline", "  h1=$h1Text")
+            Log.d("Teleonline", "  title=$pageTitle")
+
             // Try multiple selectors for channel title
-            val title = doc.selectFirst("meta[property='og:title']")?.attr("content")
-                ?: doc.selectFirst("meta[name='twitter:title']")?.attr("content")
-                ?: doc.selectFirst(".titulo-canal-manual")?.text()
-                ?: doc.selectFirst("h1.entry-title")?.text()
-                ?: doc.selectFirst("h1")?.text()
-                ?: doc.selectFirst("title")?.text()?.replace(" - Teleonline", "")?.replace(" | Teleonline", "")?.trim()
+            val title = ogTitle
+                ?: twitterTitle
+                ?: tituloManual
+                ?: h1EntryTitle
+                ?: h1Text
+                ?: pageTitle?.replace(" - Teleonline", "")?.replace(" | Teleonline", "")?.trim()
                 ?: "Canal"
+
+            Log.d("Teleonline", "  TÍTULO FINAL: '$title'")
 
             // Extract channel logo (not og:image which is generic)
             var poster = doc.selectFirst(".logo-channel img")?.attr("src")
             if (poster.isNullOrBlank()) {
-                // Try JSON-LD logo
                 val jsonLd = Regex(""""logo"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""").find(html)
                 if (jsonLd != null) poster = jsonLd.groupValues[1]
             }
