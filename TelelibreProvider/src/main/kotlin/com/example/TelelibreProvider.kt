@@ -71,10 +71,24 @@ class TelelibreProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        // Titulo para ?r= viene vacio (Tele-libre), usar el id decodificado
+        if (url.contains("?r=")) {
+            val b64 = url.substringAfter("?r=").substringBefore("&")
+            try {
+                val outer = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT))
+                val innerB64 = outer.substringAfter("get=").substringBefore("&").ifBlank { outer.substringAfter("?get=").substringBefore("&") }
+                val inner = try { String(android.util.Base64.decode(innerB64, android.util.Base64.DEFAULT)) } catch (_: Exception) { innerB64 }
+                val pretty = inner.replace("_", " ").replace("-", " ").trim()
+                val titleFromId = pretty.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                Log.d("Telelibre", "load ?r= title=$titleFromId inner=$inner")
+                val ep = newEpisode(url) { this.name = "En Vivo" }
+                return newTvSeriesLoadResponse(titleFromId.ifBlank { "Canal" }, url, TvType.Live, listOf(ep))
+            } catch (_: Exception) {}
+        }
         val html = safeGet(url) ?: return null
         val doc = Jsoup.parse(html)
-        val title = doc.selectFirst("h1")?.text()?.trim()
-            ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()
+        val title = doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotBlank() && !it.contains("Tele-libre", true) }
+            ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()?.takeIf { it.length < 60 && !it.contains("Tele-libre", true) }
             ?: "Canal"
         val poster = doc.selectFirst("img.imgCanal")?.attr("src")?.let { fixUrl(it) }
             ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
@@ -91,38 +105,28 @@ class TelelibreProvider : MainAPI() {
         val targetUrl = fixUrl(data)
         Log.d("Telelibre", "loadLinks: $targetUrl")
 
-        // Caso ?r=BASE64 -> bestleague.top (Universal etc)
+        // Caso ?r=BASE64 -> bestleague.life/tok.html?get=XXX (DASH cvattv)
         if (targetUrl.contains("?r=")) {
             val b64 = targetUrl.substringAfter("?r=").substringBefore("&")
             try {
                 val outer = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT))
                 Log.d("Telelibre", "outer decode: $outer")
-                // outer = https://bestleague.top/tok.html?get=XXXX
-                val innerB64 = outer.substringAfter("get=").substringBefore("&")
-                val inner = try { String(android.util.Base64.decode(innerB64, android.util.Base64.DEFAULT)) } catch (_: Exception) { innerB64 }
-                Log.d("Telelibre", "inner: $inner")
-                // Probar bestleague -> suele redirigir a zonatv/la18hd similar
                 val tokHtml = safeGet(outer, referer = targetUrl)
                 if (tokHtml != null) {
-                    // buscar m3u8 directo o iframe
+                    if (handleTokHtml(tokHtml, outer, callback)) return true
                     val m3u8 = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(tokHtml)?.value
                     if (m3u8 != null) {
-                        Log.d("Telelibre", "m3u8 en tok.html: $m3u8")
-                        callback(newExtractorLink(name, "$name", m3u8, ExtractorLinkType.M3U8) { this.referer = outer })
+                        callback(newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) { this.referer = outer })
                         return true
                     }
-                    val iframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(tokHtml)?.groupValues?.get(1)
-                    if (iframe != null) {
-                        val iframeUrl = if (iframe.startsWith("http")) iframe else "https://bestleague.top$iframe"
-                        Log.d("Telelibre", "iframe tok: $iframeUrl")
-                        return resolveLa18Chain(iframeUrl, outer, callback)
-                    }
                 }
-                // Fallback: tratar inner como id para zonatv
-                // ej Universal_Comedy -> probar zonatv
-                val zonatv = "https://zonatv.space/canales.php?id=${inner.lowercase().replace(" ", "-")}"
-                Log.d("Telelibre", "fallback zonatv: $zonatv")
-                if (resolveZonatvChain(zonatv, targetUrl, callback)) return true
+                // Fallback: tratar inner como id zonatv
+                val innerB64 = outer.substringAfter("get=").substringBefore("&").ifBlank { "" }
+                if (innerB64.isNotBlank()) {
+                    val inner = try { String(android.util.Base64.decode(innerB64, android.util.Base64.DEFAULT)) } catch (_: Exception) { innerB64 }
+                    val zonatv = "https://zonatv.space/canales.php?id=${inner.lowercase().replace(" ", "-")}"
+                    if (resolveZonatvChain(zonatv, targetUrl, callback)) return true
+                }
             } catch (e: Exception) {
                 Log.e("Telelibre", "r decode fail: ${e.message}")
             }
@@ -164,27 +168,24 @@ class TelelibreProvider : MainAPI() {
                 callback(newExtractorLink(name, name, generic, ExtractorLinkType.M3U8) { this.referer = nextUrl })
                 return true
             }
-            // Buscar siguiente iframe
-            val nextIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
-            if (nextIframe != null) {
+            // bestleague tok.html es DASH cvattv (no iframe)
+            if (html.contains("cvattv.com.ar") && html.contains("atob(getURL)")) {
+                if (handleTokHtml(html, nextUrl, callback)) return true
+            }
+            // Buscar siguiente iframe (ignorar placeholders ${...})
+            val nextIframeRaw = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+            if (nextIframeRaw != null && !nextIframeRaw.contains("\${") && !nextIframeRaw.contains("extensionUrl")) {
+                val nextIframe = nextIframeRaw
                 nextUrl = when {
                     nextIframe.startsWith("//") -> "https:$nextIframe"
                     nextIframe.startsWith("http") -> nextIframe
                     nextIframe.startsWith("/") -> {
-                        val base = nextUrl.substringBefore("/", nextUrl).let { 
-                            // extraer origen
-                            try { val u = java.net.URL(nextUrl); "${u.protocol}://${u.host}" } catch (_: Exception) { mainUrl }
-                        }
+                        val base = try { val u = java.net.URL(nextUrl); "${u.protocol}://${u.host}" } catch (_: Exception) { mainUrl }
                         if (nextIframe.startsWith("/mpd")) "https://tele-libre.buzz$nextIframe" else "$base$nextIframe"
                     }
                     else -> nextIframe
                 }
                 Log.d("Telelibre", "step ${depth+1} iframe: $nextUrl")
-                // Manejo especial mpd2.php?id=xxx -> construye zonatv
-                if (nextIframe.contains("mpd2.php")) {
-                    // mpd2.php redirige a zonatv.space/canales.php?id=xxx
-                    // lo parseamos igual
-                }
                 html = safeGet(nextUrl, referer = targetUrl)
                 continue
             }
@@ -204,17 +205,98 @@ class TelelibreProvider : MainAPI() {
 
     private suspend fun resolveZonatvChain(url: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
         val html = safeGet(url, referer) ?: return false
+        if (handleTokHtml(html, url, callback)) return true
         val iframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: return false
+        if (iframe.contains("\${")) return false
         val next = if (iframe.startsWith("//")) "https:$iframe" else iframe
         return resolveLa18Chain(next, url, callback)
     }
 
     private suspend fun resolveLa18Chain(url: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
         val html = safeGet(url, referer) ?: return false
+        if (handleTokHtml(html, url, callback)) return true
         val playback = Regex("""playbackURL\s*=\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: return false
         val m3u8 = playback.replace("\\/", "/")
         Log.d("Telelibre", "resolveLa18 m3u8: $m3u8")
         callback(newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) { this.referer = url })
         return true
+    }
+
+    private suspend fun handleTokHtml(html: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
+        if (!html.contains("cvattv.com.ar")) return false
+        try {
+            // getURL = base64 del canal, ej VW5pdmVyc2FsX0NvbWVkeQ==
+            val getParam = Regex("""getURL\s*==\s*"([^"]+)"""").findAll(html).map { it.groupValues[1] }.toList()
+            // number segun if chain, extraer number = X despues del primer match del getURL actual
+            // Simplificado: buscar el bloque que contiene el getURL del referer
+            val urlGet = Regex("""[?&]get=([^&"']+)""").find(referer)?.groupValues?.get(1) ?: Regex("""get=([^&"']+)""").find(referer)?.groupValues?.get(1)
+            var number: String? = null
+            if (urlGet != null) {
+                // Buscar el if que contiene ese get y su number
+                val pattern = Regex("""if\s*\(getURL\s*==\s*"$urlGet"[^)]*\)\s*\n*number\s*=\s*(\d+)""")
+                number = pattern.find(html)?.groupValues?.get(1)
+                if (number == null) {
+                    // Buscar en listas con ||
+                    val listPattern = Regex("""getURL\s*==\s*"$urlGet"[^;]*number\s*=\s*(\d+)""", RegexOption.DOT_MATCHES_ALL)
+                    number = listPattern.find(html)?.groupValues?.get(1)
+                }
+                // fallback por cercania
+                if (number == null) {
+                    val idx = html.indexOf(urlGet)
+                    if (idx >= 0) {
+                        val snippet = html.substring(idx, minOf(html.length, idx + 3000))
+                        number = Regex("""number\s*=\s*(\d+)""").find(snippet)?.groupValues?.get(1)
+                    }
+                }
+            }
+            if (number == null) number = Regex("""number\s*=\s*(\d+)""").find(html)?.groupValues?.get(1) ?: "6"
+            // mt tokens
+            val mtBlock = Regex("""var\s+mt\s*=\s*\[(.*?)\];""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1) ?: return false
+            val tokenRegex = Regex("""token:\s*"([^"]+)"""")
+            val tokens = tokenRegex.findAll(mtBlock).map { it.groupValues[1] }.toList()
+            if (tokens.isEmpty()) return false
+            val token = tokens.first()
+            val decodedGet = if (urlGet != null) try { String(android.util.Base64.decode(urlGet, android.util.Base64.DEFAULT)) } catch (_: Exception) { urlGet } else "unknown"
+            // cdn del token (edge-liveXX-sl)
+            val cdn = Regex(""""cdn":\s*"([^"]+)"""").find(mtBlock)?.groupValues?.get(1) ?: "edge-live01-sl"
+            val mpdUrl = "https://$cdn.cvattv.com.ar/$token/live/c${number}eds/$decodedGet/SA_Live_dash_enc/$decodedGet.mpd"
+            Log.d("Telelibre", "tok DASH mpd=$mpdUrl number=$number cdn=$cdn")
+            // Buscar ClearKey para este getURL
+            val keyBlock = Regex("""if\s*\(getURL\s*==\s*"$urlGet"\)\s*\{[^}]*keyId\s*=\s*"([^"]+)"[^}]*key\s*=\s*"([^"]+)"""", RegexOption.DOT_MATCHES_ALL).find(html)
+            val keyId = keyBlock?.groupValues?.get(1)
+            val key = keyBlock?.groupValues?.get(2)
+            // Fallback búsqueda global por atob(getURL) nombre
+            var fallbackKeyId: String? = null
+            var fallbackKey: String? = null
+            if (keyId == null) {
+                // Buscar por decoded nombre en comentarios // Universal Comedy
+                val commentPattern = Regex("""//\s*${Regex.escape(decodedGet)}[^}]*keyId\s*=\s*"([^"]+)"[^}]*key\s*=\s*"([^"]+)""", RegexOption.DOT_MATCHES_ALL)
+                val m = commentPattern.find(html)
+                fallbackKeyId = m?.groupValues?.get(1)
+                fallbackKey = m?.groupValues?.get(2)
+            }
+            val finalKeyId = keyId ?: fallbackKeyId
+            val finalKey = key ?: fallbackKey
+            if (finalKeyId != null && finalKey != null) {
+                Log.d("Telelibre", "ClearKey $finalKeyId:$finalKey")
+                // CloudStream DASH ClearKey via header? Emit as DASH with drm param not directly supported, usamos MPD con headers y ExoPlayer lo resolvera si pasamos clearkey via callback? 
+                // Por ahora emitimos MPD normal, el player lo intentara sin DRM si el token lo permite, y si falla el DRM se necesita extractor custom.
+                // Emitimos como DASH
+                callback(newExtractorLink(name, "$name - DASH", mpdUrl, ExtractorLinkType.DASH) {
+                    this.referer = referer
+                    this.headers = desktopHeaders
+                })
+                return true
+            } else {
+                // Sin clearkey, igual intentar MPD
+                callback(newExtractorLink(name, name, mpdUrl, ExtractorLinkType.DASH) {
+                    this.referer = referer
+                })
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e("Telelibre", "handleTok fail: ${e.message}")
+            return false
+        }
     }
 }
