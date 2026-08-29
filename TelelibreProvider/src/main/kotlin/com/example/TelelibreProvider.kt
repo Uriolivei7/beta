@@ -250,15 +250,28 @@ class TelelibreProvider : MainAPI() {
                 }
             }
             if (number == null) number = Regex("""number\s*=\s*(\d+)""").find(html)?.groupValues?.get(1) ?: "6"
-            // mt tokens
+            // mt tokens - buscar token cuyo path contiene decodedGet
             val mtBlock = Regex("""var\s+mt\s*=\s*\[(.*?)\];""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1) ?: return false
-            val tokenRegex = Regex("""token:\s*"([^"]+)"""")
-            val tokens = tokenRegex.findAll(mtBlock).map { it.groupValues[1] }.toList()
-            if (tokens.isEmpty()) return false
-            val token = tokens.first()
             val decodedGet = if (urlGet != null) try { String(android.util.Base64.decode(urlGet, android.util.Base64.DEFAULT)) } catch (_: Exception) { urlGet } else "unknown"
-            // cdn del token (edge-liveXX-sl)
-            val cdn = Regex(""""cdn":\s*"([^"]+)"""").find(mtBlock)?.groupValues?.get(1) ?: "edge-live01-sl"
+            // Extraer todos los cdn/token/path
+            val entryRegex = Regex("""\{\s*cdn:\s*"([^"]+)"\s*,\s*token:\s*"([^"]+)"""", RegexOption.DOT_MATCHES_ALL)
+            val entries = entryRegex.findAll(mtBlock).map { it.groupValues[1] to it.groupValues[2] }.toList()
+            if (entries.isEmpty()) return false
+            // Buscar token cuyo JWT path contiene decodedGet
+            var selected: Pair<String,String>? = null
+            for ((cdn, tok) in entries) {
+                try {
+                    val payloadB64 = tok.split(".").getOrNull(1) ?: continue
+                    val padded = payloadB64 + "=".repeat((4 - payloadB64.length % 4) % 4)
+                    val json = String(android.util.Base64.decode(padded, android.util.Base64.URL_SAFE or android.util.Base64.DEFAULT))
+                    if (json.contains(decodedGet)) { selected = cdn to tok; break }
+                } catch (_: Exception) {}
+            }
+            if (selected == null) {
+                // Fallback: token cuyo path c number cercano? usar primero cuyo path contiene decodedGet sin decodificar
+                selected = entries.firstOrNull { (_, tok) -> tok.contains(decodedGet) } ?: entries.first()
+            }
+            val (cdn, token) = selected
             val mpdUrl = "https://$cdn.cvattv.com.ar/$token/live/c${number}eds/$decodedGet/SA_Live_dash_enc/$decodedGet.mpd"
             Log.d("Telelibre", "tok DASH mpd=$mpdUrl number=$number cdn=$cdn")
             // Buscar ClearKey para este getURL
@@ -278,17 +291,16 @@ class TelelibreProvider : MainAPI() {
             val finalKeyId = keyId ?: fallbackKeyId
             val finalKey = key ?: fallbackKey
             if (finalKeyId != null && finalKey != null) {
-                Log.d("Telelibre", "ClearKey $finalKeyId:$finalKey")
-                // CloudStream DASH ClearKey via header? Emit as DASH with drm param not directly supported, usamos MPD con headers y ExoPlayer lo resolvera si pasamos clearkey via callback? 
-                // Por ahora emitimos MPD normal, el player lo intentara sin DRM si el token lo permite, y si falla el DRM se necesita extractor custom.
-                // Emitimos como DASH
+                Log.d("Telelibre", "ClearKey $finalKeyId:$finalKey for $decodedGet")
+                // Intentar pasar clearkey via headers custom que algunos players interceptan, y también como DASH con drm
+                // CloudStream no expone clearkey directo, pero ExoPlayer puede resolver si el MPD tiene pssh y proveemos key via callback con tipo DASH + headers
                 callback(newExtractorLink(name, "$name - DASH", mpdUrl, ExtractorLinkType.DASH) {
                     this.referer = referer
-                    this.headers = desktopHeaders
+                    this.headers = desktopHeaders + mapOf("X-ClearKey" to "$finalKeyId:$finalKey", "X-DRM-KeyId" to finalKeyId, "X-DRM-Key" to finalKey)
                 })
                 return true
             } else {
-                // Sin clearkey, igual intentar MPD
+                Log.w("Telelibre", "sin clearkey para $decodedGet, probando mpd sin drm")
                 callback(newExtractorLink(name, name, mpdUrl, ExtractorLinkType.DASH) {
                     this.referer = referer
                 })
