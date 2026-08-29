@@ -497,7 +497,7 @@ class TvenvivoProvider : MainAPI() {
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
                 //    intercept playlist.php request to capture JS-generated cookies
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback")
-                val playlistInfo = interceptPlaylistViaWebView(targetUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl)
+                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl)
                 if (playlistInfo != null) {
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url} body=${playlistInfo.body.length}")
                     if (playlistInfo.body.contains("#EXTM3U")) {
@@ -644,6 +644,11 @@ class TvenvivoProvider : MainAPI() {
                     }
 
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        val url = request?.url?.toString() ?: return false
+                        if (url.contains("tvenvivo2.com") || url.contains("javascript:")) {
+                            Log.d("Tvenvivo", "WebView: bloqueando redirect → ${url.take(100)}")
+                            return true
+                        }
                         return false
                     }
                 }
