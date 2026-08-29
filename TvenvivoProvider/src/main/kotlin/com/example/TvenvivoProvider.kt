@@ -495,7 +495,7 @@ class TvenvivoProvider : MainAPI() {
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
                 //    intercept playlist.php request to capture JS-generated cookies
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback")
-                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin)
+                val playlistInfo = interceptPlaylistViaWebView(targetUrl, mainHeaders, canal, target, sig, streamOrigin)
                 if (playlistInfo != null) {
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url}")
                     val wvHeaders = mapOf(
@@ -564,7 +564,7 @@ class TvenvivoProvider : MainAPI() {
     private data class PlaylistInfo(val url: String, val cookies: String)
 
     private suspend fun interceptPlaylistViaWebView(
-        streamUrl: String,
+        pageUrl: String,
         mainHeaders: Map<String, String>,
         canal: String,
         target: String,
@@ -584,7 +584,7 @@ class TvenvivoProvider : MainAPI() {
                     mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
                 }
-                Log.d("Tvenvivo", "WebView: creado, cargando $streamUrl")
+                Log.d("Tvenvivo", "WebView: creado, cargando $pageUrl")
 
                 val infoDeferred = CompletableDeferred<PlaylistInfo?>()
 
@@ -610,27 +610,6 @@ class TvenvivoProvider : MainAPI() {
                             Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! (${cookies.length} cookies)")
                             infoDeferred.complete(PlaylistInfo(url, cookies))
                         }
-                        if (url.contains("stream.php") && requestCount <= 1) {
-                            try {
-                                val u = java.net.URL(url)
-                                val conn = u.openConnection() as java.net.HttpURLConnection
-                                conn.requestMethod = "GET"
-                                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                                conn.connectTimeout = 15000
-                                conn.readTimeout = 15000
-                                val html = conn.inputStream.bufferedReader().readText()
-                                conn.disconnect()
-                                val fakeTop = "<script>window.top={location:{replace:function(){}},parent:window,frames:[],length:0,document:document};window.top.window=window.top;</script>"
-                                val modified = html.replace("<head>", "<head>$fakeTop", ignoreCase = true)
-                                    .replace("<HEAD>", "<HEAD>$fakeTop", ignoreCase = true)
-                                Log.d("Tvenvivo", "WebView: stream.php interceptado e inyectado fakeTop (${modified.length} bytes)")
-                                val mimeType = conn.contentType ?: "text/html"
-                                val encoding = if (mimeType.contains("charset=", true)) "" else "UTF-8"
-                                return WebResourceResponse("text/html", "UTF-8", modified.byteInputStream())
-                            } catch (e: Exception) {
-                                Log.e("Tvenvivo", "WebView: error intercepted stream.php: ${e.message}")
-                            }
-                        }
                         return null
                     }
 
@@ -645,15 +624,12 @@ class TvenvivoProvider : MainAPI() {
 
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                         val url = request?.url?.toString() ?: return false
-                        if (url.contains("tvenvivo2.com")) {
-                            Log.d("Tvenvivo", "WebView: REDIRECT BLOQUEADO → ${url.take(80)}")
-                            return true
-                        }
+                        Log.d("Tvenvivo", "WebView: navigation → ${url.take(120)}")
                         return false
                     }
                 }
 
-                webView.loadUrl(streamUrl)
+                webView.loadUrl(pageUrl)
 
                 withTimeout(25000L) { infoDeferred.await() }
             } catch (e: TimeoutCancellationException) {
