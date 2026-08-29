@@ -39,6 +39,20 @@ class TvenvivoProvider : MainAPI() {
     override val hasDownloadSupport = true
 
     private val cfKiller = CloudflareKiller()
+    private val browserHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+        "Accept" to "*/*",
+        "Accept-Language" to "es-ES,es;q=0.9",
+        "Connection" to "keep-alive",
+        "Sec-Fetch-Site" to "same-origin",
+        "Sec-Fetch-Mode" to "cors",
+        "Sec-Fetch-Dest" to "empty",
+        "Sec-Fetch-Storage-Access" to "none",
+        "Sec-GPC" to "1",
+        "sec-ch-ua" to "\"Chromium\";v=\"152\", \"Not?A_Brand\";v=\"24\", \"Brave\";v=\"152\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\""
+    )
     private val successfulOptionUrl = HashMap<String, String>()
     private val nowAllowed = listOf("Red Social", "Donacion", "Donar con Paypal", "Mundo Latam")
 
@@ -355,14 +369,7 @@ class TvenvivoProvider : MainAPI() {
 
                 // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
                 val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
-                val playlistHeaders = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to streamUrl,
-                    "Accept" to "*/*",
-                    "Sec-Fetch-Site" to "same-origin",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Dest" to "empty"
-                )
+                val playlistHeaders = browserHeaders + mapOf("Referer" to streamUrl)
 
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → $playlistUrl")
                 val plResp = withTimeoutOrNull(15000L) {
@@ -432,14 +439,9 @@ class TvenvivoProvider : MainAPI() {
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
                         // Try with stream.php cookies + same-origin Referer
-                        val jsPlaylistHeaders = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        val jsPlaylistHeaders = browserHeaders + mapOf(
                             "Referer" to streamUrl,
-                            "Origin" to streamOrigin,
-                            "Accept" to "*/*",
-                            "Sec-Fetch-Site" to "same-origin",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Dest" to "empty"
+                            "Origin" to streamOrigin
                         )
                         val pl2Resp = withTimeoutOrNull(15000L) {
                             app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies, interceptor = cfKiller)
@@ -498,13 +500,9 @@ class TvenvivoProvider : MainAPI() {
                 val playlistInfo = interceptPlaylistViaWebView(targetUrl, mainHeaders, canal, target, sig, streamOrigin)
                 if (playlistInfo != null) {
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url}")
-                    val wvHeaders = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    val wvHeaders = browserHeaders + mapOf(
                         "Referer" to streamUrl,
-                        "Cookie" to playlistInfo.cookies,
-                        "Sec-Fetch-Site" to "same-origin",
-                        "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Dest" to "empty"
+                        "Cookie" to playlistInfo.cookies
                     )
                     val wvResp = withTimeoutOrNull(10000L) {
                         app.get(playlistInfo.url, timeout = 10000L, headers = wvHeaders, interceptor = cfKiller)
