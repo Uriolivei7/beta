@@ -579,16 +579,18 @@ class TvenvivoProvider : MainAPI() {
                 webView.addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onResult(data: String) {
-                        Log.d("Tvenvivo", "WebView: Bridge result (${data.length} chars): ${data.take(400)}")
+                        Log.d("Tvenvivo", "WebView: Bridge result (${data.length} chars): ${data.take(500)}")
                         if (!infoDeferred.isCompleted) {
                             if (data.contains("#EXTM3U")) {
-                                // Extraer solo el body después del prefijo STATUS
-                                val body = if (data.startsWith("STATUS:")) data.substringAfter("|", data).substringAfter("|", data) else data
-                                Log.d("Tvenvivo", "WebView: ¡M3U8 capturado! (${body.length} bytes)")
-                                infoDeferred.complete(PlaylistInfo(playlistUrl, body = body))
-                            } else if (data.startsWith("STATUS:403") || data.startsWith("STATUS:0")) {
+                                // Formato: [RETRY:]STATUS:200|URL:https://...|LEN:xxx|#EXTM3U...
+                                val urlMatch = Regex("""URL:([^|]+)""").find(data)?.groupValues?.get(1)
+                                val actualUrl = urlMatch ?: playlistUrl
+                                val bodyStart = data.indexOf("#EXTM3U")
+                                val body = if (bodyStart >= 0) data.substring(bodyStart) else data.substringAfter("|", data).substringAfter("|", data)
+                                Log.d("Tvenvivo", "WebView: ¡M3U8 capturado! url=${actualUrl.take(80)} (${body.length} bytes)")
+                                infoDeferred.complete(PlaylistInfo(actualUrl, body = body))
+                            } else if (data.startsWith("STATUS:403") || data.contains("STATUS:403") || data.startsWith("STATUS:0")) {
                                 Log.w("Tvenvivo", "WebView: Bridge 403/0 → ${data.take(300)}")
-                                // No completar, dejar que timeout ocurra para probar siguiente opción
                             }
                         }
                     }
@@ -613,32 +615,33 @@ class TvenvivoProvider : MainAPI() {
                                                     var xhr = new XMLHttpRequest();
                                                     xhr.open('GET', url, true);
                                                     xhr.withCredentials = true;
-                                                    try { xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); } catch(e) {}
                                                     try { xhr.setRequestHeader('Accept', '*/*'); } catch(e) {}
+                                                    try { xhr.setRequestHeader('Accept-Language', 'es-ES,es;q=0.9'); } catch(e) {}
                                                     xhr.timeout = 8000;
                                                     xhr.onreadystatechange = function() {
                                                         if (xhr.readyState === 4) {
                                                             var txt = xhr.responseText || '';
                                                             var label = isRetry ? 'RETRY:' : '';
-                                                            NativeBridge.onResult(label + 'STATUS:' + xhr.status + '|LEN:' + txt.length + '|' + txt.substring(0,500));
+                                                            NativeBridge.onResult(label + 'STATUS:' + xhr.status + '|URL:' + url + '|LEN:' + txt.length + '|' + txt.substring(0,600));
                                                             if (!isRetry && xhr.status === 403 && '${altUrl}'.length > 0 && '${altUrl}' !== url) {
                                                                 setTimeout(function(){ doXhr('${altUrl}', true); }, 500);
                                                             }
                                                         }
                                                     };
                                                     xhr.onerror = function() {
-                                                        NativeBridge.onResult((isRetry?'RETRY:':'') + 'XHR_ERROR:' + xhr.status);
+                                                        NativeBridge.onResult((isRetry?'RETRY:':'') + 'XHR_ERROR:' + xhr.status + '|URL:' + url);
                                                         if (!isRetry && '${altUrl}'.length > 0 && '${altUrl}' !== url) {
                                                             setTimeout(function(){ doXhr('${altUrl}', true); }, 500);
                                                         }
                                                     };
-                                                    xhr.ontimeout = function() { NativeBridge.onResult((isRetry?'RETRY:':'') + 'TIMEOUT'); };
+                                                    xhr.ontimeout = function() { NativeBridge.onResult((isRetry?'RETRY:':'') + 'TIMEOUT|URL:' + url); };
                                                     xhr.send();
                                                 } catch(e) {
                                                     NativeBridge.onResult('ERROR:' + e.toString());
                                                 }
                                             }
-                                            doXhr('$playlistUrl', false);
+                                            var primary = '${altUrl}'.length > 0 ? '${altUrl}' : '$playlistUrl';
+                                            doXhr(primary, false);
                                         })();
                                     """.trimIndent()
                                     view?.evaluateJavascript(js, null)
