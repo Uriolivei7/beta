@@ -70,6 +70,20 @@
     "fileSize": 23000
   },
   {
+    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
+    "status": 1,
+    "version": 1,
+    "apiVersion": 1,
+    "name": "TeleLibre",
+    "internalName": "TelelibreProvider",
+    "authors": ["Ranita"],
+    "description": "https://tele-libre.buzz/",
+    "tvTypes": ["Live"],
+    "iconUrl": "https://tele-libre.buzz/favicon.ico",
+    "language": "mx",
+    "fileSize": 23000
+  },
+  {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SoloLatinoProvider.cs3",
     "status": 1,
     "version": 2,

@@ -1,0 +1,1587 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>  
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TeLe Libre - Canales en VIVO Online</title>
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://tele-libre.buzz/" />
+<meta name="referrer" content="always">
+<meta name="description" content="tele-libre.buzz - Canales de TV online en vivo y en directo gratis por internet. Canales de television de manera Gratuita y Online ">
+<meta property="og:locale" content="es_AR" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="tele-libre.buzz - Ver TeleLibre online en vivo y en directo gratis" />
+<meta property="og:description" content="tele-libre.buzz puedes Ver TeleLibre de forma Gratuita y Online " />
+<meta property="og:url" content="https://tele-libre.buzz/" />
+<meta property="og:site_name" content="tele-libre.buzz" />
+<meta property="og:image" content="/img/logo.png">
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:description" content="tele-libre.buzz - Ver TeleLibre gratis online en vivo y en directo, mira todos los canales de forma online por internet." />
+<meta name="twitter:title" content="tele-libre.buzz - Canales de Television online en vivo y en directo" />
+<meta name="twitter:image" content="/img/logo.png" />
+<script src="https://kit.fontawesome.com/ccee9ace0a.js" crossorigin="anonymous"></script>   
+<link rel="stylesheet" href="/styles.css">
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="//code.jquery.com/jquery-3.3.1.min.js"></script>
+<script src="https://sidewalkboiling.com/ad/59/af/ad59afdab9f6995015fdf3fb637e0578.js"></script>
+<script type="text/javascript" data-cfasync="false">
+/*<![CDATA[/* */
+(function(){var s=window,o="c67e1dfe4d952c22a2f913cf3e23fc06",l=[["siteId",699*140*347-676*245-28473481],["minBid",0],["popundersPerIP","0"],["delayBetween",0],["default",false],["defaultPerDay",0],["topmostLayer","auto"]],f=["d3d3LmJsb2NrYWRzbm90LmNvbS9idW5pY29ybi5taW4uY3Nz","ZG5oZmk1bm4yZHQ2Ny5jbG91ZGZyb250Lm5ldC9iby95cGl6emEubWluLmpz","d3d3Lnh6d2x2amt6andnbnV1LmNvbS9kdW5pY29ybi5taW4uY3Nz","d3d3LmxpaWJlZmlibGlpbC5jb20vYU5PRVd1L2JwaXp6YS5taW4uanM="],k=-1,y,q,c=function(){clearTimeout(q);k++;if(f[k]&&!(1813948211000<(new Date).getTime()&&1<k)){y=s.document.createElement("script");y.type="text/javascript";y.async=!0;var x=s.document.getElementsByTagName("script")[0];y.src="https://"+atob(f[k]);y.crossOrigin="anonymous";y.onerror=c;y.onload=function(){clearTimeout(q);s[o.slice(0,16)+o.slice(0,16)]||c()};q=setTimeout(c,5E3);x.parentNode.insertBefore(y,x)}};if(!s[o]){try{Object.freeze(s[o]=l)}catch(e){}c()}})();
+/*]]>/* */
+</script>
+</head>
+
+<style>.button-container {display: flex;align-items: center;}.md-link {margin-right: 8px;}p.des { margin-bottom: 5px;text-align: center;line-height: 23px;color: #fff;}#buscar::placeholder {color: #fff; }.d-none {display: none !important; }.main__filter-search,.main__filter-wrap{display: flex;flex-direction: row;justify-content: flex-start;align-items: center;width: 100%;position: relative;}.main__filter-search { margin-top: 10px}.main__filter-search input {width: 100%;height: 40px;background-color: #fff;color: #fff ;font-size: 14px;border-radius: 12px;border: none;padding: 0 60px 0 20px;font-family: Inter,sans-serif;--bs-card-border-width: 0.0625rem;--bs-card-border-color: hsl(0deg 0% 100% / 30%);border: var(--bs-card-border-width) solid var(--bs-card-border-color);}input:focus {--bs-card-border-width: 0.0625rem;--bs-card-border-color: hsl(0deg 0% 100% / 30%);border: var(--bs-card-border-width) solid var(--bs-card-border-color);}.main__filter-search input:focus {border-color: #141d26}.main__filter-search button {position: absolute;right: 20px;top: 0;height: 40px;width: auto;display: flex;flex-direction: row;justify-content: center;align-items: center}.main__filter-search button svg {width: 20px;height: auto;fill: #fff;transition: .5s ease}.main__filter-search button:hover svg {fill: #6164ff}.inf {
+    background-color: #000;border-radius: 5px;color: #fff;font-size: 12px;font-weight: 700;padding: 2px 10px;position: absolute;}.object-contain {object-fit: contain; margin-top: 1.6rem;</style> 
+<body class="flex flex-col h-screen justify-between dark:bg-slate-800 dark:text-slate-300 font-sans"><div id="navbar"></div><script>$(document).ready(function() {$("#navbar").load("/header.php");});</script>    
+    
+
+
+
+<main class="container mx-auto px-4  max-w-7xl mb-auto" style="max-width:90%">
+    
+
+
+
+
+<h1 class="text-3xl my-3 text-center">TeLe Libre - Canales en VIVO Online</h1>  
+<script type="text/javascript" src="https://platform-api.sharethis.com/js/sharethis.js#property=656f5d95d945ce0012dd9364&product=inline-share-buttons" async="async"></script>
+<div class="sharethis-inline-share-buttons"></div>
+<br>
+
+
+
+
+<center><div class="alert alert-soft-success" role="alert"><p><i style="color:red">IMPORTANTE</i> : Para reproducir los Canales de TV de Sudamerica  necesitas instalar la extension en tu Navegador Google Chrome: <strong><a target="_blank" href="https://chromewebstore.google.com/detail/reproductor-mpdm3u8m3uepg/opmeopcambhfimffbomjgemehjkbbmji"><i style="color:red">Reproductor MPD/M3U8/M3U/EPG </strong></i><p>Estos Canales de TV se ven en Argentina, Uruguay, Paraguay, Fuera de estos Paises necesitas usar una VPN con los Paises mencionados. </a><p><strong><i style="color:blue">Guardar la Pagina en Favoritos </strong></p></p></div></center>
+ 
+
+<center><iframe src="/schedule/" width="90%" height="400" marginheight="0" marginwidth="0" scrolling="yes" frameborder="0" allowfullscreen allow="encrypted-media"></iframe></center>
+
+<style>
+
+.closebtnt {margin-left: 15px;color: white;font-weight: bold;float: right;font-size: 22px;line-height: 22px;cursor: pointer;transition: 0.3s;}
+
+  .alert-soft-primary {
+    color: #eef8fc!important;
+    background-color: #141d26 !important;
+
+  }
+.alert-soft-success {
+    color: #fff !important;
+    background-color: #000 !important;
+}
+
+  .alert {
+    --bs-alert-bg: transparent;
+    --bs-alert-padding-x: 0.75rem;
+    --bs-alert-padding-y: 0.75rem;
+    --bs-alert-margin-bottom: 1rem;
+    --bs-alert-color: inherit;
+    --bs-alert-border-color: transparent;
+    --bs-alert-border: 0.0625rem solid var(--bs-alert-border-color);
+    --bs-alert-border-radius: 0.5rem;
+    --bs-card-border-width: 0.0625rem;
+    --bs-card-border-color: hsla(0,0%,100%,.1);
+    --bs-card-border-radius: 0.75rem;
+    --bs-card-box-shadow: 0rem 0.375rem 0.75rem rgba(30,32,34,.2);
+    position: relative;
+    padding: var(--bs-alert-padding-y) var(--bs-alert-padding-x);
+    margin-bottom: var(--bs-alert-margin-bottom);
+    color: var(--bs-alert-color);
+    background-color: var(--bs-alert-bg);
+    border: var(--bs-alert-border);
+    border-radius: var(--bs-alert-border-radius);
+    border: var(--bs-card-border-width) solid var(--bs-card-border-color)
+}
+</style>
+
+
+
+<div class="channels grid grid-cols-2 md:grid-cols-5 gap-6 my-5" style="padding-left: 0rem; padding-right: 0rem;">
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="https://deportelibre.icu">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/logo-agenda.avif" title="Deportes en VIVO" alt="Agenda Deportiva"></a></div> 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/telefe/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telefe.png" title="Telefe en VIVO" alt="Telefe"></a></div>   
+ 
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/el-trece/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/eltrece.webp" title="El Trece en VIVO" alt="El Trece (13)"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/america-tv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/america.webp" title="America TV en VIVO" alt="America TV"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tv-publica/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tvpublica.webp" title="TV Publica en VIVO" alt="TV Publica (TVP)"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/el-nueve/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/nueve.webp" title="El Nueve en VIVO" alt="El Nueve (9)"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tn/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tn.png" title="TN en VIVO" alt="TN"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/c5n/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/c5n.webp"  title="C5N en VIVO" alt="C5N"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/a24/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/a24.webp" title="A24 en VIVO" alt="A24"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/canal-26/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/canal26.webp" title="Canal 26 en VIVO" alt="Canal 26"></a></div>
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/ciudad-magazine/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/ciudad.webp" title="Ciudad Magazine en VIVO" alt="Ciudad Magazine"></a></div>
+
+
+
+
+
+
+
+
+
+
+
+   <div>
+
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/unimas/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/unimas.png" title="Unimas en VIVO" alt="Unimas">
+
+</a>
+</div>  
+ 
+
+
+   <div>
+
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/telemundo/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telemundo.svg" title="Telemundo en VIVO" alt="Telemundo">
+
+</a>
+</div>  
+
+ 
+ <div>
+
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/canal-5/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/canal5mx.png" title="Canal 5 en VIVO" alt="Canal 5">
+
+</a>
+</div>   
+ 
+ 
+ <div>
+
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/azteca-7/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/azteca7.png" title="Azteca 7 en VIVO" alt="Azteca 7">
+
+</a>
+</div>    
+ 
+
+ 
+   <div>
+
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/univision/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/univision.png" title="Univision en VIVO" alt="Univision">
+
+</a>
+</div>   
+ 
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cronicatv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" title="Cronica TV en VIVO" src="/img/cronica.png" alt="Cronica TV">
+
+</a>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=L21wZDIucGhwP2lkPXR2ZTI0aA==">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tve24h.png" title="TVE 24H en VIVO" alt="TVE 24H">
+
+</a>
+</div>    
+    
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tve1/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tve1.svg" title="TVE 1 en VIVO" alt="TVE 1 (LA 1)">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tve2/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tve2.png" title="TVE 2 en VIVO" alt="TVE 2 (LA 2)">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/antena-3/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/antena3.png" title="Antena 3 en VIVO" alt="Antena 3">
+
+</a>
+</div>  
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/la-cuatro/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cuatro.png" title="La Cuatro en VIVO" alt="La Cuatro">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/telecinco/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telecinco.png" title="Telecinco en VIVO" alt="Telecinco">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/la-sexta/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/sexta.png" title="La Sexta en VIVO" alt="La Sexta">
+
+</a>
+</div>  
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/mega/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/mega.png" title="Mega en VIVO" alt="Mega">
+
+</a>
+</div>  
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/telemadrid/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telemadrid.png" title="Telemadrid en VIVO" alt="Telemadrid">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/toros/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/onetoro.png" title="Toros en VIVO" alt="Toros">
+
+</a>
+</div>  
+ 
+ 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/m-plus/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/m-plus.png" title="M+ en VIVO" alt="M+">
+
+</a>
+</div>   
+ 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/volver/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/volver.webp" title="Volver en VIVO" alt="Volver">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/lifetime/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/lifetime.webp" title="Lifetime en VIVO" alt="Lifetime">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/food-network/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/food.webp" title="Food Network en VIVO" alt="Food Network">
+
+</a>
+</div> 
+
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/a3cine/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/a3cine.png" title="A3 Cine en VIVO" alt="A3 Cine">
+
+</a>
+</div> 
+
+
+ 
+ 
+ 
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/las-estrellas/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/estrellas.png" title="Las Estrellas en VIVO" alt="Las Estrellas">
+
+</a>
+</div> 
+
+
+
+ 
+ 
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/argentinisima/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/argentinisima.png" title="Argentinisima en VIVO" alt="Argentinisima">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/bbc-news/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/bbc.png" title="BBC News en VIVO" alt="BBC News">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/bravo-tv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/bravotv.png" title="Bravo TV en VIVO" alt="Bravo TV">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/c9n/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/c9n.png" title="C9N en VIVO" alt="C9N">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/canal-4-uruguay/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/canal4uy.webp" title="Canal 4 Uruguay en VIVO" alt="Canal 4 Uruguay">
+
+</a>
+</div>   
+  
+  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/canal-10-uruguay/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/canal10uy.webp" title="Canal 10 Uruguay en VIVO" alt="Canal 10 Uruguay">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/dreamworks/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/dream.png" title="Dreamworks en VIVO" alt="Dreamworks">
+
+</a>
+</div>   
+  
+  
+
+
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/el-doce/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/12cordoba.png" title="El Doce en VIVO" alt="El Doce">
+
+</a>
+</div>    
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/encuentro/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/encuentro.webp" title="Encuentro en VIVO" alt="Encuentro">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/entertainment/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/e=.webp" title="Entertainment en VIVO" alt="Entertainment">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/eurochannel/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/eurochannel.png" title="Eurochannel en VIVO" alt="Eurochannel">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/euronews/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/euronews.png" title="Euronews en VIVO" alt="Euronews">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/europa-europa/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/europa.png" title="Europa Europa en VIVO" alt="Europa Europa">
+
+</a>
+</div>    
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/film-arts/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/film.png" title="Film Arts en VIVO" alt="Film Arts">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/fox-news/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxnews.png" title="Fox News en VIVO" alt="Fox News">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/garage-tv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/garagetv.webp" title="Garage en VIVO" alt="Garage">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/gen/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/gen.webp" title="Gen en VIVO" alt="Gen">
+
+</a>
+</div>   
+  
+  
+
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hola-tv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/holatv.jpg" title="Hola TV en VIVO" alt="Hola TV">
+
+</a>
+</div>  
+  
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/la-nacion/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/lanacion.webp" title="La Nacion en VIVO" alt="La Nacion">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/latele/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/latele.webp" title="Latele en VIVO" alt="Latele">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/metro/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/metro.png" title="Metro en VIVO" alt="Metro">
+
+</a>
+</div>    
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/net-tv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/nettv.webp" title="NET TV en VIVO" alt="NET TV">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/noticias-paraguay/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/noticiaspy.png" title="Noticias Paraguay en VIVO" alt="Noticias Paraguay">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/paraguay-tv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/paraguaytv.png" title="Paraguay TV en VIVO" alt="Paraguay TV">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9VWxCRFgwTTA=">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/trecepy.webp" title="el Trece en VIVO" alt="Canal el Trece">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9U1c1MlpYTjBhV2RoWTJsdmJsOVFaWEpwYjJScGMzUnBZMkU9">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/ipnoticias.webp" title="IP Noticias en VIVO" alt="Canal IP Noticias">
+
+</a>
+</div>   
+  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9UTJGdVlXeGZaR1ZmYkdGZlkybDFaR0Zr">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/canaldelaciudadd.webp" title="Canal de la Ciudad  en VIVO" alt="Canal de la Ciudad">
+
+</a>
+</div>   
+  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9UVdSMWJIUmZVM2RwYlE9PQ==">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/adult-swim.png" title="Canal Adult Swim  en VIVO" alt="Canal Adult Swim">
+
+</a>
+</div>   
+  
+  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/paravision/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/paravision.webp" title="Paravision en VIVO" alt="Paravision">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/quiero/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/quiero.webp" title="Quiero en VIVO" alt="Quiero">
+
+</a>
+</div>    
+  
+  
+  
+
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/sun/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/sun.png" title="SUN en VIVO" alt="SUN">
+
+</a>
+</div>   
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/telefuturo/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telefuturo.webp" title="Telefuturo en VIVO" alt="Telefuturo">
+
+</a>
+</div>    
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/telemax/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telemax.webp" title="Telemax en VIVO" alt="Telemax">
+
+</a>
+</div>  
+  
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tele-sur/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/telesur.png" title="Tele Sur en VIVO" alt="Tele Sur">
+
+</a>
+</div>   
+  
+
+  
+ 
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9Vlc1cGRtVnljMkZzWDBOcGJtVnRZUT09">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/universalcinema.webp" title="universal cinema en VIVO" alt="universal cinema">
+
+</a>
+</div>   
+ 
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9ZFc1cGRtVnljMkZzWDBOeWFXMWw=">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/universalcrime.webp" title="universal crime en VIVO" alt="universal crime">
+
+</a>
+</div>  
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9Vlc1cGRtVnljMkZzWDBOdmJXVmtlUT09">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/universalcomedy.webp" title="universal comedy en VIVO" alt="universal comedy">
+
+</a>
+</div>  
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9Vlc1cGRtVnljMkZzWDFKbFlXeHBkSGs9">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/universalreality.webp" title="universal reality en VIVO" alt="universal reality">
+
+</a>
+</div>  
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9Vlc1cGRtVnljMkZzWDFCeVpXMXBaWEps">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/universalpremiere.webp" title="universal premiere en VIVO" alt="universal premiere">
+
+</a>
+</div>  
+
+
+
+ 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9UjI5c1pHVnU=">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/golden.png" title="Golden en VIVO" alt="Golden">
+
+</a>
+</div> 
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/star-channel/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/star.webp" title="Star Channel en VIVO" alt="Star Channel">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hbo.webp" title="HBO en VIVO" alt="HBO">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-2/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hbo2.webp" title="HBO 2 en VIVO" alt="HBO 2">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-plus/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hboplus.webp" title="HBO Plus en VIVO" alt="HBO Plus">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-family/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hbofam.webp" title="HBO Family en VIVO" alt="HBO Family">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-xtreme/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hboxtreme.webp" title="HBO Xtreme en VIVO" alt="HBO Xtreme">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-mundi/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hbomundi.webp" title="HBO Mundi en VIVO" alt="HBO Mundi">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-pop/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hbopop.webp" title="HBO Pop en VIVO" alt="HBO Pop">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/hbo-signature/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hbosig.webp" title="HBO Signature en VIVO" alt="HBO Signature">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tnt/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tnt.webp" title="TNT en VIVO" alt="TNT HD">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tnt-series/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tntseries.webp" title="TNT Series en VIVO" alt="TNT Series">
+
+</a>
+</div> 
+ 
+ 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tnt-novelas/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tntnovelas.png" title="TNT Novelas en VIVO" alt="TNT Novelas (TBS)">
+
+</a>
+</div> 
+  
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cinecanal/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cinecanal.webp" title="Cinecanal en VIVO" alt="Cinecanal">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cinemax/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cinemax.webp" title="Cinemax en VIVO" alt="Cinemax">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/space/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/space.webp" title="Space en VIVO" alt="Space">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/amc/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/amc.webp" title="AMC en VIVO" alt="AMC">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/axn/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/axn.webp" title="AXN en VIVO" alt="AXN">
+
+</a>
+</div> 
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/universaltv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/unitv.webp" title="Universal TV en VIVO" alt="Universal TV">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/fx/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/fx.webp" title="FX HD en VIVO" alt="FX HD">
+
+</a>
+</div> 
+ 
+ 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/warner/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/warner.webp" title="Warner Channel en VIVO" alt="Warner Channel">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/studio-universal/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/studio.webp" title="Studio Universal en VIVO" alt="Studio Universal">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/sony-channel/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/sony.webp" title="Sony Channel en VIVO" alt="Sony Channel">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/sony-movies/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/sonymovies.webp" title="Sony Movies en VIVO" alt="Sony Movies">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/tcm/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tcm.webp" title="TCM en VIVO" alt="TCM">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cinear/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cinear.png" title="CineAR en VIVO" alt="Cine AR">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/comedy-central/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/comedy.webp" title="Comedy Central en VIVO" alt="Comedy Central">
+
+</a>
+</div> 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cartoon-network/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cn.webp" title="Cartoon Network en VIVO" alt="Cartoon Network">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cartoonito/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cart.webp" title="Cartoonito en VIVO" alt="Cartoonito">
+
+</a>
+</div>
+
+ 
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/disney-channel/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/disney.webp" title="Disney Channel en VIVO" alt="Disney Channel">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/disney-jr/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/disneyjr.webp" title="Disney Junior en VIVO" alt="Disney Junior">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-kids/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/diskids.webp" title="Discovery Kids en VIVO" alt="Discovery Kids">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/nick/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/nick.png" title="Nickelodeon en VIVO" alt="Nickelodeon">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/nickjr/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/nickjr.webp" title="Nick Junior en VIVO" alt="Nick Jr. (Nick Junior)">
+
+</a>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/mtv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/mtv.webp" title="MTV en VIVO" alt="MTV">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/mtv-hits/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/mtvhts.webp" title="MTV Hits en VIVO" alt="MTV Hits">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/mtv-00s/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/mtv00s.png" title="MTV 00s en VIVO" alt="MTV 00s">
+
+</a>
+</div>  
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/cm/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/cm.webp" title="CM en VIVO" alt="CM">
+
+</a>
+</div> 
+
+  
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/flow-music/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/flowmusic.webp" title="Flow Music en VIVO" alt="Flow Music">
+
+</a>
+</div>
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/?r=aHR0cHM6Ly9iZXN0bGVhZ3VlLnRvcC90b2suaHRtbD9nZXQ9U0ZSVw==">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/htv.webp" title="HTV en VIVO" alt="Canal HTV">
+
+</a>
+</div>  
+
+
+
+
+
+
+
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-channel/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/discovery.webp" title="Discovery Channel en VIVO" alt="Discovery">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-world/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/disworld.webp" title="Discovery World en VIVO" alt="Discovery World">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-theater/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/distheater.webp" title="Discovery Theater en VIVO" alt="Discovery Theater">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-science/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/disscience.webp" title="Discovery Science en VIVO" alt="Discovery Science">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-tlc/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tlc.webp" title="Discovery TLC en VIVO" alt="Discovery TLC">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-turbo/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/turbo.webp" title="Discovery Turbo en VIVO" alt="Discovery Turbo">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-hyh/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/hyh.webp" title="Discovery hyh en VIVO" alt="Discovery hyh">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/discovery-id/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/id.webp" title="Discovery ID en VIVO" alt="Discovery ID">
+
+</a>
+</div> 
+
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/history/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/history.webp" title="History en VIVO" alt="History">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/history-2/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/history2.webp" title="History 2 en VIVO" alt="History 2">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/animal-planet/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/aplanet.webp" title="Animal Planet en VIVO" alt="Animal Planet">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/national-geographic/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/natgeo.webp" title="National Geographic en VIVO" alt="National Geographic (Natgeo) ">
+
+</a>
+</div> 
+ 
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/ae/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/ae.webp" title="AE en VIVO" alt="AE (A&E)">
+
+</a>
+</div> 
+
+
+ 
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-01.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn.webp" title="ESPN en VIVO" alt="ESPN 1"></a></div> 
+
+
+<div>
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-02.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn2.webp" title="ESPN 2 en VIVO" alt="ESPN 2">
+
+</a>
+</div> 
+ 
+<div>
+    
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-03.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn3.webp" title="ESPN 3 en VIVO" alt="ESPN 3">
+
+</a>
+</div> 
+
+
+ <div>
+    
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-04.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn4.webp" title="ESPN 4 en VIVO" alt="ESPN 4">
+
+</a>
+</div> 
+
+
+  <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-05.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn5.png" title="ESPN 5 en VIVO" alt="ESPN 5">
+
+</a>
+</div> 
+
+
+
+  <div>
+    
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-06.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn6.webp" title="ESPN 6 en VIVO" alt="ESPN 6">
+
+</a>
+</div> 
+
+
+
+  <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-07.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn7.webp" title="ESPN 7 en VIVO" alt="ESPN 7">
+
+</a>
+</div> 
+
+
+
+
+  <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-387.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espnpr.webp" title="ESPN Premium en VIVO" alt="ESPN Premium">
+
+</a>
+</div> 
+
+
+ <div>
+ 
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-388.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tntsports.png" title="TNT Sports en VIVO" alt="TNT Sports">
+
+</a>
+</div> 
+ 
+ 
+  <div>
+  
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-746.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tycsports.png" title="TyC Sports en VIVO" alt="TyC Sports">
+
+</a>
+</div>  
+ 
+ 
+ 
+    <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-375.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espndeportes.png" title="ESPN Deportes en VIVO" alt="ESPN Deportes">
+
+</a>
+</div> 
+ 
+ 
+ 
+    <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-643.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxdeportes.png" title="FOX Deportes en VIVO" alt="FOX Deportes">
+
+</a>
+</div>  
+ 
+ 
+ 
+ 
+   <div>
+        
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-845.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/universo.png" title="NBC Universo en VIVO" alt="NBC Universo">
+
+</a>
+</div> 
+
+
+<div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-001.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/dsports.webp" title="DSports en VIVO" alt="DirecTV Sports (DSports)">
+
+</a>
+</div> 
+
+
+ <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-002.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/dsports2.webp" title="DSports 2 en VIVO" alt="DirecTV Sports 2 (DSports 2)">
+
+</a>
+</div> 
+
+
+ <div>
+   
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-003.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/dsportsplus.webp" title="DSports Plus en VIVO" alt="DirecTV Sports + (DSports +)">
+
+</a>
+</div> 
+ 
+
+
+
+   <div>
+       
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-372.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/beinñ.png" title="bein Ñ en VIVO" alt="bein Ñ">
+
+</a>
+</div> 
+
+
+
+  <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-830.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxpr.png" title="FOX Sports Premium en VIVO" alt="FOX Sports Premium MX (Mexico)">
+
+</a>
+</div> 
+ 
+ 
+ 
+
+
+   <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-787.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxsports.png" title="FOX Sports en VIVO" alt="FOX Sports 1">
+
+</a>
+</div> 
+
+
+   <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-788.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxsports2.png" title="FOX Sports 2 en VIVO" alt="FOX Sports 2">
+
+</a>
+</div> 
+
+
+   <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-789.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxsports3.png" title="FOX Sports 3 en VIVO" alt="FOX Sports 3">
+
+</a>
+</div> 
+
+
+ 
+    <div>
+ 
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-392.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/winsports.webp" title="Win Sports + en VIVO" alt="Win Sports + (Win Sports Plus)">
+
+</a>
+</div> 
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-018.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/win.png" title="Win Sports  en VIVO" alt="Win Sports (Win Sports)"></a></div> 
+
+
+ 
+ 
+
+ 
+
+
+  <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-642.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tnt-sports.png" title="TNT Sports Chile en VIVO" alt="TNT Sports Chile">
+
+</a>
+</div> 
+ 
+ 
+
+
+
+   <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-012.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/liga1max.webp" title="Liga1 MAX en VIVO" alt="Liga 1 Max (Liga1)">
+
+</a>
+</div> 
+
+
+
+   <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-019.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/zaping.jpeg" title="zaping en VIVO" alt="zaping">
+
+</a>
+</div> 
+
+
+ <div>
+    
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-391.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/vtvplus.webp" title="VTV + en VIVO" alt="VTV Plus (VTV +)">
+
+</a>
+</div> 
+
+
+
+<div>
+
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/caracoltv/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/caracoltv.webp" title="Caracol TV en VIVO" alt="Caracol TV">
+
+</a>
+</div>
+ 
+ 
+ 
+
+
+
+   <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-929.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxsportsmx.png" title="FOX Sports Mexico en VIVO" alt="FOX Sports 1">
+
+</a>
+</div> 
+
+
+   <div>
+       
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-930.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxsports2mx.png" title="FOX Sports 2 Mexico en VIVO" alt="FOX Sports 2">
+
+</a>
+</div> 
+
+
+   <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-931.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/foxsports3mx.png" title="FOX Sports 3 Mexico en VIVO" alt="FOX Sports 3">
+
+</a>
+</div> 
+
+
+
+
+
+   <div>
+     
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-66.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tudn.png" title="TUDN en VIVO" alt="TUDN">
+
+</a>
+</div> 
+
+
+
+   <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-935.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/tudn.png" title="TUDN Mexico en VIVO" alt="TUDN Mexico">
+
+</a>
+</div> 
+
+
+
+
+
+  <div>
+      
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-925.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn.webp" title="ESPN Mexico en VIVO" alt="ESPN 1">
+
+</a>
+</div> 
+
+
+<div>
+  
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-926.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn2.webp" title="ESPN 2 Mexico en VIVO" alt="ESPN 2">
+
+</a>
+</div> 
+ 
+ 
+ <div>
+    
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-927.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn3.webp" title="ESPN 3 Mexico en VIVO" alt="ESPN 3">
+
+</a>
+</div> 
+
+
+ <div>
+    
+<a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/stream-928.php">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/espn4.webp" title="ESPN 4 Mexico en VIVO" alt="ESPN 4">
+
+</a>
+</div> 
+
+
+
+<div><a class="flex flex-col justify-evenly items-center h-full channel-link" href="/en-vivo/adultos/">
+<img class="w-28 h-28 object-contain rounded" loading="lazy" src="/img/adultos.webp" title="Canales para Adultos en VIVO" alt="Canales para Adultos (+18)">
+
+</a>
+</div> 
+
+
+
+
+
+  
+  
+  
+  
+
+  
+  
+  
+
+
+</div>
+</div>
+</section>
+
+
+</div>
+</main>
+<footer class="mt-4 bg-slate-200 text-zinc-600 py-4 dark:bg-slate-700">
+<div class="container mx-auto px-4 text-center">
+<p class="text-gray-800 dark:text-slate-300">Tele-libre.buzz - Canales en VIVO Online &copy; 2026</p> </a></center>
+</div>
+</footer>
+
+<script>$(document).ready(function() {
+    $('#buscar').on('input', function() {
+        var value = $(this).val().toLowerCase();
+        $('.channels > div').each(function() {
+            var imageAlt = $(this).find('img').attr('alt').toLowerCase();
+            var cardVisible = imageAlt.indexOf(value) > -1;
+
+        
+            if (cardVisible) {
+                $(this).removeClass('d-none'); 
+            } else {
+                $(this).addClass('d-none'); 
+            }
+        });
+    });
+});
+
+</script>
+<script type="text/javascript">var _Hasync= _Hasync|| [];
+_Hasync.push(['Histats.start', '1,4737022,4,0,0,0,00010000']);
+_Hasync.push(['Histats.fasi', '1']);
+_Hasync.push(['Histats.track_hits', '']);
+(function() {
+var hs = document.createElement('script'); hs.type = 'text/javascript'; hs.async = true;
+hs.src = ('//s10.histats.com/js15_as.js');
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(hs);
+})();</script>
+<noscript><a href="/" target="_blank"><img  src="//sstatic1.histats.com/0.gif?4737022&101" alt="free contador" border="0"></a></noscript>
+</body>
+</html>
