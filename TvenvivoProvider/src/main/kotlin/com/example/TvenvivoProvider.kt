@@ -587,6 +587,15 @@ class TvenvivoProvider : MainAPI() {
                 Log.d("Tvenvivo", "WebView: creado, cargando $streamUrl")
 
                 val infoDeferred = CompletableDeferred<PlaylistInfo?>()
+                val receivedResults = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
+                webView.addJavascriptInterface(object {
+                    @android.webkit.JavascriptInterface
+                    fun sendResult(data: String) {
+                        Log.d("Tvenvivo", "WebView: JS-Interface result: ${data.take(200)}")
+                        receivedResults.add(data)
+                    }
+                }, "AndroidBridge")
 
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -598,13 +607,53 @@ class TvenvivoProvider : MainAPI() {
                         if (!infoDeferred.isCompleted) {
                             view?.postDelayed({
                                 if (!infoDeferred.isCompleted) {
-                                    Log.d("Tvenvivo", "WebView: 5s post-load sin playlist.php, evaluando JS...")
-                                    view.evaluateJavascript("(function(){return {cookie:document.cookie,title:document.title,bodyLen:document.body?document.body.innerHTML.length:0}})()") { jsResult ->
-                                        Log.d("Tvenvivo", "WebView: JS result=$jsResult")
-                                        infoDeferred.complete(null)
-                                    }
+                                    Log.d("Tvenvivo", "WebView: 2s post-load, inyectando JS...")
+                                    val js1 = """
+                                        try {
+                                            var result = {
+                                                cookies: document.cookie,
+                                                bodyLen: document.body ? document.body.innerHTML.length : 0,
+                                                title: document.title,
+                                                url: location.href
+                                            };
+                                            var video = document.querySelector('video');
+                                            result.videoSrc = video ? (video.src || video.currentSrc || '') : '';
+                                            var iframes = document.querySelectorAll('iframe');
+                                            result.iframeCount = iframes.length;
+                                            result.iframeSrcs = [];
+                                            for (var i = 0; i < iframes.length; i++) {
+                                                result.iframeSrcs.push(iframes[i].src || '');
+                                            }
+                                            AndroidBridge.sendResult(JSON.stringify(result));
+                                        } catch(e) { AndroidBridge.sendResult(JSON.stringify({error: e.toString()})); }
+                                    """.trimIndent()
+                                    view.evaluateJavascript(js1, null)
                                 }
-                            }, 5000)
+                            }, 2000)
+                            view?.postDelayed({
+                                if (!infoDeferred.isCompleted) {
+                                    val js2 = """
+                                        try {
+                                            var plUrl = '$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig';
+                                            fetch(plUrl, {credentials: 'include'}).then(function(r) {
+                                                return r.text().then(function(t) {
+                                                    AndroidBridge.sendResult(JSON.stringify({
+                                                        type: 'fetchPlaylist',
+                                                        status: r.status,
+                                                        len: t.length,
+                                                        isM3u8: t.indexOf('#EXTM3U') >= 0,
+                                                        body: t.substring(0, 1000),
+                                                        url: plUrl
+                                                    }));
+                                                });
+                                            }).catch(function(e) {
+                                                AndroidBridge.sendResult(JSON.stringify({type: 'fetchPlaylist', error: e.toString()}));
+                                            });
+                                        } catch(e) { AndroidBridge.sendResult(JSON.stringify({error: e.toString()})); }
+                                    """.trimIndent()
+                                    view.evaluateJavascript(js2, null)
+                                }
+                            }, 4000)
                         }
                     }
 
@@ -626,7 +675,6 @@ class TvenvivoProvider : MainAPI() {
 
                     override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                         Log.e("Tvenvivo", "WebView: onReceivedError code=$errorCode desc=$description url=$failingUrl")
-                        if (!infoDeferred.isCompleted) infoDeferred.complete(null)
                     }
 
                     override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: android.webkit.WebResourceResponse?) {
@@ -646,10 +694,39 @@ class TvenvivoProvider : MainAPI() {
 
                 webView.loadUrl(streamUrl)
 
-                withTimeout(12000L) { infoDeferred.await() }
+                kotlinx.coroutines.withTimeoutOrNull(20_000L) {
+                    while (infoDeferred.isActive) {
+                        kotlinx.coroutines.delay(500)
+                        for (r in receivedResults) {
+                            receivedResults.remove(r)
+                            try {
+                                val json = org.json.JSONObject(r)
+                                if (json.has("type") && json.getString("type") == "fetchPlaylist") {
+                                    if (json.optInt("status") == 200 && json.optBoolean("isM3u8")) {
+                                        Log.d("Tvenvivo", "WebView: ¡fetchPlaylist M3U8 OK! (${json.optInt("len")} bytes)")
+                                        val cookies = json.optString("cookies", "")
+                                        infoDeferred.complete(PlaylistInfo(json.getString("url"), cookies))
+                                        return@withTimeoutOrNull
+                                    } else {
+                                        Log.d("Tvenvivo", "WebView: fetchPlaylist status=${json.optInt("status")} isM3u8=${json.optBoolean("isM3u8")} len=${json.optInt("len")} body=${json.optString("body").take(100)}")
+                                    }
+                                } else if (json.has("bodyLen")) {
+                                    Log.d("Tvenvivo", "WebView: page info: bodyLen=${json.optInt("bodyLen")} cookies='${json.optString("cookies").take(100)}' videoSrc=${json.optString("videoSrc")} iframes=${json.optInt("iframeCount")}")
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        if (!infoDeferred.isActive) break
+                    }
+                    infoDeferred.await()
+                }
+                if (infoDeferred.isCompleted && infoDeferred.getCompleted() != null) {
+                    infoDeferred.getCompleted()
+                } else null
             } catch (e: TimeoutCancellationException) {
-                Log.w("Tvenvivo", "WebView: timeout 12s (requests intercepted=$requestCount)")
+                Log.w("Tvenvivo", "WebView: timeout 20s (requests intercepted=$requestCount)")
                 null
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("Tvenvivo", "WebView exception: ${e::class.simpleName}: ${e.message}")
                 null
