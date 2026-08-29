@@ -290,17 +290,25 @@ class TelelibreProvider : MainAPI() {
             }
             val finalKeyId = keyId ?: fallbackKeyId
             val finalKey = key ?: fallbackKey
+            // Verificar que el MPD es accesible antes de emitir (evitar 2001 silencioso)
+            val mpdCheck = try {
+                val h = desktopHeaders + mapOf("Referer" to referer)
+                val res = app.get(mpdUrl, headers = h, timeout = 10000L)
+                Log.d("Telelibre", "MPD check ${res.code} len=${res.text.length} mpd=${res.text.contains("<MPD")}")
+                res.code
+            } catch (e: Exception) {
+                Log.e("Telelibre", "MPD check fail: ${e.message}")
+                0
+            }
             if (finalKeyId != null && finalKey != null) {
-                Log.d("Telelibre", "ClearKey $finalKeyId:$finalKey for $decodedGet")
-                // Intentar pasar clearkey via headers custom que algunos players interceptan, y también como DASH con drm
-                // CloudStream no expone clearkey directo, pero ExoPlayer puede resolver si el MPD tiene pssh y proveemos key via callback con tipo DASH + headers
+                Log.d("Telelibre", "ClearKey $finalKeyId:$finalKey for $decodedGet mpdCheck=$mpdCheck")
                 callback(newExtractorLink(name, "$name - DASH", mpdUrl, ExtractorLinkType.DASH) {
                     this.referer = referer
-                    this.headers = desktopHeaders + mapOf("X-ClearKey" to "$finalKeyId:$finalKey", "X-DRM-KeyId" to finalKeyId, "X-DRM-Key" to finalKey)
+                    this.headers = desktopHeaders + mapOf("Referer" to referer)
                 })
                 return true
             } else {
-                Log.w("Telelibre", "sin clearkey para $decodedGet, probando mpd sin drm")
+                Log.w("Telelibre", "sin clearkey para $decodedGet mpdCheck=$mpdCheck")
                 callback(newExtractorLink(name, name, mpdUrl, ExtractorLinkType.DASH) {
                     this.referer = referer
                 })
