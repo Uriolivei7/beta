@@ -125,6 +125,17 @@ class TeleonlineProvider : MainAPI() {
         return extractChannels(html).distinctBy { it.url }.map { it.toSearchResponse() }
     }
 
+    private fun cleanTitle(raw: String): String {
+        return raw
+            .replace("Ver ", "")
+            .replace(" en directo 🔴 Teleonline", "")
+            .replace(" en directo", "")
+            .replace(" - Teleonline", "")
+            .replace(" | Teleonline", "")
+            .replace(" 🔴", "")
+            .trim()
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         try {
             val html = safeGet(url, 20000L) ?: return null
@@ -146,13 +157,15 @@ class TeleonlineProvider : MainAPI() {
             Log.d("Teleonline", "  h1=$h1Text")
             Log.d("Teleonline", "  title=$pageTitle")
 
-            // Try multiple selectors for channel title
-            val title = ogTitle
-                ?: twitterTitle
-                ?: tituloManual
-                ?: h1EntryTitle
-                ?: h1Text
-                ?: pageTitle?.replace(" - Teleonline", "")?.replace(" | Teleonline", "")?.trim()
+            // PRIORITY 1: .titulo-canal-manual (clean name)
+            // PRIORITY 2: h1 (clean name)
+            // PRIORITY 3: og:title / title but CLEANED
+            val title = tituloManual
+                ?: h1Text?.let { cleanTitle(it) }
+                ?: ogTitle?.let { cleanTitle(it) }
+                ?: twitterTitle?.let { cleanTitle(it) }
+                ?: h1EntryTitle?.let { cleanTitle(it) }
+                ?: pageTitle?.let { cleanTitle(it) }
                 ?: "Canal"
 
             Log.d("Teleonline", "  TÍTULO FINAL: '$title'")
