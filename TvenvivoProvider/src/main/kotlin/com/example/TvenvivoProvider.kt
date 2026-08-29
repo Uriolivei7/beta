@@ -610,6 +610,27 @@ class TvenvivoProvider : MainAPI() {
                             Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! (${cookies.length} cookies)")
                             infoDeferred.complete(PlaylistInfo(url, cookies))
                         }
+                        if (url.contains("stream.php") && requestCount <= 1) {
+                            try {
+                                val u = java.net.URL(url)
+                                val conn = u.openConnection() as java.net.HttpURLConnection
+                                conn.requestMethod = "GET"
+                                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                                conn.connectTimeout = 15000
+                                conn.readTimeout = 15000
+                                val html = conn.inputStream.bufferedReader().readText()
+                                conn.disconnect()
+                                val fakeTop = "<script>window.top={location:{replace:function(){}},parent:window,frames:[],length:0,document:document};window.top.window=window.top;</script>"
+                                val modified = html.replace("<head>", "<head>$fakeTop", ignoreCase = true)
+                                    .replace("<HEAD>", "<HEAD>$fakeTop", ignoreCase = true)
+                                Log.d("Tvenvivo", "WebView: stream.php interceptado e inyectado fakeTop (${modified.length} bytes)")
+                                val mimeType = conn.contentType ?: "text/html"
+                                val encoding = if (mimeType.contains("charset=", true)) "" else "UTF-8"
+                                return WebResourceResponse("text/html", "UTF-8", modified.byteInputStream())
+                            } catch (e: Exception) {
+                                Log.e("Tvenvivo", "WebView: error intercepted stream.php: ${e.message}")
+                            }
+                        }
                         return null
                     }
 
@@ -632,7 +653,7 @@ class TvenvivoProvider : MainAPI() {
                     }
                 }
 
-                webView.loadUrl("data:text/html,<html><body style='margin:0;padding:0;overflow:hidden'><iframe id='player' src='$streamUrl' style='width:100vw;height:100vh;border:none;position:fixed;top:0;left:0'></iframe></body></html>")
+                webView.loadUrl(streamUrl)
 
                 withTimeout(25000L) { infoDeferred.await() }
             } catch (e: TimeoutCancellationException) {
