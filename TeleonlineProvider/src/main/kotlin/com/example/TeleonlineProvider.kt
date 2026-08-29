@@ -156,7 +156,7 @@ class TeleonlineProvider : MainAPI() {
             val contentType = response.headers?.get("Content-Type") ?: ""
             val body = response.text
 
-            // Handle Markdown pages (text/markdown)
+            // Handle Markdown pages (text/markdown) - e.g. /canal/golden/
             if (contentType.contains("markdown") || contentType.contains("text/plain")) {
                 val mdTitle = extractTitleFromMarkdown(body)
                 if (mdTitle != null) {
@@ -169,36 +169,13 @@ class TeleonlineProvider : MainAPI() {
             val html = body
             val doc = Jsoup.parse(html)
 
-            // Log all title candidates for debugging
-            val ogTitle = doc.selectFirst("meta[property='og:title']")?.attr("content")
-            val twitterTitle = doc.selectFirst("meta[name='twitter:title']")?.attr("content")
-            val tituloManual = doc.selectFirst(".titulo-canal-manual")?.text()
-            val h1EntryTitle = doc.selectFirst("h1.entry-title")?.text()
-            val h1Text = doc.selectFirst("h1")?.text()
-            val pageTitle = doc.selectFirst("title")?.text()
-
-            Log.d("Teleonline", "load: url=$url")
-            Log.d("Teleonline", "  og:title=$ogTitle")
-            Log.d("Teleonline", "  twitter:title=$twitterTitle")
-            Log.d("Teleonline", "  .titulo-canal-manual=$tituloManual")
-            Log.d("Teleonline", "  h1.entry-title=$h1EntryTitle")
-            Log.d("Teleonline", "  h1=$h1Text")
-            Log.d("Teleonline", "  title=$pageTitle")
-
-            // PRIORITY 1: .titulo-canal-manual (clean name)
-            // PRIORITY 2: h1 (clean name)
-            // PRIORITY 3: og:title / title but CLEANED
-            val title = tituloManual
-                ?: h1Text?.let { cleanTitle(it) }
-                ?: ogTitle?.let { cleanTitle(it) }
-                ?: twitterTitle?.let { cleanTitle(it) }
-                ?: h1EntryTitle?.let { cleanTitle(it) }
-                ?: pageTitle?.let { cleanTitle(it) }
+            // Simple title extraction (like working version 931add4a)
+            val title = doc.selectFirst(".titulo-canal-manual")?.text()
+                ?: doc.selectFirst("h1")?.text()?.let { cleanTitle(it) }
+                ?: doc.selectFirst("title")?.text()?.let { cleanTitle(it) }
                 ?: "Canal"
 
-            Log.d("Teleonline", "  TÍTULO FINAL: '$title'")
-
-            // Extract channel logo (not og:image which is generic)
+            // Simple poster extraction (like working version 931add4a)
             var poster = doc.selectFirst(".logo-channel img")?.attr("src")
             if (poster.isNullOrBlank()) {
                 val jsonLd = Regex(""""logo"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""").find(html)
@@ -236,6 +213,39 @@ class TeleonlineProvider : MainAPI() {
             }?.text ?: return false
 
             if (mainHtml.contains("One moment") || mainHtml.contains("Please wait")) return false
+
+            // Detect Markdown page (no player)
+            val isMarkdown = mainHtml.trim().startsWith("# ") || mainHtml.contains("```") && !mainHtml.contains("<html")
+            if (isMarkdown) {
+                Log.w("Teleonline", "loadLinks: Página es Markdown (sin player) para $data")
+                // Try to get post ID from slug and try channel API
+                val slug = data.substringAfterLast("/").removeSuffix("/")
+                try {
+                    val apiResp = app.get("https://teleonline.org/wp-json/wp/v2/posts?search=$slug&per_page=1", headers = desktopHeaders, interceptor = cfKiller)
+                    if (apiResp.isSuccessful) {
+                        val json = apiResp.text
+                        val postId = Regex(""""id"\s*:\s*(\d+)""").find(json)?.groupValues?.get(1)
+                        if (postId != null) {
+                            Log.d("Teleonline", "loadLinks: Post ID encontrado: $postId, intentando API canal...")
+                            val channelResp = app.get("https://teleonline.org/wp-json/teleonline/v1/channel/$postId", headers = desktopHeaders + mapOf("Referer" to data), interceptor = cfKiller)
+                            if (channelResp.isSuccessful) {
+                                val channelJson = channelResp.text
+                                // Try to extract m3u8 from channel API response
+                                val m3u8Matches = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").findAll(channelJson).toList()
+                                if (m3u8Matches.isNotEmpty()) {
+                                    m3u8Matches.forEach { m ->
+                                        callback(newExtractorLink(name, "$name - API", m.value, ExtractorLinkType.M3U8) {
+                                            this.headers = desktopHeaders + mapOf("Referer" to data)
+                                        })
+                                    }
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+                return false
+            }
 
             // Try base64-encoded M3U8 (teleonline stores them as window.atob('...'))
             val b64Pattern = Regex("""(?:atob|btoa)\s*\(\s*['"]([A-Za-z0-9+/=]+)['"]""")
