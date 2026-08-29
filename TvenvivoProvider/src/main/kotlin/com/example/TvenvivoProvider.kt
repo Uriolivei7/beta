@@ -496,8 +496,12 @@ class TvenvivoProvider : MainAPI() {
 
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
                 //    intercept playlist.php request to capture JS-generated cookies
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback")
-                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl)
+                // También intentar el playlist JS (id=...) si existe
+                val jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
+                    .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
+                    ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
+                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback (direct=${playlistUrl.take(80)} js=${jsPlaylistUrlForWv?.take(80) ?: "null"})")
+                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl, altPlaylistUrl = jsPlaylistUrlForWv)
                 if (playlistInfo != null) {
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url} body=${playlistInfo.body.length}")
                     if (playlistInfo.body.contains("#EXTM3U")) {
@@ -550,7 +554,8 @@ class TvenvivoProvider : MainAPI() {
         target: String,
         sig: String,
         streamOrigin: String,
-        playlistUrl: String
+        playlistUrl: String,
+        altPlaylistUrl: String? = null
     ): PlaylistInfo? {
         return withContext(Dispatchers.Main) {
             val appCtx = pluginContext?.applicationContext ?: return@withContext null
@@ -565,19 +570,25 @@ class TvenvivoProvider : MainAPI() {
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
                 }
-                Log.d("Tvenvivo", "WebView: creado, cargando $pageUrl")
+                Log.d("Tvenvivo", "WebView: creado UA=${webView.settings.userAgentString.take(60)}, cargando $pageUrl")
 
                 val infoDeferred = CompletableDeferred<PlaylistInfo?>()
 
                 webView.addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onResult(data: String) {
-                        Log.d("Tvenvivo", "WebView: Bridge result (${data.length} chars): ${data.take(200)}")
+                        Log.d("Tvenvivo", "WebView: Bridge result (${data.length} chars): ${data.take(400)}")
                         if (!infoDeferred.isCompleted) {
-                            if (data.isNotEmpty() && data.contains("#EXTM3U")) {
-                                Log.d("Tvenvivo", "WebView: ¡M3U8 capturado! (${data.length} bytes)")
-                                infoDeferred.complete(PlaylistInfo(playlistUrl, body = data))
+                            if (data.contains("#EXTM3U")) {
+                                // Extraer solo el body después del prefijo STATUS
+                                val body = if (data.startsWith("STATUS:")) data.substringAfter("|", data).substringAfter("|", data) else data
+                                Log.d("Tvenvivo", "WebView: ¡M3U8 capturado! (${body.length} bytes)")
+                                infoDeferred.complete(PlaylistInfo(playlistUrl, body = body))
+                            } else if (data.startsWith("STATUS:403") || data.startsWith("STATUS:0")) {
+                                Log.w("Tvenvivo", "WebView: Bridge 403/0 → ${data.take(300)}")
+                                // No completar, dejar que timeout ocurra para probar siguiente opción
                             }
                         }
                     }
@@ -593,26 +604,41 @@ class TvenvivoProvider : MainAPI() {
                         if (!infoDeferred.isCompleted) {
                             mainHandler.postDelayed({
                                 if (!infoDeferred.isCompleted) {
-                                    Log.d("Tvenvivo", "WebView: inyectando fetch a playlist.php...")
+                                    val altUrl = altPlaylistUrl ?: ""
+                                    Log.d("Tvenvivo", "WebView: inyectando XHR a playlist.php... url=${playlistUrl.take(60)} alt=${altUrl.take(60)}")
                                     val js = """
                                         (function() {
-                                            try {
-                                                var url = '$playlistUrl';
-                                                var xhr = new XMLHttpRequest();
-                                                xhr.open('GET', url, true);
-                                                xhr.withCredentials = true;
-                                                xhr.onreadystatechange = function() {
-                                                    if (xhr.readyState === 4) {
-                                                        NativeBridge.onResult(xhr.responseText || '');
-                                                    }
-                                                };
-                                                xhr.onerror = function() {
-                                                    NativeBridge.onResult('XHR_ERROR:' + xhr.status);
-                                                };
-                                                xhr.send();
-                                            } catch(e) {
-                                                NativeBridge.onResult('ERROR:' + e.toString());
+                                            function doXhr(url, isRetry) {
+                                                try {
+                                                    var xhr = new XMLHttpRequest();
+                                                    xhr.open('GET', url, true);
+                                                    xhr.withCredentials = true;
+                                                    try { xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); } catch(e) {}
+                                                    try { xhr.setRequestHeader('Accept', '*/*'); } catch(e) {}
+                                                    xhr.timeout = 8000;
+                                                    xhr.onreadystatechange = function() {
+                                                        if (xhr.readyState === 4) {
+                                                            var txt = xhr.responseText || '';
+                                                            var label = isRetry ? 'RETRY:' : '';
+                                                            NativeBridge.onResult(label + 'STATUS:' + xhr.status + '|LEN:' + txt.length + '|' + txt.substring(0,500));
+                                                            if (!isRetry && xhr.status === 403 && '${altUrl}'.length > 0 && '${altUrl}' !== url) {
+                                                                setTimeout(function(){ doXhr('${altUrl}', true); }, 500);
+                                                            }
+                                                        }
+                                                    };
+                                                    xhr.onerror = function() {
+                                                        NativeBridge.onResult((isRetry?'RETRY:':'') + 'XHR_ERROR:' + xhr.status);
+                                                        if (!isRetry && '${altUrl}'.length > 0 && '${altUrl}' !== url) {
+                                                            setTimeout(function(){ doXhr('${altUrl}', true); }, 500);
+                                                        }
+                                                    };
+                                                    xhr.ontimeout = function() { NativeBridge.onResult((isRetry?'RETRY:':'') + 'TIMEOUT'); };
+                                                    xhr.send();
+                                                } catch(e) {
+                                                    NativeBridge.onResult('ERROR:' + e.toString());
+                                                }
                                             }
+                                            doXhr('$playlistUrl', false);
                                         })();
                                     """.trimIndent()
                                     view?.evaluateJavascript(js, null)
@@ -628,8 +654,9 @@ class TvenvivoProvider : MainAPI() {
                         val url = request?.url?.toString() ?: return null
                         requestCount++
                         val method = request.method ?: "?"
-                        if (url.contains("playlist.php") && !infoDeferred.isCompleted) {
-                            Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! → ${url.take(150)}")
+                        if (url.contains("playlist.php")) {
+                            val hdrs = request.requestHeaders
+                            Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! method=$method hdrs=${hdrs?.keys?.joinToString()} Referer=${hdrs?.get("Referer")?.take(80)} XReq=${hdrs?.get("X-Requested-With")} UA=${hdrs?.get("User-Agent")?.take(60)} → ${url.take(120)}")
                         }
                         return null
                     }
