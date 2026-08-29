@@ -136,9 +136,37 @@ class TeleonlineProvider : MainAPI() {
             .trim()
     }
 
+    private fun extractTitleFromMarkdown(markdown: String): String? {
+        val lines = markdown.lines()
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("# ")) {
+                return cleanTitle(trimmed.substring(2).trim())
+            }
+        }
+        return null
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val html = safeGet(url, 20000L) ?: return null
+            val response = withTimeoutOrNull(20000L) {
+                app.get(url, headers = desktopHeaders, interceptor = cfKiller)
+            } ?: return null
+
+            val contentType = response.headers?.get("Content-Type") ?: ""
+            val body = response.text
+
+            // Handle Markdown pages (text/markdown)
+            if (contentType.contains("markdown") || contentType.contains("text/plain")) {
+                val mdTitle = extractTitleFromMarkdown(body)
+                if (mdTitle != null) {
+                    Log.d("Teleonline", "load (markdown): url=$url, title=$mdTitle")
+                    val episodes = listOf(newEpisode(url) { this.name = "En Vivo" })
+                    return newTvSeriesLoadResponse(mdTitle, url, TvType.Live, episodes)
+                }
+            }
+
+            val html = body
             val doc = Jsoup.parse(html)
 
             // Log all title candidates for debugging
