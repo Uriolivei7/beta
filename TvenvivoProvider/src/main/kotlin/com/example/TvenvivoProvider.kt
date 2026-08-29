@@ -12,8 +12,19 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.TimeoutCancellationException
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 
 class TvenvivoProvider : MainAPI() {
+    companion object {
+        var pluginContext: android.content.Context? = null
+    }
     override var mainUrl = "https://www.tvenvivo2.com/"
     override var name = "TVenVIVO"
 
@@ -481,6 +492,44 @@ class TvenvivoProvider : MainAPI() {
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php ${streamResp?.code ?: "timeout"}")
                 }
 
+                // 6. WebView fallback: load stream.php in WebView, let JS execute,
+                //    intercept playlist.php request to capture JS-generated cookies
+                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback")
+                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders)
+                if (playlistInfo != null) {
+                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url}")
+                    val wvHeaders = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer" to streamUrl,
+                        "Cookie" to playlistInfo.cookies,
+                        "Sec-Fetch-Site" to "same-origin",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Dest" to "empty"
+                    )
+                    val wvResp = withTimeoutOrNull(10000L) {
+                        app.get(playlistInfo.url, timeout = 10000L, headers = wvHeaders)
+                    }
+                    val wvBody = wvResp?.text
+                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView playlist → ${wvResp?.code ?: "null"} len=${wvBody?.length ?: 0} m3u8=${wvBody?.contains("#EXTM3U") ?: false}")
+                    if (wvResp != null && wvResp.isSuccessful && wvBody != null) {
+                        if (wvBody.contains("#EXTM3U")) {
+                            Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 desde WebView!")
+                            emitLink(displayIndex, playlistInfo.url, streamUrl, callback, mapOf("Cookie" to playlistInfo.cookies))
+                            successfulOptionUrl[targetUrl] = rawPlayerUrl
+                            return@withTimeout true
+                        }
+                        val embedded = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(wvBody)?.groupValues?.get(1)
+                        if (embedded != null) {
+                            Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido desde WebView: $embedded")
+                            emitLink(displayIndex, embedded, streamUrl, callback, mapOf("Cookie" to playlistInfo.cookies))
+                            successfulOptionUrl[targetUrl] = rawPlayerUrl
+                            return@withTimeout true
+                        }
+                    }
+                } else {
+                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView sin resultado")
+                }
+
                 Log.w("Tvenvivo", "Opción ${displayIndex + 1}: sin enlaces")
                 false
             }
@@ -495,7 +544,11 @@ class TvenvivoProvider : MainAPI() {
         }
     }
 
-    private suspend fun emitLink(displayIndex: Int, url: String, referer: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun emitLink(displayIndex: Int, url: String, referer: String, callback: (ExtractorLink) -> Unit, extraHeaders: Map<String, String> = emptyMap()) {
+        val headers = mutableMapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer" to referer
+        ).apply { putAll(extraHeaders) }
         callback(
             newExtractorLink(
                 source = this.name,
@@ -503,12 +556,69 @@ class TvenvivoProvider : MainAPI() {
                 url = url,
                 type = ExtractorLinkType.M3U8
             ) {
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to referer
-                )
+                this.headers = headers
             }
         )
+    }
+
+    private data class PlaylistInfo(val url: String, val cookies: String)
+
+    private suspend fun interceptPlaylistViaWebView(
+        streamUrl: String,
+        mainHeaders: Map<String, String>
+    ): PlaylistInfo? {
+        return withContext(Dispatchers.Main) {
+            val appCtx = pluginContext?.applicationContext ?: return@withContext null
+            val webView = WebView(appCtx)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+            }
+
+            val infoDeferred = CompletableDeferred<PlaylistInfo?>()
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): WebResourceResponse? {
+                    val url = request?.url?.toString() ?: return null
+                    if (url.contains("playlist.php") && !infoDeferred.isCompleted) {
+                        val cookies = request.requestHeaders?.get("Cookie") ?: ""
+                        Log.d("Tvenvivo", "WebView: playlist.php interceptado (${cookies.length} cookies)")
+                        infoDeferred.complete(PlaylistInfo(url, cookies))
+                    }
+                    return null
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    if (!infoDeferred.isCompleted) {
+                        view?.postDelayed({
+                            if (!infoDeferred.isCompleted) {
+                                Log.d("Tvenvivo", "WebView: page finished sin playlist.php")
+                                infoDeferred.complete(null)
+                            }
+                        }, 5000)
+                    }
+                }
+            }
+
+            try {
+                val loadHeaders = java.util.HashMap<String, String>()
+                loadHeaders["Sec-Fetch-Site"] = "cross-site"
+                webView.loadUrl(streamUrl, loadHeaders)
+
+                withTimeout(15000L) { infoDeferred.await() }
+            } catch (e: TimeoutCancellationException) {
+                Log.w("Tvenvivo", "WebView: timeout 15s")
+                null
+            } catch (e: Exception) {
+                Log.e("Tvenvivo", "WebView error: ${e.message}")
+                null
+            } finally {
+                try { webView.destroy() } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun extractM3u8FromHtml(html: String, strict: Boolean = true): String? {

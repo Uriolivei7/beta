@@ -8,6 +8,7 @@ import android.content.Context
 class TvenvivoPlugin: Plugin() {
     override fun load(context: Context) {
         // All providers should be added in this manner. Please don't edit the providers list directly.
+        TvenvivoProvider.pluginContext = context
         registerMainAPI(TvenvivoProvider())
 
     }
