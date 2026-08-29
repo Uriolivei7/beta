@@ -366,7 +366,7 @@ class TvenvivoProvider : MainAPI() {
 
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → $playlistUrl")
                 val plResp = withTimeoutOrNull(15000L) {
-                    app.get(playlistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies)
+                    app.get(playlistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies, interceptor = cfKiller)
                 }
                 val plBody = plResp?.text
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → ${plResp?.code ?: "null"} len=${plBody?.length ?: 0} m3u8=${plBody?.contains("#EXTM3U") ?: false}")
@@ -442,7 +442,7 @@ class TvenvivoProvider : MainAPI() {
                             "Sec-Fetch-Dest" to "empty"
                         )
                         val pl2Resp = withTimeoutOrNull(15000L) {
-                            app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
+                            app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies, interceptor = cfKiller)
                         }
                         val pl2Body = pl2Resp?.text
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → ${pl2Resp?.code ?: "null"} len=${pl2Body?.length ?: 0} m3u8=${pl2Body?.contains("#EXTM3U") ?: false}")
@@ -469,7 +469,7 @@ class TvenvivoProvider : MainAPI() {
                         val origPlUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original con stream cookies → $origPlUrl")
                         val pl3Resp = withTimeoutOrNull(15000L) {
-                            app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
+                            app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies, interceptor = cfKiller)
                         }
                         val pl3Body = pl3Resp?.text
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original → ${pl3Resp?.code ?: "null"} len=${pl3Body?.length ?: 0} m3u8=${pl3Body?.contains("#EXTM3U") ?: false}")
@@ -495,7 +495,7 @@ class TvenvivoProvider : MainAPI() {
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
                 //    intercept playlist.php request to capture JS-generated cookies
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback")
-                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders)
+                val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin)
                 if (playlistInfo != null) {
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url}")
                     val wvHeaders = mapOf(
@@ -507,7 +507,7 @@ class TvenvivoProvider : MainAPI() {
                         "Sec-Fetch-Dest" to "empty"
                     )
                     val wvResp = withTimeoutOrNull(10000L) {
-                        app.get(playlistInfo.url, timeout = 10000L, headers = wvHeaders)
+                        app.get(playlistInfo.url, timeout = 10000L, headers = wvHeaders, interceptor = cfKiller)
                     }
                     val wvBody = wvResp?.text
                     Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView playlist → ${wvResp?.code ?: "null"} len=${wvBody?.length ?: 0} m3u8=${wvBody?.contains("#EXTM3U") ?: false}")
@@ -565,58 +565,87 @@ class TvenvivoProvider : MainAPI() {
 
     private suspend fun interceptPlaylistViaWebView(
         streamUrl: String,
-        mainHeaders: Map<String, String>
+        mainHeaders: Map<String, String>,
+        canal: String,
+        target: String,
+        sig: String,
+        streamOrigin: String
     ): PlaylistInfo? {
         return withContext(Dispatchers.Main) {
             val appCtx = pluginContext?.applicationContext ?: return@withContext null
-            val webView = WebView(appCtx)
-            webView.settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-            }
-
-            val infoDeferred = CompletableDeferred<PlaylistInfo?>()
-
-            webView.webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(
-                    view: WebView?,
-                    request: WebResourceRequest?
-                ): WebResourceResponse? {
-                    val url = request?.url?.toString() ?: return null
-                    if (url.contains("playlist.php") && !infoDeferred.isCompleted) {
-                        val cookies = request.requestHeaders?.get("Cookie") ?: ""
-                        Log.d("Tvenvivo", "WebView: playlist.php interceptado (${cookies.length} cookies)")
-                        infoDeferred.complete(PlaylistInfo(url, cookies))
-                    }
-                    return null
-                }
-
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    if (!infoDeferred.isCompleted) {
-                        view?.postDelayed({
-                            if (!infoDeferred.isCompleted) {
-                                Log.d("Tvenvivo", "WebView: page finished sin playlist.php")
-                                infoDeferred.complete(null)
-                            }
-                        }, 5000)
-                    }
-                }
-            }
-
+            var webView: WebView? = null
+            var requestCount = 0
             try {
-                val loadHeaders = java.util.HashMap<String, String>()
-                loadHeaders["Sec-Fetch-Site"] = "cross-site"
-                webView.loadUrl(streamUrl, loadHeaders)
+                webView = WebView(appCtx)
+                webView.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    mediaPlaybackRequiresUserGesture = false
+                    mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                }
+                Log.d("Tvenvivo", "WebView: creado, cargando $streamUrl")
 
-                withTimeout(15000L) { infoDeferred.await() }
+                val infoDeferred = CompletableDeferred<PlaylistInfo?>()
+
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        Log.d("Tvenvivo", "WebView: onPageStarted url=$url")
+                    }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        Log.d("Tvenvivo", "WebView: onPageFinished url=$url (requests intercepted=$requestCount)")
+                        if (!infoDeferred.isCompleted) {
+                            view?.postDelayed({
+                                if (!infoDeferred.isCompleted) {
+                                    Log.d("Tvenvivo", "WebView: 5s post-load sin playlist.php, evaluando JS...")
+                                    view.evaluateJavascript("(function(){return {cookie:document.cookie,title:document.title,bodyLen:document.body?document.body.innerHTML.length:0}})()") { jsResult ->
+                                        Log.d("Tvenvivo", "WebView: JS result=$jsResult")
+                                        infoDeferred.complete(null)
+                                    }
+                                }
+                            }, 5000)
+                        }
+                    }
+
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?
+                    ): WebResourceResponse? {
+                        val url = request?.url?.toString() ?: return null
+                        requestCount++
+                        val method = request.method ?: "?"
+                        Log.d("Tvenvivo", "WebView: intercept [$method] #${requestCount} → ${url.take(150)}")
+                        if (url.contains("playlist.php") && !infoDeferred.isCompleted) {
+                            val cookies = request.requestHeaders?.get("Cookie") ?: ""
+                            Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! (${cookies.length} cookies)")
+                            infoDeferred.complete(PlaylistInfo(url, cookies))
+                        }
+                        return null
+                    }
+
+                    override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                        Log.e("Tvenvivo", "WebView: onReceivedError code=$errorCode desc=$description url=$failingUrl")
+                        if (!infoDeferred.isCompleted) infoDeferred.complete(null)
+                    }
+
+                    override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: android.webkit.WebResourceResponse?) {
+                        val url = request?.url?.toString() ?: "?"
+                        Log.w("Tvenvivo", "WebView: HTTP ${errorResponse?.statusCode} → ${url.take(100)}")
+                    }
+                }
+
+                webView.loadUrl(streamUrl)
+
+                withTimeout(12000L) { infoDeferred.await() }
             } catch (e: TimeoutCancellationException) {
-                Log.w("Tvenvivo", "WebView: timeout 15s")
+                Log.w("Tvenvivo", "WebView: timeout 12s (requests intercepted=$requestCount)")
                 null
             } catch (e: Exception) {
-                Log.e("Tvenvivo", "WebView error: ${e.message}")
+                Log.e("Tvenvivo", "WebView exception: ${e::class.simpleName}: ${e.message}")
                 null
             } finally {
-                try { webView.destroy() } catch (_: Exception) {}
+                try { webView?.destroy() } catch (_: Exception) {}
             }
         }
     }
