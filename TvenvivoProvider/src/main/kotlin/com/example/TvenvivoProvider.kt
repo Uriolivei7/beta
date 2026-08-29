@@ -633,6 +633,15 @@ class TvenvivoProvider : MainAPI() {
                         val url = request?.url?.toString() ?: "?"
                         Log.w("Tvenvivo", "WebView: HTTP ${errorResponse?.statusCode} → ${url.take(100)}")
                     }
+
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        val url = request?.url?.toString() ?: return false
+                        if (url.contains("tvenvivo2.com")) {
+                            Log.d("Tvenvivo", "WebView: REDIRECT BLOQUEADO → ${url.take(80)}")
+                            return true
+                        }
+                        return false
+                    }
                 }
 
                 webView.loadUrl(streamUrl)
