@@ -91,7 +91,7 @@ class FuegoCineProvider : MainAPI() {
     /** Build a clean display title from a URL slug */
     private fun slugToTitle(url: String): String {
         return url.substringAfterLast("/").substringBefore(".html")
-            .replace("-", " ").replaceFirstChar { it.uppercase() }
+            .replace("-", " ").let { s -> if (s.isNotEmpty()) s[0].uppercaseChar() + s.substring(1) else s }
     }
 
     /**
