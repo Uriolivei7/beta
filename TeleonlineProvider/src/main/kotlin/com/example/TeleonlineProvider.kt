@@ -130,9 +130,13 @@ class TeleonlineProvider : MainAPI() {
             val html = safeGet(url, 20000L) ?: return null
             val doc = Jsoup.parse(html)
 
-            val title = doc.selectFirst(".titulo-canal-manual")?.text()
+            // Try multiple selectors for channel title
+            val title = doc.selectFirst("meta[property='og:title']")?.attr("content")
+                ?: doc.selectFirst("meta[name='twitter:title']")?.attr("content")
+                ?: doc.selectFirst(".titulo-canal-manual")?.text()
+                ?: doc.selectFirst("h1.entry-title")?.text()
                 ?: doc.selectFirst("h1")?.text()
-                ?: doc.selectFirst("title")?.text()
+                ?: doc.selectFirst("title")?.text()?.replace(" - Teleonline", "")?.replace(" | Teleonline", "")?.trim()
                 ?: "Canal"
 
             // Extract channel logo (not og:image which is generic)
