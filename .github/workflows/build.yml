@@ -58,7 +58,12 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make --stacktrace
+          for i in 1 2 3; do
+            echo "Intento $i de build..."
+            ./gradlew make --stacktrace --refresh-dependencies --no-build-cache && break
+            echo "Intento $i falló, esperando 30s..."
+            sleep 30
+          done
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No cs3 found"
 
       - name: Restore My Custom JSON
