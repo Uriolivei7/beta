@@ -260,7 +260,13 @@ class UniqueStreamProvider : MainAPI() {
             val sections = listOf(
                 Triple("Nuevos", "$apiUrl/videos/new?limit=20", false),
                 Triple("Populares", "$apiUrl/videos/popular?limit=20", false),
-                Triple("Tendencias", "$apiUrl/videos/trending?limit=20", false),
+                Triple("Acción", "$apiUrl/browse?categories=action,popular&type=all&limit=20", true),
+                Triple("Aventura", "$apiUrl/browse?categories=adventure,popular&type=all&limit=20", true),
+                Triple("Comedia", "$apiUrl/browse?categories=comedy,popular&type=all&limit=20", true),
+                Triple("Drama", "$apiUrl/browse?categories=drama,popular&type=all&limit=20", true),
+                Triple("Fantasía", "$apiUrl/browse?categories=fantasy,popular&type=all&limit=20", true),
+                Triple("Sci-Fi", "$apiUrl/browse?categories=sci-fi,popular&type=all&limit=20", true),
+                Triple("Películas", "$apiUrl/videos/movies?sort=popular&limit=20", false),
             )
 
             val now = System.currentTimeMillis()
