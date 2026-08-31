@@ -376,18 +376,28 @@ object MegaExtractor {
 
     private fun handleRangeRequest(socket: Socket, output: java.io.OutputStream, startByte: Long, endByte: Long, tempFile: File, state: DownloadState) {
         try {
-            if (startByte >= state.downloadedBytes.get() && !state.downloadComplete) {
-                Log.d(TAG, "Proxy Range: wait for byte $startByte (have ${state.downloadedBytes.get()})")
-                state.waitForData(startByte + 1, 60000)
-            }
-
-            val available = if (state.downloadComplete) state.fileSize else state.downloadedBytes.get()
-            if (startByte >= available) {
+            if (startByte >= state.fileSize) {
                 val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${state.fileSize}\r\nConnection: close\r\n\r\n"
                 output.write(resp.toByteArray()); output.flush(); socket.close()
                 return
             }
-            val actualEnd = endByte.coerceAtMost(available - 1)
+
+            val available = state.downloadedBytes.get()
+            if (startByte >= available && !state.downloadComplete) {
+                val gap = startByte - available
+                val waitMs = if (gap > 10 * 1024 * 1024) 0L else 10000L
+                if (waitMs > 0) {
+                    state.waitForData(startByte + 1, waitMs)
+                }
+            }
+
+            val availableAfter = if (state.downloadComplete) state.fileSize else state.downloadedBytes.get()
+            if (startByte >= availableAfter) {
+                val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${state.fileSize}\r\nConnection: close\r\n\r\n"
+                output.write(resp.toByteArray()); output.flush(); socket.close()
+                return
+            }
+            val actualEnd = endByte.coerceAtMost(availableAfter - 1)
             val contentLength = actualEnd - startByte + 1
 
             val resp = buildString {
@@ -411,10 +421,8 @@ object MegaExtractor {
                 rem -= n
             }
             raf.close(); output.flush()
-            Log.d(TAG, "Proxy Range served: $startByte-$actualEnd ($contentLength bytes)")
             socket.close()
         } catch (e: Exception) {
-            Log.e(TAG, "Proxy Range err: ${e.message}")
             try { socket.close() } catch (_: Exception) {}
         }
     }
