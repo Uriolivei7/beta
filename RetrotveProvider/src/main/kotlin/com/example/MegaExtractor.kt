@@ -315,6 +315,7 @@ object MegaExtractor {
                 raf.seek(pos)
                 val buf = ByteArray(256 * 1024)
                 var written = 0L
+                var loggedFirstBytes = false
                 while (true) {
                     val n = enc.read(buf)
                     if (n == -1) break
@@ -322,6 +323,12 @@ object MegaExtractor {
                     raf.write(dec)
                     written += dec.size
                     state.downloadedBytes.addAndGet(dec.size.toLong())
+                    if (!loggedFirstBytes && dec.isNotEmpty() && pos == 0L) {
+                        val hex = dec.take(32).joinToString("") { "%02x".format(it) }
+                        val ascii = dec.take(32).map { b -> if (b in 32..126) b.toInt().toChar() else '.' }.joinToString("")
+                        Log.d(TAG, "MEGA T$threadIdx first32: hex=$hex ascii=$ascii")
+                        loggedFirstBytes = true
+                    }
                     state.notifyProgress()
                 }
                 if (written > 0) {
