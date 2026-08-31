@@ -393,13 +393,14 @@ object MegaExtractor {
 
             if (!state.downloadComplete) {
                 Log.d(TAG, "Proxy: waiting for download to complete (${state.downloadedBytes.get()}/${state.fileSize})...")
-                state.waitForData(state.fileSize, 300000)
-                if (!state.downloadComplete) {
-                    Log.w(TAG, "Proxy: download not complete after 300s, rejecting")
+                val ready = state.waitForData(state.fileSize, 300000)
+                val have = state.downloadedBytes.get()
+                if (!ready && have < state.fileSize && !state.downloadComplete) {
+                    Log.w(TAG, "Proxy: download not ready after 300s, rejecting")
                     sendError(socket, 503, "Download not complete")
                     return
                 }
-                Log.d(TAG, "Proxy: download complete, serving ${state.fileSize} bytes")
+                Log.d(TAG, "Proxy: download ready ($have/${state.fileSize}), serving")
             }
 
             val input = BufferedReader(java.io.InputStreamReader(socket.getInputStream()))
@@ -573,13 +574,14 @@ object MegaExtractor {
 
                 Log.d(TAG, "Waiting for download to complete before returning URL...")
                 val startTime = System.currentTimeMillis()
-                result.state.waitForData(result.state.fileSize, 300000)
+                val ready = result.state.waitForData(result.state.fileSize, 300000)
                 val elapsed = (System.currentTimeMillis() - startTime) / 1000
-                if (result.state.downloadComplete) {
-                    Log.d(TAG, "Download complete in ${elapsed}s, returning proxy URL")
+                val have = result.state.downloadedBytes.get()
+                if (ready || have >= result.state.fileSize || result.state.downloadComplete) {
+                    Log.d(TAG, "Download ready in ${elapsed}s ($have/${result.state.fileSize}), returning proxy URL")
                     Pair(result.url, result.port)
                 } else {
-                    Log.e(TAG, "Download incomplete after ${elapsed}s: ${result.state.downloadedBytes.get()}/${result.state.fileSize}")
+                    Log.e(TAG, "Download incomplete after ${elapsed}s: $have/${result.state.fileSize}")
                     null
                 }
             } catch (e: Exception) { Log.e(TAG, "Extract fail: ${e.message}", e); null }
