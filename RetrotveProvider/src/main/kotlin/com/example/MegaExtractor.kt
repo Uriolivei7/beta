@@ -175,21 +175,15 @@ object MegaExtractor {
         } catch (e: Exception) { Log.e(TAG, "Proxy start fail: ${e.message}"); null }
     }
 
-    private fun performUfaUnlock(faHash: String, sessionId: Int): String? {
+    private fun performUfaUnlock(faHash: String, sessionId: Int): Boolean {
         return try {
             Log.d(TAG, "MEGA UFA: fah=$faHash")
             val resp = megaApiPost("https://g.api.mega.co.nz/cs?", """[{"a":"ufa","fah":"$faHash","r":1,"ssl":1}]""", sessionId)
-            val pUrl = resp?.optString("p")
-            if (pUrl != null) {
-                Log.d(TAG, "MEGA UFA: got new CDN URL: ${pUrl.substringAfter("://").take(50)}...")
-                pUrl
-            } else {
-                Log.w(TAG, "MEGA UFA: no 'p' URL in response")
-                null
-            }
+            Log.d(TAG, "MEGA UFA response: ${resp?.toString()?.take(100)}")
+            resp != null
         } catch (e: Exception) {
             Log.w(TAG, "MEGA UFA error: ${e.message}")
-            null
+            false
         }
     }
 
@@ -199,8 +193,8 @@ object MegaExtractor {
         var totalChunks = 0
         var consecutiveErrors = 0
         var bandwidthRetries = 0
-        var chunkSize = 128 * 1024  // 128KB initial, progressive up to 4MB
-        val maxChunkSize = 4 * 1024 * 1024  // 4MB max
+        var chunkSize = 128 * 1024
+        val maxChunkSize = 4 * 1024 * 1024
 
         while (state.downloadedBytes.get() < state.fileSize) {
             val pos = state.downloadedBytes.get()
@@ -211,23 +205,17 @@ object MegaExtractor {
             try {
                 if (baseUrl == null) {
                     if (state.faHash != null) {
-                        val ufaUrl = performUfaUnlock(state.faHash, totalChunks + 10)
-                        if (ufaUrl != null) {
-                            baseUrl = ufaUrl
-                            consecutiveErrors = 0
-                        }
+                        performUfaUnlock(state.faHash, totalChunks + 10)
                     }
-                    if (baseUrl == null) {
-                        val urls = getDownloadUrls(state.fileId)
-                        if (urls.isEmpty()) {
-                            Log.e(TAG, "MEGA no download URLs")
-                            consecutiveErrors++
-                            Thread.sleep(5000L * consecutiveErrors.coerceAtMost(6))
-                            continue
-                        }
-                        baseUrl = urls.first()
-                        consecutiveErrors = 0
+                    val urls = getDownloadUrls(state.fileId)
+                    if (urls.isEmpty()) {
+                        Log.e(TAG, "MEGA no download URLs")
+                        consecutiveErrors++
+                        Thread.sleep(5000L * consecutiveErrors.coerceAtMost(6))
+                        continue
                     }
+                    baseUrl = urls.first()
+                    consecutiveErrors = 0
                 }
 
                 val chunkUrl = "$baseUrl/$pos-$chunkEnd"
