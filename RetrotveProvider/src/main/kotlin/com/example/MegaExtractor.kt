@@ -351,6 +351,11 @@ object MegaExtractor {
 
     private fun handleClient(socket: Socket, tempFile: File, state: DownloadState) {
         try {
+            if (state.downloadFailed) {
+                Log.w(TAG, "Proxy: download failed, rejecting connection")
+                sendError(socket, 503, state.downloadError ?: "Download failed")
+                return
+            }
             val input = BufferedReader(java.io.InputStreamReader(socket.getInputStream()))
             val output = socket.getOutputStream()
             val requestLine = input.readLine() ?: return
