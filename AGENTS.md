@@ -665,10 +665,62 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
   - Fallback `loadExtractor` wrapper (línea 652): `"SoloLatino"`, label `"$source[${link.source}]"`
   - `tryVidHideProExtraction` (línea 728): `"SoloLatino"`, label `"VidHidePro - $chosen"`
   - `tryVoeExtraction` (línea 831): `"SoloLatino"`, label `"Voe"`
-- Compilación OK: `.\gradlew.bat :SoloLatinoProvider:compileReleaseKotlin --console=plain -q`
-- Plugin empaquetado: `:SoloLatinoProvider:make` → `SoloLatinoProvider/build/SoloLatinoProvider.cs3` (81 KB)
-- ⏸️ **Pendiente**: instalar cs3 en dispositivo y probar que el interceptor ahora se ejecuta (debería ver `[intercept] CDN request` en logcat) y que los videos reproducen sin 2004.
+
+### 🔧 FIX unpackPackedJS broken URLs (30 Ago 2026) — CRITICAL
+- **Síntoma**: interceptor ahora SÍ llamado pero CDN retorna 403. URL desempaquetada tenía nombres de parámetros faltantes: `?=TOKEN&=1788145211&=129600` (roto) vs `?t=TOKEN&s=1788145211&e=129600` (correcto).
+- **Causa raíz**: `unpackPackedJS` usaba `HashMap` para el diccionario → iteración en orden aleatorio. El JS packer reemplaza de ÍNDICE ALTO→BAJO para evitar que palabras cortas del diccionario (como `t`, `s`, `e`, `f`) corrompan reemplazos más largos. `HashMap` procesa en orden random → las palabras cortas se reemplazan primero y corruptan los valores.
+- **Fix**: eliminar `HashMap`, usar loop directo `for (idx in count - 1 downTo 0)` que procesa de alto→bajo, igual que el JS packer `while(c--)`.
+- **Verificado con Python (PC)**: CDN retorna 200 OK con token fresco, incluso sin headers — el problema era 100% la URL rota del unpacker.
+
+### 🔧 FIX preferOrder y relative URLs (30 Ago 2026)
+- **PreferOrder cambiado**: `hls2 > hls3 > hls4` (antes `hls4 > hls2 > hls3`). `hls2` es el CDN conocido que funciona (`dramiyos-cdn.com`/`acek-cdn.com`). `hls4` tiene URLs relativas (`/stream/...`) que pueden no funcionar.
+- **Relative URL fix**: si el m3u8 URL empieza con `/`, se prepende `https://vidhidepro.com`.
+
+### ✅ VERIFICADO en dispositivo (30 Ago 2026)
+- `source = "SoloLatino"` → interceptor llamado (`[intercept] CDN request`)
+- Unpacker produce URLs correctas → CDN responde 200 (`application/vnd.apple.mpegurl`)
+- Segmentos `.ts` descargados seg-1 a seg-8 → 200 `video/MP2T`
+- Reproducción funcional en ambos servidores (dramiyos-cdn y acek-cdn)
 
 ### Patrón general para plugins
 - `newExtractorLink(source=..., ...)` — el parámetro `source` DEBE ser `this.name` (el nombre del provider) para que `getApiFromNameNull()` lo encuentre y llame a `getVideoInterceptor()`.
-- Providers que lo hacen bien: Uniquestream (`this.name`), Netflix (`name`), Primevideo (`name`), JioHotstar (`name`), Reanime (`name`), Plushd (falla igual — usa `"VidHide"`)
+- Providers que lo hacen bien: Uniquestream (`this.name`), Netflix (`name`), Primevideo (`name`), JioHotstar (`name`), Reanime (`name`), SoloLatino (`"SoloLatino"`)
+- Providers con el mismo bug: Plushd (usa `"VidHide"` en vez de `"PlusHD"`)
+
+---
+
+## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)
+
+### Problem
+- RetrotveProvider's `processPlayerPage` had a switch case for MEGA links that just logged "MEGA links require app installation, skipping" and did nothing
+- The site uses MEGA as one of 6 servers (Iframe/blenditall, Opt2/mega.nz, Opt3/1fichier, Opt4/mega.nz embed, Opt5/yourupload, Opt6) for episode playback
+- **Paso a paso 1x1** (trid=10532) has MEGA as the ONLY working server
+
+### Solution: Local HTTP Proxy + AES-CTR Decryption
+MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly. Solution is a local HTTP proxy:
+
+1. **Parse URL**: Extract `file_id` and `key` from `mega.nz/embed/{id}#{key}`
+2. **MEGA API**: POST to `https://g.api.mega.co.nz/cs` → get temporary download URL + file size
+3. **Local proxy server**: Random port, ExoPlayer connects to `http://127.0.0.1:PORT/video`
+4. **On-the-fly decryption**: Proxy fetches encrypted data from MEGA, decrypts AES-CTR, serves plaintext
+5. **Range requests**: For seeking support, compute AES-CTR counter offset from byte position
+
+### Key Implementation Details
+- **Key derivation**: `aes_key[i] = key_bytes[i] XOR key_bytes[i+16]` for i=0..15; `iv[0..7] = key_bytes[16..23]`, rest zeros
+- **Attribute decryption**: AES-CBC (not CTR) with zero IV for filename extraction; plaintext starts with "MEGA" prefix
+- **Block alignment**: When Range start isn't block-aligned (16 bytes), decrypt dummy prefix bytes to advance CTR counter
+- **ServerSocket timeout**: 60s; server thread stops when socket closed or process ends
+
+### Files
+- `RetrotveProvider/src/main/kotlin/com/example/MegaExtractor.kt` — MEGA API client + local HTTP proxy + AES decryption
+- `RetrotveProvider/src/main/kotlin/com/example/RetrotveProvider.kt` — integration in `processPlayerPage` (lines 409-421)
+
+### Build
+- Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (51 KB)
+- Compilation: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
+
+### ⏸️ Pending
+- Test on device: Paso a paso 1x1 (trid=10532, mega.nz embed) — verify local proxy starts, ExoPlayer connects, video plays
+- Test seeking (Range requests) — pause + seek to different position
+- Test file naming — decrypt filename from MEGA attributes
+- Test edge cases: large files (>1GB), slow connections, MEGA download quotas

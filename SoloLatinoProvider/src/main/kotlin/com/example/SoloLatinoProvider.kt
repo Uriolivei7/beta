@@ -25,7 +25,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-//yeji
 class SoloLatinoProvider : MainAPI() {
     override var mainUrl = "https://sololatino.net"
     override var name = "SoloLatino"
@@ -746,12 +745,10 @@ private suspend fun tryVidHideProExtraction(
 }
 
 private fun unpackPackedJS(html: String): String? {
-    // Find eval start: eval(function(p,a,c,k,e,d){...}('
     val evalHeaderRegex = Regex("""eval\(function\(p,a,c,k,e,d\)\{.+?\}\('""", RegexOption.DOT_MATCHES_ALL)
     val evalHeader = evalHeaderRegex.find(html) ?: return null
     val argStart = evalHeader.range.last + 1
 
-    // Find args pattern: ',base,count,'dict'.split('|'))
     val argsRegex = Regex("""',(\d+),(\d+),'([^']+)'\.split\('\|'\)""")
     val argsMatch = argsRegex.find(html, argStart) ?: return null
 
@@ -777,7 +774,6 @@ private fun unpackPackedJS(html: String): String? {
         }
     }
 
-    // Unescape \' → '
     val unescaped = result.toString().replace("\\'", "'")
     return unescaped
 }

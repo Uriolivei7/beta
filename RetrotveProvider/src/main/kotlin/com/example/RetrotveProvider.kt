@@ -407,7 +407,22 @@ class RetrotveProvider : MainAPI() {
                         extractTokyoVideo(fixedSrc, playerUrl, subtitleCallback, callback)
                     }
                     fixedSrc.contains("mega.") || fixedSrc.contains("mega.nz") -> {
-                        Log.d("RetrotveProvider", "-> Mega links require app installation, skipping")
+                        Log.d("RetrotveProvider", "-> MEGA: extracting via local proxy: $fixedSrc")
+                        val megaResult = MegaExtractor.extractMegaUrl(fixedSrc)
+                        if (megaResult != null) {
+                            val (localUrl, _) = megaResult
+                            Log.d("RetrotveProvider", "-> MEGA proxy URL: $localUrl")
+                            callback(newExtractorLink(
+                                source = "RetroTVE",
+                                name = "MEGA",
+                                url = localUrl
+                            ) {
+                                this.referer = playerUrl
+                                this.quality = 720
+                            })
+                        } else {
+                            Log.e("RetrotveProvider", "-> MEGA extraction failed")
+                        }
                     }
                     fixedSrc.contains("yourupload.com") || fixedSrc.contains("yourupload.") -> {
                         Log.d("RetrotveProvider", "-> YourUpload: using loadExtractor for: $fixedSrc")
