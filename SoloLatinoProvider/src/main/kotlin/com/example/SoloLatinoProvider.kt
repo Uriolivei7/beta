@@ -752,7 +752,6 @@ private fun unpackPackedJS(html: String): String? {
     val argStart = evalHeader.range.last + 1
 
     // Find args pattern: ',base,count,'dict'.split('|'))
-    // The packed string uses for internal quotes, so find the closing pattern
     val argsRegex = Regex("""',(\d+),(\d+),'([^']+)'\.split\('\|'\)""")
     val argsMatch = argsRegex.find(html, argStart) ?: return null
 
@@ -765,25 +764,17 @@ private fun unpackPackedJS(html: String): String? {
 
     val k = kRaw.split("|").toTypedArray()
 
-    // Decode p from base
-    val alpha = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    val dict = HashMap<String, String>()
-    var idx = count
-    while (idx > 0) {
-        idx--
-        val key = idx.toString(base)
-        dict[key] = k.getOrElse(idx) { "" }
-    }
-
-    // Replace dictionary words in packed string
     val result = StringBuilder(packedP)
-    for ((key, value) in dict) {
-        if (key.isEmpty()) continue
-        val pattern = Regex("\\b${Regex.escape(key)}\\b")
-        val replacement = Regex.escapeReplacement(value)
-        val replaced = pattern.replace(result, replacement)
-        result.clear()
-        result.append(replaced)
+    for (idx in count - 1 downTo 0) {
+        val key = idx.toString(base)
+        val value = k.getOrElse(idx) { "" }
+        if (key.isNotEmpty() && value.isNotEmpty()) {
+            val pattern = Regex("\\b${Regex.escape(key)}\\b")
+            val replacement = Regex.escapeReplacement(value)
+            val replaced = pattern.replace(result, replacement)
+            result.clear()
+            result.append(replaced)
+        }
     }
 
     // Unescape \' → '
