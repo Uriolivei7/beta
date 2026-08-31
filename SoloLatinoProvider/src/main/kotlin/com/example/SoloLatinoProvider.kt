@@ -724,32 +724,49 @@ private suspend fun tryVidHideProExtraction(
 }
 
 private fun unpackPackedJS(html: String): String? {
-    val evalRegex = Regex("""eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)\s*\{[^}]*\}\s*\(\s*'([^']+)'[\s,]+(\d+)[\s,]+(\d+)[\s,]+'([^']*)'[\s,]+(\d+)[\s,]+(\d+)\s*\)""", RegexOption.DOT_MATCHES_ALL)
-    val match = evalRegex.find(html) ?: return null
+    // Find eval start: eval(function(p,a,c,k,e,d){...}('
+    val evalHeaderRegex = Regex("""eval\(function\(p,a,c,k,e,d\)\{.+?\}\('""", RegexOption.DOT_MATCHES_ALL)
+    val evalHeader = evalHeaderRegex.find(html) ?: return null
+    val argStart = evalHeader.range.last + 1
 
-    val p = match.groupValues[1]
-    val a = match.groupValues[2].toIntOrNull() ?: return null
-    val c = match.groupValues[3].toIntOrNull() ?: return null
-    val kStr = match.groupValues[4]
-    val e = match.groupValues[5].toIntOrNull() ?: return null
-    val d = match.groupValues[6].toIntOrNull() ?: 0
+    // Find args pattern: ',base,count,'dict'.split('|'))
+    // The packed string uses for internal quotes, so find the closing pattern
+    val argsRegex = Regex("""',(\d+),(\d+),'([^']+)'\.split\('\|'\)""")
+    val argsMatch = argsRegex.find(html, argStart) ?: return null
 
-    val k = kStr.split("|").let { if (it.size == 1 && it[0].isEmpty()) emptyArray() else it.toTypedArray() }
+    val packedP = html.substring(argStart, argsMatch.range.first)
+    val base = argsMatch.groupValues[1].toIntOrNull() ?: return null
+    val count = argsMatch.groupValues[2].toIntOrNull() ?: return null
+    val kRaw = argsMatch.groupValues[3]
 
+    Log.d("SoloLatino", "unpackPackedJS: base=$base count=$count kLen=${kRaw.length} pLen=${packedP.length}")
+
+    val k = kRaw.split("|").toTypedArray()
+
+    // Decode p from base
+    val alpha = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     val dict = HashMap<String, String>()
-    var idx = c
+    var idx = count
     while (idx > 0) {
         idx--
-        val key = idx.toString(a)
+        val key = idx.toString(base)
         dict[key] = k.getOrElse(idx) { "" }
     }
 
-    val result = StringBuilder(p)
+    // Replace dictionary words in packed string
+    val result = StringBuilder(packedP)
     for ((key, value) in dict) {
         if (key.isEmpty()) continue
-        result.replace(Regex("\\b${Regex.escape(key)}\\b"), value)
+        val pattern = Regex("\\b${Regex.escape(key)}\\b")
+        val replacement = Regex.escapeReplacement(value)
+        val replaced = pattern.replace(result, replacement)
+        result.clear()
+        result.append(replaced)
     }
-    return result.toString()
+
+    // Unescape \' → '
+    val unescaped = result.toString().replace("\\'", "'")
+    return unescaped
 }
 
 private suspend fun tryVoeExtraction(
