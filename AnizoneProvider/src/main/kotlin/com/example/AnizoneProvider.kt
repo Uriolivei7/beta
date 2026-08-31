@@ -100,6 +100,27 @@ class AnizoneProvider : MainAPI() {
             .getJSONObject(0).getString("snapshot")
     }
 
+    private fun findEpisodesSnapshot(doc: Document): String {
+        val snapshots = doc.select("div[wire\\:snapshot]")
+        for (el in snapshots) {
+            val snap = el.attr("wire:snapshot").replace("&quot;", "\"")
+            if (snap.isBlank()) continue
+            try {
+                val snapJson = JSONObject(snap)
+                val memo = snapJson.optJSONObject("memo") ?: continue
+                val name = memo.optString("name", "")
+                val html = memo.optString("html", "")
+                if (html.contains("li[wire:key]") || html.contains("x-data") && name.contains("episode")) {
+                    Log.d("AniZone", "Found episodes snapshot: name=$name")
+                    return snap
+                }
+            } catch (_: Exception) {}
+        }
+        val fallback = getSnapshot(doc)
+        Log.d("AniZone", "Using fallback snapshot (${snapshots.size} found)")
+        return fallback
+    }
+
     private  fun getHtmlFromWire(json: JSONObject): Document {
         return Jsoup.parse(json.getJSONArray("components")
             .getJSONObject(0).getJSONObject("effects")
@@ -304,8 +325,10 @@ class AnizoneProvider : MainAPI() {
         val doc = req.document
         val cookie = req.cookies.toMutableMap()
         Log.d("AniZone", "load: HTTP ${req.code}, doc title='${doc.title()}'")
+
+        val episodesSnapshot = findEpisodesSnapshot(doc)
         val wireData = mutableMapOf(
-            "wireSnapshot" to getSnapshot(doc),
+            "wireSnapshot" to episodesSnapshot,
             "token" to doc.select("script[data-csrf]").attr("data-csrf")
         )
         val title = doc.title()
