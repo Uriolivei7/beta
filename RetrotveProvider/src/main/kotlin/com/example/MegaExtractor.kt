@@ -321,7 +321,8 @@ object MegaExtractor {
     // ===== Local HTTP Proxy Server =====
 
     /**
-     * Start a local HTTP server that proxies MEGA content with on-the-fly AES-CTR decryption.
+     * Start a local HTTP server.
+     * First downloads+decrypts the full file to temp, then serves via Range requests.
      * Returns the local URL for ExoPlayer to connect to.
      */
     fun startMegaProxy(
@@ -331,17 +332,38 @@ object MegaExtractor {
         iv: ByteArray,
     ): Pair<String, Int>? {
         return try {
-            val serverSocket = ServerSocket(0) // random available port
-            serverSocket.soTimeout = 60000 // 60s timeout
+            val serverSocket = ServerSocket(0)
+            serverSocket.soTimeout = 120000
             val port = serverSocket.localPort
             Log.d(TAG, "MegaProxy started on port $port")
 
-            // Start server thread
+            // Download + decrypt to temp file in background
+            val tempFile = java.io.File.createTempFile("mega_", ".tmp")
+            tempFile.deleteOnExit()
+            var downloadComplete = false
+            var downloadError: String? = null
+
+            Thread {
+                try {
+                    Log.d(TAG, "Downloading + decrypting to temp: ${tempFile.absolutePath}")
+                    downloadAndDecrypt(downloadUrl, fileSize, aesKey, iv, tempFile)
+                    downloadComplete = true
+                    Log.d(TAG, "Download complete: ${tempFile.length()} bytes")
+                } catch (e: Exception) {
+                    downloadError = e.message
+                    Log.e(TAG, "Download failed: ${e.message}", e)
+                }
+            }.start()
+
+            // Server thread
             Thread {
                 try {
                     while (!serverSocket.isClosed) {
                         val clientSocket = serverSocket.accept()
-                        Thread { handleClient(clientSocket, downloadUrl, fileSize, aesKey, iv) }.start()
+                        Thread {
+                            handleClientFromFile(clientSocket, tempFile, fileSize,
+                                { downloadComplete }, { downloadError })
+                        }.start()
                     }
                 } catch (e: Exception) {
                     if (!serverSocket.isClosed) {
@@ -357,22 +379,76 @@ object MegaExtractor {
         }
     }
 
-    private fun handleClient(
-        socket: Socket,
+    private fun downloadAndDecrypt(
         downloadUrl: String,
         fileSize: Long,
         aesKey: ByteArray,
         iv: ByteArray,
+        outputFile: java.io.File,
+    ) {
+        val conn = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 30000
+            readTimeout = 120000
+            setRequestProperty("User-Agent", MEGA_UA)
+            setRequestProperty("Accept", "*/*")
+            setRequestProperty("Origin", "https://mega.nz")
+            setRequestProperty("Referer", "https://mega.nz/")
+            instanceFollowRedirects = true
+        }
+
+        val responseCode = conn.responseCode
+        Log.d(TAG, "MEGA CDN download: HTTP $responseCode, size=$fileSize")
+        if (responseCode !in listOf(200, 206)) {
+            conn.disconnect()
+            throw Exception("MEGA CDN HTTP $responseCode")
+        }
+
+        val encryptedStream = conn.inputStream
+        val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(iv))
+
+        val bufferSize = 256 * 1024
+        val buffer = ByteArray(bufferSize)
+        var totalRead = 0L
+        val fos = java.io.FileOutputStream(outputFile)
+
+        try {
+            while (totalRead < fileSize) {
+                val bytesToRead = minOf(bufferSize.toLong(), fileSize - totalRead).toInt()
+                val bytesRead = encryptedStream.read(buffer, 0, bytesToRead)
+                if (bytesRead == -1) break
+
+                val decrypted = cipher.update(buffer, 0, bytesRead)
+                if (decrypted != null && decrypted.isNotEmpty()) {
+                    fos.write(decrypted)
+                }
+                totalRead += bytesRead
+
+                if (totalRead % (10 * 1024 * 1024) == 0L || totalRead == fileSize) {
+                    Log.d(TAG, "MEGA download progress: $totalRead/$fileSize (${(totalRead * 100 / fileSize)}%)")
+                }
+            }
+        } finally {
+            fos.close()
+            encryptedStream.close()
+            conn.disconnect()
+        }
+    }
+
+    private fun handleClientFromFile(
+        socket: Socket,
+        tempFile: java.io.File,
+        fileSize: Long,
+        isDownloadComplete: () -> Boolean,
+        getDownloadError: () -> String?,
     ) {
         try {
             val input = BufferedReader(InputStreamReader(socket.getInputStream()))
             val output = socket.getOutputStream()
 
-            // Read HTTP request line
             val requestLine = input.readLine() ?: return
             Log.d(TAG, "MegaProxy request: $requestLine")
 
-            // Read headers
             val headers = mutableMapOf<String, String>()
             while (true) {
                 val line = input.readLine() ?: break
@@ -382,6 +458,24 @@ object MegaExtractor {
                     headers[line.substring(0, colonIdx).trim().lowercase()] =
                         line.substring(colonIdx + 1).trim()
                 }
+            }
+
+            // Wait for download to complete (max 120s)
+            var waited = 0
+            while (!isDownloadComplete() && waited < 120) {
+                val err = getDownloadError()
+                if (err != null) {
+                    Log.e(TAG, "MegaProxy: download failed: $err")
+                    sendError(socket, 502, "Download failed: $err")
+                    return
+                }
+                Thread.sleep(1000)
+                waited++
+            }
+
+            if (!isDownloadComplete()) {
+                sendError(socket, 503, "Download still in progress")
+                return
             }
 
             // Parse Range header
@@ -401,8 +495,6 @@ object MegaExtractor {
             }
 
             val contentLength = endByte - startByte + 1
-
-            // Send HTTP response headers
             val statusLine = if (isRangeRequest) "HTTP/1.1 206 Partial Content" else "HTTP/1.1 200 OK"
             val responseHeaders = buildString {
                 append("$statusLine\r\n")
@@ -419,110 +511,37 @@ object MegaExtractor {
             output.write(responseHeaders.toByteArray())
             output.flush()
 
-            // Fetch and decrypt the requested byte range from MEGA
-            fetchAndDecryptRange(downloadUrl, startByte, endByte, aesKey, iv, output)
+            // Serve from temp file
+            val fis = java.io.FileInputStream(tempFile)
+            fis.skip(startByte)
+            val buffer = ByteArray(64 * 1024)
+            var remaining = contentLength
 
+            while (remaining > 0) {
+                val toRead = minOf(buffer.size.toLong(), remaining).toInt()
+                val bytesRead = fis.read(buffer, 0, toRead)
+                if (bytesRead == -1) break
+                output.write(buffer, 0, bytesRead)
+                remaining -= bytesRead
+            }
+
+            fis.close()
             output.flush()
             socket.close()
-            Log.d(TAG, "MegaProxy response sent: $startByte-$endByte ($contentLength bytes)")
+            Log.d(TAG, "MegaProxy served: $startByte-$endByte ($contentLength bytes)")
         } catch (e: Exception) {
             Log.e(TAG, "MegaProxy client error: ${e.message}")
             try { socket.close() } catch (_: Exception) {}
         }
     }
 
-    /**
-     * Fetch encrypted byte range from MEGA and decrypt AES-CTR on-the-fly.
-     */
-    private fun fetchAndDecryptRange(
-        downloadUrl: String,
-        startByte: Long,
-        endByte: Long,
-        aesKey: ByteArray,
-        iv: ByteArray,
-        output: OutputStream,
-    ) {
+    private fun sendError(socket: Socket, code: Int, message: String) {
         try {
-            val rangeUrl = URL(downloadUrl)
-            val conn = rangeUrl.openConnection() as HttpURLConnection
-            conn.connectTimeout = 30000
-            conn.readTimeout = 60000
-            conn.setRequestProperty("User-Agent", MEGA_UA)
-            conn.setRequestProperty("Accept", "*/*")
-            conn.setRequestProperty("Accept-Language", "es-ES,es;q=0.6")
-            conn.setRequestProperty("Origin", "https://mega.nz")
-            conn.setRequestProperty("Referer", "https://mega.nz/")
-            conn.setRequestProperty("Sec-Fetch-Dest", "video")
-            conn.setRequestProperty("Sec-Fetch-Mode", "no-cors")
-            conn.setRequestProperty("Sec-Fetch-Site", "cross-site")
-            conn.instanceFollowRedirects = true
-            if (startByte > 0 || endByte < Long.MAX_VALUE - 1) {
-                conn.setRequestProperty("Range", "bytes=$startByte-$endByte")
-            }
-
-            val responseCode = conn.responseCode
-            Log.d(TAG, "MEGA CDN response: $responseCode, url=${downloadUrl.take(80)}")
-            if (responseCode !in listOf(200, 206)) {
-                Log.e(TAG, "MEGA download error: HTTP $responseCode")
-                return
-            }
-
-            val encryptedStream: InputStream = conn.inputStream
-
-            // Compute AES-CTR initial counter for this byte offset
-            // Counter = iv + (startByte / 16) as big-endian increment
-            val counter = ByteArray(16)
-            System.arraycopy(iv, 0, counter, 0, 16)
-
-            // Increment counter by startByte / 16
-            var blockOffset = startByte / 16
-            for (i in 15 downTo 0) {
-                if (blockOffset == 0L) break
-                val carry = (counter[i].toInt() and 0xFF) + (blockOffset and 0xFF)
-                counter[i] = (carry and 0xFF).toByte()
-                blockOffset = blockOffset shr 8
-            }
-
-            // If startByte is not block-aligned, we need to decrypt from the block start
-            // and discard the prefix bytes
-            val blockAlignOffset = (startByte % 16).toInt()
-
-            val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(aesKey, "AES"),
-                IvParameterSpec(counter)
-            )
-
-            // If not block-aligned, decrypt dummy bytes to advance the CTR counter
-            if (blockAlignOffset > 0) {
-                val dummy = ByteArray(blockAlignOffset)
-                cipher.update(dummy) // advance counter, discard output
-            }
-
-            // Decrypt and stream the actual content
-            val bufferSize = 64 * 1024  // 64KB chunks
-            val buffer = ByteArray(bufferSize)
-            var totalRead = 0L
-            val totalToRead = endByte - startByte + 1
-
-            while (totalRead < totalToRead) {
-                val bytesToRead = minOf(bufferSize.toLong(), totalToRead - totalRead).toInt()
-                val bytesRead = encryptedStream.read(buffer, 0, bytesToRead)
-                if (bytesRead == -1) break
-
-                val decrypted = cipher.update(buffer, 0, bytesRead)
-                if (decrypted != null && decrypted.isNotEmpty()) {
-                    output.write(decrypted)
-                    totalRead += bytesRead
-                }
-            }
-
-            encryptedStream.close()
-            conn.disconnect()
-        } catch (e: Exception) {
-            Log.e(TAG, "MEGA fetch/decrypt error: ${e.message}")
-        }
+            val body = "{\"error\":\"$message\"}"
+            val response = "HTTP/1.1 $code $message\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
+            socket.getOutputStream().write(response.toByteArray())
+            socket.close()
+        } catch (_: Exception) {}
     }
 
     // ===== Main Entry Point =====
