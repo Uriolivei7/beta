@@ -640,3 +640,35 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Fix**: `buildVerticalPosterUrlWithProxy` vuelve a devolver la URL directa sin proxy
 - Tradeoff: posters pesados otra vez, pero un poster lento es mejor que uno que no carga
 - `?w=500` en imgcdn se ignora (devuelve tamaño original) — no hay resize nativo
+
+## SoloLatinoProvider — Estado (30 Ago 2026)
+
+### Arquitectura del sitio (sololatino.net)
+- Películas y series latinas (español/VOSE)
+- Cadena: `sololatino.net` → `embed69.org` (PoW + AES decryption) → links directos (vidhidepro, streamwish, voe)
+- Hosts alternativos: `morencius.com` (→ vidhidepro), `xupalace.org` (go_to_playerVast)
+
+### Funcional
+- `getMainPage()` — 5 secciones (Últimas, Películas, Series, Recientes, etc.)
+- `search()` — búsqueda por query string
+- `load()` — detalle: título, descripción, poster, tipo (movie/tv), episodios (DOM parsing)
+- `loadLinks()` — resuelve embed69 → PoW → AES decrypt → `loadSourceNameExtractor` → custom extractors
+- `tryVidHideProExtraction()` — eval/packed JS unpack → `hls2`/`hls3` URLs from `var links={...}`
+- `tryVoeExtraction()` — redirect chain → m3u8/mp4 extraction (CAPTCHA limitation)
+- `getVideoInterceptor()` — inyecta User-Agent + Referer + Origin a CDN (dramiyos, phtilzjvfok, vidhidepro, vidhide)
+- `unpackPackedJS()` — robust regex: finds `eval(function(p,a,c,k,e,d){...}('`, base-N dictionary replacement
+
+### 🔧 FIX getVideoInterceptor not called (30 Ago 2026) — CRITICAL
+- **Síntoma**: `getVideoInterceptor()` definido correctamente pero CloudStream NUNCA lo llamaba. Sin logs `[intercept] CDN request`. Error `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)` en todos los links.
+- **Causa raíz**: CloudStream busca el provider con `getApiFromNameNull(link.source)` — necesita que `link.source == provider.name`. SoloLatinoProvider usaba `"LATINO[VidHide]"`, `"VidHidePro"`, `"Voe"` como source en `newExtractorLink` → `getApiFromNameNull` retorna null → interceptor nunca llamado.
+- **Fix**: los 3 `newExtractorLink` ahora usan `source = "SoloLatino"` (= `provider.name`):
+  - Fallback `loadExtractor` wrapper (línea 652): `"SoloLatino"`, label `"$source[${link.source}]"`
+  - `tryVidHideProExtraction` (línea 728): `"SoloLatino"`, label `"VidHidePro - $chosen"`
+  - `tryVoeExtraction` (línea 831): `"SoloLatino"`, label `"Voe"`
+- Compilación OK: `.\gradlew.bat :SoloLatinoProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:SoloLatinoProvider:make` → `SoloLatinoProvider/build/SoloLatinoProvider.cs3` (81 KB)
+- ⏸️ **Pendiente**: instalar cs3 en dispositivo y probar que el interceptor ahora se ejecuta (debería ver `[intercept] CDN request` en logcat) y que los videos reproducen sin 2004.
+
+### Patrón general para plugins
+- `newExtractorLink(source=..., ...)` — el parámetro `source` DEBE ser `this.name` (el nombre del provider) para que `getApiFromNameNull()` lo encuentre y llame a `getVideoInterceptor()`.
+- Providers que lo hacen bien: Uniquestream (`this.name`), Netflix (`name`), Primevideo (`name`), JioHotstar (`name`), Reanime (`name`), Plushd (falla igual — usa `"VidHide"`)

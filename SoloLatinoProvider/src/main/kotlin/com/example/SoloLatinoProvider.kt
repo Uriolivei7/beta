@@ -649,7 +649,7 @@ suspend fun loadSourceNameExtractor(
             Log.d("SoloLatino", "loadSourceNameExtractor [$source] -> ${link.source} ${link.url.take(80)} q=${link.quality} type=${link.type}")
             outerScope.launch {
                 callback.invoke(
-                    newExtractorLink("$source[${link.source}]", "$source[${link.source}]", link.url) {
+                    newExtractorLink("SoloLatino", "$source[${link.source}]", link.url) {
                         this.quality = link.quality
                         this.type = link.type
                         this.referer = link.referer
@@ -725,7 +725,7 @@ private suspend fun tryVidHideProExtraction(
             "Origin" to url.substringBeforeLast("/"),
         )
 
-        callback(newExtractorLink("VidHidePro", "VidHidePro", m3u8, ExtractorLinkType.M3U8) {
+        callback(newExtractorLink("SoloLatino", "VidHidePro - $chosen", m3u8, ExtractorLinkType.M3U8) {
             this.referer = url
             this.headers = vidHeaders
         })
@@ -828,7 +828,7 @@ private suspend fun tryVoeExtraction(
         val type = ExtractorLinkType.M3U8
         Log.d("SoloLatino", "[Voe] found ${if (m3u8 != null) "m3u8" else "mp4"}: ${videoUrl.take(120)}")
 
-        callback(newExtractorLink("Voe", "Voe", videoUrl, type) {
+        callback(newExtractorLink("SoloLatino", "Voe", videoUrl, type) {
             this.referer = finalUrl
             this.headers = headers
         })
