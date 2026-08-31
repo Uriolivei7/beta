@@ -250,22 +250,10 @@ object MegaExtractor {
 
                 if (responseCode == 509) {
                     conn.disconnect()
-                    bandwidthRetries++
-                    Log.w(TAG, "MEGA CDN 509 bandwidth limit (attempt $bandwidthRetries/5)")
-                    if (bandwidthRetries >= 5) {
-                        Log.e(TAG, "MEGA 509: giving up — IP throttled, wait ~15 min or use VPN")
-                        state.downloadFailed = true; state.downloadError = "MEGA bandwidth limit (509) — wait or use VPN"
-                        state.notifyProgress(); return
-                    }
-                    baseUrl = null
-                    val delay = when (bandwidthRetries) {
-                        1 -> 60000L    // 60s
-                        2 -> 120000L   // 2 min
-                        else -> 300000L // 5 min
-                    }
-                    Log.d(TAG, "MEGA 509: waiting ${delay / 1000}s before retry (throttle resets ~15 min)...")
-                    Thread.sleep(delay)
-                    continue
+                    Log.e(TAG, "MEGA 509: IP throttled by MEGA CDN — wait 30-60 min or use VPN")
+                    state.downloadFailed = true
+                    state.downloadError = "MEGA bandwidth limit (509) — wait 30-60 min or use VPN"
+                    state.notifyProgress(); return
                 }
 
                 if (responseCode !in listOf(200, 206)) {
