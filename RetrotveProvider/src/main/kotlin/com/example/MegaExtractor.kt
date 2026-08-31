@@ -175,11 +175,37 @@ object MegaExtractor {
         } catch (e: Exception) { Log.e(TAG, "Proxy start fail: ${e.message}"); null }
     }
 
+    private fun performUfaUnlock(faHash: String, sessionId: Int): Boolean {
+        return try {
+            Log.d(TAG, "MEGA UFA: fah=$faHash")
+            val resp = megaApiPost("https://g.api.mega.co.nz/cs?", """[{"a":"ufa","fah":"$faHash","r":1,"ssl":1}]""", sessionId)
+            val pUrl = resp?.optString("p")
+            if (pUrl != null) {
+                Log.d(TAG, "MEGA UFA unlock: fetching ${pUrl.substringAfter("://").take(50)}...")
+                val conn = (URL(pUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"; connectTimeout = 15000; readTimeout = 30000
+                    setRequestProperty("User-Agent", MEGA_UA)
+                }
+                val code = conn.responseCode
+                conn.disconnect()
+                Log.d(TAG, "MEGA UFA unlock response: HTTP $code")
+                code in 200..299
+            } else {
+                Log.w(TAG, "MEGA UFA: no 'p' URL in response")
+                false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "MEGA UFA error: ${e.message}")
+            false
+        }
+    }
+
     private fun downloadLoop(state: DownloadState, tempFile: File, aesKey: ByteArray, baseIv: ByteArray) {
         val apiUrl = "https://g.api.mega.co.nz/cs?"
         var baseUrl: String? = null
         var totalChunks = 0
         var consecutiveErrors = 0
+        var bandwidthRetries = 0
         var chunkSize = 128 * 1024  // 128KB initial, progressive up to 4MB
         val maxChunkSize = 4 * 1024 * 1024  // 4MB max
 
@@ -188,14 +214,11 @@ object MegaExtractor {
             val remaining = state.fileSize - pos
             if (remaining <= 0) break
 
-            // Request chunk via URL path suffix (MEGA SDK pattern: /{start}-{end})
             val chunkEnd = (pos + chunkSize - 1).coerceAtMost(state.fileSize - 1)
             try {
-                // Refresh download URL when needed
                 if (baseUrl == null) {
                     if (state.faHash != null && totalChunks > 0) {
-                        Log.d(TAG, "MEGA Step 2 retry: ufa fah=${state.faHash}")
-                        megaApiPost(apiUrl, """[{"a":"ufa","fah":"${state.faHash}","r":1,"ssl":1}]""", totalChunks + 10)
+                        performUfaUnlock(state.faHash, totalChunks + 10)
                     }
                     val urls = getDownloadUrls(state.fileId)
                     if (urls.isEmpty()) {
@@ -208,13 +231,11 @@ object MegaExtractor {
                     consecutiveErrors = 0
                 }
 
-                // Path-based range: {baseurl}/{start}-{end}  (MEGA SDK pattern)
                 val chunkUrl = "$baseUrl/$pos-$chunkEnd"
                 Log.d(TAG, "MEGA chunk $totalChunks: $pos-$chunkEnd (size=${chunkEnd - pos + 1}, ${pos * 100 / state.fileSize}%)")
 
                 val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000
-                    readTimeout = 60000
+                    connectTimeout = 15000; readTimeout = 120000
                     setRequestProperty("User-Agent", MEGA_UA)
                     setRequestProperty("Origin", "https://mega.nz")
                     setRequestProperty("Referer", "https://mega.nz/")
@@ -225,41 +246,49 @@ object MegaExtractor {
 
                 if (responseCode == 416) {
                     Log.d(TAG, "MEGA CDN 416 — file fully downloaded")
-                    conn.disconnect()
-                    break
+                    conn.disconnect(); break
                 }
 
                 if (responseCode == 403 || responseCode == 404) {
-                    Log.w(TAG, "MEGA CDN HTTP $responseCode — URL may have expired, refreshing")
-                    conn.disconnect()
-                    baseUrl = null
-                    consecutiveErrors++
+                    Log.w(TAG, "MEGA CDN HTTP $responseCode — URL expired, refreshing")
+                    conn.disconnect(); baseUrl = null; consecutiveErrors++
                     Thread.sleep(3000L * consecutiveErrors.coerceAtMost(5))
                     continue
                 }
 
                 if (responseCode == 429) {
                     Log.w(TAG, "MEGA CDN rate limited (429)")
+                    conn.disconnect(); Thread.sleep(60000); continue
+                }
+
+                if (responseCode == 509) {
                     conn.disconnect()
-                    Thread.sleep(300000)
+                    bandwidthRetries++
+                    Log.w(TAG, "MEGA CDN 509 bandwidth limit (attempt $bandwidthRetries/10)")
+                    if (bandwidthRetries >= 10) {
+                        Log.e(TAG, "MEGA 509: giving up after 10 bandwidth retries")
+                        state.downloadFailed = true; state.downloadError = "Bandwidth limit exceeded"
+                        state.notifyProgress(); return
+                    }
+                    baseUrl = null
+                    val delay = if (bandwidthRetries <= 3) 10000L else 30000L
+                    Log.d(TAG, "MEGA 509: waiting ${delay / 1000}s before retry...")
+                    Thread.sleep(delay)
                     continue
                 }
 
                 if (responseCode !in listOf(200, 206)) {
                     val errText = try { conn.errorStream?.bufferedReader()?.readText()?.take(200) } catch (_: Exception) { "" }
                     Log.w(TAG, "MEGA CDN HTTP $responseCode: $errText")
-                    conn.disconnect()
-                    consecutiveErrors++
-                    baseUrl = null
+                    conn.disconnect(); consecutiveErrors++; baseUrl = null
                     Thread.sleep(5000L * consecutiveErrors.coerceAtMost(6))
                     continue
                 }
 
-                consecutiveErrors = 0
+                consecutiveErrors = 0; bandwidthRetries = 0
                 val contentLength = conn.contentLength.toLong()
                 Log.d(TAG, "MEGA CDN HTTP $responseCode, Content-Length=$contentLength")
 
-                // Initialize AES-CTR cipher with correct counter for this file position
                 val cipher = Cipher.getInstance("AES/CTR/NoPadding")
                 val ivForPos = baseIv.copyOf()
                 val blockNum = pos / 16
@@ -311,16 +340,11 @@ object MegaExtractor {
                 }
 
                 totalChunks++
-
-                // Progressive chunk size increase (like MEGA SDK)
-                if (totalChunks < 8) {
-                    chunkSize = (chunkSize * 2).coerceAtMost(maxChunkSize)
-                }
+                if (totalChunks < 8) chunkSize = (chunkSize * 2).coerceAtMost(maxChunkSize)
 
             } catch (e: Exception) {
                 Log.e(TAG, "MEGA chunk error: ${e.message}")
-                consecutiveErrors++
-                baseUrl = null
+                consecutiveErrors++; baseUrl = null
                 Thread.sleep(5000L * consecutiveErrors.coerceAtMost(6))
             }
         }
