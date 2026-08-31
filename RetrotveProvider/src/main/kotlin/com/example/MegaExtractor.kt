@@ -49,7 +49,7 @@ object MegaExtractor {
         return Pair(aesKey, iv)
     }
 
-    data class MegaFileInfo(val downloadUrl: String, val fileSize: Long, val fileName: String)
+    data class MegaFileInfo(val downloadUrl: String, val fileSize: Long, val fileName: String, val faHash: String?)
 
     suspend fun getFileInfo(fileId: String, keyBytes: ByteArray): MegaFileInfo? {
         return withContext(Dispatchers.IO) {
@@ -62,13 +62,14 @@ object MegaExtractor {
                 val fa = step1.optString("fa", "")
                 Log.d(TAG, "MEGA metadata: size=$fileSize, fa=$fa")
 
-                extractFaHash(fa)?.let { hash ->
+                val faHash = extractFaHash(fa)
+                faHash?.let { hash ->
                     Log.d(TAG, "MEGA Step 2: ufa fah=$hash")
                     megaApiPost(apiUrl, """[{"a":"ufa","fah":"$hash","r":1,"ssl":1}]""", 1)
                 }
 
                 val fileName = if (encryptedAttrs.isNotEmpty()) decryptFileName(encryptedAttrs, keyBytes) ?: "mega_file" else "mega_file"
-                MegaFileInfo("", fileSize, fileName)
+                MegaFileInfo("", fileSize, fileName, faHash)
             } catch (e: Exception) { Log.e(TAG, "MEGA API error: ${e.message}"); null }
         }
     }
@@ -136,7 +137,7 @@ object MegaExtractor {
 
     // ===== Proxy =====
 
-    private class DownloadState(val fileSize: Long, val fileId: String) {
+    private class DownloadState(val fileSize: Long, val fileId: String, val faHash: String?) {
         @Volatile var downloadedBytes = 0L
         @Volatile var downloadComplete = false
         @Volatile var downloadFailed = false
@@ -156,7 +157,7 @@ object MegaExtractor {
         }
     }
 
-    fun startMegaProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String): Pair<String, Int>? {
+    fun startMegaProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?): Pair<String, Int>? {
         return try {
             val serverSocket = ServerSocket(0)
             serverSocket.soTimeout = 300000
@@ -164,7 +165,7 @@ object MegaExtractor {
             Log.d(TAG, "MegaProxy port=$port")
             val tempFile = File.createTempFile("mega_", ".tmp")
             tempFile.deleteOnExit()
-            val state = DownloadState(fileSize, fileId)
+            val state = DownloadState(fileSize, fileId, faHash)
             Thread { downloadLoop(state, tempFile, aesKey, iv) }.start()
             Thread {
                 try { while (!serverSocket.isClosed) { val cs = serverSocket.accept(); Thread { handleClient(cs, tempFile, state) }.start() } }
@@ -176,21 +177,27 @@ object MegaExtractor {
 
     private fun downloadLoop(state: DownloadState, tempFile: File, aesKey: ByteArray, baseIv: ByteArray) {
         var retries = 0
+        val apiUrl = "https://g.api.mega.co.nz/cs?"
         while (state.downloadedBytes < state.fileSize && retries < 20) {
             try {
                 val offset = state.downloadedBytes
                 Log.d(TAG, "MEGA DL: offset=$offset/${state.fileSize} (try ${retries + 1})")
 
+                if (retries > 0 && state.faHash != null) {
+                    Log.d(TAG, "MEGA Step 2 retry: ufa fah=${state.faHash}")
+                    megaApiPost(apiUrl, """[{"a":"ufa","fah":"${state.faHash}","r":1,"ssl":1}]""", retries + 10)
+                }
+
                 val downloadUrls = getDownloadUrls(state.fileId)
                 if (downloadUrls.isEmpty()) {
-                    Log.e(TAG, "No download URLs"); retries++; Thread.sleep(3000); continue
+                    Log.e(TAG, "No download URLs"); retries++; Thread.sleep(10000); continue
                 }
 
                 var connected = false
                 for (dlUrl in downloadUrls) {
                     try {
                         val conn = (URL(dlUrl).openConnection() as HttpURLConnection).apply {
-                            connectTimeout = 15000; readTimeout = 30000
+                            connectTimeout = 15000; readTimeout = 60000
                             setRequestProperty("User-Agent", MEGA_UA)
                             setRequestProperty("Origin", "https://mega.nz")
                             setRequestProperty("Referer", "https://mega.nz/")
@@ -200,6 +207,8 @@ object MegaExtractor {
                         Log.d(TAG, "MEGA CDN: HTTP $responseCode (${dlUrl.substringAfter("://").take(30)})")
                         if (responseCode !in listOf(200, 206)) { conn.disconnect(); continue }
 
+                        val contentLength = conn.contentLength.toLong()
+                        Log.d(TAG, "MEGA CDN Content-Length: $contentLength")
                         val encStream = conn.inputStream
                         connected = true
 
@@ -222,7 +231,7 @@ object MegaExtractor {
                                 Thread.sleep(5000)
                                 if (streamClosed.get()) break
                                 val idle = System.currentTimeMillis() - lastReadTime.get()
-                                if (idle > 20000) {
+                                if (idle > 30000) {
                                     Log.w(TAG, "MEGA watchdog: no data for ${idle}ms, aborting")
                                     try { encStream.close(); conn.disconnect() } catch (_: Exception) {}
                                     streamClosed.set(true)
@@ -257,7 +266,7 @@ object MegaExtractor {
 
                                 val pct = (state.downloadedBytes * 100 / state.fileSize).toInt()
                                 if (pct / 5 > lastLogPct / 5) {
-                                    Log.d(TAG, "MEGA: ${state.downloadedBytes}/${state.fileSize} ($pct%)${if (bytesToSkip > 0) " [skipped ${(totalDecrypted.coerceAtMost(bytesToSkip))}/$bytesToSkip]" else ""}")
+                                    Log.d(TAG, "MEGA: ${state.downloadedBytes}/${state.fileSize} ($pct%)${if (bytesToSkip > 0) " [skip ${(totalDecrypted.coerceAtMost(bytesToSkip))}/$bytesToSkip]" else ""}")
                                     lastLogPct = pct
                                 }
                                 state.notifyProgress()
@@ -267,7 +276,13 @@ object MegaExtractor {
                             raf.close(); try { encStream.close() } catch (_: Exception) {}; conn.disconnect()
                         }
 
-                        Log.d(TAG, "MEGA chunk done: wrote $writtenSinceOffset bytes (skipped $totalDecrypted total), total=${state.downloadedBytes}/${state.fileSize}")
+                        val cdnBytes = totalDecrypted
+                        Log.d(TAG, "MEGA chunk done: wrote=$writtenSinceOffset cdnTotal=$cdnBytes total=${state.downloadedBytes}/${state.fileSize}")
+
+                        if (cdnBytes < 1024) {
+                            Log.w(TAG, "MEGA CDN sent almost no data ($cdnBytes bytes) — rate limited")
+                            break
+                        }
 
                         if (state.downloadedBytes >= state.fileSize) {
                             state.downloadComplete = true; state.notifyProgress()
@@ -281,14 +296,15 @@ object MegaExtractor {
                     }
                 }
 
-                if (!connected) { retries++; Thread.sleep(3000); continue }
+                if (!connected) { retries++; Thread.sleep(10000); continue }
 
                 retries++
-                Log.d(TAG, "MEGA: chunk ended, retrying in 3s...")
-                Thread.sleep(3000)
+                val waitMs = if (retries <= 3) 15000L else if (retries <= 6) 30000L else 60000L
+                Log.d(TAG, "MEGA: chunk ended, retry #${retries} in ${waitMs/1000}s...")
+                Thread.sleep(waitMs)
             } catch (e: Exception) {
                 Log.e(TAG, "MEGA DL error: ${e.message}")
-                retries++; Thread.sleep(3000)
+                retries++; Thread.sleep(10000)
             }
         }
 
@@ -391,41 +407,47 @@ object MegaExtractor {
 
     private fun handleStreamRequest(socket: Socket, output: java.io.OutputStream, tempFile: File, state: DownloadState) {
         try {
-            Log.d(TAG, "Proxy Stream: start (fileSize=${state.fileSize})")
+            Log.d(TAG, "Proxy Stream: start (fileSize=${state.fileSize}, have=${state.downloadedBytes})")
             val resp = buildString {
                 append("HTTP/1.1 200 OK\r\n")
                 append("Content-Type: video/mp4\r\n")
-                append("Content-Length: ${state.fileSize}\r\n")
-                append("Accept-Ranges: bytes\r\n")
+                append("Transfer-Encoding: chunked\r\n")
                 append("Connection: keep-alive\r\n\r\n")
             }
             output.write(resp.toByteArray()); output.flush()
 
             var served = 0L
             val buf = ByteArray(64 * 1024)
-            while (served < state.fileSize && !socket.isClosed) {
-                if (served >= state.downloadedBytes && !state.downloadComplete) {
-                    state.waitForData(served + 1, 10000)
+            while (!socket.isClosed) {
+                if (served >= state.downloadedBytes) {
+                    if (state.downloadComplete) break
+                    state.waitForData(served + 1, 15000)
                     if (served >= state.downloadedBytes && !state.downloadComplete) {
-                        Thread.sleep(200)
+                        if (state.downloadFailed) break
                         continue
                     }
                 }
-                if (served >= state.downloadedBytes && state.downloadComplete) break
 
                 val raf = RandomAccessFile(tempFile, "r")
                 raf.seek(served)
-                val n = raf.read(buf)
+                val toRead = minOf(buf.size.toLong(), state.downloadedBytes - served).toInt()
+                val n = raf.read(buf, 0, toRead)
                 raf.close()
 
                 if (n > 0) {
-                    output.write(buf, 0, n)
+                    val chunk = String.format("%x\r\n", n).toByteArray() + buf.copyOf(n) + "\r\n".toByteArray()
+                    output.write(chunk)
                     output.flush()
                     served += n
                 } else {
                     Thread.sleep(100)
                 }
             }
+
+            try {
+                output.write("0\r\n\r\n".toByteArray())
+                output.flush()
+            } catch (_: Exception) {}
             Log.d(TAG, "Proxy Stream done: served $served bytes")
             socket.close()
         } catch (e: Exception) {
@@ -454,7 +476,7 @@ object MegaExtractor {
                 val (aesKey, iv) = deriveKeyAndIv(keyBytes)
                 Log.d(TAG, "AES=${aesKey.size}B IV=${iv.size}B")
 
-                val proxy = startMegaProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId) ?: return@withContext null
+                val proxy = startMegaProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
                 Log.d(TAG, "Proxy ready: ${proxy.first}")
                 proxy
             } catch (e: Exception) { Log.e(TAG, "Extract fail: ${e.message}", e); null }
