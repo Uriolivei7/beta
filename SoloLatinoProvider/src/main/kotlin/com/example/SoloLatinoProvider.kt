@@ -700,16 +700,11 @@ private suspend fun tryVidHideProExtraction(
         val m3u8 = linksMap[chosen]!!
         Log.d("SoloLatino", "[VH-Pro] chosen=$chosen url=${m3u8.take(120)}")
 
-        val isHls3 = chosen == "hls3"
-        val vidHeaders = if (isHls3) {
-            mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                "Referer" to url,
-                "Origin" to url.substringBeforeLast("/"),
-            )
-        } else {
-            emptyMap()
-        }
+        val vidHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Referer" to url,
+            "Origin" to url.substringBeforeLast("/"),
+        )
 
         callback(newExtractorLink("VidHidePro", "VidHidePro", m3u8, ExtractorLinkType.M3U8) {
             this.referer = url
