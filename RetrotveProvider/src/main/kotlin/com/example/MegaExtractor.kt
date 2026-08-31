@@ -333,25 +333,40 @@ object MegaExtractor {
                 }
             }
 
-            // Wait for data
-            if (startByte > 0 && startByte >= state.downloadedBytes && !state.downloadComplete) {
-                Log.d(TAG, "Proxy: wait for byte $startByte (have ${state.downloadedBytes})")
+            if (isRange) {
+                handleRangeRequest(socket, output, startByte, endByte, tempFile, state)
+            } else {
+                handleStreamRequest(socket, output, tempFile, state)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Proxy client err: ${e.message}")
+            try { socket.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun handleRangeRequest(socket: Socket, output: java.io.OutputStream, startByte: Long, endByte: Long, tempFile: File, state: DownloadState) {
+        try {
+            if (startByte >= state.downloadedBytes && !state.downloadComplete) {
+                Log.d(TAG, "Proxy Range: wait for byte $startByte (have ${state.downloadedBytes})")
                 state.waitForData(startByte + 1, 60000)
             }
 
             val available = if (state.downloadComplete) state.fileSize else state.downloadedBytes
             if (startByte >= available) {
-                if (state.downloadComplete) sendError(socket, 404, "EOF") else sendError(socket, 503, "No data")
+                val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${state.fileSize}\r\nConnection: close\r\n\r\n"
+                output.write(resp.toByteArray()); output.flush(); socket.close()
                 return
             }
-            endByte = endByte.coerceAtMost(available - 1)
-            val contentLength = endByte - startByte + 1
+            val actualEnd = endByte.coerceAtMost(available - 1)
+            val contentLength = actualEnd - startByte + 1
 
-            val status = if (isRange) "HTTP/1.1 206 Partial Content" else "HTTP/1.1 200 OK"
             val resp = buildString {
-                append("$status\r\nContent-Type: video/mp4\r\nContent-Length: $contentLength\r\nAccept-Ranges: bytes\r\nConnection: close\r\n")
-                if (isRange) append("Content-Range: bytes $startByte-$endByte/${state.fileSize}\r\n")
-                append("\r\n")
+                append("HTTP/1.1 206 Partial Content\r\n")
+                append("Content-Type: video/mp4\r\n")
+                append("Content-Length: $contentLength\r\n")
+                append("Content-Range: bytes $startByte-$actualEnd/${state.fileSize}\r\n")
+                append("Accept-Ranges: bytes\r\n")
+                append("Connection: keep-alive\r\n\r\n")
             }
             output.write(resp.toByteArray()); output.flush()
 
@@ -359,11 +374,62 @@ object MegaExtractor {
             raf.seek(startByte)
             val buf = ByteArray(64 * 1024)
             var rem = contentLength
-            while (rem > 0) { val n = raf.read(buf, 0, minOf(buf.size.toLong(), rem).toInt()); if (n == -1) break; output.write(buf, 0, n); rem -= n }
-            raf.close(); output.flush(); socket.close()
-            Log.d(TAG, "Proxy served: $startByte-$endByte ($contentLength bytes)")
+            while (rem > 0) {
+                val n = raf.read(buf, 0, minOf(buf.size.toLong(), rem).toInt())
+                if (n == -1) break
+                output.write(buf, 0, n)
+                rem -= n
+            }
+            raf.close(); output.flush()
+            Log.d(TAG, "Proxy Range served: $startByte-$actualEnd ($contentLength bytes)")
+            socket.close()
         } catch (e: Exception) {
-            Log.e(TAG, "Proxy client err: ${e.message}")
+            Log.e(TAG, "Proxy Range err: ${e.message}")
+            try { socket.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun handleStreamRequest(socket: Socket, output: java.io.OutputStream, tempFile: File, state: DownloadState) {
+        try {
+            Log.d(TAG, "Proxy Stream: start (fileSize=${state.fileSize})")
+            val resp = buildString {
+                append("HTTP/1.1 200 OK\r\n")
+                append("Content-Type: video/mp4\r\n")
+                append("Content-Length: ${state.fileSize}\r\n")
+                append("Accept-Ranges: bytes\r\n")
+                append("Connection: keep-alive\r\n\r\n")
+            }
+            output.write(resp.toByteArray()); output.flush()
+
+            var served = 0L
+            val buf = ByteArray(64 * 1024)
+            while (served < state.fileSize && !socket.isClosed) {
+                if (served >= state.downloadedBytes && !state.downloadComplete) {
+                    state.waitForData(served + 1, 10000)
+                    if (served >= state.downloadedBytes && !state.downloadComplete) {
+                        Thread.sleep(200)
+                        continue
+                    }
+                }
+                if (served >= state.downloadedBytes && state.downloadComplete) break
+
+                val raf = RandomAccessFile(tempFile, "r")
+                raf.seek(served)
+                val n = raf.read(buf)
+                raf.close()
+
+                if (n > 0) {
+                    output.write(buf, 0, n)
+                    output.flush()
+                    served += n
+                } else {
+                    Thread.sleep(100)
+                }
+            }
+            Log.d(TAG, "Proxy Stream done: served $served bytes")
+            socket.close()
+        } catch (e: Exception) {
+            Log.d(TAG, "Proxy Stream end: ${e.message}")
             try { socket.close() } catch (_: Exception) {}
         }
     }
