@@ -65,7 +65,20 @@ object MegaExtractor {
                 val faHash = extractFaHash(fa)
                 faHash?.let { hash ->
                     Log.d(TAG, "MEGA Step 2: ufa fah=$hash")
-                    megaApiPost(apiUrl, """[{"a":"ufa","fah":"$hash","r":1,"ssl":1}]""", 1)
+                    val ufaResp = megaApiPost(apiUrl, """[{"a":"ufa","fah":"$hash","r":1,"ssl":1}]""", 1)
+                    val pUrl = ufaResp?.optString("p")
+                    if (pUrl != null) {
+                        Log.d(TAG, "MEGA UFA unlock: fetching ${pUrl.substringAfter("://").take(50)}...")
+                        try {
+                            val conn = (URL(pUrl).openConnection() as HttpURLConnection).apply {
+                                requestMethod = "GET"; connectTimeout = 15000; readTimeout = 30000
+                                setRequestProperty("User-Agent", MEGA_UA)
+                            }
+                            val code = conn.responseCode
+                            conn.disconnect()
+                            Log.d(TAG, "MEGA UFA unlock response: HTTP $code")
+                        } catch (e: Exception) { Log.w(TAG, "MEGA UFA unlock error: ${e.message}") }
+                    }
                 }
 
                 val fileName = if (encryptedAttrs.isNotEmpty()) decryptFileName(encryptedAttrs, keyBytes) ?: "mega_file" else "mega_file"
@@ -217,7 +230,7 @@ object MegaExtractor {
             val chunkEnd = (pos + chunkSize - 1).coerceAtMost(state.fileSize - 1)
             try {
                 if (baseUrl == null) {
-                    if (state.faHash != null && totalChunks > 0) {
+                    if (state.faHash != null) {
                         performUfaUnlock(state.faHash, totalChunks + 10)
                     }
                     val urls = getDownloadUrls(state.fileId)
