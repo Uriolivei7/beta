@@ -170,7 +170,9 @@ object MegaExtractor {
         }
     }
 
-    fun startMegaProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?): Pair<String, Int>? {
+    private data class MegaProxyResult(val url: String, val port: Int, val state: DownloadState)
+
+    private fun startMegaProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?): MegaProxyResult? {
         return try {
             val serverSocket = ServerSocket(0)
             serverSocket.soTimeout = 300000
@@ -184,7 +186,7 @@ object MegaExtractor {
                 try { while (!serverSocket.isClosed) { val cs = serverSocket.accept(); Thread { handleClient(cs, tempFile, state) }.start() } }
                 catch (e: Exception) { if (!serverSocket.isClosed) Log.e(TAG, "Server err: ${e.message}") }
             }.start()
-            Pair("http://127.0.0.1:$port/video", port)
+            MegaProxyResult("http://127.0.0.1:$port/video", port, state)
         } catch (e: Exception) { Log.e(TAG, "Proxy start fail: ${e.message}"); null }
     }
 
@@ -389,15 +391,15 @@ object MegaExtractor {
                 return
             }
 
-            if (!state.tailReady) {
-                Log.d(TAG, "Proxy: waiting for tail (moov atom)...")
-                val tailOk = state.waitForTail(120000)
-                if (!tailOk && !state.tailReady) {
-                    Log.w(TAG, "Proxy: tail not ready after 120s, rejecting")
-                    sendError(socket, 503, "Download not ready")
+            if (!state.downloadComplete) {
+                Log.d(TAG, "Proxy: waiting for download to complete (${state.downloadedBytes.get()}/${state.fileSize})...")
+                state.waitForData(state.fileSize, 300000)
+                if (!state.downloadComplete) {
+                    Log.w(TAG, "Proxy: download not complete after 300s, rejecting")
+                    sendError(socket, 503, "Download not complete")
                     return
                 }
-                Log.d(TAG, "Proxy: tail ready, have ${state.downloadedBytes.get()}/${state.fileSize} bytes")
+                Log.d(TAG, "Proxy: download complete, serving ${state.fileSize} bytes")
             }
 
             val input = BufferedReader(java.io.InputStreamReader(socket.getInputStream()))
@@ -564,11 +566,22 @@ object MegaExtractor {
                 val keyBytes = base64UrlDecode(urlInfo.key)
                 val fileInfo = getFileInfo(urlInfo.fileId, keyBytes) ?: return@withContext null
                 val (aesKey, iv) = deriveKeyAndIv(keyBytes)
-                Log.d(TAG, "AES=${aesKey.size}B IV=${iv.size}B")
+                Log.d(TAG, "AES=${aesKey.size}B IV=${iv.size}B, size=${fileInfo.fileSize / 1024 / 1024}MB")
 
-                val proxy = startMegaProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
-                Log.d(TAG, "Proxy ready: ${proxy.first}")
-                proxy
+                val result = startMegaProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
+                Log.d(TAG, "Proxy ready: ${result.url}")
+
+                Log.d(TAG, "Waiting for download to complete before returning URL...")
+                val startTime = System.currentTimeMillis()
+                result.state.waitForData(result.state.fileSize, 300000)
+                val elapsed = (System.currentTimeMillis() - startTime) / 1000
+                if (result.state.downloadComplete) {
+                    Log.d(TAG, "Download complete in ${elapsed}s, returning proxy URL")
+                    Pair(result.url, result.port)
+                } else {
+                    Log.e(TAG, "Download incomplete after ${elapsed}s: ${result.state.downloadedBytes.get()}/${result.state.fileSize}")
+                    null
+                }
             } catch (e: Exception) { Log.e(TAG, "Extract fail: ${e.message}", e); null }
         }
     }
