@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
+import okhttp3.Interceptor
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.util.Date
@@ -85,6 +86,24 @@ class SoloLatinoProvider : MainAPI() {
 
     private suspend fun safeAppGetDoc(url: String, timeoutMs: Long = 30000L) =
         app.get(url, timeout = timeoutMs, headers = baseHeaders).document
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "vidhidepro", "vidhide")
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            val isCdn = cdnDomains.any { url.contains(it, ignoreCase = true) }
+            if (!isCdn) return@Interceptor chain.proceed(request)
+
+            Log.d("SoloLatino", "[intercept] CDN request: ${url.take(120)}")
+            val newRequest = request.newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+                .header("Referer", extractorLink.referer)
+                .header("Origin", "https://vidhidepro.com")
+                .build()
+            chain.proceed(newRequest)
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d("SoloLatino", "DEBUG: Iniciando getMainPage, página: $page, solicitud: ${request.name}")
