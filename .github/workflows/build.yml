@@ -25,20 +25,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: "src"
-          fetch-depth: 1 # Descarga rápida para evitar Error 500
+          fetch-depth: 1
 
       - name: Checkout or Create Builds Branch
         uses: actions/checkout@v4
-        continue-on-error: true # Por si la rama no existe aún
+        continue-on-error: true
         with:
           ref: "builds"
           path: "builds"
           fetch-depth: 1
 
-      - name: Clean or Create builds folder
+      - name: Clean builds folder
         run: |
-          mkdir -p $GITHUB_WORKSPACE/builds
-          rm -f $GITHUB_WORKSPACE/builds/*.cs3
+          cd $GITHUB_WORKSPACE/builds
+          rm -f *.cs3
+          rm -f plugins.json
+          rm -rf plugins/
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -64,37 +66,31 @@ jobs:
             echo "Intento $i falló, esperando 30s..."
             sleep 30
           done
-          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No cs3 found"
 
-      - name: Restore My Custom JSON
+      - name: Copy built plugins
         run: |
-          if [ -f "$GITHUB_WORKSPACE/src/plugins.json" ]; then
-            cp -f "$GITHUB_WORKSPACE/src/plugins.json" "$GITHUB_WORKSPACE/builds/plugins.json"
-            echo "¡Éxito! Tu plugins.json personalizado ha sido restaurado."
-          else
-            echo "ERROR: No se encontró 'src/plugins.json'."
-            exit 1
-          fi
+          cd $GITHUB_WORKSPACE/src
+          find . -path '*/build/*.cs3' -not -path '*/builds/*' -not -path '*/.gradle/*' -exec cp {} $GITHUB_WORKSPACE/builds/ \;
+          echo "=== .cs3 files in builds ==="
+          ls -la $GITHUB_WORKSPACE/builds/*.cs3 || echo "NO .cs3 FILES FOUND"
+
+      - name: Restore plugins.json
+        run: |
+          cp -f "$GITHUB_WORKSPACE/src/plugins.json" "$GITHUB_WORKSPACE/builds/plugins.json"
 
       - name: Commit and Push builds
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd $GITHUB_WORKSPACE/builds
-          git init
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          
-          # ELIMINA EL ORIGIN SI YA EXISTE PARA EVITAR EL ERROR
-          git remote remove origin || true
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          
-          git checkout -b builds || git checkout builds
-          git add .
-          
+
+          git add -A
+
           if git diff --staged --quiet; then
             echo "Nada que actualizar."
           else
-            git commit -m "Build: Actualización automática de plugins y JSON"
-            git push origin builds --force
+            git commit -m "Build: Actualizacion automatica de plugins y JSON"
+            git push origin HEAD:builds --force
           fi
