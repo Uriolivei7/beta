@@ -443,15 +443,25 @@ object MegaExtractor {
         output: OutputStream,
     ) {
         try {
-            // MEGA download URLs support Range requests
             val rangeUrl = URL(downloadUrl)
             val conn = rangeUrl.openConnection() as HttpURLConnection
-            conn.setRequestProperty("Range", "bytes=$startByte-$endByte")
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            conn.connectTimeout = 15000
-            conn.readTimeout = 30000
+            conn.connectTimeout = 30000
+            conn.readTimeout = 60000
+            conn.setRequestProperty("User-Agent", MEGA_UA)
+            conn.setRequestProperty("Accept", "*/*")
+            conn.setRequestProperty("Accept-Language", "es-ES,es;q=0.6")
+            conn.setRequestProperty("Origin", "https://mega.nz")
+            conn.setRequestProperty("Referer", "https://mega.nz/")
+            conn.setRequestProperty("Sec-Fetch-Dest", "video")
+            conn.setRequestProperty("Sec-Fetch-Mode", "no-cors")
+            conn.setRequestProperty("Sec-Fetch-Site", "cross-site")
+            conn.instanceFollowRedirects = true
+            if (startByte > 0 || endByte < Long.MAX_VALUE - 1) {
+                conn.setRequestProperty("Range", "bytes=$startByte-$endByte")
+            }
 
             val responseCode = conn.responseCode
+            Log.d(TAG, "MEGA CDN response: $responseCode, url=${downloadUrl.take(80)}")
             if (responseCode !in listOf(200, 206)) {
                 Log.e(TAG, "MEGA download error: HTTP $responseCode")
                 return
