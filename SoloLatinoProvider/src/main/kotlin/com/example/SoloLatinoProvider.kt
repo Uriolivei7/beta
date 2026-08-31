@@ -88,7 +88,7 @@ class SoloLatinoProvider : MainAPI() {
         app.get(url, timeout = timeoutMs, headers = baseHeaders).document
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "vidhidepro", "vidhide")
+        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "acek-cdn", "vidhidepro", "vidhide")
         return Interceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -100,8 +100,12 @@ class SoloLatinoProvider : MainAPI() {
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
                 .header("Referer", extractorLink.referer)
                 .header("Origin", "https://vidhidepro.com")
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
-            chain.proceed(newRequest)
+            val response = chain.proceed(newRequest)
+            Log.d("SoloLatino", "[intercept] CDN response: ${response.code} ${response.header("content-type","?")} url=${url.take(100)}")
+            response
         }
     }
 
@@ -714,9 +718,13 @@ private suspend fun tryVidHideProExtraction(
             return false
         }
 
-        val preferOrder = listOf("hls4", "hls2", "hls3")
+        val preferOrder = listOf("hls2", "hls3", "hls4")
         val chosen = preferOrder.firstOrNull { linksMap.containsKey(it) } ?: linksMap.keys.first()
-        val m3u8 = linksMap[chosen]!!
+        var m3u8 = linksMap[chosen]!!
+        if (m3u8.startsWith("/")) {
+            m3u8 = "https://vidhidepro.com$m3u8"
+            Log.d("SoloLatino", "[VH-Pro] relative URL, prepended base: ${m3u8.take(120)}")
+        }
         Log.d("SoloLatino", "[VH-Pro] chosen=$chosen url=${m3u8.take(120)}")
 
         val vidHeaders = mapOf(
