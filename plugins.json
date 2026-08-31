@@ -478,7 +478,7 @@
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/RetrotveProvider.cs3",
     "status": 1,
-    "version": 28,
+    "version": 29,
     "apiVersion": 1,
     "name": "RetroTVE",
     "internalName": "RetrotveProvider",
@@ -487,7 +487,7 @@
     "tvTypes": ["TvSeries", "Movie", "Cartoon"],
     "iconUrl": "https://retrotve.com/wp-content/uploads/2024/11/cropped-android-chrome-512x512-1-32x32.png",
     "language": "mx",
-    "fileSize": 57938
+    "fileSize": 58888
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PlayhubProvider.cs3",
