@@ -65,20 +65,7 @@ object MegaExtractor {
                 val faHash = extractFaHash(fa)
                 faHash?.let { hash ->
                     Log.d(TAG, "MEGA Step 2: ufa fah=$hash")
-                    val ufaResp = megaApiPost(apiUrl, """[{"a":"ufa","fah":"$hash","r":1,"ssl":1}]""", 1)
-                    val pUrl = ufaResp?.optString("p")
-                    if (pUrl != null) {
-                        Log.d(TAG, "MEGA UFA unlock: fetching ${pUrl.substringAfter("://").take(50)}...")
-                        try {
-                            val conn = (URL(pUrl).openConnection() as HttpURLConnection).apply {
-                                requestMethod = "GET"; connectTimeout = 15000; readTimeout = 30000
-                                setRequestProperty("User-Agent", MEGA_UA)
-                            }
-                            val code = conn.responseCode
-                            conn.disconnect()
-                            Log.d(TAG, "MEGA UFA unlock response: HTTP $code")
-                        } catch (e: Exception) { Log.w(TAG, "MEGA UFA unlock error: ${e.message}") }
-                    }
+                    megaApiPost(apiUrl, """[{"a":"ufa","fah":"$hash","r":1,"ssl":1}]""", 1)
                 }
 
                 val fileName = if (encryptedAttrs.isNotEmpty()) decryptFileName(encryptedAttrs, keyBytes) ?: "mega_file" else "mega_file"
@@ -188,28 +175,21 @@ object MegaExtractor {
         } catch (e: Exception) { Log.e(TAG, "Proxy start fail: ${e.message}"); null }
     }
 
-    private fun performUfaUnlock(faHash: String, sessionId: Int): Boolean {
+    private fun performUfaUnlock(faHash: String, sessionId: Int): String? {
         return try {
             Log.d(TAG, "MEGA UFA: fah=$faHash")
             val resp = megaApiPost("https://g.api.mega.co.nz/cs?", """[{"a":"ufa","fah":"$faHash","r":1,"ssl":1}]""", sessionId)
             val pUrl = resp?.optString("p")
             if (pUrl != null) {
-                Log.d(TAG, "MEGA UFA unlock: fetching ${pUrl.substringAfter("://").take(50)}...")
-                val conn = (URL(pUrl).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"; connectTimeout = 15000; readTimeout = 30000
-                    setRequestProperty("User-Agent", MEGA_UA)
-                }
-                val code = conn.responseCode
-                conn.disconnect()
-                Log.d(TAG, "MEGA UFA unlock response: HTTP $code")
-                code in 200..299
+                Log.d(TAG, "MEGA UFA: got new CDN URL: ${pUrl.substringAfter("://").take(50)}...")
+                pUrl
             } else {
                 Log.w(TAG, "MEGA UFA: no 'p' URL in response")
-                false
+                null
             }
         } catch (e: Exception) {
             Log.w(TAG, "MEGA UFA error: ${e.message}")
-            false
+            null
         }
     }
 
@@ -231,17 +211,23 @@ object MegaExtractor {
             try {
                 if (baseUrl == null) {
                     if (state.faHash != null) {
-                        performUfaUnlock(state.faHash, totalChunks + 10)
+                        val ufaUrl = performUfaUnlock(state.faHash, totalChunks + 10)
+                        if (ufaUrl != null) {
+                            baseUrl = ufaUrl
+                            consecutiveErrors = 0
+                        }
                     }
-                    val urls = getDownloadUrls(state.fileId)
-                    if (urls.isEmpty()) {
-                        Log.e(TAG, "MEGA no download URLs")
-                        consecutiveErrors++
-                        Thread.sleep(5000L * consecutiveErrors.coerceAtMost(6))
-                        continue
+                    if (baseUrl == null) {
+                        val urls = getDownloadUrls(state.fileId)
+                        if (urls.isEmpty()) {
+                            Log.e(TAG, "MEGA no download URLs")
+                            consecutiveErrors++
+                            Thread.sleep(5000L * consecutiveErrors.coerceAtMost(6))
+                            continue
+                        }
+                        baseUrl = urls.first()
+                        consecutiveErrors = 0
                     }
-                    baseUrl = urls.first()
-                    consecutiveErrors = 0
                 }
 
                 val chunkUrl = "$baseUrl/$pos-$chunkEnd"
@@ -277,15 +263,19 @@ object MegaExtractor {
                 if (responseCode == 509) {
                     conn.disconnect()
                     bandwidthRetries++
-                    Log.w(TAG, "MEGA CDN 509 bandwidth limit (attempt $bandwidthRetries/10)")
-                    if (bandwidthRetries >= 10) {
-                        Log.e(TAG, "MEGA 509: giving up after 10 bandwidth retries")
-                        state.downloadFailed = true; state.downloadError = "Bandwidth limit exceeded"
+                    Log.w(TAG, "MEGA CDN 509 bandwidth limit (attempt $bandwidthRetries/5)")
+                    if (bandwidthRetries >= 5) {
+                        Log.e(TAG, "MEGA 509: giving up — IP throttled, wait ~15 min or use VPN")
+                        state.downloadFailed = true; state.downloadError = "MEGA bandwidth limit (509) — wait or use VPN"
                         state.notifyProgress(); return
                     }
                     baseUrl = null
-                    val delay = if (bandwidthRetries <= 3) 10000L else 30000L
-                    Log.d(TAG, "MEGA 509: waiting ${delay / 1000}s before retry...")
+                    val delay = when (bandwidthRetries) {
+                        1 -> 60000L    // 60s
+                        2 -> 120000L   // 2 min
+                        else -> 300000L // 5 min
+                    }
+                    Log.d(TAG, "MEGA 509: waiting ${delay / 1000}s before retry (throttle resets ~15 min)...")
                     Thread.sleep(delay)
                     continue
                 }
