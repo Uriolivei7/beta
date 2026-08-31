@@ -143,6 +143,7 @@ object MegaExtractor {
         @Volatile var downloadComplete = false
         @Volatile var downloadFailed = false
         @Volatile var downloadError: String? = null
+        @Volatile var tailReady = false
         val lock = Object()
         fun notifyProgress() { synchronized(lock) { lock.notifyAll() } }
         fun waitForData(minBytes: Long, timeoutMs: Long): Boolean {
@@ -155,6 +156,17 @@ object MegaExtractor {
                 }
             }
             return downloadedBytes.get() >= minBytes || downloadComplete
+        }
+        fun waitForTail(timeoutMs: Long): Boolean {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            synchronized(lock) {
+                while (!tailReady && !downloadComplete && !downloadFailed) {
+                    val r = deadline - System.currentTimeMillis()
+                    if (r <= 0) return false
+                    lock.wait(r.coerceAtLeast(100))
+                }
+            }
+            return tailReady || downloadComplete
         }
     }
 
@@ -214,9 +226,39 @@ object MegaExtractor {
 
         val chunkSize = 4L * 1024 * 1024
         val totalChunks = ((state.fileSize + chunkSize - 1) / chunkSize).toInt()
+        val url = urls[0]
+
+        val tailChunks = (totalChunks - 3).coerceAtLeast(0)
+        val tailEnd = totalChunks - 1
+        Log.d(TAG, "MEGA tail-first: downloading chunks $tailChunks..$tailEnd (last ${(tailEnd - tailChunks + 1) * 4}MB for moov)")
+        for (ci in tailChunks..tailEnd) {
+            if (state.downloadFailed) break
+            val pos = ci.toLong() * chunkSize
+            val end = (pos + chunkSize - 1).coerceAtMost(state.fileSize - 1)
+            var ok = false
+            var retries = 0
+            while (!ok && retries < 8 && !state.downloadFailed) {
+                try {
+                    downloadSingleChunk(state, tempFile, aesKey, baseIv, url, pos, end, 0)
+                    ok = true
+                } catch (e: MegaBandwidthException) {
+                    retries++; Thread.sleep(5000L * retries.coerceAtMost(6))
+                    Log.w(TAG, "MEGA tail 509 ($retries/8)")
+                } catch (e: Exception) {
+                    retries++; Thread.sleep(3000L * retries.coerceAtMost(5))
+                    Log.w(TAG, "MEGA tail error ($retries/8): ${e.message}")
+                }
+            }
+            if (!ok) { Log.e(TAG, "MEGA tail chunk $ci FAILED"); break }
+        }
+
+        state.tailReady = true
+        state.notifyProgress()
+        Log.d(TAG, "MEGA tail ready (${state.downloadedBytes.get()}/${state.fileSize} bytes), starting head download")
+
         val nextChunk = AtomicInteger(0)
         val numWorkers = urls.size.coerceAtMost(4)
-        Log.d(TAG, "MEGA parallel: $numWorkers workers, $totalChunks chunks of ${chunkSize / 1024 / 1024}MB")
+        Log.d(TAG, "MEGA parallel: $numWorkers workers for remaining chunks")
 
         val allWorkers = (0 until numWorkers).map { threadIdx ->
             Thread({
@@ -346,6 +388,18 @@ object MegaExtractor {
                 sendError(socket, 503, state.downloadError ?: "Download failed")
                 return
             }
+
+            if (!state.tailReady) {
+                Log.d(TAG, "Proxy: waiting for tail (moov atom)...")
+                val tailOk = state.waitForTail(120000)
+                if (!tailOk && !state.tailReady) {
+                    Log.w(TAG, "Proxy: tail not ready after 120s, rejecting")
+                    sendError(socket, 503, "Download not ready")
+                    return
+                }
+                Log.d(TAG, "Proxy: tail ready, have ${state.downloadedBytes.get()}/${state.fileSize} bytes")
+            }
+
             val input = BufferedReader(java.io.InputStreamReader(socket.getInputStream()))
             val output = socket.getOutputStream()
             val requestLine = input.readLine() ?: return
@@ -391,11 +445,8 @@ object MegaExtractor {
 
             val available = state.downloadedBytes.get()
             if (startByte >= available && !state.downloadComplete) {
-                val gap = startByte - available
-                val waitMs = if (gap > 10 * 1024 * 1024) 0L else 10000L
-                if (waitMs > 0) {
-                    state.waitForData(startByte + 1, waitMs)
-                }
+                Log.d(TAG, "Proxy Range: need byte $startByte, have $available, waiting...")
+                state.waitForData(startByte + 1, 60000)
             }
 
             val availableAfter = if (state.downloadComplete) state.fileSize else state.downloadedBytes.get()
