@@ -456,33 +456,36 @@ object MegaExtractor {
             Log.d(TAG, "Proxy Stream: headers sent, streaming from disk")
 
             var served = 0L
-            val buf = ByteArray(64 * 1024)
-            while (!socket.isClosed) {
-                if (served >= state.downloadedBytes.get()) {
-                    if (state.downloadComplete) break
-                    state.waitForData(served + 1, 15000)
-                    if (served >= state.downloadedBytes.get() && !state.downloadComplete) {
-                        if (state.downloadFailed) break
-                        continue
+            val buf = ByteArray(256 * 1024)
+            val raf = RandomAccessFile(tempFile, "r")
+            try {
+                while (!socket.isClosed) {
+                    if (served >= state.downloadedBytes.get()) {
+                        if (state.downloadComplete) break
+                        state.waitForData(served + 1, 15000)
+                        if (served >= state.downloadedBytes.get() && !state.downloadComplete) {
+                            if (state.downloadFailed) break
+                            continue
+                        }
+                    }
+
+                    raf.seek(served)
+                    val toRead = minOf(buf.size.toLong(), state.downloadedBytes.get() - served).toInt()
+                    val n = raf.read(buf, 0, toRead)
+
+                    if (n > 0) {
+                        output.write(buf, 0, n)
+                        output.flush()
+                        served += n
+                        if (served % (5 * 1024 * 1024) < 262144) {
+                            Log.d(TAG, "Proxy Stream: served ${served}/${state.downloadedBytes.get()} bytes")
+                        }
+                    } else {
+                        Thread.sleep(100)
                     }
                 }
-
-                val raf = RandomAccessFile(tempFile, "r")
-                raf.seek(served)
-                val toRead = minOf(buf.size.toLong(), state.downloadedBytes.get() - served).toInt()
-                val n = raf.read(buf, 0, toRead)
+            } finally {
                 raf.close()
-
-                if (n > 0) {
-                    output.write(buf, 0, n)
-                    output.flush()
-                    served += n
-                    if (served % (5 * 1024 * 1024) < 65536) {
-                        Log.d(TAG, "Proxy Stream: served ${served}/${state.downloadedBytes.get()} bytes")
-                    }
-                } else {
-                    Thread.sleep(100)
-                }
             }
             Log.d(TAG, "Proxy Stream done: served $served bytes")
             socket.close()

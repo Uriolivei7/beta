@@ -2,6 +2,7 @@ package com.example
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.Jsoup
@@ -415,7 +416,8 @@ class RetrotveProvider : MainAPI() {
                             callback(newExtractorLink(
                                 source = "RetroTVE",
                                 name = "MEGA",
-                                url = localUrl
+                                url = localUrl,
+                                type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = playerUrl
                                 this.quality = 720
