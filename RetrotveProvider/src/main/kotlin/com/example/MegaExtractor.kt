@@ -276,14 +276,23 @@ object MegaExtractor {
                     raf.seek(start)
                     val buf = ByteArray(256 * 1024)
                     var totalWritten = 0L
+                    var firstBytes: ByteArray? = null
                     while (true) {
                         val n = enc.read(buf)
                         if (n == -1) break
                         val dec = cipher.update(buf, 0, n) ?: continue
                         raf.write(dec)
+                        if (firstBytes == null && dec.isNotEmpty()) {
+                            firstBytes = dec.copyOf(minOf(32, dec.size))
+                        }
                         totalWritten += dec.size
                     }
                     stream.writtenBytes.addAndGet(totalWritten)
+                    if (ci == 0 && firstBytes != null) {
+                        val hex = firstBytes.joinToString("") { "%02x".format(it) }
+                        val ascii = firstBytes.map { b -> if (b in 32..126) b.toInt().toChar() else '.' }.joinToString("")
+                        Log.d(TAG, "Chunk 0 first 32 bytes: $hex | $ascii")
+                    }
                 }
                 conn.disconnect()
                 stream.availableChunks.add(ci)
@@ -551,6 +560,9 @@ object MegaExtractor {
                 val fileInfo = getFileInfo(urlInfo.fileId, keyBytes) ?: return@withContext null
                 val (aesKey, iv) = deriveKeyAndIv(keyBytes)
                 Log.d(TAG, "AES=${aesKey.size}B IV=${iv.size}B, size=${fileInfo.fileSize / 1024 / 1024}MB")
+                Log.d(TAG, "keyHex=${aesKey.joinToString("") { "%02x".format(it) }}")
+                Log.d(TAG, "ivHex=${iv.joinToString("") { "%02x".format(it) }}")
+                Log.d(TAG, "keyBytesLen=${keyBytes.size}, keyBytesHex=${keyBytes.take(32).joinToString("") { "%02x".format(it) }}")
 
                 val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
                 Log.d(TAG, "Stream proxy ready: ${result.url}")
