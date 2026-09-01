@@ -54,6 +54,13 @@ object MegaExtractor {
         return Pair(aesKey, iv)
     }
 
+    private fun isMp4Signature(bytes: ByteArray): Boolean {
+        if (bytes.size < 8) return false
+        val sig = String(bytes, 4, minOf(4, bytes.size - 4), Charsets.US_ASCII)
+        val validSignatures = listOf("ftyp", "moov", "mdat", "free", "wide", "skip", "junk", "uuid", "pdat", "stbl", "mvhd", "trak", "mdia")
+        return validSignatures.any { sig.startsWith(it) }
+    }
+
     data class MegaFileInfo(val downloadUrl: String, val fileSize: Long, val fileName: String, val faHash: String?)
 
     suspend fun getFileInfo(fileId: String, keyBytes: ByteArray): MegaFileInfo? {
@@ -132,13 +139,16 @@ object MegaExtractor {
 
     // ===== Disk-Based Streaming =====
 
-    class DiskStream(val fileSize: Long, val tempFile: File) {
+    class DiskStream(val fileSize: Long, val tempFile: File, val rawKeyBytes: ByteArray? = null) {
         val writtenBytes = AtomicLong(0L)
         val downloadComplete = AtomicBoolean(false)
         val availableChunks = ConcurrentHashMap.newKeySet<Int>()
         @Volatile var cdnUrl: String? = null
         @Volatile var failed = false
         @Volatile var errorMsg: String? = null
+        @Volatile var resolvedAesKey: ByteArray? = null
+        @Volatile var resolvedBaseIv: ByteArray? = null
+        @Volatile var firstEncryptedBytes: ByteArray? = null
 
         fun totalChunks() = ((fileSize + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt()
         fun chunkStart(ci: Int) = ci.toLong() * CHUNK_SIZE
@@ -259,8 +269,10 @@ object MegaExtractor {
                     continue
                 }
 
+                val useAesKey = stream.resolvedAesKey ?: aesKey
+                val useBaseIv = stream.resolvedBaseIv ?: baseIv
                 val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-                val ivForPos = baseIv.copyOf()
+                val ivForPos = useBaseIv.copyOf()
                 val blockNum = start / 16
                 ivForPos[8] = ((blockNum shr 56) and 0xFF).toByte()
                 ivForPos[9] = ((blockNum shr 48) and 0xFF).toByte()
@@ -270,22 +282,31 @@ object MegaExtractor {
                 ivForPos[13] = ((blockNum shr 16) and 0xFF).toByte()
                 ivForPos[14] = ((blockNum shr 8) and 0xFF).toByte()
                 ivForPos[15] = (blockNum and 0xFF).toByte()
-                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(ivForPos))
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForPos))
 
+                var firstBytes: ByteArray? = null
                 conn.inputStream.use { enc ->
                     raf.seek(start)
                     val buf = ByteArray(256 * 1024)
                     var totalWritten = 0L
-                    var firstBytes: ByteArray? = null
+                    var firstEncBuf: java.io.ByteArrayOutputStream? = null
+                    if (ci == 0) firstEncBuf = java.io.ByteArrayOutputStream()
                     while (true) {
                         val n = enc.read(buf)
                         if (n == -1) break
+                        firstEncBuf?.let { eb ->
+                            if (eb.size() < 64 * 1024) eb.write(buf, 0, minOf(n, (64 * 1024 - eb.size())))
+                        }
                         val dec = cipher.update(buf, 0, n) ?: continue
                         raf.write(dec)
                         if (firstBytes == null && dec.isNotEmpty()) {
                             firstBytes = dec.copyOf(minOf(32, dec.size))
                         }
                         totalWritten += dec.size
+                    }
+                    if (ci == 0) {
+                        stream.firstEncryptedBytes = firstEncBuf?.toByteArray()
+                        Log.d(TAG, "Saved ${stream.firstEncryptedBytes?.size ?: 0} encrypted bytes for fallback")
                     }
                     stream.writtenBytes.addAndGet(totalWritten)
                     if (ci == 0 && firstBytes != null) {
@@ -295,6 +316,105 @@ object MegaExtractor {
                     }
                 }
                 conn.disconnect()
+
+                // After chunk 0: validate MP4 and try fallback key derivations if standard fails
+                if (ci == 0 && stream.rawKeyBytes != null && firstBytes != null && !isMp4Signature(firstBytes)) {
+                    Log.w(TAG, "Standard derivation produced garbage MP4, trying fallback key derivations...")
+                    val rawKey = stream.rawKeyBytes
+                    val encBytes = stream.firstEncryptedBytes
+
+                    val fallbackDerivations = listOf(
+                        "noXOR-raw16" to { ra: ByteArray ->
+                            val k = ra.copyOf(16)
+                            val iv = ByteArray(16)
+                            System.arraycopy(ra, 16, iv, 0, 8)
+                            Pair(k, iv)
+                        },
+                        "aes256-full32" to { ra: ByteArray ->
+                            val k = ra.copyOf(32)
+                            val iv = ByteArray(16)
+                            System.arraycopy(ra, 16, iv, 0, 8)
+                            Pair(k, iv)
+                        },
+                        "raw16-zerosIv" to { ra: ByteArray ->
+                            val k = ra.copyOf(16)
+                            Pair(k, ByteArray(16))
+                        },
+                        "xor-reversedIv" to { ra: ByteArray ->
+                            val k = ByteArray(16)
+                            for (i in 0 until 16) k[i] = (ra[i].toInt() xor ra[i + 16].toInt()).toByte()
+                            val iv = ByteArray(16)
+                            System.arraycopy(ra, 0, iv, 0, 8)
+                            Pair(k, iv)
+                        }
+                    )
+
+                    for ((name, deriveFunc) in fallbackDerivations) {
+                        val (altKey, altIv) = deriveFunc(rawKey)
+                        Log.d(TAG, "Trying derivation: $name, key=${altKey.joinToString("") { "%02x".format(it) }}")
+
+                        val chunkUrl = "${stream.cdnUrl}/$start-$end"
+                        val retryConn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 15000; readTimeout = 60000
+                            setRequestProperty("User-Agent", MEGA_UA)
+                            setRequestProperty("Origin", "https://mega.nz")
+                            setRequestProperty("Referer", "https://mega.nz/")
+                            instanceFollowRedirects = true
+                        }
+                        val retryCode = retryConn.responseCode
+                        if (retryCode !in listOf(200, 206)) {
+                            retryConn.disconnect()
+                            continue
+                        }
+
+                        val retryCipher = Cipher.getInstance("AES/CTR/NoPadding")
+                        val retryIv = altIv.copyOf()
+                        val retryBlockNum = start / 16
+                        retryIv[8] = ((retryBlockNum shr 56) and 0xFF).toByte()
+                        retryIv[9] = ((retryBlockNum shr 48) and 0xFF).toByte()
+                        retryIv[10] = ((retryBlockNum shr 40) and 0xFF).toByte()
+                        retryIv[11] = ((retryBlockNum shr 32) and 0xFF).toByte()
+                        retryIv[12] = ((retryBlockNum shr 24) and 0xFF).toByte()
+                        retryIv[13] = ((retryBlockNum shr 16) and 0xFF).toByte()
+                        retryIv[14] = ((retryBlockNum shr 8) and 0xFF).toByte()
+                        retryIv[15] = (retryBlockNum and 0xFF).toByte()
+                        retryCipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(altKey, "AES"), IvParameterSpec(retryIv))
+
+                        retryConn.inputStream.use { retryEnc ->
+                            raf.seek(start)
+                            val retryBuf = ByteArray(256 * 1024)
+                            var retryTotalWritten = 0L
+                            var retryFirstBytes: ByteArray? = null
+                            while (true) {
+                                val n = retryEnc.read(retryBuf)
+                                if (n == -1) break
+                                val dec = retryCipher.update(retryBuf, 0, n) ?: continue
+                                raf.write(dec)
+                                if (retryFirstBytes == null && dec.isNotEmpty()) {
+                                    retryFirstBytes = dec.copyOf(minOf(32, dec.size))
+                                }
+                                retryTotalWritten += dec.size
+                            }
+                            if (retryFirstBytes != null) {
+                                val hex = retryFirstBytes.joinToString("") { "%02x".format(it) }
+                                Log.d(TAG, "Fallback $name first 32: $hex")
+                                if (isMp4Signature(retryFirstBytes)) {
+                                    Log.d(TAG, "FOUND WORKING DERIVATION: $name")
+                                    stream.resolvedAesKey = altKey
+                                    stream.resolvedBaseIv = altIv
+                                    stream.writtenBytes.addAndGet(retryTotalWritten)
+                                    stream.availableChunks.add(ci)
+                                    Log.d(TAG, "Chunk $ci -> disk via $name (${stream.writtenBytes.get()}/${stream.fileSize})")
+                                    retryConn.disconnect()
+                                    return
+                                }
+                            }
+                        }
+                        retryConn.disconnect()
+                    }
+                    Log.e(TAG, "All fallback key derivations failed for chunk 0")
+                }
+
                 stream.availableChunks.add(ci)
                 Log.d(TAG, "Chunk $ci -> disk (${stream.writtenBytes.get()}/${stream.fileSize})")
                 return
@@ -313,7 +433,7 @@ object MegaExtractor {
 
     private class StreamState(val stream: DiskStream)
 
-    private fun startStreamProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?): StreamProxyResult? {
+    private fun startStreamProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?, rawKeyBytes: ByteArray?): StreamProxyResult? {
         return try {
             val serverSocket = ServerSocket(0)
             serverSocket.soTimeout = 600000
@@ -323,7 +443,7 @@ object MegaExtractor {
             tempFile.deleteOnExit()
             Log.d(TAG, "Temp file: ${tempFile.absolutePath} (${fileSize / 1024 / 1024}MB)")
 
-            val stream = DiskStream(fileSize, tempFile)
+            val stream = DiskStream(fileSize, tempFile, rawKeyBytes)
             backgroundDownloader(stream, aesKey, iv, fileId, faHash)
 
             val state = StreamState(stream)
@@ -564,7 +684,7 @@ object MegaExtractor {
                 Log.d(TAG, "ivHex=${iv.joinToString("") { "%02x".format(it) }}")
                 Log.d(TAG, "keyBytesLen=${keyBytes.size}, keyBytesHex=${keyBytes.take(32).joinToString("") { "%02x".format(it) }}")
 
-                val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
+                val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash, keyBytes) ?: return@withContext null
                 Log.d(TAG, "Stream proxy ready: ${result.url}")
 
                 val proxyResult = MegaProxyResult(result.url, result.port, result.stream, result.serverSocket)
