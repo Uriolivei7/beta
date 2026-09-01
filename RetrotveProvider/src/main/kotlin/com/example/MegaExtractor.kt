@@ -25,7 +25,7 @@ object MegaExtractor {
     private const val CHUNK_SIZE = 4L * 1024 * 1024
     private const val FIVE_ZERO_NINE_DELAY_MS = 15000L
     private const val WAIT_INTERVAL_MS = 100L
-    private const val MAX_WAIT_MS = 120000L
+    private const val MAX_WAIT_MS = 30000L
 
     data class MegaUrlInfo(val fileId: String, val key: String)
 
@@ -163,14 +163,6 @@ object MegaExtractor {
         Thread {
             try {
                 if (faHash != null) performUfaUnlock(faHash, 0)
-                val urls = getDownloadUrls(fileId)
-                if (urls.isEmpty()) {
-                    stream.failed = true
-                    stream.errorMsg = "No CDN URLs"
-                    return@Thread
-                }
-                stream.cdnUrl = urls[0]
-                Log.d(TAG, "CDN URL ready: ${urls[0].removePrefix("https://").take(40)}")
 
                 val raf = RandomAccessFile(stream.tempFile, "rw")
                 try {
@@ -180,22 +172,31 @@ object MegaExtractor {
                     val lastChunk = totalChunks - 1
 
                     Log.d(TAG, "Phase 1: downloading chunk 0 first (initial data)")
-                    downloadChunk(stream, raf, 0, aesKey, baseIv)
+                    downloadChunkWithFreshUrl(stream, raf, 0, aesKey, baseIv, fileId, faHash)
+
+                    if (stream.failed) {
+                        Log.e(TAG, "Phase 1 failed, aborting download")
+                        return@Thread
+                    }
 
                     if (lastChunk > 0) {
                         Log.d(TAG, "Phase 2: downloading last chunk $lastChunk (moov atom)")
-                        downloadChunk(stream, raf, lastChunk, aesKey, baseIv)
+                        downloadChunkWithFreshUrl(stream, raf, lastChunk, aesKey, baseIv, fileId, faHash)
                     }
 
                     Log.d(TAG, "Phase 3: downloading chunks 1..${(lastChunk - 1).coerceAtLeast(0)} sequentially")
                     for (ci in 1 until lastChunk) {
                         if (stream.failed) break
                         if (stream.availableChunks.contains(ci)) continue
-                        downloadChunk(stream, raf, ci, aesKey, baseIv)
+                        downloadChunkWithFreshUrl(stream, raf, ci, aesKey, baseIv, fileId, faHash)
                     }
 
-                    stream.downloadComplete.set(true)
-                    Log.d(TAG, "Download complete: ${stream.writtenBytes.get()}/${stream.fileSize}")
+                    if (!stream.failed) {
+                        stream.downloadComplete.set(true)
+                        Log.d(TAG, "Download complete: ${stream.writtenBytes.get()}/${stream.fileSize}")
+                    } else {
+                        Log.e(TAG, "Download failed: ${stream.errorMsg} (${stream.writtenBytes.get()}/${stream.fileSize} bytes)")
+                    }
                 } finally {
                     raf.close()
                 }
@@ -207,10 +208,26 @@ object MegaExtractor {
         }.start()
     }
 
-    private fun downloadChunk(stream: DiskStream, raf: RandomAccessFile, ci: Int, aesKey: ByteArray, baseIv: ByteArray) {
+    private fun downloadChunkWithFreshUrl(stream: DiskStream, raf: RandomAccessFile, ci: Int, aesKey: ByteArray, baseIv: ByteArray, fileId: String, faHash: String?) {
         var retries = 0
-        while (retries < 10 && !stream.failed) {
+        val maxRetries = 30
+        while (retries < maxRetries && !stream.failed) {
             try {
+                if (stream.cdnUrl == null || retries > 0) {
+                    if (retries % 5 == 0) {
+                        Log.d(TAG, "Getting fresh CDN URL (attempt $retries)")
+                        val freshUrl = getDownloadUrls(fileId)
+                        if (freshUrl.isNotEmpty()) {
+                            stream.cdnUrl = freshUrl[0]
+                            Log.d(TAG, "Fresh CDN URL: ${freshUrl[0].removePrefix("https://").take(40)}")
+                        } else if (stream.cdnUrl == null) {
+                            stream.failed = true
+                            stream.errorMsg = "No CDN URLs available"
+                            return
+                        }
+                    }
+                }
+
                 val start = stream.chunkStart(ci)
                 val end = stream.chunkEnd(ci)
                 val chunkUrl = "${stream.cdnUrl}/$start-$end"
@@ -225,8 +242,9 @@ object MegaExtractor {
                 if (code == 509) {
                     conn.disconnect()
                     retries++
-                    Log.w(TAG, "509 chunk $ci ($retries/10), waiting ${FIVE_ZERO_NINE_DELAY_MS}ms...")
-                    Thread.sleep(FIVE_ZERO_NINE_DELAY_MS)
+                    val delay = (FIVE_ZERO_NINE_DELAY_MS * (1 + retries / 3)).coerceAtMost(60000L)
+                    Log.w(TAG, "509 chunk $ci ($retries/$maxRetries), waiting ${delay}ms...")
+                    Thread.sleep(delay)
                     continue
                 }
                 if (code == 416) {
@@ -237,7 +255,7 @@ object MegaExtractor {
                 if (code !in listOf(200, 206)) {
                     conn.disconnect()
                     retries++
-                    Thread.sleep(3000L * retries)
+                    Thread.sleep(3000L * retries.coerceAtMost(5))
                     continue
                 }
 
@@ -273,14 +291,14 @@ object MegaExtractor {
                 return
             } catch (e: Exception) {
                 retries++
-                Log.w(TAG, "Chunk $ci error ($retries/10): ${e.message}")
+                Log.w(TAG, "Chunk $ci error ($retries/$maxRetries): ${e.message}")
                 Thread.sleep(3000L * retries.coerceAtMost(5))
             }
         }
 
         if (!stream.failed) {
             stream.failed = true
-            stream.errorMsg = "Chunk $ci failed after 10 retries"
+            stream.errorMsg = "Chunk $ci failed after $maxRetries retries"
         }
     }
 
@@ -371,7 +389,9 @@ object MegaExtractor {
 
             val stream = state.stream
             if (stream.failed) {
-                sendError(socket, 503, stream.errorMsg ?: "MEGA download failed")
+                val msg = stream.errorMsg ?: "MEGA download failed"
+                Log.e(TAG, "Stream failed, returning 503: $msg")
+                sendError(socket, 503, msg)
                 return
             }
 
@@ -420,7 +440,7 @@ object MegaExtractor {
             }
             output.write(resp.toByteArray()); output.flush()
 
-            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes, cl=$stream.fileSize) hasRange=$hasRangeHeader")
+            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes, cl=${stream.fileSize}) hasRange=$hasRangeHeader")
 
             val raf = RandomAccessFile(stream.tempFile, "r")
             try {
