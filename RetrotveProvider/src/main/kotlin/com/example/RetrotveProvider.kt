@@ -461,6 +461,7 @@ class RetrotveProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("RetrotveProvider", "loadLinks: data = $data")
+        MegaExtractor.cleanupAll()
         
         val document = app.get(data).document
         Log.d("RetrotveProvider", "loadLinks: page title = ${document.title()}")

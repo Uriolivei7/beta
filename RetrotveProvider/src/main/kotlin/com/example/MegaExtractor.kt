@@ -502,11 +502,42 @@ object MegaExtractor {
 
     data class MegaProxyResult(val url: String, val port: Int, val stream: DiskStream)
 
+    private val activeProxies = ConcurrentHashMap<String, MegaProxyResult>()
+
+    fun cleanup(fileId: String) {
+        activeProxies.remove(fileId)?.let { result ->
+            Log.d(TAG, "Cleaning up proxy for $fileId (port ${result.port})")
+            result.stream.failed = true
+            try { java.net.ServerSocket(result.port).close() } catch (_: Exception) {}
+            result.stream.cleanup()
+        }
+    }
+
+    fun cleanupAll() {
+        activeProxies.forEach { (fileId, result) ->
+            Log.d(TAG, "Cleaning up proxy for $fileId")
+            result.stream.failed = true
+            try { java.net.ServerSocket(result.port).close() } catch (_: Exception) {}
+            result.stream.cleanup()
+        }
+        activeProxies.clear()
+    }
+
     suspend fun extractMegaUrl(megaUrl: String): MegaProxyResult? {
         return withContext(Dispatchers.IO) {
             try {
                 val urlInfo = parseMegaUrl(megaUrl) ?: return@withContext null
                 Log.d(TAG, "Parsed: fileId=${urlInfo.fileId}, key=${urlInfo.key.take(20)}...")
+
+                activeProxies[urlInfo.fileId]?.let { existing ->
+                    if (!existing.stream.failed && existing.stream.writtenBytes.get() > 0) {
+                        Log.d(TAG, "Reusing existing proxy for ${urlInfo.fileId}: ${existing.url}")
+                        return@withContext existing
+                    }
+                    Log.d(TAG, "Existing proxy for ${urlInfo.fileId} failed, creating new one")
+                    cleanup(urlInfo.fileId)
+                }
+
                 val keyBytes = base64UrlDecode(urlInfo.key)
                 val fileInfo = getFileInfo(urlInfo.fileId, keyBytes) ?: return@withContext null
                 val (aesKey, iv) = deriveKeyAndIv(keyBytes)
@@ -515,7 +546,9 @@ object MegaExtractor {
                 val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
                 Log.d(TAG, "Stream proxy ready: ${result.url}")
 
-                MegaProxyResult(result.url, result.port, result.stream)
+                val proxyResult = MegaProxyResult(result.url, result.port, result.stream)
+                activeProxies[urlInfo.fileId] = proxyResult
+                proxyResult
             } catch (e: Exception) { Log.e(TAG, "Extract fail: ${e.message}", e); null }
         }
     }
