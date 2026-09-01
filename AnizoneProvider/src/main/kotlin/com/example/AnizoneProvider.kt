@@ -92,8 +92,7 @@ class AnizoneProvider : MainAPI() {
 
 
     private fun getSnapshot(doc : Document) : String {
-        return doc.select("main div[wire:snapshot]")
-            .attr("wire:snapshot").replace("&quot;", "\"")
+        return doc.selectFirst("main")?.getElementsByAttribute("wire:snapshot")?.attr("wire:snapshot")?.replace("&quot;", "\"") ?: ""
     }
     private fun getSnapshot(json : JSONObject) : String {
         return json.getJSONArray("components")
@@ -102,7 +101,7 @@ class AnizoneProvider : MainAPI() {
 
     private fun findEpisodesSnapshot(doc: Document): String {
         val mainEl = doc.selectFirst("main") ?: return getSnapshot(doc)
-        val candidates = mainEl.select("[wire\\:snapshot]")
+        val candidates = mainEl.getElementsByAttribute("wire:snapshot")
         for (el in candidates) {
             val raw = el.attr("wire:snapshot").replace("&quot;", "\"")
             if (raw.isBlank()) continue
@@ -116,13 +115,13 @@ class AnizoneProvider : MainAPI() {
             } catch (_: Exception) {}
         }
         val fallback = getSnapshot(doc)
-        Log.d("AniZone", "Using fallback snapshot (${candidates.size} candidates)")
+        Log.d("AniZone", "Using fallback snapshot (${candidates.count()} candidates)")
         return fallback
     }
 
     private fun findEpisodesXData(doc: Document): String? {
         val mainEl = doc.selectFirst("main") ?: return null
-        val candidates = mainEl.select("[wire\\:snapshot]")
+        val candidates = mainEl.getElementsByAttribute("wire:snapshot")
         for (el in candidates) {
             val raw = el.attr("wire:snapshot").replace("&quot;", "\"")
             if (raw.isBlank()) continue
