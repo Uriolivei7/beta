@@ -388,8 +388,9 @@ object MegaExtractor {
 
             val actualEnd = endByte.coerceAtMost(stream.fileSize - 1)
             val contentLength = actualEnd - startByte + 1
+            val hasRangeHeader = endByte < stream.fileSize - 1
 
-            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes) written=${stream.writtenBytes.get()}")
+            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes) written=${stream.writtenBytes.get()} hasRange=$hasRangeHeader")
 
             if (!stream.waitForData(startByte, MAX_WAIT_MS)) {
                 Log.e(TAG, "Timeout waiting for byte $startByte (have ${stream.writtenBytes.get()})")
@@ -398,10 +399,14 @@ object MegaExtractor {
             }
 
             val resp = buildString {
-                append("HTTP/1.1 206 Partial Content\r\n")
+                if (hasRangeHeader) {
+                    append("HTTP/1.1 206 Partial Content\r\n")
+                    append("Content-Range: bytes $startByte-$actualEnd/${stream.fileSize}\r\n")
+                } else {
+                    append("HTTP/1.1 200 OK\r\n")
+                }
                 append("Content-Type: video/mp4\r\n")
                 append("Content-Length: $contentLength\r\n")
-                append("Content-Range: bytes $startByte-$actualEnd/${stream.fileSize}\r\n")
                 append("Accept-Ranges: bytes\r\n")
                 append("Connection: close\r\n\r\n")
             }
@@ -418,12 +423,13 @@ object MegaExtractor {
                         break
                     }
 
-                    val available = stream.writtenBytes.get()
+                    var available = stream.writtenBytes.get()
                     if (pos >= available && !stream.downloadComplete.get()) {
                         if (!stream.waitForData(pos, 30000L)) {
                             Log.w(TAG, "Timeout at byte $pos (have $available, done=${stream.downloadComplete.get()})")
                             break
                         }
+                        available = stream.writtenBytes.get()
                     }
 
                     if (pos >= available) break
