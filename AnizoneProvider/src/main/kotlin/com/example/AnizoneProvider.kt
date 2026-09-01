@@ -463,7 +463,7 @@ class AnizoneProvider : MainAPI() {
                 val snapshot = item.optString("snapshot", "").ifBlank { null }
 
                 newEpisode(data = url) {
-                    this.name = "Episode $slug${epTitle?.let { " : $it" } ?: ""}"
+                    this.name = epTitle ?: "Episode $slug"
                     this.season = 0
                     this.posterUrl = snapshot
                     this.data = "$url|||$imdbId"
