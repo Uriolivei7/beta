@@ -414,13 +414,13 @@ object MegaExtractor {
                     append("HTTP/1.1 200 OK\r\n")
                 }
                 append("Content-Type: video/mp4\r\n")
-                append("Content-Length: $contentLength\r\n")
+                append("Content-Length: ${stream.fileSize}\r\n")
                 append("Accept-Ranges: bytes\r\n")
                 append("Connection: close\r\n\r\n")
             }
             output.write(resp.toByteArray()); output.flush()
 
-            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes) hasRange=$hasRangeHeader")
+            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes, cl=$stream.fileSize) hasRange=$hasRangeHeader")
 
             val raf = RandomAccessFile(stream.tempFile, "r")
             try {
