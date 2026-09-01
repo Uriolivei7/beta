@@ -397,34 +397,38 @@ object MegaExtractor {
 
             var startByte = 0L
             var endByte = stream.fileSize - 1
+            var hasRangeHeader = false
 
             headers["range"]?.let { rangeValue ->
                 Regex("""bytes=(\d+)-(\d*)""").find(rangeValue)?.let {
                     startByte = it.groupValues[1].toLong()
                     if (it.groupValues[2].isNotEmpty()) endByte = it.groupValues[2].toLong()
+                    hasRangeHeader = true
                 }
             }
 
-            handleStreamRange(socket, output, startByte, endByte, state)
+            handleStreamRange(socket, output, startByte, endByte, hasRangeHeader, state)
         } catch (e: Exception) {
             Log.e(TAG, "Client err: ${e.message}")
             try { socket.close() } catch (_: Exception) {}
         }
     }
 
-    private fun handleStreamRange(socket: Socket, output: java.io.OutputStream, startByteIn: Long, endByteIn: Long, state: StreamState) {
+    private fun handleStreamRange(socket: Socket, output: java.io.OutputStream, startByteIn: Long, endByteIn: Long, hasRangeHeader: Boolean, state: StreamState) {
         val stream = state.stream
         try {
-            var startByte = startByteIn
-            var endByte = if (startByteIn >= stream.fileSize) startByte else endByteIn
-            if (startByte >= stream.fileSize) {
-                startByte = (stream.fileSize - 1).coerceAtLeast(0)
-                endByte = startByte
+            if (startByteIn >= stream.fileSize) {
+                val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${stream.fileSize}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                output.write(resp.toByteArray()); output.flush()
+                Log.d(TAG, "416: start=$startByteIn >= fileSize=${stream.fileSize}")
+                socket.close()
+                return
             }
 
-            val actualEnd = endByte.coerceAtMost(stream.fileSize - 1)
+            val startByte = startByteIn
+            val endByte = endByteIn.coerceAtMost(stream.fileSize - 1)
+            val actualEnd = if (hasRangeHeader) endByte else stream.fileSize - 1
             val contentLength = actualEnd - startByte + 1
-            val hasRangeHeader = endByte < stream.fileSize - 1
 
             val resp = buildString {
                 if (hasRangeHeader) {
@@ -434,13 +438,13 @@ object MegaExtractor {
                     append("HTTP/1.1 200 OK\r\n")
                 }
                 append("Content-Type: video/mp4\r\n")
-                append("Content-Length: ${stream.fileSize}\r\n")
+                append("Content-Length: $contentLength\r\n")
                 append("Accept-Ranges: bytes\r\n")
                 append("Connection: close\r\n\r\n")
             }
             output.write(resp.toByteArray()); output.flush()
 
-            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes, cl=${stream.fileSize}) hasRange=$hasRangeHeader")
+            Log.d(TAG, "Serve: $startByte-$actualEnd ($contentLength bytes) range=$hasRangeHeader")
 
             val raf = RandomAccessFile(stream.tempFile, "r")
             try {
