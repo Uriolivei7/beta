@@ -178,13 +178,17 @@ object MegaExtractor {
                     Log.d(TAG, "Background download: $totalChunks chunks to disk")
 
                     val lastChunk = totalChunks - 1
+
+                    Log.d(TAG, "Phase 1: downloading chunk 0 first (initial data)")
+                    downloadChunk(stream, raf, 0, aesKey, baseIv)
+
                     if (lastChunk > 0) {
-                        Log.d(TAG, "Phase 1: downloading last chunk $lastChunk (moov atom) first")
+                        Log.d(TAG, "Phase 2: downloading last chunk $lastChunk (moov atom)")
                         downloadChunk(stream, raf, lastChunk, aesKey, baseIv)
                     }
 
-                    Log.d(TAG, "Phase 2: downloading chunks 0..$lastChunk sequentially")
-                    for (ci in 0 until totalChunks) {
+                    Log.d(TAG, "Phase 3: downloading chunks 1..${(lastChunk - 1).coerceAtLeast(0)} sequentially")
+                    for (ci in 1 until lastChunk) {
                         if (stream.failed) break
                         if (stream.availableChunks.contains(ci)) continue
                         downloadChunk(stream, raf, ci, aesKey, baseIv)
@@ -388,13 +392,14 @@ object MegaExtractor {
         }
     }
 
-    private fun handleStreamRange(socket: Socket, output: java.io.OutputStream, startByte: Long, endByte: Long, state: StreamState) {
+    private fun handleStreamRange(socket: Socket, output: java.io.OutputStream, startByteIn: Long, endByteIn: Long, state: StreamState) {
         val stream = state.stream
         try {
+            var startByte = startByteIn
+            var endByte = if (startByteIn >= stream.fileSize) startByte else endByteIn
             if (startByte >= stream.fileSize) {
-                output.write("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${stream.fileSize}\r\nConnection: close\r\n\r\n".toByteArray())
-                output.flush(); socket.close()
-                return
+                startByte = (stream.fileSize - 1).coerceAtLeast(0)
+                endByte = startByte
             }
 
             val actualEnd = endByte.coerceAtMost(stream.fileSize - 1)
