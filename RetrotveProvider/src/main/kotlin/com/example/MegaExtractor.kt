@@ -331,11 +331,11 @@ object MegaExtractor {
             }.start()
 
             Log.d(TAG, "Stream proxy started on port $port")
-            StreamProxyResult("http://127.0.0.1:$port/video", port, stream)
+            StreamProxyResult("http://127.0.0.1:$port/video", port, stream, serverSocket)
         } catch (e: Exception) { Log.e(TAG, "Proxy start fail: ${e.message}"); null }
     }
 
-    private data class StreamProxyResult(val url: String, val port: Int, val stream: DiskStream)
+    private data class StreamProxyResult(val url: String, val port: Int, val stream: DiskStream, val serverSocket: ServerSocket?)
 
     private fun performUfaUnlock(faHash: String, sessionId: Int): Boolean {
         return try {
@@ -500,16 +500,17 @@ object MegaExtractor {
 
     // ===== Entry Point =====
 
-    data class MegaProxyResult(val url: String, val port: Int, val stream: DiskStream)
+    data class MegaProxyResult(val url: String, val port: Int, val stream: DiskStream, val serverSocket: ServerSocket?)
 
     private val activeProxies = ConcurrentHashMap<String, MegaProxyResult>()
+    @Volatile private var currentFileId: String? = null
 
     fun cleanup(fileId: String) {
         activeProxies.remove(fileId)?.let { result ->
             Log.d(TAG, "Cleaning up proxy for $fileId (port ${result.port})")
             result.stream.failed = true
-            try { java.net.ServerSocket(result.port).close() } catch (_: Exception) {}
-            result.stream.cleanup()
+            try { result.serverSocket?.close() } catch (_: Exception) {}
+            try { result.stream.tempFile.delete() } catch (_: Exception) {}
         }
     }
 
@@ -517,10 +518,11 @@ object MegaExtractor {
         activeProxies.forEach { (fileId, result) ->
             Log.d(TAG, "Cleaning up proxy for $fileId")
             result.stream.failed = true
-            try { java.net.ServerSocket(result.port).close() } catch (_: Exception) {}
-            result.stream.cleanup()
+            try { result.serverSocket?.close() } catch (_: Exception) {}
+            try { result.stream.tempFile.delete() } catch (_: Exception) {}
         }
         activeProxies.clear()
+        currentFileId = null
     }
 
     suspend fun extractMegaUrl(megaUrl: String): MegaProxyResult? {
@@ -529,8 +531,15 @@ object MegaExtractor {
                 val urlInfo = parseMegaUrl(megaUrl) ?: return@withContext null
                 Log.d(TAG, "Parsed: fileId=${urlInfo.fileId}, key=${urlInfo.key.take(20)}...")
 
+                if (urlInfo.fileId != currentFileId) {
+                    Log.d(TAG, "Episode changed: $currentFileId -> ${urlInfo.fileId}, cleaning old proxies")
+                    val oldId = currentFileId
+                    currentFileId = urlInfo.fileId
+                    oldId?.let { cleanup(it) }
+                }
+
                 activeProxies[urlInfo.fileId]?.let { existing ->
-                    if (!existing.stream.failed && existing.stream.writtenBytes.get() > 0) {
+                    if (!existing.stream.failed) {
                         Log.d(TAG, "Reusing existing proxy for ${urlInfo.fileId}: ${existing.url}")
                         return@withContext existing
                     }
@@ -546,7 +555,7 @@ object MegaExtractor {
                 val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash) ?: return@withContext null
                 Log.d(TAG, "Stream proxy ready: ${result.url}")
 
-                val proxyResult = MegaProxyResult(result.url, result.port, result.stream)
+                val proxyResult = MegaProxyResult(result.url, result.port, result.stream, result.serverSocket)
                 activeProxies[urlInfo.fileId] = proxyResult
                 proxyResult
             } catch (e: Exception) { Log.e(TAG, "Extract fail: ${e.message}", e); null }
