@@ -386,17 +386,28 @@ object MegaExtractor {
                 return
             }
 
+            if (!stream.downloadComplete.get() && !stream.failed) {
+                Log.d(TAG, "Waiting for full download before serving (have ${stream.writtenBytes.get()}/${stream.fileSize})...")
+                val deadline = System.currentTimeMillis() + 600000L
+                while (!stream.downloadComplete.get() && !stream.failed && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(1000)
+                }
+                if (!stream.downloadComplete.get() && !stream.failed) {
+                    sendError(socket, 504, "Download timeout (10min)")
+                    return
+                }
+                if (stream.failed) {
+                    sendError(socket, 503, stream.errorMsg ?: "Download failed")
+                    return
+                }
+                Log.d(TAG, "Download complete! ${stream.writtenBytes.get()}/${stream.fileSize}")
+            }
+
             val actualEnd = endByte.coerceAtMost(stream.fileSize - 1)
             val contentLength = actualEnd - startByte + 1
             val hasRangeHeader = endByte < stream.fileSize - 1
 
-            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes) written=${stream.writtenBytes.get()} hasRange=$hasRangeHeader")
-
-            if (!stream.waitForData(startByte, MAX_WAIT_MS)) {
-                Log.e(TAG, "Timeout waiting for byte $startByte (have ${stream.writtenBytes.get()})")
-                sendError(socket, 504, "Download too slow")
-                return
-            }
+            Log.d(TAG, "Serve: bytes $startByte-$actualEnd ($contentLength bytes) hasRange=$hasRangeHeader")
 
             val resp = buildString {
                 if (hasRangeHeader) {
@@ -418,29 +429,10 @@ object MegaExtractor {
                 val buf = ByteArray(64 * 1024)
 
                 while (pos <= actualEnd) {
-                    if (stream.failed) {
-                        Log.e(TAG, "Stream failed during serve")
-                        break
-                    }
-
-                    var available = stream.writtenBytes.get()
-                    if (pos >= available && !stream.downloadComplete.get()) {
-                        if (!stream.waitForData(pos, 30000L)) {
-                            Log.w(TAG, "Timeout at byte $pos (have $available, done=${stream.downloadComplete.get()})")
-                            break
-                        }
-                        available = stream.writtenBytes.get()
-                    }
-
-                    if (pos >= available) break
-
                     raf.seek(pos)
-                    val toRead = minOf(buf.size.toLong(), actualEnd - pos + 1, available - pos).toInt()
+                    val toRead = minOf(buf.size.toLong(), actualEnd - pos + 1).toInt()
                     val n = raf.read(buf, 0, toRead)
-                    if (n <= 0) {
-                        Thread.sleep(50)
-                        continue
-                    }
+                    if (n <= 0) break
                     output.write(buf, 0, n)
                     output.flush()
                     pos += n
