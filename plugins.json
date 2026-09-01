@@ -2,7 +2,7 @@
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnizoneProvider.cs3",
     "status": 1,
-    "version": 2,
+    "version": 3,
     "apiVersion": 1,
     "name": "AniZone",
     "internalName": "AnizoneProvider",
@@ -11,7 +11,7 @@
     "tvTypes": ["Anime"],
     "iconUrl": "https://anizone.to/favicon-32x32.png",
     "language": "en",
-    "fileSize": 19000
+    "fileSize": 29932
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/NetflixmirrorProvider.cs3",
