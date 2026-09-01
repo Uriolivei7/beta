@@ -411,7 +411,7 @@ class RetrotveProvider : MainAPI() {
                         Log.d("RetrotveProvider", "-> MEGA: extracting via local proxy: $fixedSrc")
                         val megaResult = MegaExtractor.extractMegaUrl(fixedSrc)
                         if (megaResult != null) {
-                            val (localUrl, _) = megaResult
+                            val localUrl = megaResult.url
                             Log.d("RetrotveProvider", "-> MEGA proxy URL: $localUrl")
                             callback(newExtractorLink(
                                 source = "RetroTVE",
