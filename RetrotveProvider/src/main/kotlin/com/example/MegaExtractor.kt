@@ -61,7 +61,7 @@ object MegaExtractor {
         return validSignatures.any { sig.startsWith(it) }
     }
 
-    data class MegaFileInfo(val downloadUrl: String, val fileSize: Long, val fileName: String, val faHash: String?, val ufaPUrl: String? = null)
+    data class MegaFileInfo(val downloadUrl: String, val fileSize: Long, val fileName: String, val faHash: String?)
 
     suspend fun getFileInfo(fileId: String, keyBytes: ByteArray): MegaFileInfo? {
         return withContext(Dispatchers.IO) {
@@ -75,16 +75,13 @@ object MegaExtractor {
                 Log.d(TAG, "MEGA metadata: size=$fileSize, fa=$fa")
 
                 val faHash = extractFaHash(fa)
-                var ufaPUrl: String? = null
                 faHash?.let { hash ->
                     Log.d(TAG, "MEGA Step 2: ufa fah=$hash")
-                    val ufaResp = megaApiPost(apiUrl, """[{"a":"ufa","fah":"$hash","r":1,"ssl":1}]""", 1)
-                    ufaPUrl = ufaResp?.optString("p", null)
-                    Log.d(TAG, "MEGA ufa p URL: ${ufaPUrl?.take(80)}")
+                    performUfaUnlock(hash, 1)
                 }
 
                 val fileName = if (encryptedAttrs.isNotEmpty()) decryptFileName(encryptedAttrs, keyBytes) ?: "mega_file" else "mega_file"
-                MegaFileInfo("", fileSize, fileName, faHash, ufaPUrl)
+                MegaFileInfo("", fileSize, fileName, faHash)
             } catch (e: Exception) { Log.e(TAG, "MEGA API error: ${e.message}"); null }
         }
     }
@@ -153,6 +150,8 @@ object MegaExtractor {
         @Volatile var resolvedBaseIv: ByteArray? = null
         @Volatile var firstEncryptedBytes: ByteArray? = null
         @Volatile var useUfaUrl: Boolean = false
+        @Volatile var cdnUrls: List<String> = emptyList()
+        @Volatile var cdnUrlIndex: Int = 0
 
         fun totalChunks() = ((fileSize + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt()
         fun chunkStart(ci: Int) = ci.toLong() * CHUNK_SIZE
@@ -173,17 +172,10 @@ object MegaExtractor {
         }
     }
 
-    private fun backgroundDownloader(stream: DiskStream, aesKey: ByteArray, baseIv: ByteArray, fileId: String, faHash: String?, ufaPUrl: String? = null) {
+    private fun backgroundDownloader(stream: DiskStream, aesKey: ByteArray, baseIv: ByteArray, fileId: String, faHash: String?) {
         Thread {
             try {
                 if (faHash != null) performUfaUnlock(faHash, 0)
-
-                // Use ufa p URL as primary CDN URL if available (works better with msd:1 files)
-                if (ufaPUrl != null) {
-                    stream.cdnUrl = ufaPUrl
-                    stream.useUfaUrl = true
-                    Log.d(TAG, "Using ufa p URL as CDN: ${ufaPUrl.take(80)}")
-                }
 
                 val raf = RandomAccessFile(stream.tempFile, "rw")
                 try {
@@ -234,43 +226,53 @@ object MegaExtractor {
         val maxRetries = 30
         while (retries < maxRetries && !stream.failed) {
             try {
-                if (stream.cdnUrl == null || retries > 0) {
-                    if (!stream.useUfaUrl && retries % 5 == 0) {
-                        Log.d(TAG, "Getting fresh CDN URL (attempt $retries)")
-                        val freshUrl = getDownloadUrls(fileId)
-                        if (freshUrl.isNotEmpty()) {
-                            stream.cdnUrl = freshUrl[0]
-                            Log.d(TAG, "Fresh CDN URL: ${freshUrl[0].removePrefix("https://").take(40)}")
-                        } else if (stream.cdnUrl == null) {
+                // Fetch CDN URLs if we don't have any yet
+                if (stream.cdnUrls.isEmpty()) {
+                    Log.d(TAG, "Fetching CDN URLs for $fileId")
+                    val urls = getDownloadUrls(fileId)
+                    if (urls.isEmpty()) {
+                        if (stream.cdnUrl == null) {
                             stream.failed = true
                             stream.errorMsg = "No CDN URLs available"
                             return
                         }
-                    } else if (stream.useUfaUrl && retries > 0 && retries % 5 == 0) {
-                        // Re-fetch ufa p URL on retries for ufa mode
-                        Log.d(TAG, "Re-fetching ufa p URL (attempt $retries)")
-                        val freshUrl = getDownloadUrls(fileId)
-                        if (freshUrl.isNotEmpty()) {
-                            stream.cdnUrl = freshUrl[0]
-                            Log.d(TAG, "Fresh CDN URL (fallback): ${freshUrl[0].removePrefix("https://").take(40)}")
-                            stream.useUfaUrl = false
+                    } else {
+                        stream.cdnUrls = urls
+                        stream.cdnUrlIndex = 0
+                        stream.cdnUrl = urls[0]
+                        Log.d(TAG, "Got ${urls.size} CDN URL(s): ${urls.map { it.removePrefix("https://").take(30) }}")
+                    }
+                }
+
+                // On retries, cycle through all CDN URLs
+                if (retries > 0) {
+                    if (retries % 5 == 0) {
+                        Log.d(TAG, "Getting fresh CDN URLs (attempt $retries)")
+                        val freshUrls = getDownloadUrls(fileId)
+                        if (freshUrls.isNotEmpty()) {
+                            stream.cdnUrls = freshUrls
+                            stream.cdnUrlIndex = 0
+                            Log.d(TAG, "Fresh: ${freshUrls.size} CDN URL(s)")
                         }
+                    }
+                    // Cycle to next CDN URL on each retry
+                    if (stream.cdnUrls.isNotEmpty()) {
+                        stream.cdnUrlIndex = (stream.cdnUrlIndex + 1) % stream.cdnUrls.size
+                        stream.cdnUrl = stream.cdnUrls[stream.cdnUrlIndex]
+                        Log.d(TAG, "Trying CDN URL #${stream.cdnUrlIndex}: ${stream.cdnUrl!!.removePrefix("https://").take(40)}")
                     }
                 }
 
                 val start = stream.chunkStart(ci)
                 val end = stream.chunkEnd(ci)
-                val chunkUrl = if (stream.useUfaUrl) stream.cdnUrl!! else "${stream.cdnUrl}/$start-$end"
-                Log.d(TAG, "Chunk $ci: url=${if (stream.useUfaUrl) "ufa" else "path"}, range=$start-$end")
+                val chunkUrl = "${stream.cdnUrl}/$start-$end"
+                Log.d(TAG, "Chunk $ci: range=$start-$end (attempt $retries)")
                 val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000; readTimeout = 60000
                     setRequestProperty("User-Agent", MEGA_UA)
                     setRequestProperty("Origin", "https://mega.nz")
                     setRequestProperty("Referer", "https://mega.nz/")
                     instanceFollowRedirects = true
-                    if (stream.useUfaUrl) {
-                        setRequestProperty("Range", "bytes=$start-$end")
-                    }
                 }
                 val code = conn.responseCode
                 if (code == 509) {
@@ -451,7 +453,10 @@ object MegaExtractor {
                         }
                         retryConn.disconnect()
                     }
-                    Log.e(TAG, "All fallback key derivations failed for chunk 0")
+                    Log.e(TAG, "All fallback key derivations failed for chunk 0, trying next CDN URL")
+                    retries++
+                    Thread.sleep(2000L)
+                    continue
                 }
 
                 stream.availableChunks.add(ci)
@@ -472,7 +477,7 @@ object MegaExtractor {
 
     private class StreamState(val stream: DiskStream)
 
-    private fun startStreamProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?, rawKeyBytes: ByteArray?, ufaPUrl: String? = null): StreamProxyResult? {
+    private fun startStreamProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?, rawKeyBytes: ByteArray?): StreamProxyResult? {
         return try {
             val serverSocket = ServerSocket(0)
             serverSocket.soTimeout = 600000
@@ -483,7 +488,7 @@ object MegaExtractor {
             Log.d(TAG, "Temp file: ${tempFile.absolutePath} (${fileSize / 1024 / 1024}MB)")
 
             val stream = DiskStream(fileSize, tempFile, rawKeyBytes)
-            backgroundDownloader(stream, aesKey, iv, fileId, faHash, ufaPUrl)
+            backgroundDownloader(stream, aesKey, iv, fileId, faHash)
 
             val state = StreamState(stream)
 
@@ -723,7 +728,7 @@ object MegaExtractor {
                 Log.d(TAG, "ivHex=${iv.joinToString("") { "%02x".format(it) }}")
                 Log.d(TAG, "keyBytesLen=${keyBytes.size}, keyBytesHex=${keyBytes.take(32).joinToString("") { "%02x".format(it) }}")
 
-                val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash, keyBytes, fileInfo.ufaPUrl) ?: return@withContext null
+                val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash, keyBytes) ?: return@withContext null
                 Log.d(TAG, "Stream proxy ready: ${result.url}")
 
                 val proxyResult = MegaProxyResult(result.url, result.port, result.stream, result.serverSocket)
