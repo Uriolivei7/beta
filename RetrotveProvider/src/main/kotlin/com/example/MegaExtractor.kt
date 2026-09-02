@@ -965,10 +965,29 @@ object MegaExtractor {
         try {
             if (startByteIn >= stream.fileSize) {
                 // ExoPlayer has stale Content-Length from previous episode
-                // Return 416 with correct file size — ExoPlayer uses Content-Range to update seek range
-                Log.w(TAG, "Range start $startByteIn >= fileSize ${stream.fileSize}, returning 416 (stale Content-Length)")
-                val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${stream.fileSize}\r\nConnection: close\r\n\r\n"
+                // Redirect to byte 0 with Connection: close — ExoPlayer gets valid data (ftyp)
+                // and closes the stale connection. NOT 416 — ExoPlayer treats that as fatal error 2004.
+                Log.w(TAG, "Range start $startByteIn >= fileSize ${stream.fileSize}, redirecting to byte 0 (stale)")
+                val startByte = 0L
+                val actualEnd = stream.fileSize - 1
+                val contentLength = actualEnd - startByte + 1
+                val resp = buildString {
+                    append("HTTP/1.1 206 Partial Content\r\n")
+                    append("Content-Range: bytes $startByte-$actualEnd/${stream.fileSize}\r\n")
+                    append("Content-Type: video/mp4\r\n")
+                    append("Content-Length: $contentLength\r\n")
+                    append("Accept-Ranges: bytes\r\n")
+                    append("Connection: close\r\n\r\n")
+                }
                 output.write(resp.toByteArray()); output.flush()
+                // Serve first 64KB only, then close — enough for ExoPlayer to parse ftyp/moov
+                val raf = RandomAccessFile(stream.tempFile, "r")
+                try {
+                    val buf = ByteArray(64 * 1024)
+                    val toRead = minOf(buf.size.toLong(), contentLength)
+                    val n = raf.read(buf, 0, toRead.toInt())
+                    if (n > 0) { output.write(buf, 0, n); output.flush() }
+                } finally { raf.close() }
                 socket.close()
                 return
             }
