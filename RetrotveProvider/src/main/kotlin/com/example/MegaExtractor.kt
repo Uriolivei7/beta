@@ -291,7 +291,16 @@ object MegaExtractor {
                 val relStart: Long
                 val relEnd: Long
                 val shardOffsets = stream.shardOffsets
-                if (shardOffsets.size > 1) {
+
+                // BUG FIX: when cycling CDN URLs on retry, use the cycled URL DIRECTLY
+                // (bypass shard map which may have duplicate offsets picking wrong URL)
+                if (retries > 0 && stream.cdnUrls.isNotEmpty()) {
+                    urlForChunk = stream.cdnUrls[stream.cdnUrlIndex]
+                    relStart = start
+                    relEnd = end
+                    val hostname = urlForChunk.removePrefix("https://").takeWhile { it != '/' }
+                    Log.d(TAG, "Chunk $ci: cycling to CDN #${stream.cdnUrlIndex} ${hostname.take(30)}... range=$relStart-$relEnd (attempt $retries)")
+                } else if (shardOffsets.size > 1) {
                     // Find shard whose offset is <= start, preferring the one with the largest offset
                     var bestUrl: String? = null
                     var bestOffset = -1L
@@ -711,6 +720,7 @@ object MegaExtractor {
      */
     private fun probeShardOffsets(cdnUrls: List<String>, aesKey: ByteArray, baseIv: ByteArray, fileSize: Long): LinkedHashMap<String, Long> {
         val result = linkedMapOf<String, Long>()
+        val matchedUrls = mutableSetOf<String>() // Track URLs with confirmed MP4 signature matches
         if (cdnUrls.size <= 1) return result
 
         val numUrls = cdnUrls.size
@@ -836,16 +846,36 @@ object MegaExtractor {
                 }
 
                 result[url] = foundOffset
+                if (foundOffset >= 0 && foundOffset == 0L || (foundOffset > 0 && !result.values.contains(foundOffset))) {
+                    matchedUrls.add(url)
+                }
                 Log.d(TAG, "Shard #$index: final offset=${foundOffset / 1024 / 1024}MB (${foundOffset})")
             } catch (e: Exception) {
                 Log.w(TAG, "Shard probe #$index error: ${e.message}")
             }
         }
 
-        // Phase 6: Validate and fix shard ordering
-        // If we have all URLs mapped, sort by offset and verify no overlaps
+        // Phase 6: Deduplicate — if a heuristic URL has the same offset as a matched URL, remove it
+        // (matched URLs are confirmed by MP4 signature, heuristic ones are guesses)
+        val deduped = linkedMapOf<String, Long>()
+        val usedOffsets = mutableSetOf<Long>()
+        for ((url, offset) in result) {
+            if (url in matchedUrls) {
+                // Matched URL: always keep, and claim this offset
+                deduped[url] = offset
+                usedOffsets.add(offset)
+            } else if (offset !in usedOffsets) {
+                // Heuristic URL with unique offset: keep
+                deduped[url] = offset
+                usedOffsets.add(offset)
+            } else {
+                Log.d(TAG, "Shard dedup: removing ${url.removePrefix("https://").take(30)}... (offset ${offset / 1024 / 1024}MB already claimed by matched URL)")
+            }
+        }
+
+        // Phase 7: Sort and log
         val sorted = linkedMapOf<String, Long>()
-        result.entries.sortedBy { it.value }.forEach { sorted[it.key] = it.value }
+        deduped.entries.sortedBy { it.value }.forEach { sorted[it.key] = it.value }
 
         // Log detailed shard map
         Log.d(TAG, "Shard map: ${sorted.size}/${cdnUrls.size} URLs mapped")
