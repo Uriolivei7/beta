@@ -738,3 +738,13 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Compilacion OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
 - Plugin empaquetado: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (72 KB)
 - Pendiente: instalar cs3 en dispositivo y probar episodio 5 (44NxgQha, 333MB, 6 URLs CDN, `msd:1`) — verificar que el shard probing encuentra los offsets correctos y que los chunks se descargan de las URLs correctas
+
+### 🔧 Fix UFA URL fallback + exponential 509 backoff (02 Sep 2026 v66)
+- **Síntoma (v65)**: episodio 5 (44NxgQha) obtuvo HTTP 509 en TODOS los CDNs para chunk 0. Intentó CDN#1→#5, URLs frescas, no-range test — todos 509 con Content-Length=0. Es throttle de bandwidth por IP, no bug de código.
+- **Causa raíz**: el throttle 509 es por IP, NO por CDN. Probar diferentes CDNs no ayuda. El backoff anterior (15s×retries, cap 60s) era insuficiente — el cooldown de MEGA puede durar 5-10 minutos.
+- **Fix 1: UFA URL como fallback** — `performUfaUnlock()` ahora retorna la URL UFA (antes solo retornaba boolean). Se guarda en `DiskStream.ufaUrl`. Cuando TODOS los CDNs fallan con 509 después del retry loop, se intenta la UFA URL como último recurso (bucket de rate-limit diferente).
+- **Fix 2: Exponential backoff mejorado** — delays: 15s, 15s, 20s, 25s, 30s, 40s, 50s, 60s, 90s, 120s (antes: 15s×retries, cap 60s). Da tiempo al cooldown de MEGA para expirar.
+- **No se puso UFA URL en cdnUrls** — porque el probe de shards la detecta como "mirrors" (sirve todo el archivo), rompiendo el mapeo de shards.
+- Compilación OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (89 KB)
+- ⏸️ **Pendiente**: probar en dispositivo — episode 5 aislado (no después de episode 1) para verificar UFA fallback + backoff.
