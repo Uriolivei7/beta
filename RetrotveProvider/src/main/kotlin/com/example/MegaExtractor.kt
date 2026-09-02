@@ -185,7 +185,9 @@ object MegaExtractor {
 
                     val lastChunk = totalChunks - 1
 
-                    Log.d(TAG, "Phase 1: downloading chunk 0 (ftyp/initial data)")
+                    // STEP 1: Fetch CDN URLs and download chunk 0 IMMEDIATELY
+                    // (before probe — ExoPlayer times out after ~30s)
+                    Log.d(TAG, "Phase 1: fetching CDN URLs + downloading chunk 0 immediately")
                     downloadChunkWithFreshUrl(stream, raf, 0, aesKey, baseIv, fileId, faHash)
 
                     if (stream.failed) {
@@ -194,16 +196,22 @@ object MegaExtractor {
                     }
                     Log.d(TAG, "Phase 1 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
 
+                    // STEP 2: Probe shard offsets (now in background, ExoPlayer already playing)
+                    if (stream.cdnUrls.size > 1 && stream.shardOffsets.isEmpty()) {
+                        Log.d(TAG, "Phase 2: probing shard offsets for ${stream.cdnUrls.size} CDN URLs...")
+                        stream.shardOffsets = probeShardOffsets(stream.cdnUrls, aesKey, baseIv, stream.fileSize)
+                    }
+
                     if (lastChunk > 0) {
-                        Log.d(TAG, "Phase 2: downloading last chunk $lastChunk (moov atom)")
+                        Log.d(TAG, "Phase 3: downloading last chunk $lastChunk (moov atom)")
                         downloadChunkWithFreshUrl(stream, raf, lastChunk, aesKey, baseIv, fileId, faHash)
                     }
 
                     if (!stream.failed) {
-                        Log.d(TAG, "Phase 2 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
+                        Log.d(TAG, "Phase 3 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
                     }
 
-                    Log.d(TAG, "Phase 3: downloading chunks 1..${(lastChunk - 1).coerceAtLeast(0)} sequentially")
+                    Log.d(TAG, "Phase 4: downloading chunks 1..${(lastChunk - 1).coerceAtLeast(0)} sequentially")
                     for (ci in 1 until lastChunk) {
                         if (stream.failed) break
                         if (stream.availableChunks.contains(ci)) continue
@@ -244,13 +252,11 @@ object MegaExtractor {
                         }
                     } else {
                         stream.cdnUrls = urls
-                        stream.cdnUrlIndex = 0
-                        stream.cdnUrl = urls[0]
-                        Log.d(TAG, "Got ${urls.size} CDN URL(s): ${urls.map { it.removePrefix("https://").take(30) }}")
-                        // Probe shard offsets for msd:1 multi-CDN files
-                        if (urls.size > 1 && stream.shardOffsets.isEmpty()) {
-                            stream.shardOffsets = probeShardOffsets(urls, aesKey, baseIv, stream.fileSize)
-                        }
+                        // For multi-CDN: start at CDN #1 (known ftyp shard) to avoid garbage from CDN #0
+                        stream.cdnUrlIndex = if (urls.size > 1) 1 else 0
+                        stream.cdnUrl = urls[stream.cdnUrlIndex]
+                        Log.d(TAG, "Got ${urls.size} CDN URL(s), starting at CDN #${stream.cdnUrlIndex}: ${stream.cdnUrl!!.removePrefix("https://").take(40)}")
+                        // NOTE: shard probe is done in backgroundDownloader (not here) to avoid blocking chunk 0
                     }
                 }
 
@@ -799,10 +805,11 @@ object MegaExtractor {
                     continue
                 }
 
-                // Try each candidate offset — decrypt first 32 bytes of data at that offset
+                // Phase 1: try known candidate offsets with 512-byte sample
                 var foundOffset = -1L
                 for (candidate in candidateOffsets) {
-                    val dec = tryDecryptAtOffset(aesKey, baseIv, candidate, data.copyOf(minOf(32, data.size)))
+                    val sampleSize = minOf(512, data.size)
+                    val dec = tryDecryptAtOffset(aesKey, baseIv, candidate, data.copyOf(sampleSize))
                     if (dec != null && isMp4Signature(dec)) {
                         foundOffset = candidate
                         val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
@@ -811,16 +818,40 @@ object MegaExtractor {
                     }
                 }
 
+                // Phase 2: fine scan — every 16 bytes within the downloaded data
+                // For middle shards, the MP4 signature can be at ANY position within the 66MB
                 if (foundOffset < 0) {
-                    // No MP4 signature at any candidate — this shard starts mid-mdat
-                    // Try finer scan: every 1MB within the data
-                    Log.d(TAG, "Shard #$index: no match at candidates, scanning every 1MB...")
-                    for (pos in 0L until fileSize step (1L * 1024 * 1024)) {
-                        val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOf(minOf(32, data.size)))
+                    Log.d(TAG, "Shard #$index: no match at candidates, scanning every 16 bytes (max 5MB region)...")
+                    val scanLimit = minOf(data.size.toLong(), 5L * 1024 * 1024)
+                    var logCounter = 0
+                    for (pos in 0L until scanLimit step 16) {
+                        val sampleSize = minOf(512, data.size - pos.toInt())
+                        if (sampleSize < 32) break
+                        val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOfRange(pos.toInt(), pos.toInt() + sampleSize))
                         if (dec != null && isMp4Signature(dec)) {
                             foundOffset = pos
                             val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
-                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB (scan) — box=$boxName")
+                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB ($pos, scan) — box=$boxName")
+                            break
+                        }
+                        logCounter++
+                        if (logCounter % 50000 == 0) {
+                            Log.d(TAG, "Shard #$index: scanned ${pos / 1024}KB, no match yet...")
+                        }
+                    }
+                }
+
+                // Phase 3: coarse scan — every 1MB for the full 66MB (catches late signatures)
+                if (foundOffset < 0) {
+                    Log.d(TAG, "Shard #$index: no match in first 5MB, scanning every 1MB for full range...")
+                    for (pos in 0L until data.size.toLong() step (1L * 1024 * 1024)) {
+                        val sampleSize = minOf(512, data.size - pos.toInt())
+                        if (sampleSize < 32) break
+                        val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOfRange(pos.toInt(), pos.toInt() + sampleSize))
+                        if (dec != null && isMp4Signature(dec)) {
+                            foundOffset = pos
+                            val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
+                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB ($pos, coarse) — box=$boxName")
                             break
                         }
                     }
