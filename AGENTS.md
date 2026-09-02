@@ -724,3 +724,17 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Test seeking (Range requests) — pause + seek to different position
 - Test file naming — decrypt filename from MEGA attributes
 - Test edge cases: large files (>1GB), slow connections, MEGA download quotas
+
+### 🔧 Fix msd:1 multi-CDN shard download (01 Sep 2026 v54)
+- **Sintoma**: episodios con `msd:1` (multi-server download) y 6 URLs CDN fallan — chunk 0 funciona (ftyp OK en CDN #1), pero chunks mas alla de ~55-70MB obtienen 0 bytes de TODAS las URLs CDN
+- **Causa raiz (3 bugs)**:
+  1. **CDN #0 skip**: despues de obtener URLs frescas (`retries % 5 == 0`), `cdnUrlIndex` se pone en 0 pero se incrementa inmediatamente a 1 — CDN #0 NUNCA se reintenta
+  2. **Descarga parcial aceptada**: cuando CDN retorna 2.7MB de 4MB, `totalWritten > 0` se acepta como completo — deja gaps en el archivo
+  3. **Sin routing aware de shards**: `msd:1` retorna 6 URLs que sirven diferentes rangos de bytes, pero se usan rangos absolutos en TODAS — CDN retorna 0 bytes cuando el rango esta fuera de su shard
+- **Fix: Shard probing**: descarga 4MB de cada URL CDN, intenta descifrar en cada posicion de CHUNK_SIZE para encontrar MP4 valido → mapea cada URL a su offset de shard
+- **Fix: Rangos relativos al shard**: para cada chunk, encuentra la URL cuyo shard contiene la posicion del chunk, calcula rango relativo (`start - shardOffset`), usa `$url/$relStart-$relEnd`
+- **Fix: Deteccion de descarga parcial**: si `totalWritten < expectedSize`, revierte y reintenta
+- **Fix: CDN #0 fresh URLs**: usa CDN #0 directamente sin incrementar despues de URLs frescas
+- Compilacion OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (72 KB)
+- Pendiente: instalar cs3 en dispositivo y probar episodio 5 (44NxgQha, 333MB, 6 URLs CDN, `msd:1`) — verificar que el shard probing encuentra los offsets correctos y que los chunks se descargan de las URLs correctas
