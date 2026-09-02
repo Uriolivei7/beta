@@ -412,7 +412,8 @@ class RetrotveProvider : MainAPI() {
                         val megaResult = MegaExtractor.extractMegaUrl(fixedSrc)
                         if (megaResult != null) {
                             val localUrl = megaResult.url
-                            Log.d("RetrotveProvider", "-> MEGA proxy URL: $localUrl")
+                            Log.d("RetrotveProvider", "-> MEGA proxy URL: $localUrl (port=${megaResult.port})")
+                            Log.d("RetrotveProvider", "-> MEGA stream: ${megaResult.stream.writtenBytes.get()}/${megaResult.stream.fileSize} bytes, failed=${megaResult.stream.failed}, complete=${megaResult.stream.downloadComplete.get()}")
                             callback(newExtractorLink(
                                 source = "RetroTVE",
                                 name = "MEGA",
@@ -422,6 +423,7 @@ class RetrotveProvider : MainAPI() {
                                 this.referer = playerUrl
                                 this.quality = 720
                             })
+                            Log.d("RetrotveProvider", "-> MEGA callback emitted successfully")
                         } else {
                             Log.e("RetrotveProvider", "-> MEGA extraction failed")
                         }

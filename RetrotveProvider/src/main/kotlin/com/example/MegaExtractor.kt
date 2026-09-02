@@ -176,6 +176,7 @@ object MegaExtractor {
     private fun backgroundDownloader(stream: DiskStream, aesKey: ByteArray, baseIv: ByteArray, fileId: String, faHash: String?) {
         Thread {
             try {
+                val startTime = System.currentTimeMillis()
                 if (faHash != null) performUfaUnlock(faHash, 0)
 
                 val raf = RandomAccessFile(stream.tempFile, "rw")
@@ -642,8 +643,10 @@ object MegaExtractor {
 
             Thread {
                 try {
+                    Log.d(TAG, "Proxy server loop started on port $port, waiting for connections...")
                     while (!serverSocket.isClosed) {
                         val cs = serverSocket.accept()
+                        Log.d(TAG, "Proxy accepted connection from ${cs.inetAddress?.hostAddress}:${cs.port} (local=$port)")
                         Thread { handleStreamClient(cs, state) }.start()
                     }
                 } catch (e: Exception) {
@@ -652,6 +655,20 @@ object MegaExtractor {
             }.start()
 
             Log.d(TAG, "Stream proxy started on port $port")
+
+            // Heartbeat: log every 5s to confirm proxy alive
+            Thread {
+                try {
+                    while (!serverSocket.isClosed && !stream.downloadComplete.get() && !stream.failed) {
+                        Thread.sleep(5000)
+                        if (!serverSocket.isClosed) {
+                            Log.d(TAG, "HEARTBEAT port=$port chunks=${stream.availableChunks.size}/${stream.totalChunks()} bytes=${stream.writtenBytes.get()}/${stream.fileSize} failed=${stream.failed}")
+                        }
+                    }
+                    Log.d(TAG, "HEARTBEAT stopped: closed=${serverSocket.isClosed} complete=${stream.downloadComplete.get()} failed=${stream.failed}")
+                } catch (_: Exception) {}
+            }.start()
+
             StreamProxyResult("http://127.0.0.1:$port/video", port, stream, serverSocket)
         } catch (e: Exception) { Log.e(TAG, "Proxy start fail: ${e.message}"); null }
     }
@@ -1145,14 +1162,18 @@ object MegaExtractor {
     suspend fun extractMegaUrl(megaUrl: String): MegaProxyResult? {
         return withContext(Dispatchers.IO) {
             try {
+                Log.d(TAG, "=== extractMegaUrl called: $megaUrl ===")
+                Log.d(TAG, "Active proxies: ${activeProxies.size}, currentFileId=$currentFileId")
                 val urlInfo = parseMegaUrl(megaUrl) ?: return@withContext null
                 Log.d(TAG, "Parsed: fileId=${urlInfo.fileId}, key=${urlInfo.key.take(20)}...")
 
                 if (urlInfo.fileId != currentFileId) {
-                    Log.d(TAG, "Episode changed: $currentFileId -> ${urlInfo.fileId}, cleaning old proxies")
+                    Log.d(TAG, "Episode changed: $currentFileId -> ${urlInfo.fileId}")
+                    Log.d(TAG, "Active proxies before cleanup: ${activeProxies.keys}")
                     val oldId = currentFileId
                     currentFileId = urlInfo.fileId
                     oldId?.let { cleanup(it) }
+                    Log.d(TAG, "Active proxies after cleanup: ${activeProxies.keys}")
                 }
 
                 activeProxies[urlInfo.fileId]?.let { existing ->
