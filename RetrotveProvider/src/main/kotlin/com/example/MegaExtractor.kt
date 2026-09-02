@@ -381,6 +381,12 @@ object MegaExtractor {
                     }
                     if (code !in listOf(200, 206)) {
                         conn.disconnect()
+                        // Fast-fail: 302/redirect means wrong CDN shard — try next immediately
+                        if (code == 302 || code == 301) {
+                            Log.w(TAG, "Chunk $ci: HTTP $code from CDN (wrong shard), trying next immediately")
+                            failedSubChunk = true
+                            break
+                        }
                         retries++
                         Thread.sleep(3000L * retries.coerceAtMost(5))
                         failedSubChunk = true
@@ -441,6 +447,11 @@ object MegaExtractor {
                     val expectedSize = end - start + 1
                     if (totalWritten == 0L) {
                         Log.w(TAG, "Chunk $ci got 0 bytes (range=$start-$end, expected=$expectedSize)")
+                        // Fast-fail: 0 bytes likely means wrong shard — try next CDN immediately
+                        if (stream.cdnUrls.size > 1) {
+                            retries++
+                            break
+                        }
                         retries++
                         Thread.sleep(1000L)
                         continue
@@ -449,6 +460,11 @@ object MegaExtractor {
                         stream.writtenBytes.addAndGet(-totalWritten)
                         raf.seek(start)
                         raf.setLength(start)
+                        // Fast-fail: very small response likely means wrong shard
+                        if (totalWritten < 1024 && stream.cdnUrls.size > 1) {
+                            retries++
+                            break
+                        }
                         retries++
                         Thread.sleep(1000L)
                         continue
@@ -593,7 +609,11 @@ object MegaExtractor {
             } catch (e: Exception) {
                 retries++
                 Log.w(TAG, "Chunk $ci error ($retries/$maxRetries): ${e.message}")
-                Thread.sleep(3000L * retries.coerceAtMost(5))
+                // Fast-fail for connection errors (likely wrong shard): 1s delay
+                // Slow down for genuine errors: 3s × retries
+                val isConnectionError = e.message?.contains("302") == true || e.message?.contains("Connect") == true
+                val delay = if (isConnectionError && stream.cdnUrls.size > 1) 1000L else (3000L * retries.coerceAtMost(5))
+                Thread.sleep(delay)
             }
         }
 
@@ -882,16 +902,66 @@ object MegaExtractor {
             result[r.url] = r.foundOffset
         }
 
-        // Phase 3: Assign unidentified URLs to remaining offsets by elimination
+        // Phase 3: Boundary probe — for unidentified URLs, request 1 byte at each shard boundary
+        // to verify which shard they actually serve (elimination alone is unreliable)
         val usedOffsets = identified.map { it.foundOffset }.toSet()
         val remainingOffsets = candidateOffsets.filter { it !in usedOffsets }
 
         Log.d(TAG, "Identified: ${identified.size}/${cdnUrls.size}, remaining offsets: ${remainingOffsets.map { "${it / 1024 / 1024}MB" }}")
 
-        for ((i, url) in unidentified.withIndex()) {
-            if (i < remainingOffsets.size) {
-                result[url] = remainingOffsets[i]
-                Log.d(TAG, "Assigned ${url.removePrefix("https://").take(30)}... → ${remainingOffsets[i] / 1024 / 1024}MB (elimination)")
+        if (unidentified.isNotEmpty() && remainingOffsets.isNotEmpty()) {
+            Log.d(TAG, "Phase 3: boundary probe for ${unidentified.size} unidentified URLs...")
+            val stillUnidentified = mutableListOf<String>()
+            val boundaryAssigned = mutableListOf<Pair<String, Long>>()
+
+            for (url in unidentified) {
+                var assigned = false
+                for (offset in remainingOffsets) {
+                    if (offset in boundaryAssigned.map { it.second }) continue
+                    // Request 1 byte at the start of this shard boundary
+                    val probeUrl = "$url/$offset-$offset"
+                    try {
+                        val probeConn = (URL(probeUrl).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 10000; readTimeout = 15000
+                            setRequestProperty("User-Agent", MEGA_UA)
+                            setRequestProperty("Origin", "https://mega.nz")
+                            setRequestProperty("Referer", "https://mega.nz/")
+                            instanceFollowRedirects = true
+                        }
+                        val probeCode = probeConn.responseCode
+                        probeConn.disconnect()
+                        if (probeCode in listOf(200, 206)) {
+                            boundaryAssigned.add(url to offset)
+                            result[url] = offset
+                            Log.d(TAG, "Boundary probe: ${url.removePrefix("https://").take(30)}... → ${offset / 1024 / 1024}MB (HTTP $probeCode)")
+                            assigned = true
+                            break
+                        } else {
+                            Log.d(TAG, "Boundary probe: ${url.removePrefix("https://").take(30)}... ≠ ${offset / 1024 / 1024}MB (HTTP $probeCode)")
+                        }
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Boundary probe error: ${url.removePrefix("https").take(20)}... @${offset / 1024 / 1024}MB: ${e.message}")
+                    }
+                }
+                if (!assigned) stillUnidentified.add(url)
+            }
+
+            // Phase 4: Assign any still-unidentified URLs by elimination (remaining offsets not yet claimed)
+            val claimedByBoundary = boundaryAssigned.map { it.second }.toSet()
+            val finalRemaining = remainingOffsets.filter { it !in claimedByBoundary }
+            for ((i, url) in stillUnidentified.withIndex()) {
+                if (i < finalRemaining.size) {
+                    result[url] = finalRemaining[i]
+                    Log.d(TAG, "Elimination: ${url.removePrefix("https://").take(30)}... → ${finalRemaining[i] / 1024 / 1024}MB")
+                }
+            }
+        } else {
+            // No unidentified URLs — pure elimination for remaining offsets
+            for ((i, url) in unidentified.withIndex()) {
+                if (i < remainingOffsets.size) {
+                    result[url] = remainingOffsets[i]
+                    Log.d(TAG, "Assigned ${url.removePrefix("https://").take(30)}... → ${remainingOffsets[i] / 1024 / 1024}MB (elimination)")
+                }
             }
         }
 
@@ -965,30 +1035,10 @@ object MegaExtractor {
         try {
             if (startByteIn >= stream.fileSize) {
                 // ExoPlayer has stale Content-Length from previous episode
-                // Redirect to byte 0 with Connection: close — ExoPlayer gets valid data (ftyp)
-                // and closes the stale connection. NOT 416 — ExoPlayer treats that as fatal error 2004.
-                Log.w(TAG, "Range start $startByteIn >= fileSize ${stream.fileSize}, redirecting to byte 0 (stale)")
-                val startByte = 0L
-                val actualEnd = stream.fileSize - 1
-                val contentLength = actualEnd - startByte + 1
-                val resp = buildString {
-                    append("HTTP/1.1 206 Partial Content\r\n")
-                    append("Content-Range: bytes $startByte-$actualEnd/${stream.fileSize}\r\n")
-                    append("Content-Type: video/mp4\r\n")
-                    append("Content-Length: $contentLength\r\n")
-                    append("Accept-Ranges: bytes\r\n")
-                    append("Connection: close\r\n\r\n")
-                }
-                output.write(resp.toByteArray()); output.flush()
-                // Serve first 64KB only, then close — enough for ExoPlayer to parse ftyp/moov
-                val raf = RandomAccessFile(stream.tempFile, "r")
-                try {
-                    val buf = ByteArray(64 * 1024)
-                    val toRead = minOf(buf.size.toLong(), contentLength)
-                    val n = raf.read(buf, 0, toRead.toInt())
-                    if (n > 0) { output.write(buf, 0, n); output.flush() }
-                } finally { raf.close() }
-                socket.close()
+                // Close socket immediately — ExoPlayer gets connection reset (no data wasted)
+                // NOT 416 (ExoPlayer error 2004) and NOT serve from byte 0 (causes storm)
+                Log.d(TAG, "Stale range $startByteIn >= fileSize ${stream.fileSize}, closing (no response)")
+                try { socket.close() } catch (_: Exception) {}
                 return
             }
 
