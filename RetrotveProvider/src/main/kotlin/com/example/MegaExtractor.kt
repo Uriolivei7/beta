@@ -311,10 +311,10 @@ object MegaExtractor {
                 cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForPos))
 
                 var firstBytes: ByteArray? = null
+                var totalWritten = 0L
                 conn.inputStream.use { enc ->
                     raf.seek(start)
                     val buf = ByteArray(256 * 1024)
-                    var totalWritten = 0L
                     var firstEncBuf: java.io.ByteArrayOutputStream? = null
                     if (ci == 0) firstEncBuf = java.io.ByteArrayOutputStream()
                     while (true) {
@@ -343,10 +343,22 @@ object MegaExtractor {
                 }
                 conn.disconnect()
 
-                // After chunk 0: validate MP4 and try fallback key derivations if standard fails
-                if (ci == 0 && stream.rawKeyBytes != null && firstBytes != null && !isMp4Signature(firstBytes)) {
-                    Log.w(TAG, "Standard derivation produced garbage MP4, trying fallback key derivations...")
+                // After chunk 0: validate MP4 signature
+                if (ci == 0 && firstBytes != null && !isMp4Signature(firstBytes)) {
+                    stream.writtenBytes.addAndGet(-totalWritten)
+                    if (stream.cdnUrls.size > 1 && stream.cdnUrlIndex < stream.cdnUrls.size - 1) {
+                        Log.w(TAG, "Chunk 0 garbage from CDN #${stream.cdnUrlIndex}, trying next CDN URL immediately")
+                        retries++
+                        continue
+                    }
+                    Log.w(TAG, "All CDN URLs failed standard derivation, trying fallback key derivations...")
+                    stream.writtenBytes.addAndGet(totalWritten)
                     val rawKey = stream.rawKeyBytes
+                    if (rawKey == null || rawKey.size < 32) {
+                        Log.e(TAG, "No raw key bytes available for fallback")
+                        stream.availableChunks.add(ci)
+                        return
+                    }
 
                     // Log first encrypted bytes hex for debugging
                     stream.firstEncryptedBytes?.let { enc ->
