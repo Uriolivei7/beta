@@ -143,6 +143,7 @@ object MegaExtractor {
         val writtenBytes = AtomicLong(0L)
         val downloadComplete = AtomicBoolean(false)
         val availableChunks = ConcurrentHashMap.newKeySet<Int>()
+        val fileLock = Any() // synchronized lock for raf.seek+write in parallel threads
         @Volatile var cdnUrl: String? = null
         @Volatile var failed = false
         @Volatile var errorMsg: String? = null
@@ -245,11 +246,51 @@ object MegaExtractor {
                         Log.d(TAG, "Phase 3 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
                     }
 
-                    Log.d(TAG, "Phase 4: downloading chunks ${earlyChunkLimit + 1}..${(lastChunk - 1).coerceAtLeast(earlyChunkLimit + 1)} sequentially")
-                    for (ci in (earlyChunkLimit + 1) until lastChunk) {
-                        if (stream.failed) break
-                        if (stream.availableChunks.contains(ci)) continue
-                        downloadChunkWithFreshUrl(stream, raf, ci, aesKey, baseIv, fileId, faHash)
+                    val phase4Start = earlyChunkLimit + 1
+                    val phase4End = lastChunk
+                    if (phase4Start < phase4End) {
+                        if (stream.cdnUrls.size > 1 && stream.shardOffsets.isNotEmpty()) {
+                            Log.d(TAG, "Phase 4: parallel download chunks $phase4Start..${phase4End - 1} across ${stream.cdnUrls.size} CDN shards")
+                            val sortedShards = stream.shardOffsets.entries.sortedBy { it.value }
+                            val latch = java.util.concurrent.CountDownLatch(sortedShards.size)
+                            for (shardEntry in sortedShards) {
+                                val shardUrl = shardEntry.key
+                                val shardOffset = shardEntry.value
+                                val shardEnd = stream.fileSize // last shard extends to EOF
+                                Thread {
+                                    try {
+                                        val shardHost = shardUrl.removePrefix("https://").takeWhile { it != '/' }
+                                        Log.d(TAG, "  Shard thread: $shardHost offset=$shardOffset")
+                                        var shardChunkCount = 0
+                                        for (ci in phase4Start until phase4End) {
+                                            if (stream.failed) break
+                                            if (stream.availableChunks.contains(ci)) continue
+                                            val chunkStartByte = ci * CHUNK_SIZE.toLong()
+                                            val chunkEndByte = (chunkStartByte + CHUNK_SIZE - 1).coerceAtMost(stream.fileSize - 1)
+                                            if (chunkStartByte >= shardEnd) break
+                                            if (chunkEndByte < shardOffset) continue
+                                            downloadChunkFromShard(stream, raf, ci, shardUrl, shardOffset, aesKey, baseIv, fileId, faHash)
+                                            shardChunkCount++
+                                        }
+                                        Log.d(TAG, "  Shard thread $shardHost done: $shardChunkCount chunks")
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "  Shard thread error: ${e.message}")
+                                    } finally {
+                                        latch.countDown()
+                                    }
+                                }.also { it.start() }
+                            }
+                            Log.d(TAG, "Phase 4: waiting for ${sortedShards.size} shard threads...")
+                            latch.await()
+                            Log.d(TAG, "Phase 4 parallel done")
+                        } else {
+                            Log.d(TAG, "Phase 4: sequential download chunks $phase4Start..${phase4End - 1}")
+                            for (ci in phase4Start until phase4End) {
+                                if (stream.failed) break
+                                if (stream.availableChunks.contains(ci)) continue
+                                downloadChunkWithFreshUrl(stream, raf, ci, aesKey, baseIv, fileId, faHash)
+                            }
+                        }
                     }
 
                     if (!stream.failed) {
@@ -706,6 +747,95 @@ object MegaExtractor {
         } catch (e: Exception) {
             Log.w(TAG, "MEGA UFA error: ${e.message}")
             false
+        }
+    }
+
+    private fun downloadChunkFromShard(stream: DiskStream, raf: RandomAccessFile, ci: Int, shardUrl: String, shardOffset: Long, aesKey: ByteArray, baseIv: ByteArray, fileId: String, faHash: String?) {
+        var retries = 0
+        val maxRetries = 30
+        while (retries < maxRetries && !stream.failed) {
+            try {
+                val start = stream.chunkStart(ci)
+                val end = stream.chunkEnd(ci)
+                val relStart = start - shardOffset
+                val relEnd = end - shardOffset
+                val useAesKey = stream.resolvedAesKey ?: aesKey
+                val useBaseIv = stream.resolvedBaseIv ?: baseIv
+
+                val chunkUrl = "$shardUrl/$relStart-$relEnd"
+                val hostname = shardUrl.removePrefix("https://").takeWhile { it != '/' }
+                Log.d(TAG, "Chunk $ci: downloading from $hostname ($relStart-$relEnd, ${end - start + 1}B) shard (attempt $retries)")
+
+                val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15000; readTimeout = 60000
+                    setRequestProperty("User-Agent", MEGA_UA)
+                    setRequestProperty("Origin", "https://mega.nz")
+                    setRequestProperty("Referer", "https://mega.nz/")
+                    instanceFollowRedirects = true
+                }
+                val code = conn.responseCode
+                if (code == 509) {
+                    conn.disconnect()
+                    retries++
+                    val delay = (FIVE_ZERO_NINE_DELAY_MS * (1 + retries / 3)).coerceAtMost(60000L)
+                    Log.w(TAG, "509 chunk $ci ($retries/$maxRetries), waiting ${delay}ms...")
+                    Thread.sleep(delay)
+                    continue
+                }
+                if (code == 416) {
+                    conn.disconnect()
+                    stream.availableChunks.add(ci)
+                    return
+                }
+                if (code !in listOf(200, 206)) {
+                    conn.disconnect()
+                    retries++
+                    Thread.sleep(3000L * retries.coerceAtMost(5))
+                    continue
+                }
+
+                val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+                val ivForChunk = useBaseIv.copyOf()
+                setIvBlockCounter(ivForChunk, start)
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForChunk))
+
+                var totalWritten = 0L
+                conn.inputStream.use { enc ->
+                    val buf = ByteArray(256 * 1024)
+                    while (true) {
+                        val n = enc.read(buf)
+                        if (n == -1) break
+                        val dec = cipher.update(buf, 0, n) ?: continue
+                        synchronized(stream.fileLock) {
+                            raf.seek(start)
+                            raf.write(dec)
+                        }
+                        totalWritten += dec.size
+                    }
+                }
+
+                val expectedSize = end - start + 1
+                if (totalWritten == 0L) {
+                    retries++
+                    Thread.sleep(1000L)
+                    continue
+                } else if (totalWritten < expectedSize) {
+                    Log.w(TAG, "Chunk $ci incomplete: $totalWritten/$expectedSize")
+                    stream.writtenBytes.addAndGet(-totalWritten)
+                    raf.seek(start)
+                    raf.setLength(start)
+                    retries++
+                    Thread.sleep(1000L)
+                    continue
+                }
+
+                stream.writtenBytes.addAndGet(totalWritten)
+                stream.availableChunks.add(ci)
+                return
+            } catch (e: Exception) {
+                retries++
+                Thread.sleep(2000L * retries.coerceAtMost(5))
+            }
         }
     }
 
