@@ -937,14 +937,12 @@ object MegaExtractor {
         val stream = state.stream
         try {
             if (startByteIn >= stream.fileSize) {
-                val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${stream.fileSize}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                output.write(resp.toByteArray()); output.flush()
-                Log.d(TAG, "416: start=$startByteIn >= fileSize=${stream.fileSize}")
-                socket.close()
-                return
+                // ExoPlayer has stale Content-Length from previous episode — serve from byte 0
+                // instead of returning 416 (whichExoPlayer treats as fatal error)
+                Log.w(TAG, "Range start $startByteIn >= fileSize ${stream.fileSize}, redirecting to byte 0 (stale Content-Length?)")
             }
 
-            val startByte = startByteIn
+            val startByte = if (startByteIn >= stream.fileSize) 0L else startByteIn
             val endByte = endByteIn.coerceAtMost(stream.fileSize - 1)
             val actualEnd = if (hasRangeHeader) endByte else stream.fileSize - 1
             val contentLength = actualEnd - startByte + 1
