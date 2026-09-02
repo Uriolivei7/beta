@@ -197,8 +197,24 @@ object MegaExtractor {
                     }
                     Log.d(TAG, "Phase 1 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
 
+                    // STEP 1b: Start shard probe IN PARALLEL with chunk download
+                    // Probe takes ~22s, ExoPlayer needs data within ~8s per connection
+                    // By running probe in parallel with chunks 1-15, probe finishes before Phase 4
+                    var probeResult: LinkedHashMap<String, Long>? = null
+                    val probeThread = if (stream.cdnUrls.size > 1 && stream.shardOffsets.isEmpty()) {
+                        Log.d(TAG, "Phase 2: starting parallel probe for ${stream.cdnUrls.size} CDN URLs...")
+                        Thread {
+                            try {
+                                probeResult = probeShardOffsets(stream.cdnUrls, aesKey, baseIv, stream.fileSize)
+                                Log.d(TAG, "Phase 2 probe complete: ${probeResult?.size} shards")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Phase 2 probe failed: ${e.message}")
+                            }
+                        }.also { it.start() }
+                    } else null
+
                     // STEP 1b: Download chunks 1..15 from CDN#1 IMMEDIATELY (all within 66MB shard)
-                    // ExoPlayer needs these within ~30s or it times out waiting for data beyond chunk 0
+                    // ExoPlayer needs these within ~8s or it times out
                     val earlyChunkLimit = minOf(15, lastChunk)
                     Log.d(TAG, "Phase 1b: downloading chunks 1..$earlyChunkLimit from CDN#1 (within 66MB shard)")
                     for (ci in 1..earlyChunkLimit) {
@@ -208,10 +224,16 @@ object MegaExtractor {
                     }
                     Log.d(TAG, "Phase 1b OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes, chunks available=${stream.availableChunks.sorted()}")
 
-                    // STEP 2: Probe shard offsets (now AFTER chunks 0-15 are available)
-                    if (stream.cdnUrls.size > 1 && stream.shardOffsets.isEmpty()) {
-                        Log.d(TAG, "Phase 2: probing shard offsets for ${stream.cdnUrls.size} CDN URLs...")
-                        stream.shardOffsets = probeShardOffsets(stream.cdnUrls, aesKey, baseIv, stream.fileSize)
+                    // STEP 2: Wait for parallel probe to finish (should be mostly done by now)
+                    if (probeThread != null) {
+                        Log.d(TAG, "Phase 2: waiting for probe thread to finish...")
+                        probeThread.join(30_000) // max 30s wait
+                        if (probeResult != null && probeResult!!.isNotEmpty()) {
+                            stream.shardOffsets = probeResult!!
+                            Log.d(TAG, "Phase 2 OK: shard offsets=${stream.shardOffsets}")
+                        } else {
+                            Log.w(TAG, "Phase 2: probe incomplete/failed, shards not mapped")
+                        }
                     }
 
                     if (lastChunk > 0) {
