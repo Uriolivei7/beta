@@ -285,144 +285,150 @@ object MegaExtractor {
 
                 val start = stream.chunkStart(ci)
                 val end = stream.chunkEnd(ci)
-
-                // Shard-aware URL selection: find the URL whose shard contains this chunk
-                val urlForChunk: String
-                val relStart: Long
-                val relEnd: Long
                 val shardOffsets = stream.shardOffsets
 
-                // BUG FIX: when cycling CDN URLs on retry, use the cycled URL DIRECTLY
-                // (bypass shard map which may have duplicate offsets picking wrong URL)
-                if (retries > 0 && stream.cdnUrls.isNotEmpty()) {
-                    urlForChunk = stream.cdnUrls[stream.cdnUrlIndex]
-                    relStart = start
-                    relEnd = end
-                    val hostname = urlForChunk.removePrefix("https://").takeWhile { it != '/' }
-                    Log.d(TAG, "Chunk $ci: cycling to CDN #${stream.cdnUrlIndex} ${hostname.take(30)}... range=$relStart-$relEnd (attempt $retries)")
-                } else if (shardOffsets.size > 1) {
-                    // Find shard whose offset is <= start, preferring the one with the largest offset
-                    var bestUrl: String? = null
-                    var bestOffset = -1L
-                    for ((url, offset) in shardOffsets) {
-                        if (offset <= start && offset > bestOffset) {
-                            bestUrl = url
-                            bestOffset = offset
+                // Build sub-chunks: split cross-shard chunks across multiple CDN URLs
+                data class SubChunk(val filePos: Long, val fileSize: Long, val cdnUrl: String, val relStart: Long, val relEnd: Long)
+                val subChunks = mutableListOf<SubChunk>()
+
+                if (shardOffsets.size > 1) {
+                    // Build sorted shard list with end offsets
+                    val sortedShards = shardOffsets.entries.sortedBy { it.value }
+                    var pos = start
+                    for (i in sortedShards.indices) {
+                        if (pos > end) break
+                        val shardStart = sortedShards[i].value
+                        val shardEnd = if (i + 1 < sortedShards.size) sortedShards[i + 1].value - 1 else Long.MAX_VALUE
+                        // Bytes of this chunk that fall within this shard
+                        val overlapStart = pos.coerceAtLeast(shardStart)
+                        val overlapEnd = end.coerceAtMost(shardEnd)
+                        if (overlapStart <= overlapEnd) {
+                            subChunks.add(SubChunk(overlapStart, overlapEnd - overlapStart + 1, sortedShards[i].key, overlapStart - shardStart, overlapEnd - shardStart))
+                            pos = overlapEnd + 1
                         }
                     }
-                    // Fallback: if no shard found (chunk before first shard), use first shard
-                    if (bestUrl == null) {
-                        val first = shardOffsets.entries.first()
-                        bestUrl = first.key
-                        bestOffset = first.value
+                }
+
+                if (subChunks.isEmpty()) {
+                    subChunks.add(SubChunk(start, end - start + 1, stream.cdnUrl!!, start, end))
+                }
+
+                if (subChunks.size > 1) {
+                    Log.d(TAG, "Chunk $ci: CROSS-SHARD split into ${subChunks.size} sub-chunks")
+                    for (sc in subChunks) {
+                        val h = sc.cdnUrl.removePrefix("https://").takeWhile { it != '/' }
+                        Log.d(TAG, "  file=${sc.filePos}-${sc.filePos + sc.fileSize - 1} via ${h.take(30)}... rel=${sc.relStart}-${sc.relEnd}")
                     }
-                    urlForChunk = bestUrl
-                    relStart = start - bestOffset
-                    relEnd = end - bestOffset
-                    val shardHost = bestUrl.removePrefix("https://").takeWhile { it != '/' }
-                    Log.d(TAG, "Chunk $ci: shardOffset=${bestOffset / 1024 / 1024}MB, rel=$relStart-$relEnd via ${shardHost.take(30)}... (attempt $retries)")
-                } else {
-                    urlForChunk = stream.cdnUrl!!
-                    relStart = start
-                    relEnd = end
-                    Log.d(TAG, "Chunk $ci: range=$relStart-$relEnd (no shards, attempt $retries)")
                 }
 
-                val chunkUrl = "${urlForChunk}/$relStart-$relEnd"
-                val hostname = urlForChunk.removePrefix("https://").takeWhile { it != '/' }
-                Log.d(TAG, "Chunk $ci: downloading from $hostname ($relStart-$relEnd, ${relEnd - relStart + 1}B)")
-                val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000; readTimeout = 60000
-                    setRequestProperty("User-Agent", MEGA_UA)
-                    setRequestProperty("Origin", "https://mega.nz")
-                    setRequestProperty("Referer", "https://mega.nz/")
-                    instanceFollowRedirects = true
-                }
-                val code = conn.responseCode
-                if (code == 509) {
-                    conn.disconnect()
-                    retries++
-                    val delay = (FIVE_ZERO_NINE_DELAY_MS * (1 + retries / 3)).coerceAtMost(60000L)
-                    Log.w(TAG, "509 chunk $ci ($retries/$maxRetries), waiting ${delay}ms...")
-                    Thread.sleep(delay)
-                    continue
-                }
-                if (code == 416) {
-                    conn.disconnect()
-                    stream.availableChunks.add(ci)
-                    return
-                }
-                if (code !in listOf(200, 206)) {
-                    conn.disconnect()
-                    retries++
-                    Thread.sleep(3000L * retries.coerceAtMost(5))
-                    continue
-                }
-
+                // Download each sub-chunk
+                var totalWritten = 0L
+                var firstBytes: ByteArray? = null
+                var failedSubChunk = false
                 val useAesKey = stream.resolvedAesKey ?: aesKey
                 val useBaseIv = stream.resolvedBaseIv ?: baseIv
-                val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-                val ivForPos = useBaseIv.copyOf()
-                val blockNum = start / 16
-                ivForPos[8] = ((blockNum shr 56) and 0xFF).toByte()
-                ivForPos[9] = ((blockNum shr 48) and 0xFF).toByte()
-                ivForPos[10] = ((blockNum shr 40) and 0xFF).toByte()
-                ivForPos[11] = ((blockNum shr 32) and 0xFF).toByte()
-                ivForPos[12] = ((blockNum shr 24) and 0xFF).toByte()
-                ivForPos[13] = ((blockNum shr 16) and 0xFF).toByte()
-                ivForPos[14] = ((blockNum shr 8) and 0xFF).toByte()
-                ivForPos[15] = (blockNum and 0xFF).toByte()
-                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForPos))
 
-                var firstBytes: ByteArray? = null
-                var totalWritten = 0L
-                conn.inputStream.use { enc ->
-                    raf.seek(start)
-                    val buf = ByteArray(256 * 1024)
-                    var firstEncBuf: java.io.ByteArrayOutputStream? = null
-                    if (ci == 0) firstEncBuf = java.io.ByteArrayOutputStream()
-                    while (true) {
-                        val n = enc.read(buf)
-                        if (n == -1) break
-                        firstEncBuf?.let { eb ->
-                            if (eb.size() < 64 * 1024) eb.write(buf, 0, minOf(n, (64 * 1024 - eb.size())))
+                for ((si, sc) in subChunks.withIndex()) {
+                    val subChunkUrl = "${sc.cdnUrl}/${sc.relStart}-${sc.relEnd}"
+                    val hostname = sc.cdnUrl.removePrefix("https://").takeWhile { it != '/' }
+                    if (subChunks.size > 1) {
+                        Log.d(TAG, "Sub[$si]: downloading from $hostname (${sc.relStart}-${sc.relEnd}, ${sc.fileSize}B)")
+                    } else {
+                        Log.d(TAG, "Chunk $ci: downloading from $hostname (${sc.relStart}-${sc.relEnd}, ${sc.fileSize}B) (attempt $retries)")
+                    }
+
+                    val conn = (URL(subChunkUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15000; readTimeout = 60000
+                        setRequestProperty("User-Agent", MEGA_UA)
+                        setRequestProperty("Origin", "https://mega.nz")
+                        setRequestProperty("Referer", "https://mega.nz/")
+                        instanceFollowRedirects = true
+                    }
+                    val code = conn.responseCode
+                    if (code == 509) {
+                        conn.disconnect()
+                        retries++
+                        val delay = (FIVE_ZERO_NINE_DELAY_MS * (1 + retries / 3)).coerceAtMost(60000L)
+                        Log.w(TAG, "509 chunk $ci ($retries/$maxRetries), waiting ${delay}ms...")
+                        Thread.sleep(delay)
+                        failedSubChunk = true
+                        break
+                    }
+                    if (code == 416) {
+                        conn.disconnect()
+                        if (subChunks.size == 1) {
+                            stream.availableChunks.add(ci)
+                            return
                         }
-                        val dec = cipher.update(buf, 0, n) ?: continue
-                        raf.write(dec)
-                        if (firstBytes == null && dec.isNotEmpty()) {
-                            firstBytes = dec.copyOf(minOf(32, dec.size))
+                        continue
+                    }
+                    if (code !in listOf(200, 206)) {
+                        conn.disconnect()
+                        retries++
+                        Thread.sleep(3000L * retries.coerceAtMost(5))
+                        failedSubChunk = true
+                        break
+                    }
+
+                    val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+                    val ivForSub = useBaseIv.copyOf()
+                    setIvBlockCounter(ivForSub, sc.filePos)
+                    cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForSub))
+
+                    var subWritten = 0L
+                    conn.inputStream.use { enc ->
+                        raf.seek(sc.filePos)
+                        val buf = ByteArray(256 * 1024)
+                        var firstEncBuf: java.io.ByteArrayOutputStream? = null
+                        if (ci == 0 && si == 0) firstEncBuf = java.io.ByteArrayOutputStream()
+                        while (true) {
+                            val n = enc.read(buf)
+                            if (n == -1) break
+                            firstEncBuf?.let { eb ->
+                                if (eb.size() < 64 * 1024) eb.write(buf, 0, minOf(n, (64 * 1024 - eb.size())))
+                            }
+                            val dec = cipher.update(buf, 0, n) ?: continue
+                            raf.write(dec)
+                            if (firstBytes == null && dec.isNotEmpty()) {
+                                firstBytes = dec.copyOf(minOf(32, dec.size))
+                            }
+                            subWritten += dec.size
                         }
-                        totalWritten += dec.size
+                        if (ci == 0 && si == 0) {
+                            stream.firstEncryptedBytes = firstEncBuf?.toByteArray()
+                        }
+                        totalWritten += subWritten
+
+                        // For cross-shard: verify sub-chunk size
+                        if (subChunks.size > 1 && subWritten < sc.fileSize) {
+                            Log.w(TAG, "Sub[$si] incomplete: got $subWritten/${sc.fileSize} bytes")
+                            retries++
+                            Thread.sleep(1000L)
+                            failedSubChunk = true
+                        }
                     }
-                    if (ci == 0) {
-                        stream.firstEncryptedBytes = firstEncBuf?.toByteArray()
-                        Log.d(TAG, "Saved ${stream.firstEncryptedBytes?.size ?: 0} encrypted bytes for fallback")
-                    }
-                    stream.writtenBytes.addAndGet(totalWritten)
-                    if (ci == 0 && firstBytes != null) {
-                        val hex = firstBytes.joinToString("") { "%02x".format(it) }
-                        val ascii = firstBytes.map { b -> if (b in 32..126) b.toInt().toChar() else '.' }.joinToString("")
-                        Log.d(TAG, "Chunk 0 first 32 bytes: $hex | $ascii")
-                    }
+                    conn.disconnect()
+                    if (failedSubChunk) break
                 }
-                conn.disconnect()
+                if (failedSubChunk) continue
+
+                stream.writtenBytes.addAndGet(totalWritten)
+                if (ci == 0 && firstBytes != null) {
+                    val hex = firstBytes.joinToString("") { "%02x".format(it) }
+                    val ascii = firstBytes.map { b -> if (b in 32..126) b.toInt().toChar() else '.' }.joinToString("")
+                    Log.d(TAG, "Chunk 0 first 32 bytes: $hex | $ascii")
+                }
 
                 // For non-chunk0: detect incomplete or 0-byte CDN response (shard mismatch)
                 if (ci > 0) {
                     val expectedSize = end - start + 1
                     if (totalWritten == 0L) {
-                        // Log response headers for debugging 0-byte responses
-                        val respHeaders = mutableMapOf<String, String>()
-                        conn.headerFields?.forEach { (k, v) ->
-                            if (k != null) respHeaders[k] = v?.firstOrNull() ?: ""
-                        }
-                        Log.w(TAG, "Chunk $ci got 0 bytes from CDN #${stream.cdnUrlIndex} (range=$start-$end, expected=$expectedSize)")
-                        Log.w(TAG, "  Response headers: $respHeaders")
+                        Log.w(TAG, "Chunk $ci got 0 bytes (range=$start-$end, expected=$expectedSize)")
                         retries++
                         Thread.sleep(1000L)
                         continue
                     } else if (totalWritten < expectedSize) {
-                        Log.w(TAG, "Chunk $ci incomplete: got $totalWritten/$expectedSize bytes from CDN #${stream.cdnUrlIndex}, retrying")
+                        Log.w(TAG, "Chunk $ci incomplete: got $totalWritten/$expectedSize bytes, retrying")
                         stream.writtenBytes.addAndGet(-totalWritten)
                         raf.seek(start)
                         raf.setLength(start)
@@ -710,29 +716,30 @@ object MegaExtractor {
 
     /**
      * For msd:1 files with multiple CDN URLs, probe each URL to find which byte range (shard) it serves.
-     * Strategy:
-     * 1. Download 1MB from each URL (range $url/0-1048575)
-     * 2. For each URL, scan the decrypted data at EVERY 16-byte offset within first 1MB to find MP4 signature
-     * 3. Also try specific positions (mid-file, end-of-file) by downloading larger ranges
-     * 4. If no MP4 signature found by scanning, try the heuristic: each shard = fileSize/numUrls
+     * v57 strategy:
+     * 1. Quick no-range test to detect mirrors vs shards
+     * 2. For each URL: download ONE full shard (~66MB) without path-based range
+     * 3. Decrypt at 6 candidate offsets (0, 66, 132, 198, 264, 330MB) to find valid MP4 signature
+     * 4. The first shard is always at offset 0 (ftyp). Other shards at known offsets.
+     * 5. No heuristic guessing — only confirmed MP4 signatures
      *
      * Returns LinkedHashMap<url, shardOffset> sorted by offset.
      */
     private fun probeShardOffsets(cdnUrls: List<String>, aesKey: ByteArray, baseIv: ByteArray, fileSize: Long): LinkedHashMap<String, Long> {
         val result = linkedMapOf<String, Long>()
-        val matchedUrls = mutableSetOf<String>() // Track URLs with confirmed MP4 signature matches
         if (cdnUrls.size <= 1) return result
 
         val numUrls = cdnUrls.size
-        val estimatedShardSize = fileSize / numUrls
-        val probeSize = 1L * 1024 * 1024  // 1MB probe (down from 4MB to speed up)
-        Log.d(TAG, "Probing $numUrls CDN URLs for shard offsets (fileSize=${fileSize / 1024 / 1024}MB, estShard=${estimatedShardSize / 1024 / 1024}MB)")
+        // MEGA CDN hard-limits to ~66MB per connection (confirmed by no-range test)
+        val SHARD_SIZE = 66L * 1024 * 1024  // 66MB
+        val downloadSize = SHARD_SIZE.coerceAtMost(fileSize)
+        Log.d(TAG, "Probing $numUrls CDN URLs for shard offsets (fileSize=${fileSize / 1024 / 1024}MB, download=${downloadSize / 1024 / 1024}MB per URL)")
 
         // Quick test: download without path-based ranges to check if these are mirrors or shards
         try {
             val testUrl = cdnUrls.first()
             val conn = (URL(testUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000; readTimeout = 30000
+                connectTimeout = 15000; readTimeout = 60000
                 setRequestProperty("User-Agent", MEGA_UA)
                 setRequestProperty("Origin", "https://mega.nz")
                 setRequestProperty("Referer", "https://mega.nz/")
@@ -740,40 +747,44 @@ object MegaExtractor {
             }
             val code = conn.responseCode
             val contentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L
-            val contentType = conn.getHeaderField("Content-Type") ?: "unknown"
-            Log.d(TAG, "No-range test: HTTP $code, Content-Length=$contentLength (${contentLength / 1024 / 1024}MB), Content-Type=$contentType")
+            Log.d(TAG, "No-range test: HTTP $code, Content-Length=$contentLength (${contentLength / 1024 / 1024}MB)")
             conn.disconnect()
 
             if (code == 200 && contentLength >= fileSize - 1024) {
-                Log.d(TAG, "URLs appear to be MIRRORS (no-range serves full file). Using single URL mode.")
+                Log.d(TAG, "URLs are MIRRORS (full file). Single URL mode.")
                 result[cdnUrls.first()] = 0L
                 val sorted = linkedMapOf<String, Long>()
                 result.entries.sortedBy { it.value }.forEach { sorted[it.key] = it.value }
                 return sorted
             }
-            if (code == 416) {
-                Log.d(TAG, "No-range returns 416 — CDN requires path-based ranges (confirming shards)")
-            } else if (code in 200..299 && contentLength < fileSize) {
-                Log.d(TAG, "No-range serves partial ($contentLength bytes) — likely a shard")
+            if (code in 200..299 && contentLength < fileSize) {
+                Log.d(TAG, "No-range serves $contentLength bytes (~${contentLength / 1024 / 1024}MB) — shard confirmed")
             }
         } catch (e: Exception) {
-            Log.d(TAG, "No-range test failed: ${e.message} (likely requires ranges = shards)")
+            Log.d(TAG, "No-range test failed: ${e.message}")
         }
+
+        // Candidate shard offsets: 0, 66MB, 132MB, 198MB, 264MB, 330MB
+        // MEGA CDN limits to ~66MB per connection, so shards are ~66MB each
+        val candidateOffsets = mutableListOf<Long>()
+        var off = 0L
+        while (off < fileSize) {
+            candidateOffsets.add(off)
+            off += SHARD_SIZE
+        }
+        Log.d(TAG, "Candidate shard offsets: ${candidateOffsets.map { "${it / 1024 / 1024}MB" }}")
 
         for ((index, url) in cdnUrls.withIndex()) {
             try {
-                // Phase 1: Download 1MB from the START of this URL's range
-                val probeUrl = "$url/0-${probeSize - 1}"
-                Log.d(TAG, "Shard #$index: downloading probe from ${probeUrl.removePrefix("https://").take(60)}...")
-                val conn = (URL(probeUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000; readTimeout = 60000
+                Log.d(TAG, "Shard #$index: downloading ${downloadSize / 1024 / 1024}MB from ${url.removePrefix("https://").take(40)}...")
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 30000; readTimeout = 120000
                     setRequestProperty("User-Agent", MEGA_UA)
                     setRequestProperty("Origin", "https://mega.nz")
                     setRequestProperty("Referer", "https://mega.nz/")
                     instanceFollowRedirects = true
                 }
                 val code = conn.responseCode
-                val respContentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L
                 if (code !in listOf(200, 206)) {
                     conn.disconnect()
                     Log.d(TAG, "Shard #$index: HTTP $code, skipping")
@@ -781,103 +792,54 @@ object MegaExtractor {
                 }
                 val data = conn.inputStream.readBytes()
                 conn.disconnect()
-                Log.d(TAG, "Shard #$index: got ${data.size}B (HTTP $code, Content-Length=$respContentLength)")
+                Log.d(TAG, "Shard #$index: got ${data.size}B (${data.size / 1024 / 1024}MB, HTTP $code)")
 
                 if (data.size < 32) {
                     Log.d(TAG, "Shard #$index: too small (${data.size}B), skipping")
                     continue
                 }
 
-                // Phase 2: Try offset 0 (first shard starts at file position 0)
+                // Try each candidate offset — decrypt first 32 bytes of data at that offset
                 var foundOffset = -1L
-                val dec0 = tryDecryptAtOffset(aesKey, baseIv, 0, data.copyOf(minOf(32, data.size)))
-                if (dec0 != null && isMp4Signature(dec0)) {
-                    foundOffset = 0L
-                    Log.d(TAG, "Shard #$index: MATCH at offset 0 (first shard)")
+                for (candidate in candidateOffsets) {
+                    val dec = tryDecryptAtOffset(aesKey, baseIv, candidate, data.copyOf(minOf(32, data.size)))
+                    if (dec != null && isMp4Signature(dec)) {
+                        foundOffset = candidate
+                        val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
+                        Log.d(TAG, "Shard #$index: MATCH at offset ${candidate / 1024 / 1024}MB ($candidate) — box=$boxName")
+                        break
+                    }
                 }
 
-                // Phase 3: If not first shard, scan within the 1MB probe at every 16-byte offset
-                // This finds middle shards where the MP4 signature appears at a non-CHUNK_SIZE position
                 if (foundOffset < 0) {
-                    // Only scan positions that could be within the shard's data
-                    // A middle shard's data at file position X starts at probe position 0
-                    // But the probe only has the first 1MB of the shard
-                    // We need to find where in the FILE this data maps to
-                    // Strategy: try every estimatedShardSize-aligned position
-                    val positions = mutableListOf<Long>()
-                    // First: try estimated shard boundaries
-                    for (i in 0 until numUrls) {
-                        positions.add(i * estimatedShardSize)
-                    }
-                    // Then: try every 1MB within file range
-                    for (pos in 0L until fileSize step probeSize) {
-                        if (!positions.contains(pos)) positions.add(pos)
-                    }
-
-                    for (pos in positions) {
+                    // No MP4 signature at any candidate — this shard starts mid-mdat
+                    // Try finer scan: every 1MB within the data
+                    Log.d(TAG, "Shard #$index: no match at candidates, scanning every 1MB...")
+                    for (pos in 0L until fileSize step (1L * 1024 * 1024)) {
                         val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOf(minOf(32, data.size)))
                         if (dec != null && isMp4Signature(dec)) {
                             foundOffset = pos
-                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB")
+                            val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
+                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB (scan) — box=$boxName")
                             break
                         }
                     }
                 }
 
-                // Phase 4: Fine-grained scan at the matched offset area (±1MB in 16-byte steps)
                 if (foundOffset >= 0) {
-                    val scanStart = (foundOffset - probeSize).coerceAtLeast(0)
-                    val scanEnd = (foundOffset + probeSize).coerceAtMost(fileSize - 32)
-                    for (pos in scanStart until scanEnd step 16) {
-                        val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOf(minOf(32, data.size)))
-                        if (dec != null && isMp4Signature(dec)) {
-                            foundOffset = pos
-                            break
-                        }
-                    }
+                    result[url] = foundOffset
+                } else {
+                    Log.w(TAG, "Shard #$index: no MP4 signature found — skipping this URL")
                 }
-
-                // Phase 5: If still no match, this URL might be a shard that starts mid-mdat
-                // Try the heuristic: shard index = index, offset = index * estimatedShardSize
-                if (foundOffset < 0) {
-                    val heuristicOffset = index * estimatedShardSize
-                    Log.d(TAG, "Shard #$index: no MP4 signature found, using heuristic offset=${heuristicOffset / 1024 / 1024}MB (index * fileSize/$numUrls)")
-                    foundOffset = heuristicOffset
-                }
-
-                result[url] = foundOffset
-                if (foundOffset >= 0 && foundOffset == 0L || (foundOffset > 0 && !result.values.contains(foundOffset))) {
-                    matchedUrls.add(url)
-                }
-                Log.d(TAG, "Shard #$index: final offset=${foundOffset / 1024 / 1024}MB (${foundOffset})")
             } catch (e: Exception) {
                 Log.w(TAG, "Shard probe #$index error: ${e.message}")
             }
         }
 
-        // Phase 6: Deduplicate — if a heuristic URL has the same offset as a matched URL, remove it
-        // (matched URLs are confirmed by MP4 signature, heuristic ones are guesses)
-        val deduped = linkedMapOf<String, Long>()
-        val usedOffsets = mutableSetOf<Long>()
-        for ((url, offset) in result) {
-            if (url in matchedUrls) {
-                // Matched URL: always keep, and claim this offset
-                deduped[url] = offset
-                usedOffsets.add(offset)
-            } else if (offset !in usedOffsets) {
-                // Heuristic URL with unique offset: keep
-                deduped[url] = offset
-                usedOffsets.add(offset)
-            } else {
-                Log.d(TAG, "Shard dedup: removing ${url.removePrefix("https://").take(30)}... (offset ${offset / 1024 / 1024}MB already claimed by matched URL)")
-            }
-        }
-
-        // Phase 7: Sort and log
+        // Sort by offset and log
         val sorted = linkedMapOf<String, Long>()
-        deduped.entries.sortedBy { it.value }.forEach { sorted[it.key] = it.value }
+        result.entries.sortedBy { it.value }.forEach { sorted[it.key] = it.value }
 
-        // Log detailed shard map
         Log.d(TAG, "Shard map: ${sorted.size}/${cdnUrls.size} URLs mapped")
         for ((url, offset) in sorted) {
             val hostname = url.removePrefix("https://").take(40)
