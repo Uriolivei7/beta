@@ -321,37 +321,41 @@ object MegaExtractor {
                 if (ci == 0 && stream.rawKeyBytes != null && firstBytes != null && !isMp4Signature(firstBytes)) {
                     Log.w(TAG, "Standard derivation produced garbage MP4, trying fallback key derivations...")
                     val rawKey = stream.rawKeyBytes
-                    val encBytes = stream.firstEncryptedBytes
 
-                    val fallbackDerivations = listOf(
-                        "noXOR-raw16" to { ra: ByteArray ->
-                            val k = ra.copyOf(16)
-                            val iv = ByteArray(16)
-                            System.arraycopy(ra, 16, iv, 0, 8)
-                            Pair(k, iv)
-                        },
-                        "aes256-full32" to { ra: ByteArray ->
-                            val k = ra.copyOf(32)
-                            val iv = ByteArray(16)
-                            System.arraycopy(ra, 16, iv, 0, 8)
-                            Pair(k, iv)
-                        },
-                        "raw16-zerosIv" to { ra: ByteArray ->
-                            val k = ra.copyOf(16)
-                            Pair(k, ByteArray(16))
-                        },
-                        "xor-reversedIv" to { ra: ByteArray ->
-                            val k = ByteArray(16)
-                            for (i in 0 until 16) k[i] = (ra[i].toInt() xor ra[i + 16].toInt()).toByte()
-                            val iv = ByteArray(16)
-                            System.arraycopy(ra, 0, iv, 0, 8)
-                            Pair(k, iv)
-                        }
+                    // Log first encrypted bytes hex for debugging
+                    stream.firstEncryptedBytes?.let { enc ->
+                        val encHex = enc.take(64).joinToString("") { "%02x".format(it) }
+                        Log.d(TAG, "First 64 encrypted bytes: $encHex")
+                    }
+
+                    // Derivation: name → (aesKey, baseIv, useAdditiveCounter)
+                    // useAdditiveCounter=true means iv[8..15] has initial counter, block counter ADDED to it
+                    // useAdditiveCounter=false means iv[8..15] is REPLACED by block counter
+                    data class FallbackDeriv(val name: String, val aesKey: ByteArray, val baseIv: ByteArray, val additiveCounter: Boolean)
+
+                    val fallbacks = listOf(
+                        // SDK: key=first16, IV=last16 (full), counter ADDITIVE
+                        FallbackDeriv("sdk-fulliv", rawKey.copyOf(16), rawKey.copyOfRange(16, 32), true),
+                        // XOR key + full IV
+                        FallbackDeriv("xor-fulliv", ByteArray(16).also { for (i in 0 until 16) it[i] = (rawKey[i].toInt() xor rawKey[i + 16].toInt()).toByte() }, rawKey.copyOfRange(16, 32), true),
+                        // SDK: key=first16, IV=nonce(8)+zeros, counter REPLACES
+                        FallbackDeriv("sdk-nonceonly", rawKey.copyOf(16), ByteArray(16).also { System.arraycopy(rawKey, 16, it, 0, 8) }, false),
+                        // XOR key + nonce only
+                        FallbackDeriv("xor-nonceonly", ByteArray(16).also { for (i in 0 until 16) it[i] = (rawKey[i].toInt() xor rawKey[i + 16].toInt()).toByte() }, ByteArray(16).also { System.arraycopy(rawKey, 16, it, 0, 8) }, false),
+                        // key=first16, IV=zeros (full zeros)
+                        FallbackDeriv("sdk-zerosIv", rawKey.copyOf(16), ByteArray(16), false),
+                        // key=XOR, IV=nonce+zeros2 reversed (nonce from first half)
+                        FallbackDeriv("xor-reversedNonce", ByteArray(16).also { for (i in 0 until 16) it[i] = (rawKey[i].toInt() xor rawKey[i + 16].toInt()).toByte() }, ByteArray(16).also { System.arraycopy(rawKey, 0, it, 0, 8) }, false),
+                        // key=first16, IV=nonce from first half + counter from second half
+                        FallbackDeriv("sdk-reversedNonceFull", rawKey.copyOf(16), ByteArray(16).also { System.arraycopy(rawKey, 0, it, 0, 8); System.arraycopy(rawKey, 24, it, 8, 8) }, true),
+                        // key=XOR, IV=nonce from first half + counter from second half
+                        FallbackDeriv("xor-reversedNonceFull", ByteArray(16).also { for (i in 0 until 16) it[i] = (rawKey[i].toInt() xor rawKey[i + 16].toInt()).toByte() }, ByteArray(16).also { System.arraycopy(rawKey, 0, it, 0, 8); System.arraycopy(rawKey, 24, it, 8, 8) }, true),
+                        // key=full32 truncated to16, IV=last16
+                        FallbackDeriv("full32to16-fulliv", rawKey.copyOf(16), rawKey.copyOfRange(16, 32), false)
                     )
 
-                    for ((name, deriveFunc) in fallbackDerivations) {
-                        val (altKey, altIv) = deriveFunc(rawKey)
-                        Log.d(TAG, "Trying derivation: $name, key=${altKey.joinToString("") { "%02x".format(it) }}")
+                    for (fb in fallbacks) {
+                        Log.d(TAG, "Trying: ${fb.name}, key=${fb.aesKey.joinToString("") { "%02x".format(it) }}, iv=${fb.baseIv.joinToString("") { "%02x".format(it) }}, additive=${fb.additiveCounter}")
 
                         val chunkUrl = "${stream.cdnUrl}/$start-$end"
                         val retryConn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
@@ -368,17 +372,28 @@ object MegaExtractor {
                         }
 
                         val retryCipher = Cipher.getInstance("AES/CTR/NoPadding")
-                        val retryIv = altIv.copyOf()
+                        val retryIv = fb.baseIv.copyOf()
                         val retryBlockNum = start / 16
-                        retryIv[8] = ((retryBlockNum shr 56) and 0xFF).toByte()
-                        retryIv[9] = ((retryBlockNum shr 48) and 0xFF).toByte()
-                        retryIv[10] = ((retryBlockNum shr 40) and 0xFF).toByte()
-                        retryIv[11] = ((retryBlockNum shr 32) and 0xFF).toByte()
-                        retryIv[12] = ((retryBlockNum shr 24) and 0xFF).toByte()
-                        retryIv[13] = ((retryBlockNum shr 16) and 0xFF).toByte()
-                        retryIv[14] = ((retryBlockNum shr 8) and 0xFF).toByte()
-                        retryIv[15] = (retryBlockNum and 0xFF).toByte()
-                        retryCipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(altKey, "AES"), IvParameterSpec(retryIv))
+                        if (fb.additiveCounter) {
+                            // ADD block counter to existing iv[8..15] (big-endian)
+                            var carry = retryBlockNum
+                            for (i in 15 downTo 8) {
+                                val sum = (retryIv[i].toInt() and 0xFF) + (carry and 0xFF)
+                                retryIv[i] = (sum and 0xFF).toByte()
+                                carry = (carry shr 8) + (sum shr 8)
+                            }
+                        } else {
+                            // REPLACE iv[8..15] with block counter
+                            retryIv[8] = ((retryBlockNum shr 56) and 0xFF).toByte()
+                            retryIv[9] = ((retryBlockNum shr 48) and 0xFF).toByte()
+                            retryIv[10] = ((retryBlockNum shr 40) and 0xFF).toByte()
+                            retryIv[11] = ((retryBlockNum shr 32) and 0xFF).toByte()
+                            retryIv[12] = ((retryBlockNum shr 24) and 0xFF).toByte()
+                            retryIv[13] = ((retryBlockNum shr 16) and 0xFF).toByte()
+                            retryIv[14] = ((retryBlockNum shr 8) and 0xFF).toByte()
+                            retryIv[15] = (retryBlockNum and 0xFF).toByte()
+                        }
+                        retryCipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(fb.aesKey, "AES"), IvParameterSpec(retryIv))
 
                         retryConn.inputStream.use { retryEnc ->
                             raf.seek(start)
@@ -397,14 +412,14 @@ object MegaExtractor {
                             }
                             if (retryFirstBytes != null) {
                                 val hex = retryFirstBytes.joinToString("") { "%02x".format(it) }
-                                Log.d(TAG, "Fallback $name first 32: $hex")
+                                Log.d(TAG, "${fb.name} first 32: $hex")
                                 if (isMp4Signature(retryFirstBytes)) {
-                                    Log.d(TAG, "FOUND WORKING DERIVATION: $name")
-                                    stream.resolvedAesKey = altKey
-                                    stream.resolvedBaseIv = altIv
+                                    Log.d(TAG, "FOUND WORKING DERIVATION: ${fb.name}")
+                                    stream.resolvedAesKey = fb.aesKey
+                                    stream.resolvedBaseIv = fb.baseIv
                                     stream.writtenBytes.addAndGet(retryTotalWritten)
                                     stream.availableChunks.add(ci)
-                                    Log.d(TAG, "Chunk $ci -> disk via $name (${stream.writtenBytes.get()}/${stream.fileSize})")
+                                    Log.d(TAG, "Chunk $ci -> disk via ${fb.name} (${stream.writtenBytes.get()}/${stream.fileSize})")
                                     retryConn.disconnect()
                                     return
                                 }
