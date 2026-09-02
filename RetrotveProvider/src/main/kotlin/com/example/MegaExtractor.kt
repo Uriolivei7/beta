@@ -263,9 +263,13 @@ object MegaExtractor {
                     }
                 }
 
+                // For multi-CDN (msd:1), use URL that worked for chunk 0
+                // If that fails (0 bytes), we'll retry with other URLs
+                val urlForChunk = stream.cdnUrl!!
+
                 val start = stream.chunkStart(ci)
                 val end = stream.chunkEnd(ci)
-                val chunkUrl = "${stream.cdnUrl}/$start-$end"
+                val chunkUrl = "${urlForChunk}/$start-$end"
                 Log.d(TAG, "Chunk $ci: range=$start-$end (attempt $retries)")
                 val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000; readTimeout = 60000
@@ -342,6 +346,14 @@ object MegaExtractor {
                     }
                 }
                 conn.disconnect()
+
+                // For non-chunk0: detect 0-byte CDN response (shard mismatch)
+                if (ci > 0 && totalWritten == 0L) {
+                    Log.w(TAG, "Chunk $ci got 0 bytes from CDN, trying next URL")
+                    retries++
+                    Thread.sleep(1000L)
+                    continue
+                }
 
                 // After chunk 0: validate MP4 signature
                 if (ci == 0 && firstBytes != null && !isMp4Signature(firstBytes)) {
