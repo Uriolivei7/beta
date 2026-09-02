@@ -196,7 +196,18 @@ object MegaExtractor {
                     }
                     Log.d(TAG, "Phase 1 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
 
-                    // STEP 2: Probe shard offsets (now in background, ExoPlayer already playing)
+                    // STEP 1b: Download chunks 1..15 from CDN#1 IMMEDIATELY (all within 66MB shard)
+                    // ExoPlayer needs these within ~30s or it times out waiting for data beyond chunk 0
+                    val earlyChunkLimit = minOf(15, lastChunk)
+                    Log.d(TAG, "Phase 1b: downloading chunks 1..$earlyChunkLimit from CDN#1 (within 66MB shard)")
+                    for (ci in 1..earlyChunkLimit) {
+                        if (stream.failed) break
+                        if (stream.availableChunks.contains(ci)) continue
+                        downloadChunkWithFreshUrl(stream, raf, ci, aesKey, baseIv, fileId, faHash)
+                    }
+                    Log.d(TAG, "Phase 1b OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes, chunks available=${stream.availableChunks.sorted()}")
+
+                    // STEP 2: Probe shard offsets (now AFTER chunks 0-15 are available)
                     if (stream.cdnUrls.size > 1 && stream.shardOffsets.isEmpty()) {
                         Log.d(TAG, "Phase 2: probing shard offsets for ${stream.cdnUrls.size} CDN URLs...")
                         stream.shardOffsets = probeShardOffsets(stream.cdnUrls, aesKey, baseIv, stream.fileSize)
@@ -211,8 +222,8 @@ object MegaExtractor {
                         Log.d(TAG, "Phase 3 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
                     }
 
-                    Log.d(TAG, "Phase 4: downloading chunks 1..${(lastChunk - 1).coerceAtLeast(0)} sequentially")
-                    for (ci in 1 until lastChunk) {
+                    Log.d(TAG, "Phase 4: downloading chunks ${earlyChunkLimit + 1}..${(lastChunk - 1).coerceAtLeast(earlyChunkLimit + 1)} sequentially")
+                    for (ci in (earlyChunkLimit + 1) until lastChunk) {
                         if (stream.failed) break
                         if (stream.availableChunks.contains(ci)) continue
                         downloadChunkWithFreshUrl(stream, raf, ci, aesKey, baseIv, fileId, faHash)
@@ -722,12 +733,12 @@ object MegaExtractor {
 
     /**
      * For msd:1 files with multiple CDN URLs, probe each URL to find which byte range (shard) it serves.
-     * v57 strategy:
+     * v60 strategy:
      * 1. Quick no-range test to detect mirrors vs shards
-     * 2. For each URL: download ONE full shard (~66MB) without path-based range
-     * 3. Decrypt at 6 candidate offsets (0, 66, 132, 198, 264, 330MB) to find valid MP4 signature
-     * 4. The first shard is always at offset 0 (ftyp). Other shards at known offsets.
-     * 5. No heuristic guessing — only confirmed MP4 signatures
+     * 2. For each URL: download only 1MB from start (fast) + 1MB from end (for moov detection)
+     * 3. Decrypt at candidate offsets to find valid MP4 signature (ftyp/moov)
+     * 4. Identified URLs: matched by MP4 box signature
+     * 5. Unidentified URLs: assigned to remaining offsets by process of elimination
      *
      * Returns LinkedHashMap<url, shardOffset> sorted by offset.
      */
@@ -736,16 +747,16 @@ object MegaExtractor {
         if (cdnUrls.size <= 1) return result
 
         val numUrls = cdnUrls.size
-        // MEGA CDN hard-limits to ~66MB per connection (confirmed by no-range test)
-        val SHARD_SIZE = 66L * 1024 * 1024  // 66MB
-        val downloadSize = SHARD_SIZE.coerceAtMost(fileSize)
-        Log.d(TAG, "Probing $numUrls CDN URLs for shard offsets (fileSize=${fileSize / 1024 / 1024}MB, download=${downloadSize / 1024 / 1024}MB per URL)")
+        val SHARD_SIZE = 66L * 1024 * 1024  // 66MB per CDN connection
+        val PROBE_START_SIZE = 1024L * 1024  // 1MB from start
+        val PROBE_END_SIZE = 1024L * 1024    // 1MB from end
+        Log.d(TAG, "Probing $numUrls CDN URLs (fileSize=${fileSize / 1024 / 1024}MB, probe=1MB×2 per URL)")
 
-        // Quick test: download without path-based ranges to check if these are mirrors or shards
+        // Quick test: no-range to detect mirrors vs shards
         try {
             val testUrl = cdnUrls.first()
             val conn = (URL(testUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000; readTimeout = 60000
+                connectTimeout = 15000; readTimeout = 30000
                 setRequestProperty("User-Agent", MEGA_UA)
                 setRequestProperty("Origin", "https://mega.nz")
                 setRequestProperty("Referer", "https://mega.nz/")
@@ -770,21 +781,26 @@ object MegaExtractor {
             Log.d(TAG, "No-range test failed: ${e.message}")
         }
 
-        // Candidate shard offsets: 0, 66MB, 132MB, 198MB, 264MB, 330MB
-        // MEGA CDN limits to ~66MB per connection, so shards are ~66MB each
+        // Candidate shard offsets
         val candidateOffsets = mutableListOf<Long>()
         var off = 0L
         while (off < fileSize) {
             candidateOffsets.add(off)
             off += SHARD_SIZE
         }
-        Log.d(TAG, "Candidate shard offsets: ${candidateOffsets.map { "${it / 1024 / 1024}MB" }}")
+        Log.d(TAG, "Candidate offsets: ${candidateOffsets.map { "${it / 1024 / 1024}MB" }}")
+
+        // Phase 1: Download 1MB from start of each URL — fast (6×1MB = 6MB total)
+        data class ProbeResult(val url: String, val foundOffset: Long, val boxName: String)
+        val identified = mutableListOf<ProbeResult>()
+        val unidentified = mutableListOf<String>()
 
         for ((index, url) in cdnUrls.withIndex()) {
             try {
-                Log.d(TAG, "Shard #$index: downloading ${downloadSize / 1024 / 1024}MB from ${url.removePrefix("https://").take(40)}...")
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 30000; readTimeout = 120000
+                val startProbeUrl = "$url/0-${PROBE_START_SIZE - 1}"
+                Log.d(TAG, "Shard #$index: probing start 1MB from ${url.removePrefix("https://").take(35)}...")
+                val conn = (URL(startProbeUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15000; readTimeout = 30000
                     setRequestProperty("User-Agent", MEGA_UA)
                     setRequestProperty("Origin", "https://mega.nz")
                     setRequestProperty("Referer", "https://mega.nz/")
@@ -793,88 +809,99 @@ object MegaExtractor {
                 val code = conn.responseCode
                 if (code !in listOf(200, 206)) {
                     conn.disconnect()
-                    Log.d(TAG, "Shard #$index: HTTP $code, skipping")
+                    Log.d(TAG, "Shard #$index: HTTP $code on start probe, skipping")
+                    unidentified.add(url)
                     continue
                 }
                 val data = conn.inputStream.readBytes()
                 conn.disconnect()
-                Log.d(TAG, "Shard #$index: got ${data.size}B (${data.size / 1024 / 1024}MB, HTTP $code)")
 
                 if (data.size < 32) {
-                    Log.d(TAG, "Shard #$index: too small (${data.size}B), skipping")
+                    Log.d(TAG, "Shard #$index: too small (${data.size}B)")
+                    unidentified.add(url)
                     continue
                 }
 
-                // Phase 1: try known candidate offsets with 512-byte sample
+                // Try all candidate offsets with first 512 bytes of downloaded data
                 var foundOffset = -1L
+                var boxName = ""
                 for (candidate in candidateOffsets) {
                     val sampleSize = minOf(512, data.size)
                     val dec = tryDecryptAtOffset(aesKey, baseIv, candidate, data.copyOf(sampleSize))
                     if (dec != null && isMp4Signature(dec)) {
                         foundOffset = candidate
-                        val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
-                        Log.d(TAG, "Shard #$index: MATCH at offset ${candidate / 1024 / 1024}MB ($candidate) — box=$boxName")
+                        boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
                         break
                     }
                 }
 
-                // Phase 2: fine scan — every 16 bytes within the downloaded data
-                // For middle shards, the MP4 signature can be at ANY position within the 66MB
-                if (foundOffset < 0) {
-                    Log.d(TAG, "Shard #$index: no match at candidates, scanning every 16 bytes (max 5MB region)...")
-                    val scanLimit = minOf(data.size.toLong(), 5L * 1024 * 1024)
-                    var logCounter = 0
-                    for (pos in 0L until scanLimit step 16) {
-                        val sampleSize = minOf(512, data.size - pos.toInt())
-                        if (sampleSize < 32) break
-                        val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOfRange(pos.toInt(), pos.toInt() + sampleSize))
-                        if (dec != null && isMp4Signature(dec)) {
-                            foundOffset = pos
-                            val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
-                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB ($pos, scan) — box=$boxName")
-                            break
-                        }
-                        logCounter++
-                        if (logCounter % 50000 == 0) {
-                            Log.d(TAG, "Shard #$index: scanned ${pos / 1024}KB, no match yet...")
-                        }
-                    }
-                }
-
-                // Phase 3: coarse scan — every 1MB for the full 66MB (catches late signatures)
-                if (foundOffset < 0) {
-                    Log.d(TAG, "Shard #$index: no match in first 5MB, scanning every 1MB for full range...")
-                    for (pos in 0L until data.size.toLong() step (1L * 1024 * 1024)) {
-                        val sampleSize = minOf(512, data.size - pos.toInt())
-                        if (sampleSize < 32) break
-                        val dec = tryDecryptAtOffset(aesKey, baseIv, pos, data.copyOfRange(pos.toInt(), pos.toInt() + sampleSize))
-                        if (dec != null && isMp4Signature(dec)) {
-                            foundOffset = pos
-                            val boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
-                            Log.d(TAG, "Shard #$index: MATCH at offset ${pos / 1024 / 1024}MB ($pos, coarse) — box=$boxName")
-                            break
-                        }
-                    }
-                }
-
                 if (foundOffset >= 0) {
-                    result[url] = foundOffset
+                    identified.add(ProbeResult(url, foundOffset, boxName))
+                    Log.d(TAG, "Shard #$index: MATCH at ${foundOffset / 1024 / 1024}MB (box=$boxName)")
                 } else {
-                    Log.w(TAG, "Shard #$index: no MP4 signature found — skipping this URL")
+                    // No match at start — try end of shard (moov is at end of file)
+                    val endProbeUrl = "$url/${SHARD_SIZE - PROBE_END_SIZE}-${SHARD_SIZE - 1}"
+                    val endConn = (URL(endProbeUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15000; readTimeout = 30000
+                        setRequestProperty("User-Agent", MEGA_UA)
+                        setRequestProperty("Origin", "https://mega.nz")
+                        setRequestProperty("Referer", "https://mega.nz/")
+                        instanceFollowRedirects = true
+                    }
+                    val endCode = endConn.responseCode
+                    if (endCode in listOf(200, 206)) {
+                        val endData = endConn.inputStream.readBytes()
+                        for (candidate in candidateOffsets) {
+                            val sampleSize = minOf(512, endData.size)
+                            val dec = tryDecryptAtOffset(aesKey, baseIv, candidate, endData.copyOf(sampleSize))
+                            if (dec != null && isMp4Signature(dec)) {
+                                foundOffset = candidate
+                                boxName = String(dec, 4, minOf(4, dec.size - 4), Charsets.US_ASCII)
+                                break
+                            }
+                        }
+                    }
+                    endConn.disconnect()
+
+                    if (foundOffset >= 0) {
+                        identified.add(ProbeResult(url, foundOffset, boxName))
+                        Log.d(TAG, "Shard #$index: MATCH at end → ${foundOffset / 1024 / 1024}MB (box=$boxName)")
+                    } else {
+                        unidentified.add(url)
+                        Log.d(TAG, "Shard #$index: no MP4 signature (start+end scan)")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Shard probe #$index error: ${e.message}")
+                unidentified.add(url)
             }
         }
 
-        // Sort by offset and log
+        // Phase 2: Add identified URLs to result
+        for (r in identified) {
+            result[r.url] = r.foundOffset
+        }
+
+        // Phase 3: Assign unidentified URLs to remaining offsets by elimination
+        val usedOffsets = identified.map { it.foundOffset }.toSet()
+        val remainingOffsets = candidateOffsets.filter { it !in usedOffsets }
+
+        Log.d(TAG, "Identified: ${identified.size}/${cdnUrls.size}, remaining offsets: ${remainingOffsets.map { "${it / 1024 / 1024}MB" }}")
+
+        for ((i, url) in unidentified.withIndex()) {
+            if (i < remainingOffsets.size) {
+                result[url] = remainingOffsets[i]
+                Log.d(TAG, "Assigned ${url.removePrefix("https://").take(30)}... → ${remainingOffsets[i] / 1024 / 1024}MB (elimination)")
+            }
+        }
+
+        // Sort by offset
         val sorted = linkedMapOf<String, Long>()
         result.entries.sortedBy { it.value }.forEach { sorted[it.key] = it.value }
 
-        Log.d(TAG, "Shard map: ${sorted.size}/${cdnUrls.size} URLs mapped")
+        Log.d(TAG, "Shard map: ${sorted.size}/${cdnUrls.size} URLs")
         for ((url, offset) in sorted) {
-            val hostname = url.removePrefix("https://").take(40)
-            Log.d(TAG, "  ${hostname}... → offset=${offset / 1024 / 1024}MB ($offset)")
+            Log.d(TAG, "  ${url.removePrefix("https://").take(40)}... → ${offset / 1024 / 1024}MB ($offset)")
         }
 
         return sorted
@@ -937,12 +964,16 @@ object MegaExtractor {
         val stream = state.stream
         try {
             if (startByteIn >= stream.fileSize) {
-                // ExoPlayer has stale Content-Length from previous episode — serve from byte 0
-                // instead of returning 416 (whichExoPlayer treats as fatal error)
-                Log.w(TAG, "Range start $startByteIn >= fileSize ${stream.fileSize}, redirecting to byte 0 (stale Content-Length?)")
+                // ExoPlayer has stale Content-Length from previous episode
+                // Return 416 with correct file size — ExoPlayer uses Content-Range to update seek range
+                Log.w(TAG, "Range start $startByteIn >= fileSize ${stream.fileSize}, returning 416 (stale Content-Length)")
+                val resp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${stream.fileSize}\r\nConnection: close\r\n\r\n"
+                output.write(resp.toByteArray()); output.flush()
+                socket.close()
+                return
             }
 
-            val startByte = if (startByteIn >= stream.fileSize) 0L else startByteIn
+            val startByte = startByteIn
             val endByte = endByteIn.coerceAtMost(stream.fileSize - 1)
             val actualEnd = if (hasRangeHeader) endByte else stream.fileSize - 1
             val contentLength = actualEnd - startByte + 1
