@@ -369,7 +369,12 @@ class TvenvivoProvider : MainAPI() {
 
                 // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
                 val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
-                val playlistHeaders = browserHeaders + mapOf("Referer" to streamUrl)
+                val playlistHeaders = browserHeaders + mapOf(
+                    "Referer" to streamUrl,
+                    "Origin" to streamOrigin,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "application/vnd.apple.mpegurl,*/*;q=0.9"
+                )
 
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → $playlistUrl")
                 val plResp = withTimeoutOrNull(15000L) {
@@ -438,10 +443,12 @@ class TvenvivoProvider : MainAPI() {
                         val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
-                        // Try with stream.php cookies + same-origin Referer
+                        // Try with stream.php cookies + same-origin Referer + XHR
                         val jsPlaylistHeaders = browserHeaders + mapOf(
                             "Referer" to streamUrl,
-                            "Origin" to streamOrigin
+                            "Origin" to streamOrigin,
+                            "X-Requested-With" to "XMLHttpRequest",
+                            "Accept" to "application/vnd.apple.mpegurl,*/*;q=0.9"
                         )
                         val pl2Resp = withTimeoutOrNull(15000L) {
                             app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies, interceptor = cfKiller)
@@ -617,6 +624,7 @@ class TvenvivoProvider : MainAPI() {
                                                     xhr.withCredentials = true;
                                                     try { xhr.setRequestHeader('Accept', '*/*'); } catch(e) {}
                                                     try { xhr.setRequestHeader('Accept-Language', 'es-ES,es;q=0.9'); } catch(e) {}
+                                                    try { xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); } catch(e) {}
                                                     xhr.timeout = 8000;
                                                     xhr.onreadystatechange = function() {
                                                         if (xhr.readyState === 4) {
