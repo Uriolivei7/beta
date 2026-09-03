@@ -743,6 +743,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar — buscar `[VH-Pro] probe hls2 -> 502` y elegir `hls4` (vidhidepro da 200).
 
+### 🔧 FIX interceptor por path + voe multi-candidato (03 Sep 2026)
+- **hls3 rota dominios** (`.shop`, `.space`, `.store`, `.sbs` además de `.cyou`) → el match por marca quedaba obsoleto cada episodio. **Fix**: matchear por path (`/hls2/`, `/hls3/`, `.urlset/`) + hosts fijos. Cubre marcas presentes y futuras.
+- **Mirrors voe inútiles**: el primer base64 largo de la página suele ser señuelo (hash integrity) y el decrypt fallaba. **Fix**: probar TODOS los candidatos base64 con `decryptVoeF7(quiet=true)` hasta hallar uno con `source`/`direct_access_url`.
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar mirrors voe — buscar `[Voe] Found M3U8` tras `probando mirror`.
+
 ---
 
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)

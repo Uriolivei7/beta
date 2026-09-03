@@ -70,11 +70,18 @@ open class VoeExtractor : ExtractorApi() {
             ?.substringBeforeLast("\"]")
 
         if (encodedString == null) {
+            // Probar candidatos: la página trae señuelos base64 (hashes integrity, etc.)
             val scripts = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(html).map { it.groupValues[1] }
-            for (body in scripts) {
-                encodedString = Regex("""["']([A-Za-z0-9+/=]{100,})["']""").find(body)?.groupValues?.get(1)
-                if (encodedString != null) break
+            outer@ for (body in scripts) {
+                for (m in Regex("""["']([A-Za-z0-9+/=]{100,})["']""").findAll(body)) {
+                    val cand = m.groupValues[1]
+                    val test = decryptVoeF7(cand, quiet = true)
+                    if (test?.source != null || test?.directAccessUrl != null) {
+                        encodedString = cand
+                        break@outer
+                    }
+                }
             }
         }
 
@@ -111,7 +118,7 @@ open class VoeExtractor : ExtractorApi() {
         return emitted
     }
 
-    private fun decryptVoeF7(p8: String): VoeDecrypted? {
+    private fun decryptVoeF7(p8: String, quiet: Boolean = false): VoeDecrypted? {
         return try {
             val vF = rot13(p8)
             val vF2 = replacePatterns(vF)
@@ -122,7 +129,7 @@ open class VoeExtractor : ExtractorApi() {
             val vAtob = base64Decode(vF6)
             parseJson<VoeDecrypted>(vAtob)
         } catch (e: Exception) {
-            Log.e("SoloLatino", "[Voe] decrypt error: ${e.message}")
+            if (!quiet) Log.e("SoloLatino", "[Voe] decrypt error: ${e.message}")
             null
         }
     }

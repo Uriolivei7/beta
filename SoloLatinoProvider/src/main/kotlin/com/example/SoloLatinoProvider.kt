@@ -100,10 +100,13 @@ class SoloLatinoProvider : MainAPI() {
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val cdnDomains = listOf("dramiyos", "phtilzjvfok", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "cyou")
+        // Los dominios hls3 rotan (.shop/.space/.store/.sbs): matchear por path en vez de marca
+        val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/")
         return Interceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            val isCdn = cdnDomains.any { url.contains(it, ignoreCase = true) }
+            val isCdn = cdnDomains.any { url.contains(it, ignoreCase = true) } ||
+                cdnPaths.any { url.contains(it, ignoreCase = true) }
             if (!isCdn) return@Interceptor chain.proceed(request)
 
             Log.d("SoloLatino", "[intercept] CDN request: ${url.take(120)}")
