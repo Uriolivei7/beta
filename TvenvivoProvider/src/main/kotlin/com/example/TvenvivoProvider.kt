@@ -614,9 +614,11 @@ class TvenvivoProvider : MainAPI() {
                             mainHandler.postDelayed({
                                 if (!infoDeferred.isCompleted) {
                                     val altUrl = altPlaylistUrl ?: ""
-                                    Log.d("Tvenvivo", "WebView: inyectando XHR a playlist.php... url=${playlistUrl.take(60)} alt=${altUrl.take(60)}")
+                                    Log.d("Tvenvivo", "WebView: inyectando XHR a playlist.php... url=${playlistUrl.take(60)} alt=${altUrl.take(60)} cookie=${android.webkit.CookieManager.getInstance().getCookie(url)?.take(200) ?: "null"}")
                                     val js = """
                                         (function() {
+                                            var ck = document.cookie;
+                                            try { NativeBridge.onResult('COOKIE:' + ck + '|CKLEN:' + ck.length); } catch(e) {}
                                             function doXhr(url, isRetry) {
                                                 try {
                                                     var xhr = new XMLHttpRequest();
@@ -654,7 +656,7 @@ class TvenvivoProvider : MainAPI() {
                                     """.trimIndent()
                                     view?.evaluateJavascript(js, null)
                                 }
-                            }, 1000)
+                            }, 3000)
                         }
                     }
 
@@ -693,9 +695,9 @@ class TvenvivoProvider : MainAPI() {
 
                 webView.loadUrl(pageUrl)
 
-                withTimeout(20000L) { infoDeferred.await() }
+                withTimeout(30000L) { infoDeferred.await() }
             } catch (e: TimeoutCancellationException) {
-                Log.w("Tvenvivo", "WebView: timeout 20s (requests intercepted=$requestCount)")
+                Log.w("Tvenvivo", "WebView: timeout 30s (requests intercepted=$requestCount)")
                 null
             } catch (e: CancellationException) {
                 throw e
@@ -739,9 +741,11 @@ class TvenvivoProvider : MainAPI() {
             val b64Regex = Regex("""window\[['"][^'"]+['"]\]\s*=\s*['"]([A-Za-z0-9+/=]{100,})['"]""")
             for (m in b64Regex.findAll(html)) {
                 val b64 = m.groupValues[1]
-                try {
-                    val decoded = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                    // Buscar m3u8 en el JS decodificado
+                // Probar UTF-8 y Latin1
+                val decodedVariants = mutableListOf<String>()
+                try { decodedVariants.add(String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)) } catch (_: Exception) {}
+                try { decodedVariants.add(String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.ISO_8859_1)) } catch (_: Exception) {}
+                for (decoded in decodedVariants) {
                     val innerPatterns = listOf(
                         """(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""",
                         """['"]([^"']*\.m3u8[^"']*)['"]""",
@@ -759,7 +763,7 @@ class TvenvivoProvider : MainAPI() {
                             if (found != null) return found.replace("\\/", "/")
                         }
                     }
-                } catch (_: Exception) {}
+                }
             }
         } catch (_: Exception) {}
         // Buscar patrones de API/endpoint
