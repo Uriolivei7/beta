@@ -1,5 +1,5 @@
 package com.example
-// v4.1 - force rebuild for playlist Referer fix
+
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
@@ -160,7 +160,6 @@ class TvenvivoProvider : MainAPI() {
         val channels = mutableListOf<Triple<String, String, String>>()
         val doc = Jsoup.parse(html)
 
-        // Nuevo HTML usa a.channel con div.channel-name e img alt; mantener fallback a a.channel-card
         val selectors = listOf("a.channel", "a.channel-card", "a[class*=channel]")
         val seen = mutableSetOf<String>()
         for (sel in selectors) {
@@ -330,7 +329,6 @@ class TvenvivoProvider : MainAPI() {
             withTimeout(30000L) {
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: $playerUrl")
 
-                // 1. Fetch core.php → extract iframe src (stream.php URL with params)
                 val coreHeaders = mainHeaders.toMutableMap().apply {
                     put("Referer", targetUrl)
                     put("Sec-Fetch-Site", "same-origin")
@@ -343,10 +341,8 @@ class TvenvivoProvider : MainAPI() {
                     return@withTimeout false
                 }
 
-                // Collect cookies from core.php response
                 val allCookies = mainCookies + coreResp.cookies
 
-                // 2. Extract iframe src (= stream.php URL)
                 val streamUrlRaw = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                     .find(coreResp.text)?.groupValues?.get(1)
                     ?.replace("&amp;", "&")
@@ -356,7 +352,6 @@ class TvenvivoProvider : MainAPI() {
                 }
                 val streamUrl = fixUrl(streamUrlRaw)
 
-                // 3. Parse params from stream.php URL
                 val canal = Regex("""canal=([^&]+)""").find(streamUrl)?.groupValues?.get(1) ?: ""
                 val target = Regex("""target=([^&]+)""").find(streamUrl)?.groupValues?.get(1) ?: ""
                 val sig = Regex("""sig=([^&]+)""").find(streamUrl)?.groupValues?.get(1) ?: ""
@@ -369,7 +364,6 @@ class TvenvivoProvider : MainAPI() {
                     val u = java.net.URL(streamUrl); "${u.protocol}://${u.host}"
                 } catch (_: Exception) { return@withTimeout false }
 
-                // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
                 val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
                 val playlistHeaders = browserHeaders + mapOf(
                     "Referer" to streamUrl,
@@ -403,7 +397,6 @@ class TvenvivoProvider : MainAPI() {
                     Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo falló ${plResp?.code ?: "timeout"}")
                 }
 
-                // 5. FALLBACK: stream.php → capture cookies + JS playlist
                 val streamHeaders = mainHeaders.toMutableMap().apply {
                     put("Referer", targetUrl)
                     put("Sec-Fetch-Site", "cross-site")
@@ -415,7 +408,7 @@ class TvenvivoProvider : MainAPI() {
                 }
                 if (streamResp != null && streamResp.isSuccessful) {
                     val streamHtml = streamResp.text
-                    // Capture cookies from stream.php (Set-Cookie headers)
+
                     val streamCookies = streamResp.cookies
                     val rawSetCookies = streamResp.headers?.names()?.filter { it.lowercase() == "set-cookie" }
                         ?.flatMap { name -> streamResp.headers.values(name) }
@@ -432,7 +425,6 @@ class TvenvivoProvider : MainAPI() {
                         return@withTimeout true
                     }
 
-                    // Parse playlist.php URL from JS
                     val playlistFromJs = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                         .find(streamHtml)?.groupValues?.get(1)
                         ?.replace("\\/", "/")
@@ -441,7 +433,6 @@ class TvenvivoProvider : MainAPI() {
                     if (playlistFromJs != null) {
                         val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
 
-                        // Try with stream.php Referer + browser headers (match desktop success)
                         val jsPlaylistHeaders = browserHeaders + mapOf(
                             "Referer" to streamUrl,
                             "Accept" to "*/*"
@@ -472,7 +463,6 @@ class TvenvivoProvider : MainAPI() {
                             Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS falló ${pl2Resp?.code ?: "timeout"}")
                         }
 
-                        // Also try original playlist.php format with stream.php cookies
                         val origPlUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
                         val pl3Resp = withTimeoutOrNull(15000L) {
                             app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
@@ -500,9 +490,6 @@ class TvenvivoProvider : MainAPI() {
                     Log.w("Tvenvivo", "Opción ${displayIndex + 1}: stream.php falló ${streamResp?.code ?: "timeout"}")
                 }
 
-                // 6. WebView fallback: load stream.php in WebView, let JS execute,
-                //    intercept playlist.php request to capture JS-generated cookies
-                // También intentar el playlist JS (id=...) si existe
                 val jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                     .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
                     ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
@@ -608,7 +595,7 @@ class TvenvivoProvider : MainAPI() {
                     fun onResult(data: String) {
                         if (!infoDeferred.isCompleted) {
                             if (data.contains("#EXTM3U")) {
-                                // Formato: [RETRY:]STATUS:200|URL:https://...|LEN:xxx|#EXTM3U...
+
                                 val urlMatch = Regex("""URL:([^|]+)""").find(data)?.groupValues?.get(1)
                                 val actualUrl = urlMatch ?: playlistUrl
                                 val bodyStart = data.indexOf("#EXTM3U")
@@ -742,12 +729,12 @@ class TvenvivoProvider : MainAPI() {
                 return found
             }
         }
-        // Buscar en window['xxx']='BASE64' - decodificar y buscar m3u8 en el decoded
+
         try {
             val b64Regex = Regex("""window\[['"][^'"]+['"]\]\s*=\s*['"]([A-Za-z0-9+/=]{100,})['"]""")
             for (m in b64Regex.findAll(html)) {
                 val b64 = m.groupValues[1]
-                // Probar UTF-8 y Latin1
+
                 val decodedVariants = mutableListOf<String>()
                 try { decodedVariants.add(String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)) } catch (_: Exception) {}
                 try { decodedVariants.add(String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.ISO_8859_1)) } catch (_: Exception) {}
@@ -772,7 +759,7 @@ class TvenvivoProvider : MainAPI() {
                 }
             }
         } catch (_: Exception) {}
-        // Buscar patrones de API/endpoint
+
         val apiPatterns = listOf(
             """/api/[^"'\s]*\.m3u8[^"'\s]*""",
             """/stream/[^"'\s]*\.m3u8[^"'\s]*""",
@@ -788,5 +775,4 @@ class TvenvivoProvider : MainAPI() {
         }
         return null
     }
-
 }
