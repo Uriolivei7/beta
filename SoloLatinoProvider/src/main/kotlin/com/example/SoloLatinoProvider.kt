@@ -509,7 +509,7 @@ class SoloLatinoProvider : MainAPI() {
                                 "JAP", "JAPANESE" -> "JAPONES"
                                 else -> lang.videoLanguage ?: "??"
                             }
-                            encryptedLinks.forEach { encrypted ->
+                            encryptedLinks.amap { encrypted ->
                                 val decryptedUrl = decryptAESLocal(encrypted, aesKey)
                                 if (decryptedUrl != null) {
                                     Log.d("SoloLatino", "embed69 - decrypted: ${decryptedUrl.take(100)}")
@@ -958,18 +958,20 @@ private suspend fun tryVoeExtraction(
             val hashPath = try { java.net.URL(url).path } catch (_: Exception) { "" }
             if (!hashPath.startsWith("/e/")) return false
             val mirrors = listOf("yip.su", "donaldlineelse.com", "tubelessceliolymph.com")
-            for (mirror in mirrors) {
+            val mirrorOk = java.util.concurrent.atomic.AtomicBoolean(false)
+            mirrors.amap { mirror ->
+                if (mirrorOk.get()) return@amap
                 try {
                     val mUrl = "https://$mirror$hashPath"
                     Log.d("SoloLatino", "[Voe] probando mirror: $mUrl")
-                    val mHtml = app.get(mUrl, headers = headers + ("Referer" to url), timeout = 15000L).text
+                    val mHtml = app.get(mUrl, headers = headers + ("Referer" to url), timeout = 10000L).text
                     if (VoeExtractor().parseHtml(mHtml, mUrl, "SoloLatino", subtitleCallback, callback)) {
                         Log.d("SoloLatino", "[Voe] mirror $mirror OK")
-                        return true
+                        mirrorOk.set(true)
                     }
                 } catch (_: Exception) {}
             }
-            return false
+            return mirrorOk.get()
         }
         val res = app.get(url, headers = headers, timeout = 15000L, allowRedirects = false)
         val redirectUrl = res.headers["Location"] ?: res.url

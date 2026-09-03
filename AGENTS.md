@@ -713,6 +713,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar — buscar `[SW] M3U8 (eval)` / `[SW] file` / `[Voe] probando mirror` en logs.
 
+### ⚡ Speedup loadLinks: paralelizar servidores + mirrors (03 Sep 2026)
+- **Síntoma**: el video tarda ~45-60s en iniciar. vidhide listo a los ~5s pero `loadLinks` no termina hasta pasar SW-WebView (~20s) + Voe-WebView (~13s) + mirrors (~60s) **en serie** (`encryptedLinks.forEach`).
+- **Fix**: `forEach` → `amap` en servidores embed69 (vidhide/SW/voe en paralelo ≈ 25s total); mirrors voe en paralelo con `AtomicBoolean` + timeout 15s→10s (donaldlineelse se colgaba 66s).
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar tiempo total hasta `loadLinks FIN`.
+
 ---
 
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)
