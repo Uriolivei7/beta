@@ -719,6 +719,15 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar tiempo total hasta `loadLinks FIN`.
 
+### ⚡ Speedup v2: WebView con salida temprana + mirrors primero + PoW rápido (03 Sep 2026)
+- **Síntoma**: aún tarda en cargar (~30s). Los WebView esperan 12s fijos aunque el challenge se resuelva antes.
+- **Fix**:
+  - `renderViaWebView` ahora acepta `readyJs` y hace polling cada 2s: dumpea el HTML en cuanto aparecen marcadores (`SW_READY_JS` = jwplayer/m3u8, `VOE_READY_JS` = sin altcha + con blob/m3u8) en vez de esperar los 12s siempre.
+  - Voe: mirrors (baratos, paralelos) ANTES que WebView en ambas ramas.
+  - PoW: hex con tabla lookup (`toHexFast`) en vez de `"%02x".format` por byte (~5x más rápido).
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar — buscar `[WebView] listo antes de tiempo` en logs.
+
 ### 🔧 FIX freeze: emitir todas las variantes hls + cubrir nuevos CDNs (03 Sep 2026)
 - **Síntoma**: Looney Tunes reproduce 5s y congela 40-60s. Log: segmentos `acek-cdn` tardan 10-20s (primer intento cuelga, el reintento OK). Mismo veredicto que Plushd v6: CDN lento, no código.
 - **Hallazgo**: el unpack trae `hls2/hls3/hls4` (3 CDNs distintos) pero solo se emitía `hls2`. Además el interceptor NO cubría `premilkyway.com` (host del link SW) ni `honeycombbrandatelier.cyou` (hls3) → esos segmentos iban sin headers.

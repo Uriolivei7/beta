@@ -573,13 +573,25 @@ class SoloLatinoProvider : MainAPI() {
     }
 }
 
+private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+private fun ByteArray.toHexFast(): String {
+    val c = CharArray(size * 2)
+    for (i in indices) {
+        val v = this[i].toInt() and 0xFF
+        c[i * 2] = HEX_CHARS[v ushr 4]
+        c[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+    }
+    return String(c)
+}
+
 private suspend fun solveEmbed69PoW(challenge: String, salt: String): ByteArray? {
     val md = java.security.MessageDigest.getInstance("SHA-256")
     var nonce = 0L
     val maxAttempts = 500000L
     while (nonce < maxAttempts) {
         val input = "$challenge$nonce".toByteArray(Charsets.UTF_8)
-        val hash = md.digest(input).joinToString("") { "%02x".format(it) }
+        val hash = md.digest(input).toHexFast()
         if (hash.startsWith("000")) {
             Log.d("SoloLatino", "embed69 PoW - nonce=$nonce hash=${hash.take(8)}")
             return java.security.MessageDigest.getInstance("SHA-256")
@@ -633,7 +645,11 @@ private fun decryptAESLocal(encryptedBase64: String, aesKey: ByteArray): String?
     }
 }
 
-private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L): String? {
+private const val SW_READY_JS = "h.includes('.m3u8')||h.includes('jwplayer')"
+private const val VOE_READY_JS = "(!h.includes('altcha-widget'))&&(h.includes('.m3u8')||h.includes('application/json'))"
+private const val DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
+
+private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, readyJs: String? = null): String? {
     return withContext(Dispatchers.Main) {
         val appCtx = SoloLatinoProvider.pluginContext?.applicationContext ?: run {
             Log.w("SoloLatino", "[WebView] sin context")
@@ -652,26 +668,54 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
             }
             val deferred = CompletableDeferred<String?>()
+            val polls = java.util.concurrent.atomic.AtomicInteger(0)
+            val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
+            fun dump() {
+                if (deferred.isCompleted) return
+                try {
+                    webView?.evaluateJavascript(DUMP_JS, null)
+                } catch (_: Exception) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            fun pollOnce() {
+                if (deferred.isCompleted) return
+                try {
+                    webView?.evaluateJavascript(
+                        "(function(){try{var h=document.documentElement.outerHTML;NativeBridge.onPoll(($readyJs));}catch(e){NativeBridge.onPoll(false);}})()",
+                        null
+                    )
+                } catch (_: Exception) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
             webView.addJavascriptInterface(object {
                 @JavascriptInterface
                 fun onHtml(html: String) {
                     if (!deferred.isCompleted) deferred.complete(html)
                 }
+
+                @JavascriptInterface
+                fun onPoll(ready: Boolean) {
+                    if (deferred.isCompleted) return
+                    if (ready) {
+                        Log.d("SoloLatino", "[WebView] listo antes de tiempo, dumpeando")
+                        dump()
+                    } else if (polls.incrementAndGet() >= maxPolls) {
+                        dump()
+                    } else {
+                        mainHandler.postDelayed({ pollOnce() }, 2000L)
+                    }
+                }
             }, "NativeBridge")
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    mainHandler.postDelayed({
-                        if (!deferred.isCompleted) {
-                            try {
-                                view?.evaluateJavascript(
-                                    "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()",
-                                    null
-                                )
-                            } catch (_: Exception) {
-                                if (!deferred.isCompleted) deferred.complete(null)
-                            }
-                        }
-                    }, waitMs)
+                    polls.set(0)
+                    if (readyJs != null) {
+                        mainHandler.postDelayed({ pollOnce() }, 2000L)
+                    } else {
+                        mainHandler.postDelayed({ dump() }, waitMs)
+                    }
                 }
 
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
@@ -735,7 +779,7 @@ suspend fun loadSourceNameExtractor(
             loadExtractor(url, referer, subtitleCallback) { link -> emitWrapped(link) }
             if (count == 0) {
                 Log.d("SoloLatino", "[SW] extractor 0 links, probando WebView: $url")
-                val rendered = renderViaWebView(url, referer)
+                val rendered = renderViaWebView(url, referer, readyJs = SW_READY_JS)
                 if (rendered != null) {
                     SoloStreamWish().parseHtml(rendered, url, referer ?: url, "SoloLatino") { link ->
                         count++
@@ -999,13 +1043,13 @@ private suspend fun tryVoeExtraction(
 
         if (finalHtml.contains("captcha") || finalHtml.contains("CAPTCHA") || finalHtml.contains("cf-challenge")) {
             Log.w("SoloLatino", "[Voe] CAPTCHA detected at $finalUrl")
+            if (tryMirrors()) return true
             Log.d("SoloLatino", "[Voe] probando WebView (Altcha se auto-resuelve): $finalUrl")
-            val rendered = renderViaWebView(finalUrl, url)
+            val rendered = renderViaWebView(finalUrl, url, readyJs = VOE_READY_JS)
             if (rendered != null && VoeExtractor().parseHtml(rendered, finalUrl, "SoloLatino", subtitleCallback, callback)) {
                 Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
                 return true
             }
-            if (tryMirrors()) return true
             return false
         }
 
@@ -1015,13 +1059,13 @@ private suspend fun tryVoeExtraction(
         val videoUrl = m3u8 ?: mp4
         if (videoUrl == null) {
             Log.w("SoloLatino", "[Voe] no m3u8/mp4 found in $finalUrl")
+            if (tryMirrors()) return true
             Log.d("SoloLatino", "[Voe] probando WebView: $finalUrl")
-            val rendered = renderViaWebView(finalUrl, url)
+            val rendered = renderViaWebView(finalUrl, url, readyJs = VOE_READY_JS)
             if (rendered != null && VoeExtractor().parseHtml(rendered, finalUrl, "SoloLatino", subtitleCallback, callback)) {
                 Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
                 return true
             }
-            if (tryMirrors()) return true
             return false
         }
 
