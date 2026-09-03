@@ -376,10 +376,13 @@ class TvenvivoProvider : MainAPI() {
 
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → $playlistUrl")
                 val plResp = withTimeoutOrNull(15000L) {
-                    app.get(playlistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies, interceptor = cfKiller)
+                    app.get(playlistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies)
                 }
                 val plBody = plResp?.text
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → ${plResp?.code ?: "null"} len=${plBody?.length ?: 0} m3u8=${plBody?.contains("#EXTM3U") ?: false}")
+                if (plResp?.code == 403) {
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: 403 hdrs=[${plResp.headers?.names()?.joinToString() ?: "null"}] server=${plResp.headers?.get("Server") ?: "?"}")
+                }
 
                 if (plResp != null && plResp.isSuccessful && plBody != null) {
                     if (plBody.contains("#EXTM3U")) {
@@ -447,10 +450,13 @@ class TvenvivoProvider : MainAPI() {
                             "Accept" to "*/*"
                         )
                         val pl2Resp = withTimeoutOrNull(15000L) {
-                            app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies, interceptor = cfKiller)
+                            app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
                         }
                         val pl2Body = pl2Resp?.text
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → ${pl2Resp?.code ?: "null"} len=${pl2Body?.length ?: 0} m3u8=${pl2Body?.contains("#EXTM3U") ?: false}")
+                        if (pl2Resp?.code == 403) {
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: 403 JS hdrs=[${pl2Resp.headers?.names()?.joinToString() ?: "null"}] server=${pl2Resp.headers?.get("Server") ?: "?"}")
+                        }
                         if (pl2Resp != null && pl2Resp.isSuccessful && pl2Body != null) {
                             if (pl2Body.contains("#EXTM3U")) {
                                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 desde JS playlist!")
@@ -474,7 +480,7 @@ class TvenvivoProvider : MainAPI() {
                         val origPlUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original con stream cookies → $origPlUrl")
                         val pl3Resp = withTimeoutOrNull(15000L) {
-                            app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies, interceptor = cfKiller)
+                            app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
                         }
                         val pl3Body = pl3Resp?.text
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original → ${pl3Resp?.code ?: "null"} len=${pl3Body?.length ?: 0} m3u8=${pl3Body?.contains("#EXTM3U") ?: false}")
