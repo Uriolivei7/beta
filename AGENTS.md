@@ -735,6 +735,14 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar eligiendo otra variante cuando acek-cdn se congele.
 
+### 🔧 FIX crash WebView thread + probe de variantes + mirrors acotados (03 Sep 2026)
+- **Bug 1 (crítico)**: `onPoll` corre en thread JavaBridge y llamaba `evaluateJavascript` directo → `WebViewMethodCalledOnWrongThreadViolation`, el dump nunca ocurría (SW WebView daba 0 links). **Fix**: postear el dump al Main via `mainHandler`.
+- **Bug 2**: `acek-cdn` devuelve **502** (caído) → 2004 al reproducir hls2. **Fix**: probe paralelo de masters (timeout 10s) y solo se emiten variantes con 200; si ninguna responde se emiten todas (fallback).
+- **Bug 3**: `donaldlineelse.com` se cuelga a nivel DNS 60-115s ignorando timeouts → CloudStream mata `loadLinks` a los 120s. **Fix**: fuera de la lista de mirrors + `withTimeoutOrNull(20s)` global.
+- **Extra**: `cdnDomains` += `cyou` genérico (cubre `honeycombbrandatelier`, `autumnmeadowcollective`, `publicshowcase` y futuros hls3).
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar — buscar `[VH-Pro] probe hls2 -> 502` y elegir `hls4` (vidhidepro da 200).
+
 ---
 
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)

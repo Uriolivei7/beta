@@ -99,7 +99,7 @@ class SoloLatinoProvider : MainAPI() {
         app.get(url, timeout = timeoutMs, headers = baseHeaders).document
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "honeycombbrandatelier")
+        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "cyou")
         return Interceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -697,14 +697,19 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
 
                 @JavascriptInterface
                 fun onPoll(ready: Boolean) {
-                    if (deferred.isCompleted) return
-                    if (ready) {
-                        Log.d("SoloLatino", "[WebView] listo antes de tiempo, dumpeando")
-                        dump()
-                    } else if (polls.incrementAndGet() >= maxPolls) {
-                        dump()
-                    } else {
-                        mainHandler.postDelayed({ pollOnce() }, 2000L)
+                    // onPoll corre en thread JavaBridge: todo acceso a WebView va al Main
+                    mainHandler.post {
+                        if (deferred.isCompleted) return@post
+                        if (ready) {
+                            Log.d("SoloLatino", "[WebView] listo antes de tiempo, dumpeando")
+                            dump()
+                            return@post
+                        }
+                        if (polls.incrementAndGet() >= maxPolls) {
+                            dump()
+                        } else {
+                            mainHandler.postDelayed({ pollOnce() }, 2000L)
+                        }
                     }
                 }
             }, "NativeBridge")
@@ -931,22 +936,48 @@ private suspend fun tryVidHideProExtraction(
             "Origin" to url.substringBeforeLast("/"),
         )
 
-        // Emitir TODAS las variantes (distintos CDNs): si uno va lento, el usuario elige otro
-        var firstM3u8: String? = null
-        for (key in orderedKeys) {
-            var m3u8 = linksMap[key]!!
-            if (m3u8.startsWith("/")) {
-                m3u8 = "https://vidhidepro.com$m3u8"
-                Log.d("SoloLatino", "[VH-Pro] relative URL, prepended base: ${m3u8.take(120)}")
+        // Probar masters en paralelo: los CDNs se caen a ratos (ej. acek 502),
+        // solo se emiten las variantes que responden 200
+        data class Variant(val key: String, val url: String)
+        val probeHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Referer" to url,
+        )
+        val resolved = orderedKeys.mapNotNull { key ->
+            var u = linksMap[key] ?: return@mapNotNull null
+            if (u.startsWith("/")) {
+                u = "https://vidhidepro.com$u"
+                Log.d("SoloLatino", "[VH-Pro] relative URL, prepended base: ${u.take(120)}")
             }
-            if (firstM3u8 == null) firstM3u8 = m3u8
-            Log.d("SoloLatino", "[VH-Pro] emit $key url=${m3u8.take(120)}")
-            callback(newExtractorLink("SoloLatino", "VidHidePro - $key", m3u8, ExtractorLinkType.M3U8) {
+            Variant(key, u)
+        }
+        val reachable = java.util.concurrent.ConcurrentHashMap.newKeySet<Variant>()
+        resolved.amap { v ->
+            try {
+                val code = withTimeoutOrNull(10000L) {
+                    app.get(v.url, headers = probeHeaders, timeout = 10000L).code
+                } ?: -1
+                Log.d("SoloLatino", "[VH-Pro] probe ${v.key} -> $code")
+                if (code in 200..299) reachable.add(v)
+            } catch (_: Exception) {}
+        }
+        val toEmit = if (reachable.isNotEmpty()) {
+            orderedKeys.mapNotNull { k -> reachable.firstOrNull { it.key == k } }
+        } else {
+            Log.w("SoloLatino", "[VH-Pro] ningún master responde, emitiendo todos igual")
+            resolved
+        }
+        // Emitir variantes (distintos CDNs): si uno va lento/caído, el usuario elige otro
+        var firstM3u8: String? = null
+        for (v in toEmit) {
+            if (firstM3u8 == null) firstM3u8 = v.url
+            Log.d("SoloLatino", "[VH-Pro] emit ${v.key} url=${v.url.take(120)}")
+            callback(newExtractorLink("SoloLatino", "VidHidePro - ${v.key}", v.url, ExtractorLinkType.M3U8) {
                 this.referer = url
                 this.headers = vidHeaders
             })
         }
-        Log.d("SoloLatino", "[VH-Pro] emitted ${orderedKeys.size} variants")
+        Log.d("SoloLatino", "[VH-Pro] emitted ${toEmit.size} variants")
         // Restaurado: subtítulos (.vtt/.srt en página + SUBTITLES del manifest)
         val seenSubs = mutableSetOf<String>()
         scanHtmlForSubs(html, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
@@ -1010,19 +1041,22 @@ private suspend fun tryVoeExtraction(
             // El hash /e/ suele ser portable en la red de mirrors voe: probar otros hosts
             val hashPath = try { java.net.URL(url).path } catch (_: Exception) { "" }
             if (!hashPath.startsWith("/e/")) return false
-            val mirrors = listOf("yip.su", "donaldlineelse.com", "tubelessceliolymph.com")
+            // donaldlineelse.com se cuelga a nivel DNS (ignora timeouts): fuera de la lista
+            val mirrors = listOf("yip.su", "tubelessceliolymph.com")
             val mirrorOk = java.util.concurrent.atomic.AtomicBoolean(false)
-            mirrors.amap { mirror ->
-                if (mirrorOk.get()) return@amap
-                try {
-                    val mUrl = "https://$mirror$hashPath"
-                    Log.d("SoloLatino", "[Voe] probando mirror: $mUrl")
-                    val mHtml = app.get(mUrl, headers = headers + ("Referer" to url), timeout = 10000L).text
-                    if (VoeExtractor().parseHtml(mHtml, mUrl, "SoloLatino", subtitleCallback, callback)) {
-                        Log.d("SoloLatino", "[Voe] mirror $mirror OK")
-                        mirrorOk.set(true)
-                    }
-                } catch (_: Exception) {}
+            withTimeoutOrNull(20000L) {
+                mirrors.amap { mirror ->
+                    if (mirrorOk.get()) return@amap
+                    try {
+                        val mUrl = "https://$mirror$hashPath"
+                        Log.d("SoloLatino", "[Voe] probando mirror: $mUrl")
+                        val mHtml = app.get(mUrl, headers = headers + ("Referer" to url), timeout = 10000L).text
+                        if (VoeExtractor().parseHtml(mHtml, mUrl, "SoloLatino", subtitleCallback, callback)) {
+                            Log.d("SoloLatino", "[Voe] mirror $mirror OK")
+                            mirrorOk.set(true)
+                        }
+                    } catch (_: Exception) {}
+                }
             }
             return mirrorOk.get()
         }
