@@ -63,14 +63,12 @@ open class VoeExtractor : ExtractorApi() {
 
         var encodedString: String? = null
 
-        // Method 1: script[type=application/json]
         encodedString = Regex("""<script[^>]*type=["']application/json["'][^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
             .find(html)?.groupValues?.get(1)?.trim()
             ?.takeIf { it.contains("[\"") }
             ?.substringAfter("[\"")
             ?.substringBeforeLast("\"]")
 
-        // Method 2: search for the encoded blob in any script
         if (encodedString == null) {
             val scripts = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(html).map { it.groupValues[1] }
@@ -262,7 +260,7 @@ class SoloStreamWish : ExtractorApi() {
                 }
             }
             if (!found) {
-                // Dean Edwards packer (igual que vidhide): desempaquetar de alto→bajo y buscar
+
                 val packerRegex = Regex("""\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
                 for (pm in packerRegex.findAll(html)) {
                     try {
@@ -283,7 +281,7 @@ class SoloStreamWish : ExtractorApi() {
                 }
             }
             if (!found) {
-                // Player embebido en iframe: un nivel de profundidad
+
                 val iframes = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
                     .findAll(html).map { it.groupValues[1] }
                     .filter { it.contains("streamwish") || it.contains("/e/") }.take(2).toList()
@@ -372,11 +370,11 @@ class SoloVidHide : ExtractorApi() {
             }
             tryExtract(resp.text, "direct")
             if (!found) {
-                // eval packer: eval(function(p,a,c,k,e,d){...})
+
                 val evalRegex = Regex("""eval\s*\(function\(p,a,c,k,e,d\).*?\)\)""", RegexOption.DOT_MATCHES_ALL)
                 for (em in evalRegex.findAll(resp.text)) {
                     val evalBlock = em.value
-                    // Quick unpack: find p,a,c,k parts like }('...',36,XX,'...'.split('|'))
+
                     val argsMatch = Regex("""\}\('(.*)',(\d+),(\d+),'(.*)'\.split""", RegexOption.DOT_MATCHES_ALL).find(evalBlock)
                     if (argsMatch != null) {
                         try {

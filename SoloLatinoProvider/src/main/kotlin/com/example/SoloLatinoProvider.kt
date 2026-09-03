@@ -697,7 +697,7 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
 
                 @JavascriptInterface
                 fun onPoll(ready: Boolean) {
-                    // onPoll corre en thread JavaBridge: todo acceso a WebView va al Main
+
                     mainHandler.post {
                         if (deferred.isCompleted) return@post
                         if (ready) {
@@ -751,7 +751,6 @@ suspend fun loadSourceNameExtractor(
     var count = 0
     val outerScope = this
 
-    // Restaurado: subtítulos de la página del servidor (.vtt/.srt)
     launch { scanPageForSubs(url, subtitleCallback) }
 
     fun emitWrapped(link: ExtractorLink) {
@@ -936,8 +935,6 @@ private suspend fun tryVidHideProExtraction(
             "Origin" to url.substringBeforeLast("/"),
         )
 
-        // Probar masters en paralelo: los CDNs se caen a ratos (ej. acek 502),
-        // solo se emiten las variantes que responden 200
         data class Variant(val key: String, val url: String)
         val probeHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -951,7 +948,7 @@ private suspend fun tryVidHideProExtraction(
             }
             Variant(key, u)
         }
-        val reachable = java.util.concurrent.ConcurrentHashMap.newKeySet<Variant>()
+        val reachable = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
         resolved.amap { v ->
             try {
                 val code = withTimeoutOrNull(10000L) {
@@ -967,7 +964,7 @@ private suspend fun tryVidHideProExtraction(
             Log.w("SoloLatino", "[VH-Pro] ningún master responde, emitiendo todos igual")
             resolved
         }
-        // Emitir variantes (distintos CDNs): si uno va lento/caído, el usuario elige otro
+
         var firstM3u8: String? = null
         for (v in toEmit) {
             if (firstM3u8 == null) firstM3u8 = v.url
@@ -978,7 +975,7 @@ private suspend fun tryVidHideProExtraction(
             })
         }
         Log.d("SoloLatino", "[VH-Pro] emitted ${toEmit.size} variants")
-        // Restaurado: subtítulos (.vtt/.srt en página + SUBTITLES del manifest)
+
         val seenSubs = mutableSetOf<String>()
         scanHtmlForSubs(html, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
         scanHtmlForSubs(unpacked, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
@@ -1038,10 +1035,10 @@ private suspend fun tryVoeExtraction(
             "Referer" to referer,
         )
         suspend fun tryMirrors(): Boolean {
-            // El hash /e/ suele ser portable en la red de mirrors voe: probar otros hosts
+
             val hashPath = try { java.net.URL(url).path } catch (_: Exception) { "" }
             if (!hashPath.startsWith("/e/")) return false
-            // donaldlineelse.com se cuelga a nivel DNS (ignora timeouts): fuera de la lista
+
             val mirrors = listOf("yip.su", "tubelessceliolymph.com")
             val mirrorOk = java.util.concurrent.atomic.AtomicBoolean(false)
             withTimeoutOrNull(20000L) {
