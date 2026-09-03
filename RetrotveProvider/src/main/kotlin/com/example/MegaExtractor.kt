@@ -443,6 +443,60 @@ object MegaExtractor {
                     val code = conn.responseCode
                 if (code == 509) {
                     conn.disconnect()
+                    Log.w(TAG, "509 from CDN for chunk $ci (attempt $retries) — trying UFA URL immediately (Range header)...")
+                    // IMMEDIATE UFA fallback: UFA uses Range header, not path suffix (returns 400 with path)
+                    if (stream.ufaUrl != null) {
+                        try {
+                            val ufaConn = (URL(stream.ufaUrl).openConnection() as HttpURLConnection).apply {
+                                connectTimeout = 15000; readTimeout = 60000
+                                setRequestProperty("User-Agent", MEGA_UA)
+                                setRequestProperty("Origin", "https://mega.nz")
+                                setRequestProperty("Referer", "https://mega.nz/")
+                                setRequestProperty("Range", "bytes=$start-$end")
+                                instanceFollowRedirects = true
+                            }
+                            val ufaCode = ufaConn.responseCode
+                            Log.d(TAG, "UFA immediate fallback chunk $ci: HTTP $ufaCode (Range $start-$end)")
+                            if (ufaCode in listOf(200, 206)) {
+                                val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+                                val ivForChunk = useBaseIv.copyOf()
+                                setIvBlockCounter(ivForChunk, start)
+                                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForChunk))
+                                var ufaWritten = 0L
+                                var ufaFirstBytes: ByteArray? = null
+                                ufaConn.inputStream.use { enc ->
+                                    synchronized(raf) { raf.seek(start) }
+                                    val buf = ByteArray(256 * 1024)
+                                    while (true) {
+                                        val n = enc.read(buf)
+                                        if (n == -1) break
+                                        val dec = cipher.update(buf, 0, n) ?: continue
+                                        synchronized(raf) { raf.write(dec) }
+                                        if (ufaFirstBytes == null && dec.isNotEmpty()) ufaFirstBytes = dec.copyOf(minOf(32, dec.size))
+                                        ufaWritten += dec.size
+                                    }
+                                }
+                                ufaConn.disconnect()
+                                if (ufaWritten > 0) {
+                                    stream.writtenBytes.addAndGet(ufaWritten)
+                                    if (ci == 0 && ufaFirstBytes != null) {
+                                        val hex = ufaFirstBytes!!.joinToString("") { "%02x".format(it) }
+                                        Log.d(TAG, "UFA chunk 0 first 32 bytes: $hex")
+                                    }
+                                    stream.availableChunks.add(ci)
+                                    Log.d(TAG, "UFA immediate fallback chunk $ci OK: ${ufaWritten}B (${stream.writtenBytes.get()}/${stream.fileSize})")
+                                    return
+                                } else {
+                                    Log.w(TAG, "UFA immediate fallback chunk $ci: 0 bytes")
+                                }
+                            } else {
+                                ufaConn.disconnect()
+                                Log.w(TAG, "UFA immediate fallback chunk $ci: HTTP $ufaCode (not 200/206)")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "UFA immediate fallback chunk $ci error: ${e.message}")
+                        }
+                    }
                     retries++
                     // Exponential backoff: 15s, 15s, 20s, 25s, 30s, 40s, 50s, 60s, 90s, 120s
                     val delay = when {
@@ -711,16 +765,16 @@ object MegaExtractor {
                 val useAesKey = stream.resolvedAesKey ?: aesKey
                 val useBaseIv = stream.resolvedBaseIv ?: baseIv
 
-                val chunkUrl = "${stream.ufaUrl}/$start-$end"
-                val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
+                val conn = (URL(stream.ufaUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000; readTimeout = 60000
                     setRequestProperty("User-Agent", MEGA_UA)
                     setRequestProperty("Origin", "https://mega.nz")
                     setRequestProperty("Referer", "https://mega.nz/")
+                    setRequestProperty("Range", "bytes=$start-$end")
                     instanceFollowRedirects = true
                 }
                 val code = conn.responseCode
-                Log.d(TAG, "UFA fallback chunk $ci: HTTP $code")
+                Log.d(TAG, "UFA fallback chunk $ci: HTTP $code (Range $start-$end)")
                 if (code in listOf(200, 206)) {
                     val cipher = Cipher.getInstance("AES/CTR/NoPadding")
                     val ivForChunk = useBaseIv.copyOf()
