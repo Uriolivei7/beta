@@ -9,6 +9,8 @@ import org.jsoup.Jsoup
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Interceptor
+import okhttp3.Response
 
 class TeleonlineProvider : MainAPI() {
     override var mainUrl = "https://teleonline.org"
@@ -18,16 +20,8 @@ class TeleonlineProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
-    override val usesWebView = true
-
     private val cfKiller = CloudflareKiller()
     private val maxPagesGeneral = 2
-    private val desktopHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "es-ES,es;q=0.9"
-    )
-
     private val countrySections = listOf(
         "Perú" to "/canales/peru/",
         "Argentina" to "/canales/argentina/",
@@ -83,14 +77,12 @@ class TeleonlineProvider : MainAPI() {
         return channels
     }
 
-    private suspend fun safeGet(url: String, timeoutMs: Long = 60000L): String? {
-        for (attempt in 1..3) {
+    private suspend fun safeGet(url: String, timeoutMs: Long = 15000L): String? {
+        for (attempt in 1..2) {
             try {
-                val res = app.get(url, timeout = timeoutMs, headers = desktopHeaders, interceptor = cfKiller)
-                if (res.isSuccessful) {
-                    val text = res.text
-                    if (!text.contains("One moment") && !text.contains("Please wait")) return text
-                }
+                val interceptor = if (attempt > 1) cfKiller else null
+                val res = app.get(url, timeout = timeoutMs * attempt, interceptor = interceptor)
+                if (res.isSuccessful) return res.text
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 Log.e("Teleonline", "safeGet error (intento $attempt): ${e.message}")
@@ -125,57 +117,16 @@ class TeleonlineProvider : MainAPI() {
         return extractChannels(html).distinctBy { it.url }.map { it.toSearchResponse() }
     }
 
-    private fun cleanTitle(raw: String): String {
-        return raw
-            .replace("Ver ", "")
-            .replace(" en directo 🔴 Teleonline", "")
-            .replace(" en directo", "")
-            .replace(" - Teleonline", "")
-            .replace(" | Teleonline", "")
-            .replace(" 🔴", "")
-            .trim()
-    }
-
-    private fun extractTitleFromMarkdown(markdown: String): String? {
-        val lines = markdown.lines()
-        for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.startsWith("# ")) {
-                return cleanTitle(trimmed.substring(2).trim())
-            }
-        }
-        return null
-    }
-
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val response = withTimeoutOrNull(20000L) {
-                app.get(url, headers = desktopHeaders, interceptor = cfKiller)
-            } ?: return null
-
-            val contentType = response.headers?.get("Content-Type") ?: ""
-            val body = response.text
-
-            // Handle Markdown pages (text/markdown) - e.g. /canal/golden/
-            if (contentType.contains("markdown") || contentType.contains("text/plain")) {
-                val mdTitle = extractTitleFromMarkdown(body)
-                if (mdTitle != null) {
-                    Log.d("Teleonline", "load (markdown): url=$url, title=$mdTitle")
-                    val episodes = listOf(newEpisode(url) { this.name = "En Vivo" })
-                    return newTvSeriesLoadResponse(mdTitle, url, TvType.Live, episodes)
-                }
-            }
-
-            val html = body
+            val html = safeGet(url, 20000L) ?: return null
             val doc = Jsoup.parse(html)
 
-            // Simple title extraction (like working version 931add4a)
             val title = doc.selectFirst(".titulo-canal-manual")?.text()
-                ?: doc.selectFirst("h1")?.text()?.let { cleanTitle(it) }
-                ?: doc.selectFirst("title")?.text()?.let { cleanTitle(it) }
+                ?: doc.selectFirst("h1")?.text()
+                ?: doc.selectFirst("title")?.text()
                 ?: "Canal"
 
-            // Simple poster extraction (like working version 931add4a)
             var poster = doc.selectFirst(".logo-channel img")?.attr("src")
             if (poster.isNullOrBlank()) {
                 val jsonLd = Regex(""""logo"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""").find(html)
@@ -208,46 +159,16 @@ class TeleonlineProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            val mainHtml = withTimeoutOrNull(60000L) {
-                app.get(data, headers = desktopHeaders, interceptor = cfKiller)
+            val mainHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9"
+            )
+
+            val mainHtml = withTimeoutOrNull(20000L) {
+                app.get(data, headers = mainHeaders, interceptor = cfKiller)
             }?.text ?: return false
 
-            if (mainHtml.contains("One moment") || mainHtml.contains("Please wait")) return false
-
-            // Detect Markdown page (no player)
-            val isMarkdown = mainHtml.trim().startsWith("# ") || mainHtml.contains("```") && !mainHtml.contains("<html")
-            if (isMarkdown) {
-                Log.w("Teleonline", "loadLinks: Página es Markdown (sin player) para $data")
-                // Try to get post ID from slug and try channel API
-                val slug = data.substringAfterLast("/").removeSuffix("/")
-                try {
-                    val apiResp = app.get("https://teleonline.org/wp-json/wp/v2/posts?search=$slug&per_page=1", headers = desktopHeaders, interceptor = cfKiller)
-                    if (apiResp.isSuccessful) {
-                        val json = apiResp.text
-                        val postId = Regex(""""id"\s*:\s*(\d+)""").find(json)?.groupValues?.get(1)
-                        if (postId != null) {
-                            Log.d("Teleonline", "loadLinks: Post ID encontrado: $postId, intentando API canal...")
-                            val channelResp = app.get("https://teleonline.org/wp-json/teleonline/v1/channel/$postId", headers = desktopHeaders + mapOf("Referer" to data), interceptor = cfKiller)
-                            if (channelResp.isSuccessful) {
-                                val channelJson = channelResp.text
-                                // Try to extract m3u8 from channel API response
-                                val m3u8Matches = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").findAll(channelJson).toList()
-                                if (m3u8Matches.isNotEmpty()) {
-                                    m3u8Matches.forEach { m ->
-                                        callback(newExtractorLink(name, "$name - API", m.value, ExtractorLinkType.M3U8) {
-                                            this.headers = desktopHeaders + mapOf("Referer" to data)
-                                        })
-                                    }
-                                    return true
-                                }
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-                return false
-            }
-
-            // Try base64-encoded M3U8 (teleonline stores them as window.atob('...'))
             val b64Pattern = Regex("""(?:atob|btoa)\s*\(\s*['"]([A-Za-z0-9+/=]+)['"]""")
             val b64Matches = b64Pattern.findAll(mainHtml).toList()
             if (b64Matches.isNotEmpty()) {
@@ -259,7 +180,10 @@ class TeleonlineProvider : MainAPI() {
                             val m3u8Url = decoded.replace("\\/", "/").trim()
                             Log.d("Teleonline", "M3U8 from base64 (opción ${idx + 1}): $m3u8Url")
                             callback(newExtractorLink(name, "En Vivo - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
-                                this.headers = desktopHeaders + mapOf("Referer" to data)
+                                this.headers = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                    "Referer" to data
+                                )
                             })
                             found = true
                         }
@@ -268,16 +192,17 @@ class TeleonlineProvider : MainAPI() {
                 if (found) return true
             }
 
-            // Direct M3U8 on page
             val directM3u8 = extractM3u8FromHtml(mainHtml)
             if (directM3u8 != null) {
                 callback(newExtractorLink(name, "$name - En Vivo", directM3u8, ExtractorLinkType.M3U8) {
-                    this.headers = desktopHeaders + mapOf("Referer" to data)
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer" to data
+                    )
                 })
                 return true
             }
 
-            // Look for iframes and player links
             val doc = Jsoup.parse(mainHtml)
             val playerUrls = doc.select("iframe[src], a[href*=/live], a[href*=.php], div[data-player] a, [data-src], iframe[src*=/embed]")
                 .mapNotNull { el ->
@@ -303,14 +228,17 @@ class TeleonlineProvider : MainAPI() {
                         return true
                     }
 
-                    val playerHtml = withTimeoutOrNull(45000L) {
-                        app.get(playerUrl, headers = desktopHeaders + mapOf("Referer" to data), interceptor = cfKiller)
+                    val playerHtml = withTimeoutOrNull(15000L) {
+                        app.get(playerUrl, headers = mainHeaders + mapOf("Referer" to data), interceptor = cfKiller)
                     }?.text ?: continue
 
                     val m3u8Url = extractM3u8FromHtml(playerHtml)
                     if (m3u8Url != null) {
                         callback(newExtractorLink(name, "$name - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
-                            this.headers = desktopHeaders + mapOf("Referer" to playerUrl)
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to playerUrl
+                            )
                         })
                         return true
                     }
@@ -320,6 +248,36 @@ class TeleonlineProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e("Teleonline", "loadLinks error: ${e.message}")
             return false
+        }
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val host = request.url.host
+                // No tocar YouTube/Google (usa sus propios headers)
+                if (host.contains("youtube.com") || host.contains("youtu.be") || host.contains("googlevideo.com")) {
+                    return chain.proceed(request)
+                }
+                val builder = request.newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
+                    .header("Accept", "*/*")
+                    .header("Accept-Language", "es-ES,es;q=0.9")
+                val referer = extractorLink.headers["Referer"]
+                if (!referer.isNullOrBlank()) {
+                    builder.header("Referer", referer)
+                    try {
+                        val u = java.net.URL(referer)
+                        builder.header("Origin", "${u.protocol}://${u.host}")
+                    } catch (_: Exception) {}
+                }
+                val response = chain.proceed(builder.build())
+                if (response.code !in 200..299) {
+                    Log.w("Teleonline", "Intercept ${response.code} → ${request.url.toString().take(130)}")
+                }
+                return response
+            }
         }
     }
 
