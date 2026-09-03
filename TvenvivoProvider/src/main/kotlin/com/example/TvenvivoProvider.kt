@@ -376,37 +376,34 @@ class TvenvivoProvider : MainAPI() {
                     "Accept" to "*/*"
                 )
 
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → $playlistUrl")
                 val plResp = withTimeoutOrNull(15000L) {
                     app.get(playlistUrl, timeout = 15000L, headers = playlistHeaders, cookies = allCookies)
                 }
                 val plBody = plResp?.text
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo → ${plResp?.code ?: "null"} len=${plBody?.length ?: 0} m3u8=${plBody?.contains("#EXTM3U") ?: false}")
                 if (plResp?.code == 403) {
-                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: 403 hdrs=[${plResp.headers?.names()?.joinToString() ?: "null"}] server=${plResp.headers?.get("Server") ?: "?"}")
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo 403 server=${plResp.headers?.get("Server") ?: "?"}")
                 }
 
                 if (plResp != null && plResp.isSuccessful && plBody != null) {
                     if (plBody.contains("#EXTM3U")) {
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 OK! (${plBody.length} bytes)")
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 directo!")
                         emitLink(displayIndex, playlistUrl, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
                     }
                     val embeddedM3u8 = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(plBody)?.groupValues?.get(1)
                     if (embeddedM3u8 != null) {
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido: $embeddedM3u8")
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido")
                         emitLink(displayIndex, embeddedM3u8, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
                     }
-                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist sin m3u8: ${plBody.take(300)}")
-                } else {
-                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo falló ${plResp?.code ?: "timeout"}")
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist sin m3u8: ${plBody.take(200)}")
+                } else if (plResp?.code != 403) {
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist directo falló ${plResp?.code ?: "timeout"}")
                 }
 
                 // 5. FALLBACK: stream.php → capture cookies + JS playlist
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php")
                 val streamHeaders = mainHeaders.toMutableMap().apply {
                     put("Referer", targetUrl)
                     put("Sec-Fetch-Site", "cross-site")
@@ -427,7 +424,6 @@ class TvenvivoProvider : MainAPI() {
                             kv[0].trim() to (kv.getOrNull(1)?.trim() ?: "")
                         } ?: emptyMap()
                     val streamAllCookies = allCookies + streamCookies + rawSetCookies
-                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php OK (${streamHtml.length} bytes) cookies=${streamCookies.size} rawSetCookie=${rawSetCookies.size}")
 
                     if (streamHtml.contains("#EXTM3U")) {
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php es m3u8 directo")
@@ -444,7 +440,6 @@ class TvenvivoProvider : MainAPI() {
 
                     if (playlistFromJs != null) {
                         val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
                         // Try with stream.php Referer + browser headers (match desktop success)
                         val jsPlaylistHeaders = browserHeaders + mapOf(
@@ -455,9 +450,8 @@ class TvenvivoProvider : MainAPI() {
                             app.get(fullPlaylistUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
                         }
                         val pl2Body = pl2Resp?.text
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → ${pl2Resp?.code ?: "null"} len=${pl2Body?.length ?: 0} m3u8=${pl2Body?.contains("#EXTM3U") ?: false}")
                         if (pl2Resp?.code == 403) {
-                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: 403 JS hdrs=[${pl2Resp.headers?.names()?.joinToString() ?: "null"}] server=${pl2Resp.headers?.get("Server") ?: "?"}")
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS 403 server=${pl2Resp.headers?.get("Server") ?: "?"}")
                         }
                         if (pl2Resp != null && pl2Resp.isSuccessful && pl2Body != null) {
                             if (pl2Body.contains("#EXTM3U")) {
@@ -468,41 +462,42 @@ class TvenvivoProvider : MainAPI() {
                             }
                             val embedded = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""").find(pl2Body)?.groupValues?.get(1)
                             if (embedded != null) {
-                                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido en playlist: $embedded")
+                                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: M3U8 embebido en playlist")
                                 emitLink(displayIndex, embedded, streamUrl, callback)
                                 successfulOptionUrl[targetUrl] = rawPlayerUrl
                                 return@withTimeout true
                             }
-                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS sin m3u8: ${pl2Body.take(300)}")
-                        } else {
-                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS falló ${pl2Resp?.code ?: "null"}")
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS sin m3u8: ${pl2Body.take(200)}")
+                        } else if (pl2Resp?.code != 403) {
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS falló ${pl2Resp?.code ?: "timeout"}")
                         }
 
                         // Also try original playlist.php format with stream.php cookies
                         val origPlUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original con stream cookies → $origPlUrl")
                         val pl3Resp = withTimeoutOrNull(15000L) {
                             app.get(origPlUrl, timeout = 15000L, headers = jsPlaylistHeaders, cookies = streamAllCookies)
                         }
                         val pl3Body = pl3Resp?.text
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist original → ${pl3Resp?.code ?: "null"} len=${pl3Body?.length ?: 0} m3u8=${pl3Body?.contains("#EXTM3U") ?: false}")
                         if (pl3Resp != null && pl3Resp.isSuccessful && pl3Body != null && pl3Body.contains("#EXTM3U")) {
+                            Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 original!")
                             emitLink(displayIndex, origPlUrl, streamUrl, callback)
                             successfulOptionUrl[targetUrl] = rawPlayerUrl
                             return@withTimeout true
+                        } else if (pl3Resp?.code != 403) {
+                            Log.w("Tvenvivo", "Opción ${displayIndex + 1}: playlist original falló ${pl3Resp?.code ?: "timeout"}")
                         }
                     }
 
                     val m3u8FromStream = extractM3u8FromHtml(streamHtml, strict = false)
                     if (m3u8FromStream != null) {
                         val fullM3u8 = if (m3u8FromStream.startsWith("http")) m3u8FromStream else "$streamOrigin/$m3u8FromStream"
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: m3u8 de HTML: $fullM3u8")
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: m3u8 directo en HTML")
                         emitLink(displayIndex, fullM3u8, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
                     }
                 } else {
-                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: stream.php ${streamResp?.code ?: "timeout"}")
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: stream.php falló ${streamResp?.code ?: "timeout"}")
                 }
 
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
@@ -511,18 +506,18 @@ class TvenvivoProvider : MainAPI() {
                 val jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                     .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
                     ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
-                Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback (direct=${playlistUrl.take(80)} js=${jsPlaylistUrlForWv?.take(80) ?: "null"})")
                 val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl, altPlaylistUrl = jsPlaylistUrlForWv)
                 if (playlistInfo != null) {
-                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist capturado → ${playlistInfo.url} body=${playlistInfo.body.length}")
                     if (playlistInfo.body.contains("#EXTM3U")) {
-                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 desde WebView! (${playlistInfo.body.length} bytes)")
+                        Log.d("Tvenvivo", "Opción ${displayIndex + 1}: ¡M3U8 desde WebView!")
                         emitLink(displayIndex, playlistInfo.url, streamUrl, callback)
                         successfulOptionUrl[targetUrl] = rawPlayerUrl
                         return@withTimeout true
+                    } else {
+                        Log.w("Tvenvivo", "Opción ${displayIndex + 1}: WebView sin m3u8: ${playlistInfo.body.take(200)}")
                     }
                 } else {
-                    Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView sin resultado")
+                    Log.w("Tvenvivo", "Opción ${displayIndex + 1}: WebView sin resultado")
                 }
 
                 Log.w("Tvenvivo", "Opción ${displayIndex + 1}: sin enlaces")
@@ -569,7 +564,9 @@ class TvenvivoProvider : MainAPI() {
                     if (!referer.isNullOrBlank()) builder.header("Referer", referer)
                     val newRequest = builder.build()
                     val response = chain.proceed(newRequest)
-                    Log.d("Tvenvivo", "Intercept ${response.code} → ${request.url.toString().take(130)}")
+                    if (response.code !in 200..299) {
+                        Log.w("Tvenvivo", "Intercept ${response.code} → ${request.url.toString().take(130)}")
+                    }
                     return response
                 }
                 return chain.proceed(request)
@@ -604,14 +601,11 @@ class TvenvivoProvider : MainAPI() {
                     cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
                     userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
                 }
-                Log.d("Tvenvivo", "WebView: creado UA=${webView.settings.userAgentString.take(60)}, cargando $pageUrl")
-
                 val infoDeferred = CompletableDeferred<PlaylistInfo?>()
 
                 webView.addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onResult(data: String) {
-                        Log.d("Tvenvivo", "WebView: Bridge result (${data.length} chars): ${data.take(500)}")
                         if (!infoDeferred.isCompleted) {
                             if (data.contains("#EXTM3U")) {
                                 // Formato: [RETRY:]STATUS:200|URL:https://...|LEN:xxx|#EXTM3U...
@@ -619,42 +613,23 @@ class TvenvivoProvider : MainAPI() {
                                 val actualUrl = urlMatch ?: playlistUrl
                                 val bodyStart = data.indexOf("#EXTM3U")
                                 val body = if (bodyStart >= 0) data.substring(bodyStart) else data.substringAfter("|", data).substringAfter("|", data)
-                                Log.d("Tvenvivo", "WebView: ¡M3U8 capturado! url=${actualUrl.take(80)} (${body.length} bytes)")
+                                Log.d("Tvenvivo", "WebView: ¡M3U8 capturado! (${body.length} bytes)")
                                 infoDeferred.complete(PlaylistInfo(actualUrl, body = body))
-                            } else if (data.startsWith("STATUS:403") || data.contains("STATUS:403") || data.startsWith("STATUS:0")) {
-                                Log.w("Tvenvivo", "WebView: Bridge 403/0 → ${data.take(300)}")
+                            } else if (data.startsWith("STATUS:403") || data.contains("STATUS:403") || data.startsWith("STATUS:0") || data.startsWith("TIMEOUT") || data.startsWith("XHR_ERROR")) {
+                                Log.w("Tvenvivo", "WebView: playlist falló → ${data.take(120)}")
                             }
                         }
                     }
                 }, "NativeBridge")
 
                 webView.webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                        Log.d("Tvenvivo", "WebView: onPageStarted url=$url")
-                    }
-
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        Log.d("Tvenvivo", "WebView: onPageFinished url=$url (requests intercepted=$requestCount)")
                         if (!infoDeferred.isCompleted) {
                             mainHandler.postDelayed({
                                 if (!infoDeferred.isCompleted) {
                                     val altUrl = altPlaylistUrl ?: ""
-                                    Log.d("Tvenvivo", "WebView: inyectando XHR a playlist.php... url=${playlistUrl.take(60)} alt=${altUrl.take(60)} cookie=${android.webkit.CookieManager.getInstance().getCookie(url)?.take(200) ?: "null"}")
                                     val js = """
                                         (function() {
-                                            var ck = document.cookie;
-                                            try { NativeBridge.onResult('COOKIE:' + ck + '|CKLEN:' + ck.length); } catch(e) {}
-                                            try {
-                                                var keys = Object.keys(window).filter(function(k){ return k.length>8 && typeof window[k]==='string' && window[k].length>200; });
-                                                NativeBridge.onResult('WINDOW_KEYS:' + keys.join(',') + '|COUNT:' + keys.length);
-                                                for(var i=0;i<Math.min(keys.length,3);i++){ var v=window[keys[i]]; NativeBridge.onResult('WINDOW_VAL:'+keys[i]+'|LEN:'+v.length+'|'+v.substring(0,1200)); }
-                                            } catch(e) { NativeBridge.onResult('WINDOW_ERR:'+e); }
-                                            try {
-                                                var html2=document.documentElement.outerHTML;
-                                                var m2=html2.match(/window\['([^']+)'\]\s*=\s*'([A-Za-z0-9+/=]{100,})'/);
-                                                if(m2){ var k2=m2[1]; var v2=window[k2]; NativeBridge.onResult('WINDOW_DIRECT:'+k2+'|LEN:'+(v2?v2.length:0)+'|VAL:'+(v2?v2.substring(0,800):'null')); }
-                                            } catch(e){ NativeBridge.onResult('WINDOW_DIRECT_ERR:'+e); }
-                                            try { var html=document.documentElement.outerHTML; NativeBridge.onResult('OUTERHTML_LEN:'+html.length+'|'+html.substring(0,2500)); } catch(e) { NativeBridge.onResult('OUTERHTML_ERR:'+e); }
                                             function doXhr(url, isRetry) {
                                                 try {
                                                     var xhr = new XMLHttpRequest();
@@ -701,23 +676,6 @@ class TvenvivoProvider : MainAPI() {
                     ): WebResourceResponse? {
                         val url = request?.url?.toString() ?: return null
                         requestCount++
-                        val method = request.method ?: "?"
-                        if (url.contains("playlist.php")) {
-                            val hdrs = request.requestHeaders
-                            Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! method=$method hdrs=${hdrs?.keys?.joinToString()} Referer=${hdrs?.get("Referer")?.take(80)} XReq=${hdrs?.get("X-Requested-With")} UA=${hdrs?.get("User-Agent")?.take(60)} → ${url.take(120)}")
-                        }
-                        if (url.contains(".m3u8")) {
-                            val hdrs = request.requestHeaders
-                            Log.d("Tvenvivo", "WebView: ¡m3u8 interceptado! method=$method hdrs=${hdrs?.keys?.joinToString()} → ${url.take(150)}")
-                            if (!infoDeferred.isCompleted) {
-                                // Try to fetch m3u8 via native to verify
-                                try {
-                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                        view?.evaluateJavascript("(function(){try{fetch('$url',{credentials:'include'}).then(r=>r.text().then(t=>NativeBridge.onResult('M3U8_FETCH:STATUS:'+r.status+'|URL:$url|LEN:'+t.length+'|'+t.substring(0,600)));}catch(e){NativeBridge.onResult('M3U8_FETCH_ERROR:'+e);}})()", null)
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                        }
                         return null
                     }
 
@@ -727,13 +685,14 @@ class TvenvivoProvider : MainAPI() {
 
                     override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: android.webkit.WebResourceResponse?) {
                         val url = request?.url?.toString() ?: "?"
-                        Log.w("Tvenvivo", "WebView: HTTP ${errorResponse?.statusCode} → ${url.take(100)}")
+                        if (!url.contains("favicon.ico")) {
+                            Log.w("Tvenvivo", "WebView: HTTP ${errorResponse?.statusCode} → ${url.take(100)}")
+                        }
                     }
 
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                         val url = request?.url?.toString() ?: return false
                         if (url.contains("tvenvivo2.com") || url.contains("javascript:")) {
-                            Log.d("Tvenvivo", "WebView: bloqueando redirect → ${url.take(100)}")
                             return true
                         }
                         return false
