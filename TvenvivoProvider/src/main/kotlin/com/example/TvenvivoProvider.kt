@@ -624,6 +624,11 @@ class TvenvivoProvider : MainAPI() {
                                                 NativeBridge.onResult('WINDOW_KEYS:' + keys.join(',') + '|COUNT:' + keys.length);
                                                 for(var i=0;i<Math.min(keys.length,3);i++){ var v=window[keys[i]]; NativeBridge.onResult('WINDOW_VAL:'+keys[i]+'|LEN:'+v.length+'|'+v.substring(0,1200)); }
                                             } catch(e) { NativeBridge.onResult('WINDOW_ERR:'+e); }
+                                            try {
+                                                var html2=document.documentElement.outerHTML;
+                                                var m2=html2.match(/window\['([^']+)'\]\s*=\s*'([A-Za-z0-9+/=]{100,})'/);
+                                                if(m2){ var k2=m2[1]; var v2=window[k2]; NativeBridge.onResult('WINDOW_DIRECT:'+k2+'|LEN:'+(v2?v2.length:0)+'|VAL:'+(v2?v2.substring(0,800):'null')); }
+                                            } catch(e){ NativeBridge.onResult('WINDOW_DIRECT_ERR:'+e); }
                                             try { var html=document.documentElement.outerHTML; NativeBridge.onResult('OUTERHTML_LEN:'+html.length+'|'+html.substring(0,2500)); } catch(e) { NativeBridge.onResult('OUTERHTML_ERR:'+e); }
                                             function doXhr(url, isRetry) {
                                                 try {
