@@ -411,7 +411,7 @@ class TvenvivoProvider : MainAPI() {
                     put("Sec-Fetch-Dest", "iframe")
                 }
                 val streamResp = withTimeoutOrNull(15000L) {
-                    app.get(streamUrl, timeout = 15000L, headers = streamHeaders, cookies = allCookies)
+                    app.get(streamUrl, timeout = 15000L, headers = streamHeaders, cookies = allCookies, interceptor = cfKiller)
                 }
                 if (streamResp != null && streamResp.isSuccessful) {
                     val streamHtml = streamResp.text
@@ -624,6 +624,7 @@ class TvenvivoProvider : MainAPI() {
                                                 NativeBridge.onResult('WINDOW_KEYS:' + keys.join(',') + '|COUNT:' + keys.length);
                                                 for(var i=0;i<Math.min(keys.length,3);i++){ var v=window[keys[i]]; NativeBridge.onResult('WINDOW_VAL:'+keys[i]+'|LEN:'+v.length+'|'+v.substring(0,1200)); }
                                             } catch(e) { NativeBridge.onResult('WINDOW_ERR:'+e); }
+                                            try { var html=document.documentElement.outerHTML; NativeBridge.onResult('OUTERHTML_LEN:'+html.length+'|'+html.substring(0,2500)); } catch(e) { NativeBridge.onResult('OUTERHTML_ERR:'+e); }
                                             function doXhr(url, isRetry) {
                                                 try {
                                                     var xhr = new XMLHttpRequest();
