@@ -99,7 +99,7 @@ class SoloLatinoProvider : MainAPI() {
         app.get(url, timeout = timeoutMs, headers = baseHeaders).document
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "acek-cdn", "vidhidepro", "vidhide")
+        val cdnDomains = listOf("dramiyos", "phtilzjvfok", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "honeycombbrandatelier")
         return Interceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -875,13 +875,11 @@ private suspend fun tryVidHideProExtraction(
         }
 
         val preferOrder = listOf("hls2", "hls3", "hls4")
-        val chosen = preferOrder.firstOrNull { linksMap.containsKey(it) } ?: linksMap.keys.first()
-        var m3u8 = linksMap[chosen]!!
-        if (m3u8.startsWith("/")) {
-            m3u8 = "https://vidhidepro.com$m3u8"
-            Log.d("SoloLatino", "[VH-Pro] relative URL, prepended base: ${m3u8.take(120)}")
+        val orderedKeys = preferOrder.filter { linksMap.containsKey(it) } + linksMap.keys.filter { it !in preferOrder }
+        if (orderedKeys.isEmpty()) {
+            Log.w("SoloLatino", "[VH-Pro] no hls links in unpacked JS")
+            return false
         }
-        Log.d("SoloLatino", "[VH-Pro] chosen=$chosen url=${m3u8.take(120)}")
 
         val vidHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -889,16 +887,27 @@ private suspend fun tryVidHideProExtraction(
             "Origin" to url.substringBeforeLast("/"),
         )
 
-        callback(newExtractorLink("SoloLatino", "VidHidePro - $chosen", m3u8, ExtractorLinkType.M3U8) {
-            this.referer = url
-            this.headers = vidHeaders
-        })
-        Log.d("SoloLatino", "[VH-Pro] emitted $chosen")
+        // Emitir TODAS las variantes (distintos CDNs): si uno va lento, el usuario elige otro
+        var firstM3u8: String? = null
+        for (key in orderedKeys) {
+            var m3u8 = linksMap[key]!!
+            if (m3u8.startsWith("/")) {
+                m3u8 = "https://vidhidepro.com$m3u8"
+                Log.d("SoloLatino", "[VH-Pro] relative URL, prepended base: ${m3u8.take(120)}")
+            }
+            if (firstM3u8 == null) firstM3u8 = m3u8
+            Log.d("SoloLatino", "[VH-Pro] emit $key url=${m3u8.take(120)}")
+            callback(newExtractorLink("SoloLatino", "VidHidePro - $key", m3u8, ExtractorLinkType.M3U8) {
+                this.referer = url
+                this.headers = vidHeaders
+            })
+        }
+        Log.d("SoloLatino", "[VH-Pro] emitted ${orderedKeys.size} variants")
         // Restaurado: subtítulos (.vtt/.srt en página + SUBTITLES del manifest)
         val seenSubs = mutableSetOf<String>()
         scanHtmlForSubs(html, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
         scanHtmlForSubs(unpacked, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
-        tryExtractSubsFromM3u8(m3u8, url, subtitleCallback)
+        firstM3u8?.let { tryExtractSubsFromM3u8(it, url, subtitleCallback) }
         true
     } catch (e: Exception) {
         Log.e("SoloLatino", "[VH-Pro] error: ${e.message}")

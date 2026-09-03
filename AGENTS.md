@@ -719,6 +719,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar tiempo total hasta `loadLinks FIN`.
 
+### 🔧 FIX freeze: emitir todas las variantes hls + cubrir nuevos CDNs (03 Sep 2026)
+- **Síntoma**: Looney Tunes reproduce 5s y congela 40-60s. Log: segmentos `acek-cdn` tardan 10-20s (primer intento cuelga, el reintento OK). Mismo veredicto que Plushd v6: CDN lento, no código.
+- **Hallazgo**: el unpack trae `hls2/hls3/hls4` (3 CDNs distintos) pero solo se emitía `hls2`. Además el interceptor NO cubría `premilkyway.com` (host del link SW) ni `honeycombbrandatelier.cyou` (hls3) → esos segmentos iban sin headers.
+- **Fix**: emitir las 3 variantes como links separados (`VidHidePro - hls2/hls3/hls4`) para elegir CDN rápido; `cdnDomains` += `premilkyway`, `honeycombbrandatelier`.
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar eligiendo otra variante cuando acek-cdn se congele.
+
 ---
 
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)
