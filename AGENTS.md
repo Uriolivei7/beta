@@ -687,6 +687,25 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Providers que lo hacen bien: Uniquestream (`this.name`), Netflix (`name`), Primevideo (`name`), JioHotstar (`name`), Reanime (`name`), SoloLatino (`"SoloLatino"`)
 - Providers con el mismo bug: Plushd (usa `"VidHide"` en vez de `"PlusHD"`)
 
+### 🔧 FIX streamwish + voe sin links → fallback WebView (03 Sep 2026)
+- **Síntoma**: solo se emitía el link vidhide hls2. Streamwish daba 0 links (página challenge "Loading... please wait", len=811, sin m3u8). Voe daba 0 links (redirect a mirror `johnbeyondnation.com` con CAPTCHA Altcha).
+- **Causa raíz**: ambos requieren ejecución JS — StreamWish para pasar su challenge, Voe/Altcha que es PoW y se auto-resuelve en navegador real. `app.get` plano nunca lo pasa.
+- **Fix**: `renderViaWebView()` (WebView + `outerHTML` tras 12s, patrón Tvenvivo) + refactor de parseos reutilizables:
+  - `SoloStreamWish.parseHtml()` (miembro, antes inline en `getUrl`) — rama `streamwish` en `loadSourceNameExtractor`: primero `loadExtractor`, si 0 links → WebView + parse, emite con `source="SoloLatino"`.
+  - `VoeExtractor.parseHtml()` (miembro, antes inline en `getUrl`) — `tryVoeExtraction`: si CAPTCHA o sin m3u8/mp4 → WebView + parse con `source="SoloLatino"`.
+- `SoloLatinoPlugin.load()` guarda `SoloLatinoProvider.pluginContext` para el WebView.
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar en dispositivo — buscar `[SW] WebView` / `[Voe] WebView fallback` en logs y verificar que streamwish/voe emiten links.
+
+### 🔧 FIX subtítulos eliminados en rewrite vidhide (03 Sep 2026)
+- **Síntoma**: antes del cambio de vidhide salían subtítulos, después ya no.
+- **Causa raíz**: el commit `078d4457` ("original sin subs") eliminó TODA la emisión de subtítulos (`scanPageForSubs`, `tryExtractSubsFromM3u8`, tracks `.srt/.vtt` del DOM).
+- **Fix**: restauradas las 2 funciones adaptadas al flujo actual:
+  - `scanHtmlForSubs()` + `scanPageForSubs()` — busca `.vtt/.srt` en HTML (con dedupe por `seen` set). Se llama en `loadSourceNameExtractor` (paralelo, por servidor) y en `tryVidHideProExtraction` (página + JS desempaquetado).
+  - `tryExtractSubsFromM3u8()` — parsea `#EXT-X-MEDIA:TYPE=SUBTITLES` del master m3u8. Se llama en `tryVidHideProExtraction` tras emitir el link.
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar en dispositivo — buscar `[PageSubs]` / `[M3u8Subs]` en logs y verificar subtítulos en el player.
+
 ---
 
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)

@@ -10,11 +10,20 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.Jsoup
 import kotlin.collections.ArrayList
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Locale
 import okhttp3.Interceptor
@@ -26,6 +35,9 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class SoloLatinoProvider : MainAPI() {
+    companion object {
+        var pluginContext: Context? = null
+    }
     override var mainUrl = "https://sololatino.net"
     override var name = "SoloLatino"
     override val supportedTypes = setOf(
@@ -621,6 +633,65 @@ private fun decryptAESLocal(encryptedBase64: String, aesKey: ByteArray): String?
     }
 }
 
+private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L): String? {
+    return withContext(Dispatchers.Main) {
+        val appCtx = SoloLatinoProvider.pluginContext?.applicationContext ?: run {
+            Log.w("SoloLatino", "[WebView] sin context")
+            return@withContext null
+        }
+        var webView: WebView? = null
+        val mainHandler = Handler(Looper.getMainLooper())
+        try {
+            webView = WebView(appCtx)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                cacheMode = WebSettings.LOAD_NO_CACHE
+                userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            }
+            val deferred = CompletableDeferred<String?>()
+            webView.addJavascriptInterface(object {
+                @JavascriptInterface
+                fun onHtml(html: String) {
+                    if (!deferred.isCompleted) deferred.complete(html)
+                }
+            }, "NativeBridge")
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    mainHandler.postDelayed({
+                        if (!deferred.isCompleted) {
+                            try {
+                                view?.evaluateJavascript(
+                                    "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()",
+                                    null
+                                )
+                            } catch (_: Exception) {
+                                if (!deferred.isCompleted) deferred.complete(null)
+                            }
+                        }
+                    }, waitMs)
+                }
+
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+            else webView.loadUrl(pageUrl)
+            Log.d("SoloLatino", "[WebView] renderizando ${pageUrl.take(100)}")
+            withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
+        } catch (e: Exception) {
+            Log.w("SoloLatino", "[WebView] error: ${e.message}")
+            null
+        } finally {
+            try { mainHandler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
+            try { webView?.destroy() } catch (_: Exception) {}
+        }
+    }
+}
+
 suspend fun loadSourceNameExtractor(
     source: String,
     url: String,
@@ -630,6 +701,24 @@ suspend fun loadSourceNameExtractor(
 ) = kotlinx.coroutines.coroutineScope {
     var count = 0
     val outerScope = this
+
+    // Restaurado: subtítulos de la página del servidor (.vtt/.srt)
+    launch { scanPageForSubs(url, subtitleCallback) }
+
+    fun emitWrapped(link: ExtractorLink) {
+        count++
+        outerScope.launch {
+            callback.invoke(
+                newExtractorLink("SoloLatino", "$source[${link.source}]", link.url) {
+                    this.quality = link.quality
+                    this.type = link.type
+                    this.referer = link.referer
+                    this.headers = link.headers
+                    this.extractorData = link.extractorData
+                }
+            )
+        }
+    }
 
     val knownHosts = listOf("vidhidepro.com", "voe.sx", "streamwish.to")
     val domain = try { java.net.URL(url).host } catch (_: Exception) { "" }
@@ -641,6 +730,21 @@ suspend fun loadSourceNameExtractor(
         domain.contains("voe.sx") -> tryVoeExtraction(url, referer ?: url, subtitleCallback) { link ->
             count++
             outerScope.launch { callback.invoke(link) }
+        }
+        domain.contains("streamwish") -> {
+            loadExtractor(url, referer, subtitleCallback) { link -> emitWrapped(link) }
+            if (count == 0) {
+                Log.d("SoloLatino", "[SW] extractor 0 links, probando WebView: $url")
+                val rendered = renderViaWebView(url, referer)
+                if (rendered != null) {
+                    SoloStreamWish().parseHtml(rendered, url, referer ?: url, "SoloLatino") { link ->
+                        count++
+                        outerScope.launch { callback.invoke(link) }
+                    }
+                }
+                if (count == 0) Log.w("SoloLatino", "[SW] WebView sin links: $url")
+            }
+            true
         }
         else -> false
     }
@@ -667,6 +771,59 @@ suspend fun loadSourceNameExtractor(
     launch {
         if (count == 0) Log.w("SoloLatino", "loadSourceNameExtractor [$source] 0 links para $url")
         else Log.d("SoloLatino", "loadSourceNameExtractor [$source] $count links para $url")
+    }
+}
+
+private fun scanHtmlForSubs(html: String, baseUrl: String, subtitleCallback: (SubtitleFile) -> Unit, seen: MutableSet<String> = mutableSetOf()) {
+    Regex("""["']([^"']*\.(?:vtt|srt)(?:\?[^"']*)?)["']""", RegexOption.IGNORE_CASE).findAll(html).forEach { match ->
+        val subUrl = match.groupValues[1]
+        val cleanSubUrl = if (subUrl.startsWith("http")) subUrl else "$baseUrl/$subUrl"
+        if (seen.add(cleanSubUrl)) {
+            Log.d("SoloLatino", "[PageSubs] Subtítulo: $cleanSubUrl")
+            subtitleCallback.invoke(SubtitleFile("Español", cleanSubUrl))
+        }
+    }
+}
+
+private suspend fun scanPageForSubs(pageUrl: String, subtitleCallback: (SubtitleFile) -> Unit) {
+    try {
+        val scanHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        )
+        val html = app.get(pageUrl, headers = scanHeaders, timeout = 20000L).text
+        scanHtmlForSubs(html, pageUrl.substringBeforeLast("/"), subtitleCallback)
+    } catch (e: Exception) {
+        Log.d("SoloLatino", "[PageSubs] Error al escanear $pageUrl: ${e.message}")
+    }
+}
+
+private suspend fun tryExtractSubsFromM3u8(
+    m3u8Url: String,
+    referer: String?,
+    subtitleCallback: (SubtitleFile) -> Unit,
+) {
+    try {
+        val subHeaders = mutableMapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+        if (referer != null) subHeaders["Referer"] = referer
+        val manifest = app.get(m3u8Url, headers = subHeaders, timeout = 20000L).text
+        val baseUrl = m3u8Url.substringBeforeLast("/")
+        var count = 0
+        Regex("""#EXT-X-MEDIA:TYPE=SUBTITLES[^#]*""", RegexOption.IGNORE_CASE).findAll(manifest).forEach { mediaBlock ->
+            val lang = Regex("""LANGUAGE\s*=\s*"([^"]*)""", RegexOption.IGNORE_CASE).find(mediaBlock.value)?.groupValues?.get(1) ?: "Español"
+            val uri = Regex("""URI\s*=\s*"([^"]*)""", RegexOption.IGNORE_CASE).find(mediaBlock.value)?.groupValues?.get(1)
+            if (uri != null) {
+                val subUrl = if (uri.startsWith("http")) uri else "$baseUrl/$uri"
+                Log.d("SoloLatino", "[M3u8Subs] lang=$lang, url=${subUrl.take(120)}")
+                subtitleCallback.invoke(SubtitleFile(lang, subUrl))
+                count++
+            }
+        }
+        if (count == 0) Log.d("SoloLatino", "[M3u8Subs] sin subtítulos en manifest")
+    } catch (e: Exception) {
+        Log.d("SoloLatino", "[M3u8Subs] Error manifest: ${e.message}")
     }
 }
 
@@ -737,6 +894,11 @@ private suspend fun tryVidHideProExtraction(
             this.headers = vidHeaders
         })
         Log.d("SoloLatino", "[VH-Pro] emitted $chosen")
+        // Restaurado: subtítulos (.vtt/.srt en página + SUBTITLES del manifest)
+        val seenSubs = mutableSetOf<String>()
+        scanHtmlForSubs(html, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
+        scanHtmlForSubs(unpacked, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
+        tryExtractSubsFromM3u8(m3u8, url, subtitleCallback)
         true
     } catch (e: Exception) {
         Log.e("SoloLatino", "[VH-Pro] error: ${e.message}")
@@ -808,6 +970,12 @@ private suspend fun tryVoeExtraction(
 
         if (finalHtml.contains("captcha") || finalHtml.contains("CAPTCHA") || finalHtml.contains("cf-challenge")) {
             Log.w("SoloLatino", "[Voe] CAPTCHA detected at $finalUrl")
+            Log.d("SoloLatino", "[Voe] probando WebView (Altcha se auto-resuelve): $finalUrl")
+            val rendered = renderViaWebView(finalUrl, url)
+            if (rendered != null && VoeExtractor().parseHtml(rendered, finalUrl, "SoloLatino", subtitleCallback, callback)) {
+                Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
+                return true
+            }
             return false
         }
 
@@ -817,6 +985,12 @@ private suspend fun tryVoeExtraction(
         val videoUrl = m3u8 ?: mp4
         if (videoUrl == null) {
             Log.w("SoloLatino", "[Voe] no m3u8/mp4 found in $finalUrl")
+            Log.d("SoloLatino", "[Voe] probando WebView: $finalUrl")
+            val rendered = renderViaWebView(finalUrl, url)
+            if (rendered != null && VoeExtractor().parseHtml(rendered, finalUrl, "SoloLatino", subtitleCallback, callback)) {
+                Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
+                return true
+            }
             return false
         }
 

@@ -702,7 +702,7 @@
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TeleonlineProvider.cs3",
     "status": 1,
-    "version": 1,
+    "version": 2,
     "apiVersion": 1,
     "name": "Teleonline",
     "internalName": "TeleonlineProvider",
@@ -711,7 +711,7 @@
     "tvTypes": ["Live"],
     "iconUrl": "https://teleonline.org/wp-content/uploads/2025/12/teleonline-logo-base.png",
     "language": "mx",
-    "fileSize": 65000
+    "fileSize": 24485
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PandramaProvider.cs3",

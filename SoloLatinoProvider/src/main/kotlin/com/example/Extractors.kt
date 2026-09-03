@@ -42,58 +42,75 @@ open class VoeExtractor : ExtractorApi() {
             Log.e("SoloLatino", "[Voe] Too many redirects, giving up")
         }
 
-        // Detect CAPTCHA page (Altcha) and exit gracefully
-        val pageText = res.text
-        if (pageText.contains("altcha-widget") || pageText.contains("Confirm you&#039;re human")) {
-            Log.w("SoloLatino", "[Voe] CAPTCHA page detected, skipping voe.sx mirror")
-            return
+        parseHtml(res.text, currentUrl, name, subtitleCallback, callback)
+    }
+
+    suspend fun parseHtml(
+        html: String,
+        pageUrl: String,
+        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        if (html.contains("altcha-widget") || html.contains("Confirm you&#039;re human")) {
+            Log.w("SoloLatino", "[Voe] CAPTCHA page, no parse: ${pageUrl.take(100)}")
+            return false
         }
+        val pageOrigin = try {
+            val u = java.net.URL(pageUrl)
+            "${u.protocol}://${u.host}"
+        } catch (_: Exception) { pageUrl }
 
         var encodedString: String? = null
 
         // Method 1: script[type=application/json]
-        encodedString = res.document.selectFirst("script[type=application/json]")
-            ?.data()?.trim()
+        encodedString = Regex("""<script[^>]*type=["']application/json["'][^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)?.trim()
+            ?.takeIf { it.contains("[\"") }
             ?.substringAfter("[\"")
             ?.substringBeforeLast("\"]")
 
-        // Method 2: search for the encoded blob in any script by decryptF7 pattern
+        // Method 2: search for the encoded blob in any script
         if (encodedString == null) {
-            encodedString = res.document.select("script").mapNotNull { script ->
-                val html = script.html()
-                Regex("""["']([A-Za-z0-9+/=]{100,})["']""").find(html)?.groupValues?.get(1)
-            }.firstOrNull()
+            val scripts = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(html).map { it.groupValues[1] }
+            for (body in scripts) {
+                encodedString = Regex("""["']([A-Za-z0-9+/=]{100,})["']""").find(body)?.groupValues?.get(1)
+                if (encodedString != null) break
+            }
         }
 
         if (encodedString == null) {
-            Log.w("SoloLatino", "[Voe] encoded string not found after ${5 - maxRedirects} redirect(s)")
-            return
+            Log.w("SoloLatino", "[Voe] encoded string not found: ${pageUrl.take(100)}")
+            return false
         }
 
         val decryptedJson = decryptVoeF7(encodedString)
         val m3u8 = decryptedJson?.source
         val mp4 = decryptedJson?.directAccessUrl
+        var emitted = false
         if (m3u8 != null) {
             Log.d("SoloLatino", "[Voe] Found M3U8: ${m3u8.take(100)}")
             M3u8Helper.generateM3u8(
-                name,
+                sourceName,
                 m3u8,
-                "$mainUrl/",
-                headers = mapOf("Origin" to "$mainUrl/"),
+                "$pageOrigin/",
+                headers = mapOf("Origin" to "$pageOrigin/"),
             ).forEach(callback)
+            emitted = true
         }
         if (mp4 != null) {
             Log.d("SoloLatino", "[Voe] Found MP4: ${mp4.take(100)}")
             callback.invoke(
-                newExtractorLink("$name MP4", "$name MP4", mp4, INFER_TYPE) {
-                    this.referer = url
+                newExtractorLink("$sourceName MP4", "$sourceName MP4", mp4, INFER_TYPE) {
+                    this.referer = pageUrl
                     this.quality = Qualities.Unknown.value
                 }
             )
+            emitted = true
         }
-        if (m3u8 == null && mp4 == null) {
-            Log.e("SoloLatino", "[Voe] No source found after decryption")
-        }
+        if (!emitted) Log.w("SoloLatino", "[Voe] No source found after decryption")
+        return emitted
     }
 
     private fun decryptVoeF7(p8: String): VoeDecrypted? {
@@ -190,36 +207,50 @@ class SoloStreamWish : ExtractorApi() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Referer" to (referer ?: url),
             ), timeout = 20000L)
-            Log.d("SoloLatino", "[SW] HTTP ${resp.code} len=${resp.text.length} snippet=${resp.text.take(1000).replace("\n"," ")}")
+            Log.d("SoloLatino", "[SW] HTTP ${resp.code} len=${resp.text.length}")
+            parseHtml(resp.text, url, referer ?: url, name, callback)
+        } catch (e: Exception) {
+            Log.e("SoloLatino", "[SW] Error: ${e.message}", e)
+        }
+    }
+
+    suspend fun parseHtml(
+        html: String,
+        pageUrl: String,
+        linkReferer: String,
+        sourceName: String,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        return try {
             val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
             val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|m4v)[^"'\s<>]*)""")
             val fileRegex = Regex("""file\s*:\s*["'](https?://[^"']+)["']""")
             var found = false
-            for (m in m3u8Regex.findAll(resp.text)) {
+            for (m in m3u8Regex.findAll(html)) {
                 Log.d("SoloLatino", "[SW] M3U8: ${m.value.take(120)}")
-                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
                 found = true
             }
             if (!found) {
-                for (m in fileRegex.findAll(resp.text)) {
+                for (m in fileRegex.findAll(html)) {
                     val f = m.groupValues[1]
                     if (f.contains(".m3u8") || f.contains(".mp4")) {
                         Log.d("SoloLatino", "[SW] file: $f")
-                        callback.invoke(newExtractorLink(name, name, f) { this.referer = mainUrl })
+                        callback.invoke(newExtractorLink(sourceName, sourceName, f) { this.referer = linkReferer })
                         found = true
                     }
                 }
             }
             if (!found) {
-                for (m in mp4Regex.findAll(resp.text)) {
+                for (m in mp4Regex.findAll(html)) {
                     Log.d("SoloLatino", "[SW] MP4: ${m.value.take(120)}")
-                    callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                    callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
                     found = true
                 }
             }
             if (!found) {
                 val evalRegex = Regex("""eval\s*\(([^)]+)\)""")
-                for (em in evalRegex.findAll(resp.text)) {
+                for (em in evalRegex.findAll(html)) {
                     val params = em.groupValues[1].split(",")
                     if (params.size >= 6) {
                         try {
@@ -234,14 +265,14 @@ class SoloStreamWish : ExtractorApi() {
                             }
                             for (m in m3u8Regex.findAll(decoded)) {
                                 Log.d("SoloLatino", "[SW] M3U8 (eval): ${m.value.take(120)}")
-                                callback.invoke(newExtractorLink(name, name, m.value) { this.referer = mainUrl })
+                                callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
                                 found = true
                             }
                             if (!found) for (m in fileRegex.findAll(decoded)) {
                                 val f = m.groupValues[1]
                                 if (f.contains(".m3u8") || f.contains(".mp4")) {
                                     Log.d("SoloLatino", "[SW] file(eval): $f")
-                                    callback.invoke(newExtractorLink(name, name, f) { this.referer = mainUrl })
+                                    callback.invoke(newExtractorLink(sourceName, sourceName, f) { this.referer = linkReferer })
                                     found = true
                                 }
                             }
@@ -249,9 +280,11 @@ class SoloStreamWish : ExtractorApi() {
                     }
                 }
             }
-            if (!found) Log.w("SoloLatino", "[SW] No M3U8/MP4 found pageHasJW=${resp.text.contains("jwplayer")} hasSources=${resp.text.contains("sources")} hasEval=${resp.text.contains("eval(")}")
+            if (!found) Log.w("SoloLatino", "[SW] No M3U8/MP4 found pageHasJW=${html.contains("jwplayer")} hasSources=${html.contains("sources")} hasEval=${html.contains("eval(")}")
+            found
         } catch (e: Exception) {
             Log.e("SoloLatino", "[SW] Error: ${e.message}", e)
+            false
         }
     }
 }
