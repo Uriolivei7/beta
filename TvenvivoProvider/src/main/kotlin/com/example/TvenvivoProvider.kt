@@ -12,6 +12,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.TimeoutCancellationException
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import okhttp3.Interceptor
+import okhttp3.Response
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebResourceRequest
@@ -552,6 +554,27 @@ class TvenvivoProvider : MainAPI() {
                 this.headers = headers
             }
         )
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                if (request.url.host.contains("saohgdassregions.com")) {
+                    val builder = request.newBuilder()
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
+                        .header("Accept", "*/*")
+                        .header("Accept-Language", "es-ES,es;q=0.9")
+                    val referer = extractorLink.headers["Referer"]
+                    if (!referer.isNullOrBlank()) builder.header("Referer", referer)
+                    val newRequest = builder.build()
+                    val response = chain.proceed(newRequest)
+                    Log.d("Tvenvivo", "Intercept ${response.code} → ${request.url.toString().take(130)}")
+                    return response
+                }
+                return chain.proceed(request)
+            }
+        }
     }
 
     private data class PlaylistInfo(val url: String, val cookies: String = "", val body: String = "")
