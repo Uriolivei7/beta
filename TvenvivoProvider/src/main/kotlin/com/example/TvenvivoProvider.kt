@@ -370,7 +370,7 @@ class TvenvivoProvider : MainAPI() {
                 // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
                 val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
                 val playlistHeaders = browserHeaders + mapOf(
-                    "Referer" to streamUrl,
+                    "Referer" to targetUrl,
                     "Origin" to streamOrigin,
                     "X-Requested-With" to "XMLHttpRequest",
                     "Accept" to "application/vnd.apple.mpegurl,*/*;q=0.9"
@@ -443,9 +443,9 @@ class TvenvivoProvider : MainAPI() {
                         val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
-                        // Try with stream.php cookies + same-origin Referer + XHR
+                        // Try with channel page Referer + XHR
                         val jsPlaylistHeaders = browserHeaders + mapOf(
-                            "Referer" to streamUrl,
+                            "Referer" to targetUrl,
                             "Origin" to streamOrigin,
                             "X-Requested-With" to "XMLHttpRequest",
                             "Accept" to "application/vnd.apple.mpegurl,*/*;q=0.9"
