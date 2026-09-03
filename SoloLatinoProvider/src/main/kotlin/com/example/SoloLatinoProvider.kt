@@ -953,6 +953,24 @@ private suspend fun tryVoeExtraction(
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer" to referer,
         )
+        suspend fun tryMirrors(): Boolean {
+            // El hash /e/ suele ser portable en la red de mirrors voe: probar otros hosts
+            val hashPath = try { java.net.URL(url).path } catch (_: Exception) { "" }
+            if (!hashPath.startsWith("/e/")) return false
+            val mirrors = listOf("yip.su", "donaldlineelse.com", "tubelessceliolymph.com")
+            for (mirror in mirrors) {
+                try {
+                    val mUrl = "https://$mirror$hashPath"
+                    Log.d("SoloLatino", "[Voe] probando mirror: $mUrl")
+                    val mHtml = app.get(mUrl, headers = headers + ("Referer" to url), timeout = 15000L).text
+                    if (VoeExtractor().parseHtml(mHtml, mUrl, "SoloLatino", subtitleCallback, callback)) {
+                        Log.d("SoloLatino", "[Voe] mirror $mirror OK")
+                        return true
+                    }
+                } catch (_: Exception) {}
+            }
+            return false
+        }
         val res = app.get(url, headers = headers, timeout = 15000L, allowRedirects = false)
         val redirectUrl = res.headers["Location"] ?: res.url
         Log.d("SoloLatino", "[Voe] status=${res.code} redirect=$redirectUrl")
@@ -976,6 +994,7 @@ private suspend fun tryVoeExtraction(
                 Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
                 return true
             }
+            if (tryMirrors()) return true
             return false
         }
 
@@ -991,6 +1010,7 @@ private suspend fun tryVoeExtraction(
                 Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
                 return true
             }
+            if (tryMirrors()) return true
             return false
         }
 

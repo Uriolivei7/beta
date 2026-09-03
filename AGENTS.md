@@ -706,6 +706,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar en dispositivo — buscar `[PageSubs]` / `[M3u8Subs]` en logs y verificar subtítulos en el player.
 
+### 🔧 FIX streamwish post-challenge sin parse + voe mirrors (03 Sep 2026)
+- **Hallazgo en logs**: WebView SÍ pasa el challenge SW (`pageHasJW=true hasSources=true`) pero el parser no hallaba nada — el video viene en packer Dean Edwards real, `file:` con URL relativa/protocol-relative, o iframe.
+- **Fix SW** (`SoloStreamWish.parseHtml`): regex `file|src` con URLs `//` y `/` (resueltas vs `pageUrl`), desempaquetador Dean Edwards alto→bajo (`unpackDeanEdwards`, igual que el fix vidhide), un nivel de iframes, y log de contexto `file|sources` si falla.
+- **Fix Voe**: si WebView sigue en CAPTCHA o no hay fuentes → probar mirrors alternos (`yip.su`, `donaldlineelse.com`, `tubelessceliolymph.com`) con el mismo hash `/e/` (portable en la red voe).
+- Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
+- ⏸️ **Pendiente**: probar — buscar `[SW] M3U8 (eval)` / `[SW] file` / `[Voe] probando mirror` en logs.
+
 ---
 
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)

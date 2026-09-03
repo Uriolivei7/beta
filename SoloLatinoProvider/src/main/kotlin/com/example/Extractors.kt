@@ -224,22 +224,35 @@ class SoloStreamWish : ExtractorApi() {
         return try {
             val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
             val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|m4v)[^"'\s<>]*)""")
-            val fileRegex = Regex("""file\s*:\s*["'](https?://[^"']+)["']""")
+            val fileRegex = Regex("""(?:file|src)\s*:\s*["']((?:https?:)?//[^"']+)["']""")
             var found = false
+            fun resolveUrl(u: String): String {
+                var r = u.replace("\\/", "/").trim()
+                if (r.startsWith("//")) r = "https:$r"
+                if (r.startsWith("/")) {
+                    val base = try {
+                        val uu = java.net.URL(pageUrl)
+                        "${uu.protocol}://${uu.host}"
+                    } catch (_: Exception) { "" }
+                    r = base + r
+                }
+                return r
+            }
+            suspend fun emitFile(raw: String, tag: String) {
+                val f = resolveUrl(raw)
+                if (f.contains(".m3u8") || f.contains(".mp4") || f.contains(".m4v")) {
+                    Log.d("SoloLatino", "[SW] $tag: ${f.take(120)}")
+                    callback.invoke(newExtractorLink(sourceName, sourceName, f) { this.referer = linkReferer })
+                    found = true
+                }
+            }
             for (m in m3u8Regex.findAll(html)) {
                 Log.d("SoloLatino", "[SW] M3U8: ${m.value.take(120)}")
                 callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
                 found = true
             }
             if (!found) {
-                for (m in fileRegex.findAll(html)) {
-                    val f = m.groupValues[1]
-                    if (f.contains(".m3u8") || f.contains(".mp4")) {
-                        Log.d("SoloLatino", "[SW] file: $f")
-                        callback.invoke(newExtractorLink(sourceName, sourceName, f) { this.referer = linkReferer })
-                        found = true
-                    }
-                }
+                for (m in fileRegex.findAll(html)) emitFile(m.groupValues[1], "file")
             }
             if (!found) {
                 for (m in mp4Regex.findAll(html)) {
@@ -249,44 +262,75 @@ class SoloStreamWish : ExtractorApi() {
                 }
             }
             if (!found) {
-                val evalRegex = Regex("""eval\s*\(([^)]+)\)""")
-                for (em in evalRegex.findAll(html)) {
-                    val params = em.groupValues[1].split(",")
-                    if (params.size >= 6) {
-                        try {
-                            val p = params[0].trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"")
-                            val a = params[1].trim().toIntOrNull() ?: 36
-                            val c = params[2].trim().toIntOrNull() ?: 0
-                            val kList = params.drop(3).map { it.trim().removeSurrounding("'", "'").removeSurrounding("\"", "\"") }.take(c)
-                            var decoded = p
-                            for (i in kList.indices.reversed()) {
-                                if (kList[i].isBlank()) continue
-                                decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), kList[i])
-                            }
-                            for (m in m3u8Regex.findAll(decoded)) {
-                                Log.d("SoloLatino", "[SW] M3U8 (eval): ${m.value.take(120)}")
-                                callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
-                                found = true
-                            }
-                            if (!found) for (m in fileRegex.findAll(decoded)) {
-                                val f = m.groupValues[1]
-                                if (f.contains(".m3u8") || f.contains(".mp4")) {
-                                    Log.d("SoloLatino", "[SW] file(eval): $f")
-                                    callback.invoke(newExtractorLink(sourceName, sourceName, f) { this.referer = linkReferer })
-                                    found = true
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
+                // Dean Edwards packer (igual que vidhide): desempaquetar de alto→bajo y buscar
+                val packerRegex = Regex("""\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
+                for (pm in packerRegex.findAll(html)) {
+                    try {
+                        val decoded = unpackDeanEdwards(
+                            pm.groupValues[1],
+                            pm.groupValues[2].toIntOrNull() ?: 36,
+                            pm.groupValues[3].toIntOrNull() ?: 0,
+                            pm.groupValues[4]
+                        ) ?: continue
+                        for (m in m3u8Regex.findAll(decoded)) {
+                            Log.d("SoloLatino", "[SW] M3U8 (eval): ${m.value.take(120)}")
+                            callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
+                            found = true
+                        }
+                        if (!found) for (m in fileRegex.findAll(decoded)) emitFile(m.groupValues[1], "file(eval)")
+                    } catch (_: Exception) {}
+                    if (found) break
                 }
             }
-            if (!found) Log.w("SoloLatino", "[SW] No M3U8/MP4 found pageHasJW=${html.contains("jwplayer")} hasSources=${html.contains("sources")} hasEval=${html.contains("eval(")}")
+            if (!found) {
+                // Player embebido en iframe: un nivel de profundidad
+                val iframes = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                    .findAll(html).map { it.groupValues[1] }
+                    .filter { it.contains("streamwish") || it.contains("/e/") }.take(2).toList()
+                if (iframes.isNotEmpty()) Log.d("SoloLatino", "[SW] iframes: $iframes")
+                for (src in iframes) {
+                    try {
+                        val ihtml = app.get(resolveUrl(src), headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to pageUrl,
+                        ), timeout = 15000L).text
+                        for (m in m3u8Regex.findAll(ihtml)) {
+                            Log.d("SoloLatino", "[SW] M3U8 (iframe): ${m.value.take(120)}")
+                            callback.invoke(newExtractorLink(sourceName, sourceName, m.value) { this.referer = linkReferer })
+                            found = true
+                        }
+                        if (!found) for (m in fileRegex.findAll(ihtml)) emitFile(m.groupValues[1], "file(iframe)")
+                    } catch (_: Exception) {}
+                    if (found) break
+                }
+            }
+            if (!found) {
+                val fctx = Regex("""(file|sources)\s*:.{0,200}""").find(html)?.value
+                Log.w("SoloLatino", "[SW] No M3U8/MP4 pageHasJW=${html.contains("jwplayer")} hasSources=${html.contains("sources")} hasEval=${html.contains("eval(")} ctx=${fctx?.take(200)}")
+            }
             found
         } catch (e: Exception) {
             Log.e("SoloLatino", "[SW] Error: ${e.message}", e)
             false
         }
     }
+}
+
+private fun unpackDeanEdwards(packed: String, base: Int, count: Int, dictRaw: String): String? {
+    return try {
+        val k = dictRaw.split("|").toTypedArray()
+        val result = StringBuilder(packed)
+        for (idx in count - 1 downTo 0) {
+            val key = idx.toString(base)
+            val value = k.getOrElse(idx) { "" }
+            if (key.isNotEmpty() && value.isNotEmpty()) {
+                val replaced = Regex("\\b${Regex.escape(key)}\\b").replace(result, Regex.escapeReplacement(value))
+                result.clear()
+                result.append(replaced)
+            }
+        }
+        result.toString().replace("\\'", "'")
+    } catch (_: Exception) { null }
 }
 
 class SoloVidHide : ExtractorApi() {
