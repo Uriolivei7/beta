@@ -368,8 +368,7 @@ class TvenvivoProvider : MainAPI() {
                 } catch (_: Exception) { return@withTimeout false }
 
                 // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
-                val stamat = System.currentTimeMillis()
-                val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig&stamat=$stamat"
+                val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
                 val playlistHeaders = browserHeaders + mapOf(
                     "Referer" to targetUrl,
                     "Origin" to streamOrigin,
@@ -441,8 +440,7 @@ class TvenvivoProvider : MainAPI() {
                         ?.replace("&amp;", "&")
 
                     if (playlistFromJs != null) {
-                        var fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
-                        if (!fullPlaylistUrl.contains("stamat=")) fullPlaylistUrl += "${if (fullPlaylistUrl.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()}"
+                        val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
                         // Try with channel page Referer + XHR
@@ -506,10 +504,9 @@ class TvenvivoProvider : MainAPI() {
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
                 //    intercept playlist.php request to capture JS-generated cookies
                 // También intentar el playlist JS (id=...) si existe
-                var jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
+                val jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                     .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
                     ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
-                if (jsPlaylistUrlForWv != null && !jsPlaylistUrlForWv.contains("stamat=")) jsPlaylistUrlForWv += "${if (jsPlaylistUrlForWv.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()}"
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback (direct=${playlistUrl.take(80)} js=${jsPlaylistUrlForWv?.take(80) ?: "null"})")
                 val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl, altPlaylistUrl = jsPlaylistUrlForWv)
                 if (playlistInfo != null) {
@@ -622,6 +619,11 @@ class TvenvivoProvider : MainAPI() {
                                         (function() {
                                             var ck = document.cookie;
                                             try { NativeBridge.onResult('COOKIE:' + ck + '|CKLEN:' + ck.length); } catch(e) {}
+                                            try {
+                                                var keys = Object.keys(window).filter(function(k){ return k.length>8 && typeof window[k]==='string' && window[k].length>200; });
+                                                NativeBridge.onResult('WINDOW_KEYS:' + keys.join(',') + '|COUNT:' + keys.length);
+                                                for(var i=0;i<Math.min(keys.length,3);i++){ var v=window[keys[i]]; NativeBridge.onResult('WINDOW_VAL:'+keys[i]+'|LEN:'+v.length+'|'+v.substring(0,1200)); }
+                                            } catch(e) { NativeBridge.onResult('WINDOW_ERR:'+e); }
                                             function doXhr(url, isRetry) {
                                                 try {
                                                     var xhr = new XMLHttpRequest();
