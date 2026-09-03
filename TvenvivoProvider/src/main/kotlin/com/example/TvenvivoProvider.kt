@@ -506,9 +506,10 @@ class TvenvivoProvider : MainAPI() {
                 // 6. WebView fallback: load stream.php in WebView, let JS execute,
                 //    intercept playlist.php request to capture JS-generated cookies
                 // También intentar el playlist JS (id=...) si existe
-                val jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
+                var jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                     .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
                     ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
+                if (jsPlaylistUrlForWv != null && !jsPlaylistUrlForWv.contains("stamat=")) jsPlaylistUrlForWv += "${if (jsPlaylistUrlForWv.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()/1000}"
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback (direct=${playlistUrl.take(80)} js=${jsPlaylistUrlForWv?.take(80) ?: "null"})")
                 val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl, altPlaylistUrl = jsPlaylistUrlForWv)
                 if (playlistInfo != null) {
