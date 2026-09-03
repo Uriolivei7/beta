@@ -368,7 +368,8 @@ class TvenvivoProvider : MainAPI() {
                 } catch (_: Exception) { return@withTimeout false }
 
                 // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
-                val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig"
+                val stamat = System.currentTimeMillis() / 1000
+                val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig&stamat=$stamat"
                 val playlistHeaders = browserHeaders + mapOf(
                     "Referer" to targetUrl,
                     "Origin" to streamOrigin,
@@ -440,7 +441,8 @@ class TvenvivoProvider : MainAPI() {
                         ?.replace("&amp;", "&")
 
                     if (playlistFromJs != null) {
-                        val fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
+                        var fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
+                        if (!fullPlaylistUrl.contains("stamat=")) fullPlaylistUrl += "${if (fullPlaylistUrl.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()/1000}"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
                         // Try with channel page Referer + XHR
@@ -670,6 +672,18 @@ class TvenvivoProvider : MainAPI() {
                         if (url.contains("playlist.php")) {
                             val hdrs = request.requestHeaders
                             Log.d("Tvenvivo", "WebView: ¡playlist.php interceptado! method=$method hdrs=${hdrs?.keys?.joinToString()} Referer=${hdrs?.get("Referer")?.take(80)} XReq=${hdrs?.get("X-Requested-With")} UA=${hdrs?.get("User-Agent")?.take(60)} → ${url.take(120)}")
+                        }
+                        if (url.contains(".m3u8")) {
+                            val hdrs = request.requestHeaders
+                            Log.d("Tvenvivo", "WebView: ¡m3u8 interceptado! method=$method hdrs=${hdrs?.keys?.joinToString()} → ${url.take(150)}")
+                            if (!infoDeferred.isCompleted) {
+                                // Try to fetch m3u8 via native to verify
+                                try {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        view?.evaluateJavascript("(function(){try{fetch('$url',{credentials:'include'}).then(r=>r.text().then(t=>NativeBridge.onResult('M3U8_FETCH:STATUS:'+r.status+'|URL:$url|LEN:'+t.length+'|'+t.substring(0,600)));}catch(e){NativeBridge.onResult('M3U8_FETCH_ERROR:'+e);}})()", null)
+                                    }
+                                } catch (_: Exception) {}
+                            }
                         }
                         return null
                     }
