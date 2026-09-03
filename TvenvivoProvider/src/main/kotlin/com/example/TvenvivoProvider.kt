@@ -368,7 +368,7 @@ class TvenvivoProvider : MainAPI() {
                 } catch (_: Exception) { return@withTimeout false }
 
                 // 4. PRIMARY: playlist.php directo (skip stream.php → 403)
-                val stamat = System.currentTimeMillis() / 1000
+                val stamat = System.currentTimeMillis()
                 val playlistUrl = "$streamOrigin/playlist.php?canal=$canal&target=$target&sig=$sig&stamat=$stamat"
                 val playlistHeaders = browserHeaders + mapOf(
                     "Referer" to targetUrl,
@@ -442,7 +442,7 @@ class TvenvivoProvider : MainAPI() {
 
                     if (playlistFromJs != null) {
                         var fullPlaylistUrl = if (playlistFromJs.startsWith("http")) playlistFromJs else "$streamOrigin/$playlistFromJs"
-                        if (!fullPlaylistUrl.contains("stamat=")) fullPlaylistUrl += "${if (fullPlaylistUrl.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()/1000}"
+                        if (!fullPlaylistUrl.contains("stamat=")) fullPlaylistUrl += "${if (fullPlaylistUrl.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()}"
                         Log.d("Tvenvivo", "Opción ${displayIndex + 1}: playlist JS → $fullPlaylistUrl")
 
                         // Try with channel page Referer + XHR
@@ -509,7 +509,7 @@ class TvenvivoProvider : MainAPI() {
                 var jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                     .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
                     ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
-                if (jsPlaylistUrlForWv != null && !jsPlaylistUrlForWv.contains("stamat=")) jsPlaylistUrlForWv += "${if (jsPlaylistUrlForWv.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()/1000}"
+                if (jsPlaylistUrlForWv != null && !jsPlaylistUrlForWv.contains("stamat=")) jsPlaylistUrlForWv += "${if (jsPlaylistUrlForWv.contains("?")) "&" else "?"}stamat=${System.currentTimeMillis()}"
                 Log.d("Tvenvivo", "Opción ${displayIndex + 1}: WebView fallback (direct=${playlistUrl.take(80)} js=${jsPlaylistUrlForWv?.take(80) ?: "null"})")
                 val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl, altPlaylistUrl = jsPlaylistUrlForWv)
                 if (playlistInfo != null) {
