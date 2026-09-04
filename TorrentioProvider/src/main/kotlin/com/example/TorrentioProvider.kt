@@ -20,6 +20,8 @@ class TorrentioProvider : MainAPI() {
         const val TRACKERS_URL = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt"
         // Config inline Torrentio (idea de yuzono/anime-extensions): sin CAM/SCR, orden por seeders
         const val TIO_CONFIG = "qualityfilter=cam,scr|sort=seeders"
+        // Subtítulos vía addon OpenSubtitles v3 de Stremio (mismo protocolo, sin auth)
+        const val OPENSUBS = "https://opensubtitles-v3.strem.io"
 
         @Volatile var cachedTrackers: List<String>? = null
         @Volatile var cachedTrackersAt: Long = 0L
@@ -80,6 +82,13 @@ class TorrentioProvider : MainAPI() {
         val episode: Int? = null,
         val isMovie: Boolean = true,
     )
+
+    data class OsSub(
+        @JsonProperty("url") val url: String? = null,
+        @JsonProperty("lang") val lang: String? = null,
+    )
+
+    data class OsResp(@JsonProperty("subtitles") val subtitles: List<OsSub>? = null)
 
     private fun metaToSearch(m: CineMeta, type: TvType): SearchResponse? {
         val title = m.name ?: return null
@@ -242,6 +251,30 @@ class TorrentioProvider : MainAPI() {
                     this.quality = getQualityFromName(if (q.isNotBlank()) q else null)
                 })
                 count++
+            }
+            // Subtítulos OpenSubtitles (español + inglés, como en Stremio)
+            try {
+                val subUrl = if (ld.isMovie || ld.season == null) {
+                    "$OPENSUBS/subtitles/movie/$imdb.json"
+                } else {
+                    "$OPENSUBS/subtitles/series/$imdb:${ld.season}:${ld.episode}.json"
+                }
+                val subs = parseJson<OsResp>(app.get(subUrl, timeout = 15000L).text)
+                    ?.subtitles?.filter { !it.url.isNullOrBlank() } ?: emptyList()
+                val wanted = subs.filter { it.lang in setOf("spa", "esp", "eng") }
+                    .sortedBy { if (it.lang == "eng") 1 else 0 }.take(6)
+                for (sub in wanted) {
+                    val langName = when (sub.lang) {
+                        "spa", "esp" -> "Español"
+                        "eng" -> "English"
+                        else -> sub.lang ?: "Sub"
+                    }
+                    Log.d("Torrentio", "sub: $langName ${sub.url?.take(80)}")
+                    subtitleCallback.invoke(SubtitleFile(langName, sub.url!!))
+                }
+                Log.d("Torrentio", "subs emitidos: ${wanted.size}/${subs.size}")
+            } catch (e: Exception) {
+                Log.w("Torrentio", "subs error: ${e.message}")
             }
             count > 0
         } catch (e: Exception) {
