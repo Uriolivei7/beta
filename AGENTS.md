@@ -751,6 +751,45 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ---
 
+## TorrentioProvider — Plugin Stremio Torrentio (04 Sep 2026)
+
+### Arquitectura (igual que Stremio real, sin servidor propio)
+- **Catálogo/búsqueda/detalle**: Cinemeta `https://v3-cinemeta.strem.io` (sin API key):
+  - `GET /catalog/{movie|series}/top.json` → main page (Películas/Series Top)
+  - `GET /catalog/{movie|series}/top/search={q}.json` → search (ambos tipos en paralelo)
+  - `GET /meta/{movie|series}/{ttId}.json` → detalle + episodios (`videos[]` con season/episode)
+- **Streams**: Torrentio público `https://torrentio.strem.fun/stream/{movie|series}/{ttId[:s:e]}.json` → `{streams:[{infoHash, fileIdx, name, title, behaviorHints{filename}, sources[tracker:...]}]}` (verificado con tt0111161: ~50 resultados con seeders/tamaño/proveedor).
+- **Magnets**: `magnet:?xt=urn:btih:{hash}&dn={filename}&tr={trackers}` — trackers del propio stream (`sources[]`) + lista ngosang (caché 1h, tope 15). Se emiten como `ExtractorLink` y los reproduce el **torrent player interno de CloudStream** (igual que TotalTorrent).
+- Label: `Torrentio 1080p 👤100 💾6.9GB (+[fileIdx] si ≠0)`; quality vía `getQualityFromName`; tope 50 links.
+
+### Reglas aplicadas
+- JSON con Jackson vía `AppUtils.parseJson`/`toJson` (NUNCA kotlinx-serialization en plugins).
+- Sin TMDB API key (Cinemeta no la pide). Sin Real-Debrid en v1 (los links son magnets, no HTTP).
+
+### Limitaciones conocidas
+- `fileIdx ≠ 0` (packs multi-archivo): el reproductor torrent puede elegir mal el archivo — se muestra `[N]` en el label como aviso.
+- Sin seeders = no reproduce (normal en torrents). Elegir links con 👤 alto.
+- Solo IDs `tt...` (IMDb). Lo demás se omite.
+
+### Archivos
+- `TorrentioProvider/build.gradle.kts` (v1, mx, Movie+TvSeries, logo torrentio)
+- `TorrentioProvider/src/main/AndroidManifest.xml`
+- `TorrentioProvider/src/main/kotlin/com/example/TorrentioPlugin.kt`
+- `TorrentioProvider/src/main/kotlin/com/example/TorrentioProvider.kt`
+- `plugins.json` → entrada `Torrentio` v1 (29517 bytes)
+
+### Estado
+- Compilación OK: `.\gradlew.bat :TorrentioProvider:compileReleaseKotlin --console=plain`
+- Plugin empaquetado: `:TorrentioProvider:make` → `TorrentioProvider/build/TorrentioProvider.cs3` (29631 bytes)
+- ⏸️ **Pendiente**: push a `master` (el bot lo publica en `builds`), instalar y probar búsqueda → detalle → link magnet → reproducción.
+
+### Enfoques adoptados de yuzono/anime-extensions (04 Sep 2026)
+- **Config inline en la URL**: `qualityfilter=cam,scr|sort=seeders/stream/...` — filtrado server-side (verificado: ordena por 👤 desc, sin CAM/SCR). Evita settings UI en v1.
+- **`&index={fileIdx}` en el magnet**: selecciona archivo en packs multi-archivo (inofensivo si el reproductor lo ignora).
+- **No adoptado**: trackers anime extra (ngosang basta), filtros por provider/idioma (requiere settings UI → v2 con Real-Debrid), TMDB API key (Cinemeta no la pide), `torrentioanime`/kitsu (solo anime; club de fans aparte).
+
+---
+
 ## RetrotveProvider — MEGA.nz extraction (30 Ago 2026)
 
 ### Problem

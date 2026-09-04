@@ -70,7 +70,7 @@ open class VoeExtractor : ExtractorApi() {
             ?.substringBeforeLast("\"]")
 
         if (encodedString == null) {
-            // Probar candidatos: la página trae señuelos base64 (hashes integrity, etc.)
+
             val scripts = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(html).map { it.groupValues[1] }
             outer@ for (body in scripts) {
