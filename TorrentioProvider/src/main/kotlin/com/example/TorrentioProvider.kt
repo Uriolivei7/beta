@@ -11,7 +11,7 @@ import java.net.URLEncoder
 class TorrentioProvider : MainAPI() {
     override var mainUrl = "https://torrentio.strem.fun"
     override var name = "Torrentio"
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override var lang = "mx"
     override val hasMainPage = true
 
