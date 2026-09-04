@@ -244,6 +244,10 @@ class TorrentioProvider : MainAPI() {
                 val size = Regex("""💾\s*([\d.]+\s*\wB)""").find(s.title ?: "")?.groupValues?.get(1)
                 var label = "Torrentio"
                 if (q.isNotBlank()) label += " $q"
+                val group = Regex("""^\[([^\]]+)\]""")
+                    .find(s.behaviorHints?.filename ?: "")?.groupValues?.get(1)
+                    ?: Regex("""^\[([^\]]+)\]""").find(s.title ?: "")?.groupValues?.get(1)
+                if (!group.isNullOrBlank()) label += " [$group]"
                 if (seeds != null) label += " 👤$seeds"
                 if (size != null) label += " $size"
                 if ((s.fileIdx ?: 0) != 0) label += " [${s.fileIdx}]"
