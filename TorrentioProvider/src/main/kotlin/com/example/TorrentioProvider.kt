@@ -18,9 +18,9 @@ class TorrentioProvider : MainAPI() {
     companion object {
         const val CINEMETA = "https://v3-cinemeta.strem.io"
         const val TRACKERS_URL = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt"
-        // Config inline Torrentio (idea de yuzono/anime-extensions): sin CAM/SCR, orden por seeders
+
         const val TIO_CONFIG = "qualityfilter=cam,scr|sort=seeders"
-        // Subtítulos vía addon OpenSubtitles v3 de Stremio (mismo protocolo, sin auth)
+
         const val OPENSUBS = "https://opensubtitles-v3.strem.io"
 
         @Volatile var cachedTrackers: List<String>? = null
@@ -235,7 +235,7 @@ class TorrentioProvider : MainAPI() {
                     trackers.forEach {
                         append("&tr=").append(URLEncoder.encode(it, "UTF-8"))
                     }
-                    // Índice de archivo en packs multi-archivo (idea yuzono; inofensivo si no se soporta)
+
                     s.fileIdx?.let { append("&index=").append(it) }
                 }
                 val blob = listOf(s.name, s.title).joinToString(" ")
@@ -256,7 +256,7 @@ class TorrentioProvider : MainAPI() {
                 })
                 count++
             }
-            // Subtítulos OpenSubtitles (español + inglés, como en Stremio)
+
             try {
                 val subUrl = if (ld.isMovie || ld.season == null) {
                     "$OPENSUBS/subtitles/movie/$imdb.json"
@@ -274,7 +274,7 @@ class TorrentioProvider : MainAPI() {
                         else -> sub.lang ?: "Sub"
                     }
                     Log.d("Torrentio", "sub: $langName ${sub.url?.take(80)}")
-                    subtitleCallback.invoke(SubtitleFile(langName, sub.url!!))
+                    subtitleCallback.invoke(newSubtitleFile(langName, sub.url!!))
                 }
                 Log.d("Torrentio", "subs emitidos: ${wanted.size}/${subs.size}")
             } catch (e: Exception) {
