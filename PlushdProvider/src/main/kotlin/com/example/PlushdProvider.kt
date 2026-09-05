@@ -513,46 +513,29 @@ class PlushdProvider : MainAPI() {
             var m3u8Url: String? = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(html)?.value
 
             if (m3u8Url == null) {
-                val evalMarker = "eval(function(p,a,c,k,e,d){"
-                val evalStart = html.indexOf(evalMarker)
-                if (evalStart >= 0) {
-                    val callStart = html.indexOf("}('", evalStart)
-                    if (callStart >= 0) {
-                        var argIdx = callStart + 2
-                        if (argIdx < html.length && html[argIdx] == '\'') {
-                            argIdx++
-                            val pStart = argIdx
-                            while (argIdx < html.length && html[argIdx] != '\'') argIdx++
-                            if (argIdx < html.length) {
-                                val p = html.substring(pStart, argIdx)
-                                argIdx++
-                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
-                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
-                                val aStart = argIdx
-                                while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
-                                val a = html.substring(aStart, argIdx).toIntOrNull() ?: 36
-                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
-                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
-                                val cStart = argIdx
-                                while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
-                                if (argIdx < html.length && html[argIdx] == ',') argIdx++
-                                while (argIdx < html.length && html[argIdx] == ' ') argIdx++
-                                if (argIdx < html.length && html[argIdx] == '\'') {
-                                    argIdx++
-                                    val kStart = argIdx
-                                    while (argIdx < html.length && html[argIdx] != '\'') argIdx++
-                                    val k = html.substring(kStart, argIdx).split("|")
-                                    var decoded = p
-for (idx in k.indices.reversed()) {
-                                    if (k[idx].isBlank()) continue
-                                    decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
-                                }
-                                unpacked = decoded
-                                m3u8Url = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(decoded)?.value
-                                }
-                            }
+                val evalInvoke = Regex("""eval\(function\(p,a,c,k,e,d\)\{.+?\}\('""", RegexOption.DOT_MATCHES_ALL)
+                for (em in evalInvoke.findAll(html)) {
+                    val argStart = em.range.last + 1
+                    val argsMatch = Regex("""',(\d+),(\d+),'([^']+)'\.split\('\|'\)""").find(html, argStart) ?: continue
+                    val p = html.substring(argStart, argsMatch.range.first)
+                    val a = argsMatch.groupValues[1].toIntOrNull() ?: 36
+                    val c = argsMatch.groupValues[2].toIntOrNull() ?: 0
+                    val k = argsMatch.groupValues[3].split("|").toTypedArray()
+                    var decoded = p
+                    for (idx in c - 1 downTo 0) {
+                        val key = idx.toString(a)
+                        val value = k.getOrElse(idx) { "" }
+                        if (key.isNotEmpty() && value.isNotEmpty()) {
+                            decoded = decoded.replace(
+                                Regex("\\b${Regex.escape(key)}\\b"),
+                                Regex.escapeReplacement(value)
+                            )
                         }
                     }
+                    val unescaped = decoded.replace("\\'", "'")
+                    unpacked = unescaped
+                    m3u8Url = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(unescaped)?.value
+                    if (m3u8Url != null) break
                 }
             }
 
@@ -574,11 +557,15 @@ for (idx in k.indices.reversed()) {
             if (linksMap.isNotEmpty()) {
                 val preferOrder = listOf("hls2", "hls3", "hls4")
                 val orderedKeys = preferOrder.filter { linksMap.containsKey(it) } + linksMap.keys.filter { it !in preferOrder }
+                val baseHost = runCatching {
+                    val uri = java.net.URI(vidReferer)
+                    "${uri.scheme}://${uri.host}"
+                }.getOrNull() ?: "https://vidhidepro.com"
                 data class Variant(val key: String, val url: String)
                 val resolved = orderedKeys.mapNotNull { key ->
                     var u = linksMap[key] ?: return@mapNotNull null
                     if (u.startsWith("/")) {
-                        u = "https://vidhidepro.com$u"
+                        u = "$baseHost$u"
                         Log.d(tag, "URL relativa, prependido base: ${u.take(120)}")
                     }
                     Variant(key, u)
