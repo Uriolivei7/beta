@@ -445,6 +445,22 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ---
 
+## PlushdProvider — Variantes múltiples CDN (04 Sep 2026 v4)
+
+### ✅ Implementado
+- **Motivo**: al igual que SoloLatino, PlusHD ahora emite las variantes `hls2/hls3/hls4` del script `var links={...}` de vidhide como links separados (`VidHidePro - hls2/hls3/hls4`), para poder elegir un CDN alternativo si uno se congela (acek-cdn es lento/saturado).
+- **Probe con validación real (NO solo HTTP 200)**: cada variante se probó leyendo el body — solo se emiten las que responden **200 y cuyo body empieza con `#EXTM3U`** (playlist HLS real). Esto descarta CDNs que devuelven 200 con contenido no-HLS (causa del `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED (3003)` en hls3 `master.txt` / `ecommercesolution.sbs`).
+- **Fallback**: si ninguna variante pasa el probe, se emiten todas (como antes).
+- **Refactor `processServer`**: el bucle de servidores player-path (tioplus `/player/`) se extrajo a una función local reutilizable. La 2ª pasada de reintento (cuando `foundLinks==0`) ya NO solo repite servidores DIRECTOS — ahora llama `processServer` para **TODOS** los servidores con referer `$mainUrl/`, arreglando el bug de "primer play → Enlaces no encontrados, segundo play → carga" (la 1ª pasada a veces devuelve videoUrl en blanco en tioplus).
+- Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
+- Plugin empaquetado: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (44.6 KB)
+- `plugins.json`: PlusHD v3 → sin cambio de version (sigue 3), fileSize 41424 → 44619
+
+### ⏸️ Pendiente
+- Probar en dispositivo: (1) que hls3 ya no se emite si falla el probe `#EXTM3U`; (2) que el primer play ya no da "Enlaces no encontrados" (reintento 2ª pasada con todos los servidores).
+
+---
+
 ## UniqueStreamProvider — Fix películas standalone (12 Ago 2026)
 
 ### 🐛 Bug corregido

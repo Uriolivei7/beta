@@ -345,145 +345,120 @@ class PlushdProvider : MainAPI() {
             wrappedCallback(link)
         }
 
+        suspend fun processServer(serverData: String, playerReferer: String, extractorReferer: String) {
+            val tag = "PlushdProvider-Server"
+            try {
+                if (serverData.isNullOrEmpty()) return
+
+                val decoded = String(Base64.decode(serverData, Base64.DEFAULT))
+                Log.d(tag, "decoded: ${decoded.take(120)}")
+
+                val isPlayerPath = !REGEX_LINK.matcher(decoded).matches()
+                val url = if (isPlayerPath) {
+                    "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
+                } else {
+                    decoded
+                }
+                Log.d(tag, "usará ${if (isPlayerPath) "PLAYER" else "DIRECT"}: ${url.take(120)}")
+
+                var videoUrl: String
+                if (url.contains("/player/")) {
+                    val playerHeaders = headers + mapOf("Referer" to playerReferer)
+                    Log.d(tag, "fetcheando player page: $url")
+                    val try1 = runCatching { app.get(url, headers = playerHeaders).document }
+                    val playerDoc = try1.getOrNull() ?: run {
+                        Log.w(tag, "intento 1 falló, reintentando con user-agent móvil...")
+                        val retryHeaders = headers + mapOf(
+                            "Referer" to url,
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+                        )
+                        runCatching { app.get(url, headers = retryHeaders).document }.getOrNull()
+                    }
+                    if (playerDoc == null) {
+                        Log.w(tag, "player page inaccesible")
+                        return
+                    }
+                    Log.d(tag, "HTML player page: ${playerDoc.html().length} chars")
+                    videoUrl = extractUrlFromPlayerPage(playerDoc)
+                } else {
+                    videoUrl = url
+                }
+
+                if (videoUrl.isBlank()) {
+                    Log.w(tag, "videoUrl en blanco después de extracción")
+                    return
+                }
+                Log.d(tag, "videoUrl raw: ${videoUrl.take(120)}")
+
+                val fixedLink = fixPelisplusHostsLinks(videoUrl)
+                    .replace(Regex("""([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https://ww3.pelisplus.to.*"""), "")
+                Log.d(tag, "fixedLink: ${fixedLink.take(120)}")
+
+                if (fixedLink.isBlank()) {
+                    Log.w(tag, "fixedLink en blanco después de fixPelisplusHostsLinks")
+                    return
+                }
+
+                if (fixedLink.contains("turbovidhls.com")) {
+                    Log.w(tag, "turbovid (error 3003), saltando")
+                    return
+                }
+                if (fixedLink.contains("#") && (
+                            fixedLink.contains("upns.pro") ||
+                                    fixedLink.contains("rpmstream.live") ||
+                                    fixedLink.contains("strp2p.com") ||
+                                    fixedLink.contains("4meplayer.pro") ||
+                                    fixedLink.contains("pelisplusto")
+                            )) {
+                    Log.w(tag, "SPA hash (error 2001), saltando")
+                    return
+                }
+
+                hasValidServer = true
+
+                if (fixedLink.contains("vidhide")) {
+                    Log.d(tag, "URL VidHide detectada, usando extractor directo...")
+                    val ok = tryVidHideExtraction(
+                        url = fixedLink,
+                        referer = fixedLink, // MhdflixVidHide usa URL como referer
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = wrappedCallback2
+                    )
+                    if (!ok) {
+                        Log.w(tag, "VidHide directo fallo, probando loadExtractor...")
+                        loadExtractor(
+                            url = fixedLink,
+                            referer = extractorReferer,
+                            subtitleCallback = loggingSubtitleCallback,
+                            callback = wrappedCallback2
+                        )
+                    }
+                } else {
+                    Log.d(tag, "llamando loadExtractor...")
+                    loadExtractor(
+                        url = fixedLink,
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = wrappedCallback2
+                    )
+                }
+                Log.d(tag, "OK")
+            } catch (e: Exception) {
+                Log.e(tag, "Error: ${e.message}")
+            }
+        }
+
         coroutineScope {
             serverItems.toList().forEach { serverLi ->
-                launch {
-                    val tag = "PlushdProvider-Server"
-                    try {
-                        val serverData = serverLi.attr("data-server")
-                        if (serverData.isNullOrEmpty()) return@launch
-
-                        val decoded = String(Base64.decode(serverData, Base64.DEFAULT))
-                        Log.d(tag, "decoded: ${decoded.take(120)}")
-
-                        val isPlayerPath = !REGEX_LINK.matcher(decoded).matches()
-                        val url = if (isPlayerPath) {
-                            "$mainUrl/player/${base64Encode(serverData.toByteArray())}"
-                        } else {
-                            decoded
-                        }
-                        Log.d(tag, "usará ${if (isPlayerPath) "PLAYER" else "DIRECT"}: ${url.take(120)}")
-
-                        var videoUrl: String
-                        if (url.contains("/player/")) {
-                            val playerHeaders = headers + mapOf("Referer" to data)
-                            Log.d(tag, "fetcheando player page (intento 1): $url")
-                            val playerDoc = app.get(url, headers = playerHeaders).document
-                            Log.d(tag, "HTML player page: ${playerDoc.html().length} chars")
-                            videoUrl = extractUrlFromPlayerPage(playerDoc)
-
-                            if (videoUrl.isBlank()) {
-                                Log.w(tag, "intento 1 falló, reintentando con user-agent móvil...")
-                                val retryHeaders = headers + mapOf(
-                                    "Referer" to url,
-                                    "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
-                                )
-                                try {
-                                    val retryDoc = app.get(url, headers = retryHeaders).document
-                                    videoUrl = extractUrlFromPlayerPage(retryDoc)
-                                } catch (_: Exception) { }
-                            }
-                        } else {
-                            videoUrl = url
-                        }
-
-                        if (videoUrl.isBlank()) {
-                            Log.w(tag, "videoUrl en blanco después de extracción")
-                            return@launch
-                        }
-                        Log.d(tag, "videoUrl raw: ${videoUrl.take(120)}")
-
-                        val fixedLink = fixPelisplusHostsLinks(videoUrl)
-                            .replace(Regex("""([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https://ww3.pelisplus.to.*"""), "")
-                        Log.d(tag, "fixedLink: ${fixedLink.take(120)}")
-
-                        if (fixedLink.isBlank()) {
-                            Log.w(tag, "fixedLink en blanco después de fixPelisplusHostsLinks")
-                            return@launch
-                        }
-
-                        if (fixedLink.contains("turbovidhls.com")) {
-                            Log.w(tag, "turbovid (error 3003), saltando")
-                            return@launch
-                        }
-                        if (fixedLink.contains("#") && (
-                                    fixedLink.contains("upns.pro") ||
-                                            fixedLink.contains("rpmstream.live") ||
-                                            fixedLink.contains("strp2p.com") ||
-                                            fixedLink.contains("4meplayer.pro") ||
-                                            fixedLink.contains("pelisplusto")
-                                    )) {
-                            Log.w(tag, "SPA hash (error 2001), saltando")
-                            return@launch
-                        }
-
-                        hasValidServer = true
-
-                        if (fixedLink.contains("vidhide")) {
-                            Log.d(tag, "URL VidHide detectada, usando extractor directo...")
-                            val ok = tryVidHideExtraction(
-                                url = fixedLink,
-                                referer = fixedLink, // MhdflixVidHide usa URL como referer
-                                subtitleCallback = loggingSubtitleCallback,
-                                callback = wrappedCallback2
-                            )
-                            if (!ok) {
-                                Log.w(tag, "VidHide directo fallo, probando loadExtractor...")
-                                loadExtractor(
-                                    url = fixedLink,
-                                    referer = fixedLink,
-                                    subtitleCallback = loggingSubtitleCallback,
-                                    callback = wrappedCallback2
-                                )
-                            }
-                        } else {
-                            Log.d(tag, "llamando loadExtractor...")
-                            loadExtractor(
-                                url = fixedLink,
-                                referer = data,
-                                subtitleCallback = loggingSubtitleCallback,
-                                callback = wrappedCallback2
-                            )
-                        }
-                        Log.d(tag, "OK")
-                    } catch (e: Exception) {
-                        Log.e(tag, "Error: ${e.message}")
-                    }
-                }
+                launch { processServer(serverLi.attr("data-server"), data, data) }
             }
         }
 
         if (foundLinks.get() == 0 && hasValidServer) {
-            Log.d("PlushdProvider", "No se encontraron links, reintentando con otro referer...")
+            Log.d("PlushdProvider", "=== loadLinks === No se encontraron links (1ª pasada), reintentando (2ª pasada)...")
             coroutineScope {
                 serverItems.toList().forEach { serverLi ->
-                    launch {
-                        try {
-                            val serverData = serverLi.attr("data-server")
-                            if (serverData.isNullOrEmpty()) return@launch
-                            val decoded = String(Base64.decode(serverData, Base64.DEFAULT))
-                            if (REGEX_LINK.matcher(decoded).matches()) {
-                                val fixedLink = fixPelisplusHostsLinks(decoded)
-                                if (fixedLink.isNotBlank() && !fixedLink.contains("turbovidhls.com")) {
-                                    if (fixedLink.contains("vidhide")) {
-                                        tryVidHideExtraction(
-                                            url = fixedLink,
-                                            referer = fixedLink,
-                                            subtitleCallback = loggingSubtitleCallback,
-                                            callback = wrappedCallback2
-                                        )
-                                    } else {
-                                        loadExtractor(
-                                            url = fixedLink,
-                                            referer = "$mainUrl/",
-                                            subtitleCallback = loggingSubtitleCallback,
-                                            callback = wrappedCallback2
-                                        )
-                                    }
-                                }
-                            }
-                        } catch (_: Exception) { }
-                    }
+                    launch { processServer(serverLi.attr("data-server"), "$mainUrl/", "$mainUrl/") }
                 }
             }
         }
@@ -578,11 +553,19 @@ class PlushdProvider : MainAPI() {
                     val reachable = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
                     resolved.forEach { v ->
                         try {
-                            val code = withTimeoutOrNull(10000L) {
-                                app.get(v.url, headers = probeHeaders, timeout = 10000L).code
-                            } ?: -1
-                            Log.d(tag, "probe ${v.key} -> $code")
-                            if (code in 200..299) reachable.add(v)
+                            Log.d(tag, "probando ${v.key} ${v.url.take(120)}")
+                            val probe = withTimeoutOrNull(10000L) {
+                                val resp = app.get(v.url, headers = probeHeaders, timeout = 10000L)
+                                val body = resp.text
+                                val ok = resp.code in 200..299 && body.trimStart().startsWith("#EXTM3U")
+                                Triple(resp.code, body.length, ok)
+                            }
+                            if (probe != null) {
+                                Log.d(tag, "probe ${v.key} -> ${probe.first} (${probe.second}B, m3u8=${probe.third})")
+                                if (probe.third) reachable.add(v)
+                            } else {
+                                Log.d(tag, "probe ${v.key} -> timeout")
+                            }
                         } catch (_: Exception) { }
                     }
                     val toEmit = if (reachable.isNotEmpty()) {
