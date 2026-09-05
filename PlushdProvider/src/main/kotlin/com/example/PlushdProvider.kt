@@ -533,7 +533,7 @@ class PlushdProvider : MainAPI() {
             }
 
             if (linksMap.isNotEmpty()) {
-                val preferOrder = listOf("hls2", "hls3", "hls4")
+                val preferOrder = listOf("hls3", "hls2", "hls4")
                 val orderedKeys = preferOrder.filter { linksMap.containsKey(it) } + linksMap.keys.filter { it !in preferOrder }
                 val baseHost = runCatching {
                     val uri = java.net.URI(vidReferer)
