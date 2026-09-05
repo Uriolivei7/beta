@@ -236,7 +236,8 @@ class PlushdProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
-                if (!url.contains(".m3u8") && !url.contains(".ts")) {
+                val isPlaylist = url.contains(".m3u8") || url.contains(".txt") || url.contains(".urlset")
+                if (!isPlaylist && !url.contains(".ts") && !url.contains(".woff2")) {
                     return chain.proceed(request)
                 }
 
@@ -249,44 +250,46 @@ class PlushdProvider : MainAPI() {
                 val response = chain.proceed(newRequest)
 
                 try {
-                    val peek = response.peekBody(2097152L)
-                    val html = peek.string()
-                    if (html.contains("Just a moment", ignoreCase = true) ||
-                        html.contains("Attention Required", ignoreCase = true)) {
-                        Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
-                        return cloudflareKiller.intercept(chain)
-                    }
-                    if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
-                        val lines = html.lines()
-                        val filtered = mutableListOf<String>()
-                        var skip = false
-                        for (line in lines) {
-                            if (line.contains("RESOLUTION=") && (
-                                        line.contains("1920x1080") ||
-                                                line.contains("1920x800") ||
-                                                line.contains("1080p") ||
-                                                line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
-                                        )) {
-                                Log.d("PlushdProvider", "Filtering out 1080p variant: $line")
-                                skip = true
-                                continue
-                            }
-                            if (skip) {
-                                if (line.startsWith("http") || line.startsWith("/") || line.startsWith("https")) {
-                                    Log.d("PlushdProvider", "Filtering out 1080p URL: $line")
-                                    skip = false
+                    if (isPlaylist) {
+                        val peek = response.peekBody(2097152L)
+                        val html = peek.string()
+                        if (html.contains("Just a moment", ignoreCase = true) ||
+                            html.contains("Attention Required", ignoreCase = true)) {
+                            Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
+                            return cloudflareKiller.intercept(chain)
+                        }
+                        if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
+                            val lines = html.lines()
+                            val filtered = mutableListOf<String>()
+                            var skip = false
+                            for (line in lines) {
+                                if (line.contains("RESOLUTION=") && (
+                                            line.contains("1920x1080") ||
+                                                    line.contains("1920x800") ||
+                                                    line.contains("1080p") ||
+                                                    line.matches(Regex(".*RESOLUTION=\\d+x1080.*"))
+                                            )) {
+                                    Log.d("PlushdProvider", "Filtering out 1080p variant: $line")
+                                    skip = true
                                     continue
                                 }
-                                skip = false
+                                if (skip) {
+                                    if (line.startsWith("http") || line.startsWith("/") || line.startsWith("https")) {
+                                        Log.d("PlushdProvider", "Filtering out 1080p URL: $line")
+                                        skip = false
+                                        continue
+                                    }
+                                    skip = false
+                                }
+                                filtered.add(line)
                             }
-                            filtered.add(line)
-                        }
-                        val filteredBody = filtered.joinToString("\n")
-                        if (filteredBody.length != html.length) {
-                            Log.d("PlushdProvider", "M3U8 filtered: ${html.length} -> ${filteredBody.length} chars (removed 1080p)")
-                            val mediaType = response.body?.contentType()
-                            if (mediaType != null) {
-                                return response.newBuilder().body(okhttp3.ResponseBody.create(mediaType, filteredBody)).build()
+                            val filteredBody = filtered.joinToString("\n")
+                            if (filteredBody.length != html.length) {
+                                Log.d("PlushdProvider", "M3U8 filtered: ${html.length} -> ${filteredBody.length} chars (removed 1080p)")
+                                val mediaType = response.body?.contentType()
+                                if (mediaType != null) {
+                                    return response.newBuilder().body(okhttp3.ResponseBody.create(mediaType, filteredBody)).build()
+                                }
                             }
                         }
                     }
@@ -330,7 +333,7 @@ class PlushdProvider : MainAPI() {
             )
             CoroutineScope(Dispatchers.IO).launch {
                 callback(newExtractorLink(link.source, link.name, link.url) {
-                    this.referer = data
+                    this.referer = link.referer ?: data
                     this.quality = link.quality
                     this.headers = link.headers + extraHeaders
                 })
@@ -576,7 +579,7 @@ class PlushdProvider : MainAPI() {
                     }
                     for (v in toEmit) {
                         Log.d(tag, "emit ${v.key} url=${v.url.take(120)}")
-                        callback(newExtractorLink("VidHide", "VidHidePro - ${v.key}", v.url, ExtractorLinkType.M3U8) {
+                        callback(newExtractorLink("PlusHD", "VidHidePro - ${v.key}", v.url, ExtractorLinkType.M3U8) {
                             this.referer = vidReferer
                         })
                     }
@@ -587,7 +590,7 @@ class PlushdProvider : MainAPI() {
 
             if (m3u8Url != null) {
                 Log.d(tag, "M3U8 encontrado: ${m3u8Url.take(100)}")
-                callback(newExtractorLink("VidHide", "VidHide", m3u8Url, ExtractorLinkType.M3U8) {
+                callback(newExtractorLink("PlusHD", "VidHide", m3u8Url, ExtractorLinkType.M3U8) {
                     this.referer = vidReferer
                 })
                 return true

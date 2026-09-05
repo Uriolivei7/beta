@@ -461,6 +461,34 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ---
 
+## PlushdProvider — CRITICAL Fix interceptor + hls3 3003 (04 Sep 2026 v4.1)
+
+### 🐛 Causa raíz del 3003 y del congelamiento (verificado)
+- **El interceptor NUNCA se llamaba**: CloudStream resuelve el interceptor por **`getApiFromNameNull(link.source)`** (CS3IPlayer.kt:1940-1941) — solo si `link.source` == nombre exacto del provider (`"PlusHD"`). Plushd emitía `newExtractorLink("VidHide", ...)` en `tryVidHideExtraction` (2 call-sites) → `getApiFromNameNull` retorna null → **sin interceptor** → los segmentos `.ts`/`.woff2` iban sin UA/Referer → CDN cortaba.
+- **hls3 = 3003**: los segmentos son `seg-N-f1-v1-a1.woff2` (rutas relativas en el variant) y el master/variante son `.txt` (no `.m3u8`). El gate viejo `if (!url.contains(".m3u8") && !url.contains(".ts"))` los excluía → sin headers → 403 (`text/plain`) / 404 (`text/html`) → ExoPlayer `PARSING_CONTAINER_UNSUPPORTED (3003)`.
+- **Verificado con Python (PC)** desde el embed `zhc8nmz6aurw`:
+  | Request hls3 | Resultado |
+  |---|---|
+  | segmento `.woff2` sin headers | **403** `text/plain` |
+  | solo UA | **404** `text/html` |
+  | UA + Referer `vidhideplus.com` | **200** `video/MP2T`, sync `0x47` OK, 701240 B |
+  | master `.txt` | 200 `application/vnd.apple.mpegurl`, 11 líneas, 3 variantes |
+  | variant `index-f1-v1-a1.txt` | 200, 136 segmentos |
+- **hls2 (acek-cdn)**: master/variante/segmentos `.ts` con token en URL — 200 ok, pero CDN **lento** (veredicto previo: < bitrate → freeze cada ~3s). El interceptor ahora inyecta headers también aquí.
+
+### ✅ Fix implementado (PlushdProvider.kt)
+1. **`source = "PlusHD"`** en los 2 `newExtractorLink` de vidhide (`VidHidePro - hlsX` y fallback `VidHide`) — `getApiFromNameNull` ahora encuentra el provider y llama `getVideoInterceptor`.
+2. **`wrappedCallback` preserva el referer**: `this.referer = link.referer ?: data` (antes forzaba `data` = tioplus → los CDN vidhide necesitan referer `vidhideplus.com`).
+3. **Interceptor ampliado**: `isPlaylist = .m3u8 || .txt || .urlset`; inyecta UA/Referer/Origin a **todo** lo que pase (`.txt`, `.woff2`, `.ts`, `.m3u8`). El peek Cloudflare + filtro 1080p solo se hace en playlists.
+- Compilación OK: `.\gradlew.bat :PlushdProvider:compileReleaseKotlin --console=plain -q`
+- Plugin: `:PlushdProvider:make` → `PlushdProvider/build/PlushdProvider.cs3` (44.7 KB)
+- `plugins.json`: fileSize 44619 → 44712 (version 3)
+
+### ⏸️ Pendiente
+- Probar en dispositivo: (1) hls3 ya no debe dar 3003 (segmentos `.woff2` con headers); (2) hls2 puede mejorar el freeze (interceptor activo); (3) verificar en logs `[intercept]` o ausencia de 403 en `.woff2`.
+
+---
+
 ## UniqueStreamProvider — Fix películas standalone (12 Ago 2026)
 
 ### 🐛 Bug corregido
