@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Element
@@ -508,6 +509,7 @@ class PlushdProvider : MainAPI() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             )
             val html = app.get(url, headers = headers).text
+            var unpacked = ""
             var m3u8Url: String? = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(html)?.value
 
             if (m3u8Url == null) {
@@ -541,11 +543,12 @@ class PlushdProvider : MainAPI() {
                                     while (argIdx < html.length && html[argIdx] != '\'') argIdx++
                                     val k = html.substring(kStart, argIdx).split("|")
                                     var decoded = p
-                                    for (idx in k.indices.reversed()) {
-                                        if (k[idx].isBlank()) continue
-                                        decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
-                                    }
-                                    m3u8Url = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(decoded)?.value
+for (idx in k.indices.reversed()) {
+                                    if (k[idx].isBlank()) continue
+                                    decoded = decoded.replace(Regex("\\b${idx.toString(a)}\\b"), k[idx])
+                                }
+                                unpacked = decoded
+                                m3u8Url = Regex("""(https?://[^"'<>\s]+\.m3u8[^"'<>\s]*)""").find(decoded)?.value
                                 }
                             }
                         }
@@ -553,10 +556,69 @@ class PlushdProvider : MainAPI() {
                 }
             }
 
+            val linksMap = mutableMapOf<String, String>()
+            for (src in listOf(html, unpacked)) {
+                if (linksMap.isNotEmpty()) break
+                Regex("""links\s*[=:]\s*\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL).find(src)?.let { block ->
+                    Regex(""""(hls\d)"\s*:\s*"([^"]+)"""").findAll(block.groupValues[1]).forEach { m ->
+                        linksMap[m.groupValues[1]] = m.groupValues[2]
+                    }
+                }
+                if (linksMap.isEmpty()) {
+                    Regex(""""(hls\d)"\s*:\s*"([^"]+)"""").findAll(src).forEach { m ->
+                        linksMap[m.groupValues[1]] = m.groupValues[2]
+                    }
+                }
+            }
+
+            if (linksMap.isNotEmpty()) {
+                val preferOrder = listOf("hls2", "hls3", "hls4")
+                val orderedKeys = preferOrder.filter { linksMap.containsKey(it) } + linksMap.keys.filter { it !in preferOrder }
+                data class Variant(val key: String, val url: String)
+                val resolved = orderedKeys.mapNotNull { key ->
+                    var u = linksMap[key] ?: return@mapNotNull null
+                    if (u.startsWith("/")) {
+                        u = "https://vidhidepro.com$u"
+                        Log.d(tag, "URL relativa, prependido base: ${u.take(120)}")
+                    }
+                    Variant(key, u)
+                }
+                if (resolved.isNotEmpty()) {
+                    val probeHeaders = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                        "Referer" to vidReferer,
+                    )
+                    val reachable = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
+                    resolved.forEach { v ->
+                        try {
+                            val code = withTimeoutOrNull(10000L) {
+                                app.get(v.url, headers = probeHeaders, timeout = 10000L).code
+                            } ?: -1
+                            Log.d(tag, "probe ${v.key} -> $code")
+                            if (code in 200..299) reachable.add(v)
+                        } catch (_: Exception) { }
+                    }
+                    val toEmit = if (reachable.isNotEmpty()) {
+                        orderedKeys.mapNotNull { k -> reachable.firstOrNull { it.key == k } }
+                    } else {
+                        Log.w(tag, "ningún master responde, emitiendo todas las variantes")
+                        resolved
+                    }
+                    for (v in toEmit) {
+                        Log.d(tag, "emit ${v.key} url=${v.url.take(120)}")
+                        callback(newExtractorLink("VidHide", "VidHidePro - ${v.key}", v.url, ExtractorLinkType.M3U8) {
+                            this.referer = vidReferer
+                        })
+                    }
+                    Log.d(tag, "emitted ${toEmit.size} variantes (hls keys=${linksMap.keys.sorted()})")
+                    return true
+                }
+            }
+
             if (m3u8Url != null) {
                 Log.d(tag, "M3U8 encontrado: ${m3u8Url.take(100)}")
                 callback(newExtractorLink("VidHide", "VidHide", m3u8Url, ExtractorLinkType.M3U8) {
-                    this.referer = mainUrl
+                    this.referer = vidReferer
                 })
                 return true
             }
