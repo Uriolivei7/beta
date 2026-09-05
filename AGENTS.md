@@ -489,6 +489,32 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ---
 
+## PlushdProvider — Veredicto final: throttle por IP del CDN vidhide (04 Sep 2026 v4.2)
+
+### ✅ Interceptor arreglado (confirmado en logs del dispositivo)
+- El fix v4.1 funcionó: `getVideoInterceptor` SÍ corre (`M3U8 filtered: 1739 -> 1344`, `Filtering out 1080p`), `tryVidHideExtraction` emite 2 variantes y el probe es correcto (`probe hls3 -> 200 (749B)`, `probe hls2 -> 200 (1739B)`).
+- `preferOrder` cambiado a **`hls3 > hls2 > hls4`** (PlushdProvider.kt:536) — hls3 (businessgrowthhacks) auto-primero.
+- `plugins.json`: fileSize 44712 (version 3) — sin cambios de bytes (solo orden de const).
+
+### 🐛 El 3003/hls3 y el freeze/hls2 tienen la MISMA causa raíz: **throttle por IP del CDN**
+- Probado en PC (script `plus_hls3_seq.py`) sobre el embed real `zhc8nmz6aurw`:
+  | Request | Resultado |
+  |---|---|
+  | hls3 master `.txt` / variante `.txt` | 200 `application/vnd.apple.mpegurl` |
+  | hls3 **seg-1** `.woff2` (con UA+Referer, ±Origin, ±cookies) | **200 `video/MP2T` sync `0x47` en 0.6s** (701240 B) |
+  | hls3 **seg-2 en adelante** | `IncompleteRead` (62-191 KB de ~700 KB), **HTTP 520**, read-timeout |
+  | embed page `vidhideplus.com/v/...` | no setea cookies (jar vacío) → las cookies no son la solución |
+- **Interpretación**: el CDN permite ~700-900 KB de burst por IP y luego corta/trunca TODAS las conexiones durante un cooldown (decenas de segundos). Coincide con el patrón en el dispositivo:
+  - **hls3 → 3003**: seg2 llega truncado (TS incompleto) → ExoPlayer `PARSING_CONTAINER_UNSUPPORTED`.
+  - **hls2 → freeze ~4-5s + tarda ~60s en volver**: `SocketException: Socket closed` en `chain.proceed` (PlushdProvider.kt:250) cada ~54s + master re-fetch.
+- Ambos CDNs (`acek-cdn` y `businessgrowthhacks`) pertenecen a la misma cuenta `m5QqjwpATPzb.*` → mismo throttle.
+- **Veredicto**: no es arreglable desde el provider (ni headers, ni cookies, ni preferOrder, ni cambio de variante). Los 4 servidores SPA (`strp2p/upns/4meplayer/rpmstream`) dan `error 2001` (requieren JS/WebView) y `turbovid` da 3003. El cuello de botella es el servidor/CDN de vidhide.
+
+### 📌 Decisión (usuario, 04 Sep 2026)
+- **Dejarlo como está** — no más cambios de código para este síntoma. Si se quiere probar el camino WebView para los SPA (por si usan otro CDN), es esfuerzo alto y resultado incierto.
+
+---
+
 ## UniqueStreamProvider — Fix películas standalone (12 Ago 2026)
 
 ### 🐛 Bug corregido
