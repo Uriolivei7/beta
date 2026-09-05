@@ -918,7 +918,7 @@
     "internalName": "TorrentioProvider",
     "authors": ["Ranita"],
     "description": "Torrents vía addon Stremio Torrentio (usa reproductor torrent de CloudStream)",
-    "tvTypes": ["TvSeries", "Movie"],
+    "tvTypes": ["TvSeries", "Movie", "Anime"],
     "iconUrl": "https://torrentio.strem.fun/images/logo_v1.png",
     "language": "mx",
     "fileSize": 33290
