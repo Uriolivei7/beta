@@ -830,10 +830,24 @@ suspend fun extractKaoEmbed69(
         val embedResp = app.get(embedUrl, headers = embed69Headers, timeout = 30000L)
         Log.d(KAO_TAG, "embed69 - HTTP ${embedResp.code}, length=${embedResp.text.length}")
         val embedDoc = embedResp.document
+        val embedPageHtml = embedResp.text
         val dataLinkScript = embedDoc.select("script")
             .firstOrNull { it.html().contains("dataLink =") }
         if (dataLinkScript == null) {
-            Log.e(KAO_TAG, "embed69 - No se encontró script con 'dataLink ='")
+            Log.d(KAO_TAG, "embed69 - sin dataLink, probando playServerVast")
+            val serverUrls = Regex("""playServerVast\(\s*'([^']+)'\s*\)""")
+                .findAll(embedPageHtml)
+                .map { it.groupValues[1] }
+                .distinct()
+                .toList()
+            if (serverUrls.isEmpty()) {
+                Log.e(KAO_TAG, "embed69 - tampoco hay playServerVast: ${embedPageHtml.take(300)}")
+                return
+            }
+            Log.d(KAO_TAG, "embed69 - servers=${serverUrls.size}: $serverUrls")
+            serverUrls.amap { serverUrl ->
+                loadKaoSourceExtractor("embed69", fixHostsLinks(serverUrl), embedUrl, subtitleCallback, callback)
+            }
             return
         }
         Log.d(KAO_TAG, "embed69 - script con dataLink encontrado")
