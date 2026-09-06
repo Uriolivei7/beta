@@ -10,6 +10,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -383,13 +384,13 @@ private fun unpackPackedJS(html: String): String? {
     return result.toString().replace("\\'", "'")
 }
 
-private fun scanHtmlForSubs(html: String, baseUrl: String, subtitleCallback: (SubtitleFile) -> Unit, seen: MutableSet<String> = mutableSetOf()) {
+private suspend fun scanHtmlForSubs(html: String, baseUrl: String, subtitleCallback: (SubtitleFile) -> Unit, seen: MutableSet<String> = mutableSetOf()) {
     Regex("""["']([^"']*\.(?:vtt|srt)(?:\?[^"']*)?)["']""", RegexOption.IGNORE_CASE).findAll(html).forEach { match ->
         val subUrl = match.groupValues[1]
         val cleanSubUrl = if (subUrl.startsWith("http")) subUrl else "$baseUrl/$subUrl"
         if (seen.add(cleanSubUrl)) {
             Log.d(KAO_TAG, "[PageSubs] Subtítulo: $cleanSubUrl")
-            subtitleCallback.invoke(SubtitleFile("Español", cleanSubUrl))
+            subtitleCallback.invoke(newSubtitleFile("Español", cleanSubUrl))
         }
     }
 }
@@ -426,7 +427,7 @@ private suspend fun tryExtractSubsFromM3u8(
             if (uri != null) {
                 val subUrl = if (uri.startsWith("http")) uri else "$baseUrl/$uri"
                 Log.d(KAO_TAG, "[M3u8Subs] lang=$lang, url=${subUrl.take(120)}")
-                subtitleCallback.invoke(SubtitleFile(lang, subUrl))
+                subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
                 count++
             }
         }

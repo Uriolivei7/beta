@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import okhttp3.Interceptor
+import okhttp3.Response
 import java.net.URLEncoder
 import java.util.*
 import kotlin.collections.ArrayList
@@ -221,13 +223,69 @@ class MonoschinosProvider : MainAPI() {
             subtitleCallback: (SubtitleFile) -> Unit,
             callback: (ExtractorLink) -> Unit
     ): Boolean {
+        var found = false
         app.get(data).document.select(".play-video").amap {
             val encodedurl = it.attr("data-player")
             val urlDecoded = base64Decode(encodedurl)
             val url = (urlDecoded).replace("https://monoschinos2.com/reproductor?url=", "")
                     .replace("https://sblona.com","https://watchsb.com").replace("https://swdyu.com","https://streamwish.to")
-            loadExtractor(url, mainUrl, subtitleCallback, callback)
+
+            val host = url.substringAfter("://").substringBefore("/")
+            Log.d(TAG, "loadLinks: server $host -> $url")
+            var serverEmitted = false
+            val countingCallback: (ExtractorLink) -> Unit = { link ->
+                serverEmitted = true
+                callback(link)
+            }
+            when {
+                host.contains("luluvdo") -> {
+                    MonosLuluvdo().getUrl(url, mainUrl, subtitleCallback, countingCallback)
+                }
+                host.contains("mixdrop") -> {
+                    MonosMixdrop().getUrl(url, mainUrl, subtitleCallback, countingCallback)
+                }
+                host.contains("voe") -> {
+                    MonosVoe().getUrl(url, mainUrl, subtitleCallback, countingCallback)
+                }
+                host.contains("mega") -> {
+                    Log.w(TAG, "loadLinks: mega.nz requiere proxy AES local, omitido: $host")
+                }
+                else -> {
+                    loadExtractor(url, mainUrl, subtitleCallback, countingCallback)
+                }
+            }
+            found = found || serverEmitted
         }
-        return true
+        return found
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            val isCdn = url.contains("cdn-tnmr", ignoreCase = true) ||
+                url.contains("mxcontent", ignoreCase = true) ||
+                url.contains("cloudwindow-route", ignoreCase = true) ||
+                url.contains(".urlset", ignoreCase = true)
+            if (!isCdn) return@Interceptor chain.proceed(request)
+
+            val referer = when {
+                url.contains("cdn-tnmr") -> "https://luluvdo.com/"
+                url.contains("mxcontent") -> "https://mixdrop.top/"
+                url.contains("cloudwindow-route") -> "https://eugenemakedraw.com/"
+                else -> extractorLink.referer
+            }
+            Log.d(TAG, "[intercept] CDN request: ${url.take(120)} referer=$referer")
+            val newRequest = request.newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+                .header("Referer", referer)
+                .header("Origin", referer.removeSuffix("/"))
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .build()
+            val response = chain.proceed(newRequest)
+            Log.d(TAG, "[intercept] CDN response: ${response.code} ${response.header("content-type","?")} url=${url.take(100)}")
+            response
+        }
     }
 }

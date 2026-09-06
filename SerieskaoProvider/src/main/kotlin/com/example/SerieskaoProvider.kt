@@ -263,7 +263,7 @@ class SerieskaoProvider : MainAPI() {
                         }
                     }
                 } else {
-                    // Flat list (single season fallback)
+
                     val epItems = doc.select("a.episode-item")
                     Log.d(TAG, "load flat episodios HTML=${epItems.size}")
                     for ((ei, element) in epItems.withIndex()) {
