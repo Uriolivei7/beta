@@ -24,7 +24,55 @@ private const val MONOS_SOURCE = "MonosChinos"
 private const val FM_READY_JS = "h.length > 3000 && (h.includes('.m3u8') || h.includes('.mp4') || h.includes('video'))"
 private const val FM_DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
 
-private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L): String? {
+// Hook que se inyecta en el HTML del SPA para capturar respuestas fetch/XHR con URLs de video
+private const val FM_HOOK_JS = """
+(function() {
+    var lim = 300000;
+    function probe(url, text) {
+        try {
+            if (!text || text.length > lim) return;
+            if (text.indexOf('m3u8') >= 0 || text.indexOf('.mp4') >= 0 || text.indexOf('direct_access') >= 0) {
+                NativeBridge.onIntercept(String(url), text);
+            }
+        } catch(e) {}
+    }
+    var f0 = window.fetch;
+    if (f0) window.fetch = function() {
+        var url = arguments[0];
+        var p = f0.apply(this, arguments);
+        try {
+            p.then(function(res) {
+                try { res.clone().text().then(function(t){ probe(url, t); }); } catch(e){}
+            });
+        } catch(e) {}
+        return p;
+    };
+    var XHR = window.XMLHttpRequest;
+    if (XHR) {
+        var oOpen = XHR.prototype.open, oSend = XHR.prototype.send;
+        XHR.prototype.open = function(m, u) { this.__u = String(u); return oOpen.apply(this, arguments); };
+        XHR.prototype.send = function() {
+            var that = this, url = this.__u;
+            try {
+                this.addEventListener('load', function() {
+                    try { probe(url, that.responseText); } catch(e){}
+                });
+            } catch(e) {}
+            return oSend.apply(this, arguments);
+        };
+    }
+})();
+"""
+
+private fun injectHook(html: String): String {
+    if (html.contains("FM_HOOK_INJECTED")) return html
+    val script = "<script id=\"FM_HOOK_INJECTED\">$FM_HOOK_JS</script>"
+    return if (html.contains("</head>")) html.replace("</head>", script + "</head>")
+    else if (html.contains("<body")) html.replaceFirst("<body", script + "<body")
+    else script + html
+}
+
+private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, embedHtml: String? = null): String? {
     return withContext(Dispatchers.Main) {
         val appCtx = MonoschinosProvider.pluginContext?.applicationContext ?: run {
             Log.w(MONOS_TAG, "[FM-WebView] sin context")
@@ -44,7 +92,6 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 allowFileAccess = false
             }
             val deferred = CompletableDeferred<String?>()
-            val capturedUrls = java.util.concurrent.ConcurrentLinkedQueue<String>()
             val polls = java.util.concurrent.atomic.AtomicInteger(0)
             val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
             fun dump() {
@@ -88,6 +135,23 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                         }
                     }
                 }
+
+                @JavascriptInterface
+                fun onIntercept(url: String, body: String) {
+                    mainHandler.post {
+                        if (deferred.isCompleted) return@post
+                        try {
+                            val first = Regex("""https?://[^"'\s<>\\]+?(?:\.m3u8|\.mp4)[^"'\s<>\\]*""").find(body)
+                            if (first != null) {
+                                val clean = first.value.replace("\\/", "/").trim()
+                                Log.d(MONOS_TAG, "[FM-WebView] hook capturó URL de video: ${clean.take(140)}")
+                                deferred.complete("__VIDEO__" + clean)
+                                return@post
+                            }
+                            Log.d(MONOS_TAG, "[FM-WebView] hook body sin video (len=${body.length}, snippet=${body.take(160).replace("\n"," ")})")
+                        } catch (_: Exception) {}
+                    }
+                }
             }, "NativeBridge")
             webView.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -96,15 +160,11 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                         if (u.contains(".m3u8", ignoreCase = true) ||
                             u.contains(".mp4", ignoreCase = true) ||
                             u.contains("/hls/", ignoreCase = true) ||
-                            u.contains("hls2-c", ignoreCase = true) ||
-                            u.contains("master.m3u8", ignoreCase = true)
+                            u.contains("hls2-c", ignoreCase = true)
                         ) {
-                            capturedUrls.add(u)
-                            Log.d(MONOS_TAG, "[FM-WebView] capturó URL de video: ${u.take(140)}")
+                            Log.d(MONOS_TAG, "[FM-WebView] red capturó URL de video: ${u.take(140)}")
                             mainHandler.post {
-                                if (!deferred.isCompleted) {
-                                    deferred.complete("__VIDEO__" + u)
-                                }
+                                if (!deferred.isCompleted) deferred.complete("__VIDEO__" + u)
                             }
                         }
                     } catch (_: Exception) {}
@@ -117,13 +177,16 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                         mainHandler.postDelayed({ pollOnce() }, 2000L)
                     }
                 }
-
-                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                    // ignorar errores de sub-recursos, solo esperar el dump
-                }
             }
-            if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
-            else webView.loadUrl(pageUrl)
+            val customHtml = if (!embedHtml.isNullOrBlank()) injectHook(embedHtml) else null
+            if (customHtml != null) {
+                webView.loadDataWithBaseURL(pageUrl, customHtml, "text/html", "UTF-8", null)
+                Log.d(MONOS_TAG, "[FM-WebView] cargando HTML inyectado (len=${customHtml.length}) base=$pageUrl")
+            } else if (!referer.isNullOrBlank()) {
+                webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+            } else {
+                webView.loadUrl(pageUrl)
+            }
             Log.d(MONOS_TAG, "[FM-WebView] renderizando ${pageUrl.take(100)}")
             withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
         } catch (e: Exception) {
@@ -481,6 +544,7 @@ class MonosFilemoon : ExtractorApi() {
     ) {
         Log.d(MONOS_TAG, "[FM] URL: $url")
         var renderedFetched = false
+        var embedHtml: String? = null
         try {
             val resp = app.get(url, headers = mapOf(
                 "User-Agent" to USER_AGENT,
@@ -489,12 +553,13 @@ class MonosFilemoon : ExtractorApi() {
             ), timeout = 20000L)
             Log.d(MONOS_TAG, "[FM] HTTP ${resp.code} len=${resp.text.length}")
             if (parseHtml(resp.text, MONOS_SOURCE, callback)) return
+            embedHtml = resp.text
             Log.w(MONOS_TAG, "[FM] sin m3u8/mp4 vía HTTP (len=${resp.text.length}), probable SPA Byse -> WebView")
         } catch (e: Exception) {
             Log.e(MONOS_TAG, "[FM] HTTP Error: ${e.message}")
         }
 
-        val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L)
+        val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L, embedHtml = embedHtml)
         if (rendered.isNullOrBlank()) {
             Log.w(MONOS_TAG, "[FM] WebView devolvió vacío")
             return
