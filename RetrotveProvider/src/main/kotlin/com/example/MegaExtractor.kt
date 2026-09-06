@@ -167,6 +167,9 @@ object MegaExtractor {
         @Volatile var cdnUrls: List<String> = emptyList()
         @Volatile var cdnUrlIndex: Int = 0
         @Volatile var shardOffsets: LinkedHashMap<String, Long> = linkedMapOf()
+        @Volatile var serveAesKey: ByteArray? = null
+        @Volatile var serveBaseIv: ByteArray? = null
+        val ondemandFetching = Collections.synchronizedSet(mutableSetOf<Int>())
 
         fun totalChunks() = ((fileSize + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt()
         fun chunkStart(ci: Int) = ci.toLong() * CHUNK_SIZE
@@ -180,6 +183,81 @@ object MegaExtractor {
                 Thread.sleep(WAIT_INTERVAL_MS)
             }
             return availableChunks.contains(ci) || downloadComplete.get()
+        }
+
+        // Fetch a single chunk on-demand via the UFA full-file mirror URL.
+        // Called from the serve loop when ExoPlayer needs a chunk the background
+        // downloader hasn't reached yet (seek-ahead or stalled shard).
+        fun fetchChunkOnDemand(ci: Int): Boolean {
+            if (!ondemandFetching.add(ci)) {
+                // Another serve thread is already fetching this chunk
+                return waitForChunk(ci, 20000L)
+            }
+            try {
+                return fetchChunkOnDemandUnlocked(ci)
+            } finally {
+                ondemandFetching.remove(ci)
+            }
+        }
+
+        private fun fetchChunkOnDemandUnlocked(ci: Int): Boolean {
+            val ufa = ufaUrl ?: return false
+            val aesKey = resolvedAesKey ?: serveAesKey ?: return false
+            val baseIv = resolvedBaseIv ?: serveBaseIv ?: return false
+            return try {
+                val start = chunkStart(ci)
+                val end = chunkEnd(ci)
+                Log.d(TAG, "On-demand UFA fetch chunk $ci ($start-$end)...")
+                val conn = (URL(ufa).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15000; readTimeout = 60000
+                    setRequestProperty("User-Agent", MEGA_UA)
+                    setRequestProperty("Origin", "https://mega.nz")
+                    setRequestProperty("Referer", "https://mega.nz/")
+                    setRequestProperty("Range", "bytes=$start-$end")
+                    instanceFollowRedirects = true
+                }
+                val code = conn.responseCode
+                if (code !in listOf(200, 206)) {
+                    conn.disconnect()
+                    Log.w(TAG, "On-demand UFA chunk $ci: HTTP $code (not 200/206)")
+                    return false
+                }
+                val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+                val ivForChunk = baseIv.copyOf()
+                setIvBlockCounter(ivForChunk, start)
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(ivForChunk))
+
+                var written = 0L
+                var writePos = start
+                RandomAccessFile(tempFile, "rw").use { raf ->
+                    conn.inputStream.use { enc ->
+                        val buf = ByteArray(256 * 1024)
+                        while (true) {
+                            val n = enc.read(buf)
+                            if (n == -1) break
+                            val dec = cipher.update(buf, 0, n) ?: continue
+                            synchronized(fileLock) {
+                                raf.seek(writePos)
+                                raf.write(dec)
+                            }
+                            writePos += dec.size
+                            written += dec.size
+                        }
+                    }
+                }
+                conn.disconnect()
+                if (written <= 0) {
+                    Log.w(TAG, "On-demand UFA chunk $ci: 0 bytes")
+                    return false
+                }
+                writtenBytes.addAndGet(written)
+                availableChunks.add(ci)
+                Log.d(TAG, "On-demand UFA chunk $ci OK: $written bytes")
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "On-demand UFA chunk $ci error: ${e.message}")
+                false
+            }
         }
 
         fun cleanup() {
@@ -799,6 +877,8 @@ val code = conn.responseCode
             Log.d(TAG, "Temp file: ${tempFile.absolutePath} (${fileSize / 1024 / 1024}MB)${if (cachedFile != null) " [CACHE]" else if (partialFile != null) " [RESUME]" else ""}")
 
             val stream = DiskStream(fileSize, tempFile, rawKeyBytes, ufaUrl, cachedFile != null)
+            stream.serveAesKey = aesKey
+            stream.serveBaseIv = iv
             if (cachedFile != null) {
                 stream.downloadComplete.set(true)
                 val totalChunks = stream.totalChunks()
@@ -1441,9 +1521,23 @@ val code = conn.responseCode
 
                     val ci = stream.chunkIndexForByte(pos)
                     if (!stream.availableChunks.contains(ci) && !stream.downloadComplete.get()) {
-                        if (!stream.waitForChunk(ci, MAX_WAIT_MS)) {
-                            Log.w(TAG, "Timeout waiting for chunk $ci (pos=$pos)")
-                            break
+                        // Wait briefly for background downloader, then fetch on-demand via UFA
+                        // if it hasn't caught up (seek-ahead / stalled shard).
+                        if (!stream.waitForChunk(ci, 5000L)) {
+                            val deadline = System.currentTimeMillis() + MAX_WAIT_MS
+                            var nextUfaAttempt = System.currentTimeMillis()
+                            Log.d(TAG, "Chunk $ci not ready after 5s, fetching on-demand via UFA (pos=$pos)")
+                            while (!stream.availableChunks.contains(ci) && !stream.downloadComplete.get() && !stream.failed) {
+                                if (System.currentTimeMillis() >= deadline) {
+                                    Log.w(TAG, "Timeout waiting for chunk $ci (pos=$pos)")
+                                    break
+                                }
+                                if (System.currentTimeMillis() >= nextUfaAttempt) {
+                                    stream.fetchChunkOnDemand(ci)
+                                    nextUfaAttempt = System.currentTimeMillis() + 5000L
+                                }
+                                Thread.sleep(WAIT_INTERVAL_MS)
+                            }
                         }
                     }
 

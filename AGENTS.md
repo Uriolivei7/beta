@@ -956,3 +956,18 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (**99.1 KB = 99071 B**)
 - `plugins.json`: version 73, fileSize 98441 → 99071 (JSON válido, 66 entradas)
 - ⏸️ **Pendiente**: instalar cs3 v73 y probar ep5 `44NxgQha` de nuevo — si `gfs270n459` se cuelga, el log debe mostrar `UFA fallback: requesting bytes ...` y el chunk 35+ debe completarse; expectativa `chunks=84/84`.
+
+### 🔧 Fix seek-ahead 2001 → serve on-demand via UFA (05 Sep 2026 v74)
+- **Verificado en dispositivo (logs 23:31-23:33, build v73)**: el test NO llegó a ejercitar el fallback UFA del shard:
+  - ep1 `Zt8m3LYQ` (91 chunks, 363MB): resume a 36/91, descarga secuencial fluida chunks 35→60 (~2s cada uno, ~8MB/s sostenido). **PERO** el usuario hizo seek a ~306MB y el `handleStreamRange` esperó 30s por el chunk 73 (`Timeout waiting for chunk 73 pos=306430588`) → sirvió **0 bytes** → **2001**.
+  - ep5 `44NxgQha` (84 chunks, 333MB): resume a 69/84; **el probe de 6 CDNs seguía corriendo al final del log** (`Shard #5: probing` 25s+), así que Phase 4 y el UFA fallback de v73 **jamás se ejecutaron**; los chunks 35-49 (shard gfs270n459) quedaron sin descargar durante ese tiempo.
+- **Causa raíz**: el serve loop (`handleStreamRange`) solo espera a que el background downloader alcance el chunk pedido (máx 30s) y nunca lo descarga él mismo. Si el usuario hace seek AVANTE del progreso (ep1), o un shard está caído/throttlado y todavía no se ha mapeado (ep5), el chunk pedido por ExoPlayer no llega a tiempo → 0 bytes → 2001.
+- **Fix (v74)** en `MegaExtractor.kt`:
+  - `DiskStream.fetchChunkOnDemand(ci)` + `fetchChunkOnDemandUnlocked(ci)`: **descarga UN chunk concreto vía la UFA URL (mirror del archivo completo, rango absoluto `bytes=start-end`)** cuando ExoPlayer lo necesita. Guard `ondemandFetching` (synchronizedSet) para que varios threads de serve no descarguen el mismo chunk en paralelo; si otro ya lo está descargando, espera hasta 20s.
+  - `serveAesKey`/`serveBaseIv` en `DiskStream`, seteado en `startStreamProxy` (mismos keys que usa el downloader). `fetchChunkOnDemand` usa `resolvedAesKey ?: serveAesKey` (igual que `downloadChunkWithFreshUrl` L.438/`tryDownloadFromUfa`).
+  - `handleStreamRange` reescrito: espera 5s al background (`waitForChunk(5000)`), luego loop hasta 30s intentando `fetchChunkOnDemand(ci)` cada 5s. Si aún no hay chunk → timeout → break (como antes).
+- **Resultado esperado**: seek al minuto 15 de ep1 → sirve el chunk 73 vía UFA en 1-3s en vez de 30s de timeout; ep5 con shard caído → el serve obtiene el chunk 35 vía UFA aunque el probe no haya terminado.
+- Compilación OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
+- Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (101190 B)
+- `plugins.json`: version 74, fileSize 99071 → 101190 (JSON válido, 66 entradas)
+- ⏸️ **Pendiente**: instalar cs3 v74 y probar: (1) ep1 con seek AVANTE — log `On-demand UFA fetch chunk N` y reproducción sin 2001; (2) ep5 — el probe puede tardar pero el play debe continuar con `On-demand UFA fetch chunk 35+` según llegue el playhead.
