@@ -152,6 +152,18 @@ class MonosVoe : ExtractorApi() {
     override val mainUrl = "https://voe.sx"
     override val requiresReferer = true
 
+    companion object {
+        private val voeMirrors = listOf(
+            "https://eugenemakedraw.com",
+            "https://yip.su",
+            "https://tubelessceliolymph.com",
+            "https://donaldlineelse.com",
+            "https://charlestoughrace.com",
+            "https://simpulumlamerop.com",
+            "https://urochsunloath.com",
+        )
+    }
+
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -164,24 +176,57 @@ class MonosVoe : ExtractorApi() {
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language" to "en-US,en;q=0.9",
         )
-        val redirectRegex = Regex("""(?:window\.)?location(?:\.href)?\s*=\s*'([^']+)'""")
+        val id = Regex("""/e/([A-Za-z0-9_-]+)""").find(url)?.groupValues?.get(1)
+        if (id.isNullOrBlank()) {
+            Log.w(MONOS_TAG, "[Voe] no id in url: $url")
+            return
+        }
+
+        val redirectRegexes = listOf(
+            Regex("""(?:window\.)?location(?:\.href)?\s*=\s*'([^']+)'"""),
+            Regex("""(?:window\.)?location\.replace\s*\(\s*'([^']+)'"""),
+            Regex("""(?:window\.)?location\.assign\s*\(\s*'([^']+)'"""),
+        )
+
         var currentUrl = url
         var currentReferer = referer ?: url
         var res = app.get(currentUrl, headers = voeHeaders, referer = currentReferer)
+        Log.d(MONOS_TAG, "[Voe] HP. ${res.code} len=${res.text.length} url=$currentUrl")
+
+        var redirectUrl: String? = null
+        for (r in redirectRegexes) {
+            r.find(res.text)?.let { redirectUrl = it.groupValues[1] }
+            if (!redirectUrl.isNullOrBlank()) break
+        }
         var maxRedirects = 5
-        var redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
-        while (redirectUrl != null && maxRedirects > 0) {
+        while (!redirectUrl.isNullOrBlank() && maxRedirects > 0) {
             Log.d(MONOS_TAG, "[Voe] Redirect to: $redirectUrl")
             currentReferer = currentUrl
-            currentUrl = redirectUrl
+            currentUrl = redirectUrl!!
             res = app.get(currentUrl, headers = voeHeaders, referer = currentReferer)
             maxRedirects--
-            redirectUrl = redirectRegex.find(res.text)?.groupValues?.get(1)
+            redirectUrl = null
+            for (r in redirectRegexes) {
+                r.find(res.text)?.let { redirectUrl = it.groupValues[1] }
+                if (!redirectUrl.isNullOrBlank()) break
+            }
         }
-        if (maxRedirects == 0 && redirectUrl != null) {
+        if (maxRedirects == 0 && !redirectUrl.isNullOrBlank()) {
             Log.e(MONOS_TAG, "[Voe] Too many redirects, giving up")
         }
-        parseHtml(res.text, currentUrl, MONOS_SOURCE, subtitleCallback, callback)
+        Log.d(MONOS_TAG, "[Voe] final len=${res.text.length} url=$currentUrl hasAppJson=${res.text.contains("application/json")} hasBlob=${res.text.contains("DROH") || res.text.contains("@$")}")
+        if (!parseHtml(res.text, currentUrl, MONOS_SOURCE, subtitleCallback, callback)) {
+            Log.d(MONOS_TAG, "[Voe] direct parse failed, probando mirrors (id=$id)")
+            for (mirror in voeMirrors) {
+                if (mirror in currentUrl) continue
+                val mUrl = "$mirror/e/$id"
+                try {
+                    val resp = app.get(mUrl, headers = voeHeaders, referer = currentUrl, timeout = 15000L)
+                    Log.d(MONOS_TAG, "[Voe] mirror $mirror -> ${resp.code} len=${resp.text.length}")
+                    if (parseHtml(resp.text, mUrl, MONOS_SOURCE, subtitleCallback, callback)) break
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     suspend fun parseHtml(
@@ -293,6 +338,68 @@ class MonosVoe : ExtractorApi() {
 
     private fun charShift(input: String, shift: Int): String {
         return input.map { (it.code - shift).toChar() }.joinToString("")
+    }
+}
+
+class MonosFilemoon : ExtractorApi() {
+    override val name = "MonosFilemoon"
+    override val mainUrl = "https://filemoon.sx"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        Log.d(MONOS_TAG, "[FM] URL: $url")
+        try {
+            val resp = app.get(url, headers = mapOf(
+                "User-Agent" to USER_AGENT,
+                "Referer" to (referer ?: url),
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ), timeout = 20000L)
+            Log.d(MONOS_TAG, "[FM] HTTP ${resp.code} len=${resp.text.length}")
+            val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+            val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|ts)[^"'\s<>]*)""")
+            var found = false
+            for (m in m3u8Regex.findAll(resp.text)) {
+                Log.d(MONOS_TAG, "[FM] M3U8: ${m.value.take(120)}")
+                callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", m.value, ExtractorLinkType.M3U8) {
+                    this.referer = mainUrl
+                    this.headers = mapOf("Origin" to mainUrl)
+                })
+                found = true
+            }
+            if (!found) {
+                for (m in mp4Regex.findAll(resp.text)) {
+                    Log.d(MONOS_TAG, "[FM] MP4: ${m.value.take(120)}")
+                    callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", m.value, ExtractorLinkType.M3U8) {
+                        this.referer = mainUrl
+                        this.headers = mapOf("Origin" to mainUrl)
+                    })
+                    found = true
+                }
+            }
+            if (!found) {
+                val fileRegex = Regex("""(?:file|src)\s*:\s*["']((?:https?:)?//[^"']+)["']""")
+                for (m in fileRegex.findAll(resp.text)) {
+                    var f = m.groupValues[1].replace("\\/", "/").trim()
+                    if (f.startsWith("//")) f = "https:$f"
+                    if (f.contains(".m3u8") || f.contains(".mp4")) {
+                        Log.d(MONOS_TAG, "[FM] file: ${f.take(120)}")
+                        callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", f, ExtractorLinkType.M3U8) {
+                            this.referer = mainUrl
+                            this.headers = mapOf("Origin" to mainUrl)
+                        })
+                        found = true
+                    }
+                }
+            }
+            if (!found) Log.w(MONOS_TAG, "[FM] no m3u8/mp4 found, snippet=${resp.text.take(300).replace("\n", " ")}")
+        } catch (e: Exception) {
+            Log.e(MONOS_TAG, "[FM] Error: ${e.message}")
+        }
     }
 }
 

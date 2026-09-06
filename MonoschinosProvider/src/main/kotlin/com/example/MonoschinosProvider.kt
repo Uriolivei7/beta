@@ -247,6 +247,9 @@ class MonoschinosProvider : MainAPI() {
                 host.contains("voe") -> {
                     MonosVoe().getUrl(url, mainUrl, subtitleCallback, countingCallback)
                 }
+                host.contains("filemoon") -> {
+                    MonosFilemoon().getUrl(url, mainUrl, subtitleCallback, countingCallback)
+                }
                 host.contains("mega") -> {
                     Log.w(TAG, "loadLinks: mega.nz requiere proxy AES local, omitido: $host")
                 }
@@ -266,7 +269,12 @@ class MonoschinosProvider : MainAPI() {
             val isCdn = url.contains("cdn-tnmr", ignoreCase = true) ||
                 url.contains("mxcontent", ignoreCase = true) ||
                 url.contains("cloudwindow-route", ignoreCase = true) ||
-                url.contains(".urlset", ignoreCase = true)
+                url.contains(".urlset", ignoreCase = true) ||
+                url.contains("abyss", ignoreCase = true) ||
+                url.contains("filemoon", ignoreCase = true) ||
+                url.contains(".sx/", ignoreCase = true) ||
+                url.contains("/hls2/", ignoreCase = true) ||
+                url.contains("/hls/", ignoreCase = true)
             if (!isCdn) return@Interceptor chain.proceed(request)
 
             val referer = when {
