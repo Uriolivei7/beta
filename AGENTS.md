@@ -937,3 +937,22 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (**98.4 KB**)
 - `plugins.json`: version 72, fileSize 95762 → 98441
 - ⏸️ **Pendiente**: instalar cs3 v72 y probar ep5 `44NxgQha` (aislado): esperar `chunks=84/84`, sin doble conteo en HEARTBEAT, y que al volver a ep1 se sirva desde cache/parcial.
+
+### 🔧 Fix shard CDN hang → UFA fallback en Phase 4 (05 Sep 2026 v73)
+- **Verificado en dispositivo (logs 22:53-22:55, build v72)**: el fix v72 FUNCIONÓ:
+  - ep1 `Zt8m3LYQ` (1 CDN URL -> Phase 4 secuencial): descarga fluida + al cambiar de episodio: `Partial download kept for resume: mega_Zt8m3LYQ.mp4 (363MB, 35 chunks)` — resume en disco funciona.
+  - ep5 `44NxgQha`: `CROSS-SHARD split` de chunks 16 y 82 OK (ambos se completan), shard threads con sus rangos exactos terminan (16/16/16/17 chunks), `HEARTBEAT` ya no excede fileSize (`bytes=286492491/349407051`).
+  - ✅ **pero NUEVO bug**: shard thread `gfs270n459` (132MB-198MB) se quedó colgado en **chunk 35** (22:55:41 «downloading» sin completar) → HEARTBEAT congelado en `chunks=69/84` durante 15+s → ExoPlayer 2001.
+- **Causa raíz**: cada shard thread usa SOLO su URL de shard y nunca cambia de fuente. Si un nodo CDN se cuelga (read timeout 60s repetido, p.ej. `gfs270n459` throttleado por IP), ese thread no avanza y el archivo nunca llega a 84/84 → el serve loop corta la conexión a los 30s → 2001.
+- **Fix (v73)** en `downloadChunkFromShard` (`MegaExtractor.kt`): **UFA URL como fallback** en TODOS los fallos del shard:
+  - **509**: probar UFA inmediatamente (igual que `downloadChunkWithFreshUrl`).
+  - **HTTP != 200/206**: probar UFA desde el attempt 2.
+  - **Catch (read timeout / socket)**: probar UFA desde el primer intento fallido.
+  - **Incomplete / 0 bytes**: probar UFA desde el attempt 2.
+  - UFA (`stream.ufaUrl`) es un mirror del archivo completo con bucket de rate-limit DISTINTO → sirve el rango absoluto `start-end` aun si el nodo shard está muerto. Ya venía del flujo v66 (`performUfaUnlock`) y se pasa a `DiskStream` en `startStreamProxy` (también en la rama resume).
+  - **Lock fix**: `tryDownloadFromUfa` usaba `synchronized(raf)` mientras los shard threads usan `synchronized(stream.fileLock)` → riesgo de seek/write race en paralelo. Ahora usa `synchronized(stream.fileLock)` + `raf.seek(ufaWritePos)` incrementado por buffer.
+  - `start`/`end` movidos fuera del `try` para que el catch pueda llamar a `tryDownloadFromUfa`.
+- Compilación OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
+- Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (**99.1 KB = 99071 B**)
+- `plugins.json`: version 73, fileSize 98441 → 99071 (JSON válido, 66 entradas)
+- ⏸️ **Pendiente**: instalar cs3 v73 y probar ep5 `44NxgQha` de nuevo — si `gfs270n459` se cuelga, el log debe mostrar `UFA fallback: requesting bytes ...` y el chunk 35+ debe completarse; expectativa `chunks=84/84`.

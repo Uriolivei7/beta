@@ -755,14 +755,18 @@ val code = conn.responseCode
 
             var ufaWritten = 0L
             var ufaFirstBytes: ByteArray? = null
+            var ufaWritePos = start
             conn.inputStream.use { enc ->
-                synchronized(raf) { raf.seek(start) }
                 val buf = ByteArray(256 * 1024)
                 while (true) {
                     val n = enc.read(buf)
                     if (n == -1) break
                     val dec = cipher.update(buf, 0, n) ?: continue
-                    synchronized(raf) { raf.write(dec) }
+                    synchronized(stream.fileLock) {
+                        raf.seek(ufaWritePos)
+                        raf.write(dec)
+                    }
+                    ufaWritePos += dec.size
                     if (ufaFirstBytes == null && dec.isNotEmpty()) ufaFirstBytes = dec.copyOf(minOf(32, dec.size))
                     ufaWritten += dec.size
                 }
@@ -871,9 +875,9 @@ val code = conn.responseCode
         var retries = 0
         val maxRetries = 30
         while (retries < maxRetries && !stream.failed) {
+            val start = stream.chunkStart(ci)
+            val end = stream.chunkEnd(ci)
             try {
-                val start = stream.chunkStart(ci)
-                val end = stream.chunkEnd(ci)
                 val useAesKey = stream.resolvedAesKey ?: aesKey
                 val useBaseIv = stream.resolvedBaseIv ?: baseIv
 
@@ -931,6 +935,10 @@ val code = conn.responseCode
                     val code = conn.responseCode
                     if (code == 509) {
                         conn.disconnect()
+                        Log.w(TAG, "509 from shard CDN for chunk $ci (attempt $retries) - trying UFA URL (different rate-limit bucket)...")
+                        if (tryDownloadFromUfa(stream, raf, ci, start, end, aesKey, baseIv)) {
+                            return
+                        }
                         retries++
                         val delay = when {
                             retries <= 2 -> FIVE_ZERO_NINE_DELAY_MS
@@ -951,6 +959,10 @@ val code = conn.responseCode
                     if (code !in listOf(200, 206)) {
                         conn.disconnect()
                         retries++
+                        Log.w(TAG, "Chunk $ci: HTTP $code from shard CDN (attempt $retries) - trying UFA URL (different rate-limit bucket)...")
+                        if (retries >= 2 && tryDownloadFromUfa(stream, raf, ci, start, end, aesKey, baseIv)) {
+                            return
+                        }
                         Thread.sleep(3000L * retries.coerceAtMost(5))
                         failedSubChunk = true
                         break
@@ -992,12 +1004,18 @@ val code = conn.responseCode
                 val expectedSize = end - start + 1
                 if (totalWritten == 0L) {
                     retries++
+                    if (retries >= 2 && tryDownloadFromUfa(stream, raf, ci, start, end, aesKey, baseIv)) {
+                        return
+                    }
                     Thread.sleep(1000L)
                     continue
                 } else if (totalWritten < expectedSize) {
                     Log.w(TAG, "Chunk $ci incomplete: $totalWritten/$expectedSize")
                     stream.writtenBytes.addAndGet(-totalWritten)
                     retries++
+                    if (retries >= 2 && tryDownloadFromUfa(stream, raf, ci, start, end, aesKey, baseIv)) {
+                        return
+                    }
                     Thread.sleep(1000L)
                     continue
                 }
@@ -1008,6 +1026,10 @@ val code = conn.responseCode
                 return
             } catch (e: Exception) {
                 retries++
+                Log.w(TAG, "Shard CDN error chunk $ci attempt $retries: ${e.message} - trying UFA URL...")
+                if (tryDownloadFromUfa(stream, raf, ci, start, end, aesKey, baseIv)) {
+                    return
+                }
                 Thread.sleep(2000L * retries.coerceAtMost(5))
             }
         }
