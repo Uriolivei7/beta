@@ -201,61 +201,96 @@ object MegaExtractor {
         }
 
         private fun fetchChunkOnDemandUnlocked(ci: Int): Boolean {
-            val ufa = ufaUrl ?: return false
             val aesKey = resolvedAesKey ?: serveAesKey ?: return false
             val baseIv = resolvedBaseIv ?: serveBaseIv ?: return false
             return try {
                 val start = chunkStart(ci)
                 val end = chunkEnd(ci)
-                Log.d(TAG, "On-demand UFA fetch chunk $ci ($start-$end)...")
-                val conn = (URL(ufa).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000; readTimeout = 60000
-                    setRequestProperty("User-Agent", MEGA_UA)
-                    setRequestProperty("Origin", "https://mega.nz")
-                    setRequestProperty("Referer", "https://mega.nz/")
-                    setRequestProperty("Range", "bytes=$start-$end")
-                    instanceFollowRedirects = true
-                }
-                val code = conn.responseCode
-                if (code !in listOf(200, 206)) {
-                    conn.disconnect()
-                    Log.w(TAG, "On-demand UFA chunk $ci: HTTP $code (not 200/206)")
-                    return false
-                }
-                val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-                val ivForChunk = baseIv.copyOf()
-                setIvBlockCounter(ivForChunk, start)
-                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(ivForChunk))
 
-                var written = 0L
-                var writePos = start
-                RandomAccessFile(tempFile, "rw").use { raf ->
-                    conn.inputStream.use { enc ->
-                        val buf = ByteArray(256 * 1024)
-                        while (true) {
-                            val n = enc.read(buf)
-                            if (n == -1) break
-                            val dec = cipher.update(buf, 0, n) ?: continue
-                            synchronized(fileLock) {
-                                raf.seek(writePos)
-                                raf.write(dec)
-                            }
-                            writePos += dec.size
-                            written += dec.size
+                // Build sub-chunks from CDN URLs (same logic as downloadChunkWithFreshUrl,
+                // which is the server-verified path). UFA URL is a file-attribute URL that
+                // returns HTTP 400 for range requests — it is NOT a content mirror.
+                data class SubChunk(val filePos: Long, val fileSize: Long, val cdnUrl: String, val relStart: Long, val relEnd: Long)
+                val subChunks = mutableListOf<SubChunk>()
+                val shards = shardOffsets
+                if (shards.size > 1) {
+                    val sortedShards = shards.entries.sortedBy { it.value }
+                    var pos = start
+                    for (i in sortedShards.indices) {
+                        if (pos > end) break
+                        val shardStart = sortedShards[i].value
+                        val shardEnd = if (i + 1 < sortedShards.size) sortedShards[i + 1].value - 1 else Long.MAX_VALUE
+                        val overlapStart = pos.coerceAtLeast(shardStart)
+                        val overlapEnd = end.coerceAtMost(shardEnd)
+                        if (overlapStart <= overlapEnd) {
+                            subChunks.add(SubChunk(overlapStart, overlapEnd - overlapStart + 1, sortedShards[i].key, overlapStart - shardStart, overlapEnd - shardStart))
+                            pos = overlapEnd + 1
                         }
                     }
                 }
-                conn.disconnect()
-                if (written <= 0) {
-                    Log.w(TAG, "On-demand UFA chunk $ci: 0 bytes")
+                if (subChunks.isEmpty()) {
+                    val cdn = cdnUrl ?: cdnUrls.firstOrNull() ?: return false
+                    subChunks.add(SubChunk(start, end - start + 1, cdn, start, end))
+                }
+                if (subChunks.isEmpty()) return false
+
+                Log.d(TAG, "On-demand CDN fetch chunk $ci ($start-$end) via ${subChunks.size} sub-chunk(s)...")
+                var totalWritten = 0L
+                RandomAccessFile(tempFile, "rw").use { raf ->
+                    for ((si, sc) in subChunks.withIndex()) {
+                        val subChunkUrl = "${sc.cdnUrl}/${sc.relStart}-${sc.relEnd}"
+                        val conn = (URL(subChunkUrl).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 15000; readTimeout = 60000
+                            setRequestProperty("User-Agent", MEGA_UA)
+                            setRequestProperty("Origin", "https://mega.nz")
+                            setRequestProperty("Referer", "https://mega.nz/")
+                            instanceFollowRedirects = true
+                        }
+                        val code = conn.responseCode
+                        if (code !in listOf(200, 206)) {
+                            conn.disconnect()
+                            Log.w(TAG, "On-demand CDN sub[$si] chunk $ci: HTTP $code (not 200/206)")
+                            return false
+                        }
+                        val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+                        val ivForSub = baseIv.copyOf()
+                        setIvBlockCounter(ivForSub, sc.filePos)
+                        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(ivForSub))
+
+                        var subWritten = 0L
+                        var writePos = sc.filePos
+                        conn.inputStream.use { enc ->
+                            val buf = ByteArray(256 * 1024)
+                            while (true) {
+                                val n = enc.read(buf)
+                                if (n == -1) break
+                                val dec = cipher.update(buf, 0, n) ?: continue
+                                synchronized(fileLock) {
+                                    raf.seek(writePos)
+                                    raf.write(dec)
+                                }
+                                writePos += dec.size
+                                subWritten += dec.size
+                            }
+                        }
+                        conn.disconnect()
+                        if (subWritten < sc.fileSize) {
+                            Log.w(TAG, "On-demand CDN sub[$si] chunk $ci incomplete: got $subWritten/${sc.fileSize}")
+                            return false
+                        }
+                        totalWritten += subWritten
+                    }
+                }
+                if (totalWritten <= 0) {
+                    Log.w(TAG, "On-demand CDN chunk $ci: 0 bytes")
                     return false
                 }
-                writtenBytes.addAndGet(written)
+                writtenBytes.addAndGet(totalWritten)
                 availableChunks.add(ci)
-                Log.d(TAG, "On-demand UFA chunk $ci OK: $written bytes")
+                Log.d(TAG, "On-demand CDN chunk $ci OK: $totalWritten bytes")
                 true
             } catch (e: Exception) {
-                Log.w(TAG, "On-demand UFA chunk $ci error: ${e.message}")
+                Log.w(TAG, "On-demand CDN chunk $ci error: ${e.message}")
                 false
             }
         }
@@ -294,9 +329,6 @@ object MegaExtractor {
                     }
                     Log.d(TAG, "Phase 1 OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes")
 
-                    // STEP 1b: Start shard probe IN PARALLEL with chunk download
-                    // Probe takes ~22s, ExoPlayer needs data within ~8s per connection
-                    // By running probe in parallel with chunks 1-15, probe finishes before Phase 4
                     var probeResult: LinkedHashMap<String, Long>? = null
                     val probeThread = if (stream.cdnUrls.size > 1 && stream.shardOffsets.isEmpty()) {
                         Log.d(TAG, "Phase 2: starting parallel probe for ${stream.cdnUrls.size} CDN URLs...")
@@ -319,15 +351,21 @@ object MegaExtractor {
                     }
                     Log.d(TAG, "Phase 1b OK: ${stream.writtenBytes.get()}/${stream.fileSize} bytes, chunks available=${stream.availableChunks.size}/${stream.totalChunks()}")
 
-                    // STEP 2: Wait for parallel probe to finish (should be mostly done by now)
                     if (probeThread != null) {
                         Log.d(TAG, "Phase 2: waiting for probe thread to finish...")
-                        probeThread.join(30_000) // max 30s wait
+
+                        probeThread.join(90_000)
                         if (probeResult != null && probeResult!!.isNotEmpty()) {
                             stream.shardOffsets = probeResult!!
                             Log.d(TAG, "Phase 2 OK: shard offsets=${stream.shardOffsets}")
                         } else {
-                            Log.w(TAG, "Phase 2: probe incomplete/failed, shards not mapped")
+                            Log.w(TAG, "Phase 2: probe incomplete/failed, retrying inline synchronously...")
+                            stream.shardOffsets = probeShardOffsets(stream.cdnUrls, aesKey, baseIv, stream.fileSize)
+                            if (stream.shardOffsets.isNotEmpty()) {
+                                Log.d(TAG, "Phase 2 inline probe OK: ${stream.shardOffsets}")
+                            } else {
+                                Log.w(TAG, "Phase 2: shards still not mapped after inline probe")
+                            }
                         }
                     }
 
@@ -1521,20 +1559,22 @@ val code = conn.responseCode
 
                     val ci = stream.chunkIndexForByte(pos)
                     if (!stream.availableChunks.contains(ci) && !stream.downloadComplete.get()) {
-                        // Wait briefly for background downloader, then fetch on-demand via UFA
-                        // if it hasn't caught up (seek-ahead / stalled shard).
+                        // Wait briefly for background downloader, then fetch on-demand
+                        // from the CDN (path-suffix ranges) if it hasn't caught up
+                        // (seek-ahead / stalled shard). UFA URL is an attribute URL that
+                        // returns HTTP 400 — never used as a content mirror.
                         if (!stream.waitForChunk(ci, 5000L)) {
                             val deadline = System.currentTimeMillis() + MAX_WAIT_MS
-                            var nextUfaAttempt = System.currentTimeMillis()
-                            Log.d(TAG, "Chunk $ci not ready after 5s, fetching on-demand via UFA (pos=$pos)")
+                            var nextOnDemandAttempt = System.currentTimeMillis()
+                            Log.d(TAG, "Chunk $ci not ready after 5s, fetching on-demand from CDN (pos=$pos)")
                             while (!stream.availableChunks.contains(ci) && !stream.downloadComplete.get() && !stream.failed) {
                                 if (System.currentTimeMillis() >= deadline) {
                                     Log.w(TAG, "Timeout waiting for chunk $ci (pos=$pos)")
                                     break
                                 }
-                                if (System.currentTimeMillis() >= nextUfaAttempt) {
+                                if (System.currentTimeMillis() >= nextOnDemandAttempt) {
                                     stream.fetchChunkOnDemand(ci)
-                                    nextUfaAttempt = System.currentTimeMillis() + 5000L
+                                    nextOnDemandAttempt = System.currentTimeMillis() + 5000L
                                 }
                                 Thread.sleep(WAIT_INTERVAL_MS)
                             }
