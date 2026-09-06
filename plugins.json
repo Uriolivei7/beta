@@ -486,8 +486,8 @@
     "tvTypes": ["TvSeries", "Movie", "Cartoon"],
     "iconUrl": "https://retrotve.com/wp-content/uploads/2024/11/cropped-android-chrome-512x512-1-32x32.png",
     "language": "mx",
-    "version": 72,
-    "fileSize": 98441
+    "version": 73,
+    "fileSize": 99071
   },
   {
     "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PlayhubProvider.cs3",
