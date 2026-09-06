@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Context
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -26,6 +27,7 @@ class MonoschinosProvider : MainAPI() {
         }
         var latestCookie: Map<String, String> = emptyMap()
         var latestToken = ""
+        var pluginContext: Context? = null
     }
 
     override var mainUrl = "https://monoschinos.st"

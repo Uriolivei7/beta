@@ -1,13 +1,114 @@
 package com.example
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val MONOS_TAG = "MonosChinos"
 private const val MONOS_SOURCE = "MonosChinos"
+
+private const val FM_READY_JS = "h.length > 3000 && (h.includes('.m3u8') || h.includes('.mp4') || h.includes('video'))"
+private const val FM_DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
+
+private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L): String? {
+    return withContext(Dispatchers.Main) {
+        val appCtx = MonoschinosProvider.pluginContext?.applicationContext ?: run {
+            Log.w(MONOS_TAG, "[FM-WebView] sin context")
+            return@withContext null
+        }
+        var webView: WebView? = null
+        val mainHandler = Handler(Looper.getMainLooper())
+        try {
+            webView = WebView(appCtx)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                cacheMode = WebSettings.LOAD_NO_CACHE
+                userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+                allowFileAccess = false
+            }
+            val deferred = CompletableDeferred<String?>()
+            val polls = java.util.concurrent.atomic.AtomicInteger(0)
+            val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
+            fun dump() {
+                if (deferred.isCompleted) return
+                try {
+                    webView?.evaluateJavascript(FM_DUMP_JS, null)
+                } catch (_: Exception) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            fun pollOnce() {
+                if (deferred.isCompleted) return
+                try {
+                    webView?.evaluateJavascript(
+                        "(function(){try{var h=document.documentElement.outerHTML;NativeBridge.onPoll(($FM_READY_JS));}catch(e){NativeBridge.onPoll(false);}})()",
+                        null
+                    )
+                } catch (_: Exception) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            webView.addJavascriptInterface(object {
+                @JavascriptInterface
+                fun onHtml(html: String) {
+                    if (!deferred.isCompleted) deferred.complete(html)
+                }
+
+                @JavascriptInterface
+                fun onPoll(ready: Boolean) {
+                    mainHandler.post {
+                        if (deferred.isCompleted) return@post
+                        if (ready) {
+                            Log.d(MONOS_TAG, "[FM-WebView] listo antes de tiempo, dumpeando")
+                            dump()
+                            return@post
+                        }
+                        if (polls.incrementAndGet() >= maxPolls) {
+                            dump()
+                        } else {
+                            mainHandler.postDelayed({ pollOnce() }, 2000L)
+                        }
+                    }
+                }
+            }, "NativeBridge")
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    polls.set(0)
+                    mainHandler.postDelayed({ pollOnce() }, 2000L)
+                }
+
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+            else webView.loadUrl(pageUrl)
+            Log.d(MONOS_TAG, "[FM-WebView] renderizando ${pageUrl.take(100)}")
+            withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
+        } catch (e: Exception) {
+            Log.w(MONOS_TAG, "[FM-WebView] error: ${e.message}")
+            null
+        } finally {
+            try { mainHandler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
+            try { webView?.destroy() } catch (_: Exception) {}
+        }
+    }
+}
 
 class MonosLuluvdo : ExtractorApi() {
     override val name = "MonosLuluvdo"
@@ -353,6 +454,7 @@ class MonosFilemoon : ExtractorApi() {
         callback: (ExtractorLink) -> Unit,
     ) {
         Log.d(MONOS_TAG, "[FM] URL: $url")
+        var renderedFetched = false
         try {
             val resp = app.get(url, headers = mapOf(
                 "User-Agent" to USER_AGENT,
@@ -360,46 +462,70 @@ class MonosFilemoon : ExtractorApi() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             ), timeout = 20000L)
             Log.d(MONOS_TAG, "[FM] HTTP ${resp.code} len=${resp.text.length}")
-            val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
-            val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|ts)[^"'\s<>]*)""")
-            var found = false
-            for (m in m3u8Regex.findAll(resp.text)) {
-                Log.d(MONOS_TAG, "[FM] M3U8: ${m.value.take(120)}")
+            if (parseHtml(resp.text, MONOS_SOURCE, callback)) return
+            Log.w(MONOS_TAG, "[FM] sin m3u8/mp4 vía HTTP (len=${resp.text.length}), probable SPA Byse -> WebView")
+        } catch (e: Exception) {
+            Log.e(MONOS_TAG, "[FM] HTTP Error: ${e.message}")
+        }
+
+        val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L)
+        renderedFetched = !rendered.isNullOrBlank()
+        if (rendered.isNullOrBlank()) {
+            Log.w(MONOS_TAG, "[FM] WebView devolvió vacío")
+            return
+        }
+        Log.d(MONOS_TAG, "[FM] WebView HTML len=${rendered.length}")
+        val found = parseHtml(rendered, MONOS_SOURCE, callback, isWebView = true)
+        if (!found) {
+            Log.w(MONOS_TAG, "[FM] WebView sin m3u8/mp4, snippet=${rendered.take(300).replace("\n", " ")}")
+        }
+        Log.d(MONOS_TAG, "[FM] done renderedFetched=$renderedFetched found=$found")
+    }
+
+    suspend fun parseHtml(
+        html: String,
+        sourceName: String,
+        callback: (ExtractorLink) -> Unit,
+        isWebView: Boolean = false,
+    ): Boolean {
+        val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+        val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|ts)[^"'\s<>]*)""")
+        var found = false
+        for (m in m3u8Regex.findAll(html)) {
+            Log.d(MONOS_TAG, "[FM] M3U8: ${m.value.take(120)}")
+            callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", m.value, ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+                this.headers = mapOf("Origin" to mainUrl)
+            })
+            found = true
+        }
+        if (!found) {
+            for (m in mp4Regex.findAll(html)) {
+                Log.d(MONOS_TAG, "[FM] MP4: ${m.value.take(120)}")
                 callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", m.value, ExtractorLinkType.M3U8) {
                     this.referer = mainUrl
                     this.headers = mapOf("Origin" to mainUrl)
                 })
                 found = true
             }
-            if (!found) {
-                for (m in mp4Regex.findAll(resp.text)) {
-                    Log.d(MONOS_TAG, "[FM] MP4: ${m.value.take(120)}")
-                    callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", m.value, ExtractorLinkType.M3U8) {
+        }
+        if (!found) {
+            val fileRegex = Regex("""(?:file|src)\s*:\s*["']((?:https?:)?//[^"']+)["']""")
+            for (m in fileRegex.findAll(html)) {
+                var f = m.groupValues[1].replace("\\/", "/").trim()
+                if (f.startsWith("//")) f = "https:$f"
+                if (f.contains(".m3u8") || f.contains(".mp4")) {
+                    Log.d(MONOS_TAG, "[FM] file: ${f.take(120)}")
+                    callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", f, ExtractorLinkType.M3U8) {
                         this.referer = mainUrl
                         this.headers = mapOf("Origin" to mainUrl)
                     })
                     found = true
                 }
             }
-            if (!found) {
-                val fileRegex = Regex("""(?:file|src)\s*:\s*["']((?:https?:)?//[^"']+)["']""")
-                for (m in fileRegex.findAll(resp.text)) {
-                    var f = m.groupValues[1].replace("\\/", "/").trim()
-                    if (f.startsWith("//")) f = "https:$f"
-                    if (f.contains(".m3u8") || f.contains(".mp4")) {
-                        Log.d(MONOS_TAG, "[FM] file: ${f.take(120)}")
-                        callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", f, ExtractorLinkType.M3U8) {
-                            this.referer = mainUrl
-                            this.headers = mapOf("Origin" to mainUrl)
-                        })
-                        found = true
-                    }
-                }
-            }
-            if (!found) Log.w(MONOS_TAG, "[FM] no m3u8/mp4 found, snippet=${resp.text.take(300).replace("\n", " ")}")
-        } catch (e: Exception) {
-            Log.e(MONOS_TAG, "[FM] Error: ${e.message}")
         }
+        if (!found && !isWebView) Log.w(MONOS_TAG, "[FM] no m3u8/mp4 found, snippet=${html.take(300).replace("\n", " ")}")
+        return found
     }
 }
 
