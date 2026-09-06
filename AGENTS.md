@@ -919,3 +919,21 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Compilación OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
 - Plugin empaquetado: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (89 KB)
 - ⏸️ **Pendiente**: probar en dispositivo — episode 5 aislado (no después de episode 1) para verificar UFA fallback + backoff.
+
+### 🔧 Fix Phase 4 shard parallel download (05 Sep 2026 v72)
+- **Síntoma (v70/v71 en dispositivo)**: ep5 `44NxgQha` (msd:1, 6 CDN shards) nunca completa la descarga → al cambiar de episodio o re-abrir da 2001. Logs MegaExtractor (22:05-22:09, build v70):
+  - `Chunk 16 incomplete: 2772555/4194304` reintentado **hasta attempt 29 sin éxito** (chunk que cruza el boundary del shard).
+  - `HEARTBEAT port=32945 chunks=75/84 bytes=439192934/349407051` → **writtenBytes 439MB > fileSize 349MB** (doble conteo).
+  - `Partial download deleted for Zt8m3LYQ` (v70 borraba parciales; v71 ya no).
+- **Causa raíz (3 bugs en Phase 4)**:
+  1. **`shardEnd = stream.fileSize` en TODOS los shard threads** (línea ~275) → cada thread iteraba TODOS los chunks del rango phase4 (solo skip si `chunkEndByte < shardOffset`), así que varios threads descargaban los MISMO chunks → `writtenBytes` se disparaba por encima de fileSize (doble conteo) + sobrescrituras concurrentes.
+  2. **`downloadChunkFromShard` SIN cross-shard split**: pedía el chunk completo como rango absoluto a UNA shard URL → para un chunk que cruza el boundary de shard, el CDN solo sirve su porción → `incomplete` infinito (chunk 16).
+  3. **`raf.setLength(start)` en incomplete** truncaba el ARCHIVO entero mientras otros threads escribían otros offsets → corrupción.
+- **Fix (v72)**:
+  - Phase 4: cada shard thread ahora tiene su rango `[shardStart, shardEndExclusive)` (siguiente offset o fileSize). Solo el thread dueño de cada chunk lo descarga (`chunkStartByte < shardStart → continue`, `>= shardEndExclusive → break`). Sin duplicados.
+  - `downloadChunkFromShard` reescrito con **sub-chunks cross-shard** (misma lógica `SubChunk` que `downloadChunkWithFreshUrl`): cada sub-rango que cae en otra shard se pide a la URL de ESA shard con `relStart-relEnd` relativo. Reintento de chunk completo `if (totalWritten < expectedSize)` tras revertir `writtenBytes`.
+  - Crucially: `raf.setLength` eliminado — no se trunca el archivo en descargas paralelas.
+- Compilación OK: `.\gradlew.bat :RetrotveProvider:compileReleaseKotlin --console=plain -q`
+- Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (**98.4 KB**)
+- `plugins.json`: version 72, fileSize 95762 → 98441
+- ⏸️ **Pendiente**: instalar cs3 v72 y probar ep5 `44NxgQha` (aislado): esperar `chunks=84/84`, sin doble conteo en HEARTBEAT, y que al volver a ep1 se sirva desde cache/parcial.

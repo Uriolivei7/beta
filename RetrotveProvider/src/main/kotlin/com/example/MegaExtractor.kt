@@ -231,7 +231,7 @@ object MegaExtractor {
                             }
                         }.also { it.start() }
                     } else null
-                    
+
                     val earlyChunkLimit = minOf(15, lastChunk)
                     Log.d(TAG, "Phase 1b: downloading chunks 1..$earlyChunkLimit from CDN#1 (within 66MB shard)")
                     for (ci in 1..earlyChunkLimit) {
@@ -268,24 +268,24 @@ object MegaExtractor {
                         if (stream.cdnUrls.size > 1 && stream.shardOffsets.isNotEmpty()) {
                             Log.d(TAG, "Phase 4: parallel download chunks $phase4Start..${phase4End - 1} across ${stream.cdnUrls.size} CDN shards")
                             val sortedShards = stream.shardOffsets.entries.sortedBy { it.value }
-                            val latch = java.util.concurrent.CountDownLatch(sortedShards.size)
-                            for (shardEntry in sortedShards) {
-                                val shardUrl = shardEntry.key
-                                val shardOffset = shardEntry.value
-                                val shardEnd = stream.fileSize // last shard extends to EOF
+                            val shardRanges = sortedShards.mapIndexed { i, e ->
+                                val nextOffset = if (i + 1 < sortedShards.size) sortedShards[i + 1].value else stream.fileSize
+                                Triple(e.key, e.value, nextOffset)
+                            }
+                            val latch = java.util.concurrent.CountDownLatch(shardRanges.size)
+                            for ((shardUrl, shardStart, shardEndExclusive) in shardRanges) {
                                 Thread {
                                     try {
                                         val shardHost = shardUrl.removePrefix("https://").takeWhile { it != '/' }
-                                        Log.d(TAG, "  Shard thread: $shardHost offset=$shardOffset")
+                                        Log.d(TAG, "  Shard thread: $shardHost range=${shardStart / 1024 / 1024}MB-${shardEndExclusive / 1024 / 1024}MB")
                                         var shardChunkCount = 0
                                         for (ci in phase4Start until phase4End) {
                                             if (stream.failed) break
                                             if (stream.availableChunks.contains(ci)) continue
-                                            val chunkStartByte = ci * CHUNK_SIZE.toLong()
-                                            val chunkEndByte = (chunkStartByte + CHUNK_SIZE - 1).coerceAtMost(stream.fileSize - 1)
-                                            if (chunkStartByte >= shardEnd) break
-                                            if (chunkEndByte < shardOffset) continue
-                                            downloadChunkFromShard(stream, raf, ci, shardUrl, shardOffset, aesKey, baseIv, fileId, faHash)
+                                            val chunkStartByte = stream.chunkStart(ci)
+                                            if (chunkStartByte < shardStart) continue
+                                            if (chunkStartByte >= shardEndExclusive) break
+                                            downloadChunkFromShard(stream, raf, ci, shardUrl, shardStart, aesKey, baseIv, fileId, faHash)
                                             shardChunkCount++
                                         }
                                         Log.d(TAG, "  Shard thread $shardHost done: $shardChunkCount chunks")
@@ -296,7 +296,7 @@ object MegaExtractor {
                                     }
                                 }.also { it.start() }
                             }
-                            Log.d(TAG, "Phase 4: waiting for ${sortedShards.size} shard threads...")
+                            Log.d(TAG, "Phase 4: waiting for ${shardRanges.size} shard threads...")
                             latch.await()
                             Log.d(TAG, "Phase 4 parallel done")
                         } else {
@@ -386,6 +386,11 @@ object MegaExtractor {
                         stream.cdnUrl = stream.cdnUrls[stream.cdnUrlIndex]
                         Log.d(TAG, "Trying CDN URL #${stream.cdnUrlIndex}: ${stream.cdnUrl!!.removePrefix("https://").take(40)}")
                     }
+                }
+
+                if (stream.availableChunks.contains(ci)) {
+                    Log.d(TAG, "Chunk $ci already available (resume), skipping download")
+                    return
                 }
 
                 val start = stream.chunkStart(ci)
@@ -780,14 +785,14 @@ val code = conn.responseCode
         }
     }
 
-    private fun startStreamProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?, rawKeyBytes: ByteArray?, ufaUrl: String? = null, cachedFile: File? = null): StreamProxyResult? {
+    private fun startStreamProxy(fileSize: Long, aesKey: ByteArray, iv: ByteArray, fileId: String, faHash: String?, rawKeyBytes: ByteArray?, ufaUrl: String? = null, cachedFile: File? = null, partialFile: File? = null, partialChunks: Set<Int>? = null): StreamProxyResult? {
         return try {
             val serverSocket = ServerSocket(0)
             serverSocket.soTimeout = 600000
             val port = serverSocket.localPort
 
-            val tempFile = cachedFile ?: cacheFile(fileId).also { if (it.exists()) it.delete() }
-            Log.d(TAG, "Temp file: ${tempFile.absolutePath} (${fileSize / 1024 / 1024}MB)${if (cachedFile != null) " [CACHE]" else ""}")
+            val tempFile = cachedFile ?: partialFile ?: cacheFile(fileId).also { if (it.exists()) it.delete() }
+            Log.d(TAG, "Temp file: ${tempFile.absolutePath} (${fileSize / 1024 / 1024}MB)${if (cachedFile != null) " [CACHE]" else if (partialFile != null) " [RESUME]" else ""}")
 
             val stream = DiskStream(fileSize, tempFile, rawKeyBytes, ufaUrl, cachedFile != null)
             if (cachedFile != null) {
@@ -795,6 +800,19 @@ val code = conn.responseCode
                 val totalChunks = stream.totalChunks()
                 for (ci in 0 until totalChunks) stream.availableChunks.add(ci)
                 Log.d(TAG, "Serving from cache: $totalChunks chunks available, no download needed")
+            } else if (partialFile != null && !partialChunks.isNullOrEmpty()) {
+                val chunks = partialChunks!!
+                for (ci in chunks) stream.availableChunks.add(ci)
+                var partialBytes = 0L
+                for (ci in chunks) partialBytes += (stream.chunkEnd(ci) - stream.chunkStart(ci) + 1)
+                stream.writtenBytes.addAndGet(partialBytes)
+                if (chunks.size >= stream.totalChunks()) {
+                    stream.downloadComplete.set(true)
+                    Log.d(TAG, "Partial file fully chunk-complete (${chunks.size}/${stream.totalChunks()}), no download needed")
+                } else {
+                    Log.d(TAG, "Resuming partial: ${chunks.size}/${stream.totalChunks()} chunks (~${partialBytes / 1024 / 1024}MB on disk), continuing in background")
+                    backgroundDownloader(stream, aesKey, iv, fileId, faHash)
+                }
             } else {
                 backgroundDownloader(stream, aesKey, iv, fileId, faHash)
             }
@@ -816,15 +834,17 @@ val code = conn.responseCode
 
             Log.d(TAG, "Stream proxy started on port $port")
 
-            // Heartbeat: log every 5s to confirm proxy alive
+            // Heartbeat: log every 5s to confirm proxy alive + persist progress bitmap
             Thread {
                 try {
                     while (!serverSocket.isClosed && !stream.downloadComplete.get() && !stream.failed) {
                         Thread.sleep(5000)
+                        writeChunkBitmap(stream)
                         if (!serverSocket.isClosed) {
                             Log.d(TAG, "HEARTBEAT port=$port chunks=${stream.availableChunks.size}/${stream.totalChunks()} bytes=${stream.writtenBytes.get()}/${stream.fileSize} failed=${stream.failed}")
                         }
                     }
+                    writeChunkBitmap(stream)
                     Log.d(TAG, "HEARTBEAT stopped: closed=${serverSocket.isClosed} complete=${stream.downloadComplete.get()} failed=${stream.failed}")
                 } catch (_: Exception) {}
             }.start()
@@ -854,67 +874,120 @@ val code = conn.responseCode
             try {
                 val start = stream.chunkStart(ci)
                 val end = stream.chunkEnd(ci)
-                val relStart = start - shardOffset
-                val relEnd = end - shardOffset
                 val useAesKey = stream.resolvedAesKey ?: aesKey
                 val useBaseIv = stream.resolvedBaseIv ?: baseIv
 
-                val chunkUrl = "$shardUrl/$relStart-$relEnd"
-                val hostname = shardUrl.removePrefix("https://").takeWhile { it != '/' }
-                Log.d(TAG, "Chunk $ci: downloading from $hostname ($relStart-$relEnd, ${end - start + 1}B) shard (attempt $retries)")
+                // Build sub-chunks: split cross-shard chunks across the correct shard URLs
+                data class SubChunk(val filePos: Long, val fileSize: Long, val cdnUrl: String, val relStart: Long, val relEnd: Long)
+                val subChunks = mutableListOf<SubChunk>()
+                val sortedShards = stream.shardOffsets.entries.sortedBy { it.value }
 
-                val conn = (URL(chunkUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000; readTimeout = 60000
-                    setRequestProperty("User-Agent", MEGA_UA)
-                    setRequestProperty("Origin", "https://mega.nz")
-                    setRequestProperty("Referer", "https://mega.nz/")
-                    instanceFollowRedirects = true
-                }
-                val code = conn.responseCode
-                if (code == 509) {
-                    conn.disconnect()
-                    retries++
-                    val delay = when {
-                        retries <= 2 -> FIVE_ZERO_NINE_DELAY_MS
-                        retries <= 5 -> FIVE_ZERO_NINE_DELAY_MS + (retries - 2) * 5000L
-                        retries <= 8 -> 30000L + (retries - 5) * 10000L
-                        else -> (120000L).coerceAtMost(FIVE_ZERO_NINE_DELAY_MS * retries)
-                    }
-                    Log.w(TAG, "509 chunk $ci ($retries/$maxRetries), waiting ${delay / 1000}s (shard)...")
-                    Thread.sleep(delay)
-                    continue
-                }
-                if (code == 416) {
-                    conn.disconnect()
-                    stream.availableChunks.add(ci)
-                    return
-                }
-                if (code !in listOf(200, 206)) {
-                    conn.disconnect()
-                    retries++
-                    Thread.sleep(3000L * retries.coerceAtMost(5))
-                    continue
-                }
-
-                val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-                val ivForChunk = useBaseIv.copyOf()
-                setIvBlockCounter(ivForChunk, start)
-                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForChunk))
-
-                var totalWritten = 0L
-                conn.inputStream.use { enc ->
-                    val buf = ByteArray(256 * 1024)
-                    while (true) {
-                        val n = enc.read(buf)
-                        if (n == -1) break
-                        val dec = cipher.update(buf, 0, n) ?: continue
-                        synchronized(stream.fileLock) {
-                            raf.seek(start)
-                            raf.write(dec)
+                if (sortedShards.size > 1) {
+                    var pos = start
+                    for (i in sortedShards.indices) {
+                        if (pos > end) break
+                        val sStart = sortedShards[i].value
+                        val sEnd = if (i + 1 < sortedShards.size) sortedShards[i + 1].value - 1 else Long.MAX_VALUE
+                        val overlapStart = pos.coerceAtLeast(sStart)
+                        val overlapEnd = end.coerceAtMost(sEnd)
+                        if (overlapStart <= overlapEnd) {
+                            subChunks.add(SubChunk(overlapStart, overlapEnd - overlapStart + 1, sortedShards[i].key, overlapStart - sStart, overlapEnd - sStart))
+                            pos = overlapEnd + 1
                         }
-                        totalWritten += dec.size
                     }
                 }
+
+                if (subChunks.isEmpty()) {
+                    subChunks.add(SubChunk(start, end - start + 1, shardUrl, start - shardOffset, end - shardOffset))
+                }
+
+                if (subChunks.size > 1) {
+                    Log.d(TAG, "Chunk $ci: CROSS-SHARD split into ${subChunks.size} sub-chunks (shard path)")
+                    for (sc in subChunks) {
+                        val h = sc.cdnUrl.removePrefix("https://").takeWhile { it != '/' }
+                        Log.d(TAG, "  file=${sc.filePos}-${sc.filePos + sc.fileSize - 1} via ${h.take(30)}... rel=${sc.relStart}-${sc.relEnd}")
+                    }
+                }
+
+                // Download each sub-chunk
+                var totalWritten = 0L
+                var failedSubChunk = false
+                for ((si, sc) in subChunks.withIndex()) {
+                    val subChunkUrl = "${sc.cdnUrl}/${sc.relStart}-${sc.relEnd}"
+                    val hostname = sc.cdnUrl.removePrefix("https://").takeWhile { it != '/' }
+                    if (subChunks.size > 1) {
+                        Log.d(TAG, "Sub[$si]: downloading from $hostname (${sc.relStart}-${sc.relEnd}, ${sc.fileSize}B) shard (attempt $retries)")
+                    } else {
+                        Log.d(TAG, "Chunk $ci: downloading from $hostname (${sc.relStart}-${sc.relEnd}, ${sc.fileSize}B) shard (attempt $retries)")
+                    }
+
+                    val conn = (URL(subChunkUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15000; readTimeout = 60000
+                        setRequestProperty("User-Agent", MEGA_UA)
+                        setRequestProperty("Origin", "https://mega.nz")
+                        setRequestProperty("Referer", "https://mega.nz/")
+                        instanceFollowRedirects = true
+                    }
+                    val code = conn.responseCode
+                    if (code == 509) {
+                        conn.disconnect()
+                        retries++
+                        val delay = when {
+                            retries <= 2 -> FIVE_ZERO_NINE_DELAY_MS
+                            retries <= 5 -> FIVE_ZERO_NINE_DELAY_MS + (retries - 2) * 5000L
+                            retries <= 8 -> 30000L + (retries - 5) * 10000L
+                            else -> (120000L).coerceAtMost(FIVE_ZERO_NINE_DELAY_MS * retries)
+                        }
+                        Log.w(TAG, "509 chunk $ci ($retries/$maxRetries), waiting ${delay / 1000}s (shard)...")
+                        Thread.sleep(delay)
+                        failedSubChunk = true
+                        break
+                    }
+                    if (code == 416) {
+                        conn.disconnect()
+                        stream.availableChunks.add(ci)
+                        return
+                    }
+                    if (code !in listOf(200, 206)) {
+                        conn.disconnect()
+                        retries++
+                        Thread.sleep(3000L * retries.coerceAtMost(5))
+                        failedSubChunk = true
+                        break
+                    }
+
+                    val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+                    val ivForSub = useBaseIv.copyOf()
+                    setIvBlockCounter(ivForSub, sc.filePos)
+                    cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForSub))
+
+                    var subWritten = 0L
+                    conn.inputStream.use { enc ->
+                        val buf = ByteArray(256 * 1024)
+                        while (true) {
+                            val n = enc.read(buf)
+                            if (n == -1) break
+                            val dec = cipher.update(buf, 0, n) ?: continue
+                            synchronized(stream.fileLock) {
+                                raf.seek(sc.filePos)
+                                raf.write(dec)
+                            }
+                            subWritten += dec.size
+                        }
+                    }
+                    conn.disconnect()
+                    totalWritten += subWritten
+
+                    if (subChunks.size > 1 && subWritten < sc.fileSize) {
+                        Log.w(TAG, "Sub[$si] incomplete: got $subWritten/${sc.fileSize} bytes")
+                        stream.writtenBytes.addAndGet(-totalWritten)
+                        retries++
+                        Thread.sleep(1000L)
+                        failedSubChunk = true
+                    }
+                    if (failedSubChunk) break
+                }
+                if (failedSubChunk) continue
 
                 val expectedSize = end - start + 1
                 if (totalWritten == 0L) {
@@ -924,8 +997,6 @@ val code = conn.responseCode
                 } else if (totalWritten < expectedSize) {
                     Log.w(TAG, "Chunk $ci incomplete: $totalWritten/$expectedSize")
                     stream.writtenBytes.addAndGet(-totalWritten)
-                    raf.seek(start)
-                    raf.setLength(start)
                     retries++
                     Thread.sleep(1000L)
                     continue
@@ -933,6 +1004,7 @@ val code = conn.responseCode
 
                 stream.writtenBytes.addAndGet(totalWritten)
                 stream.availableChunks.add(ci)
+                Log.d(TAG, "Chunk $ci -> disk (${stream.writtenBytes.get()}/${stream.fileSize})")
                 return
             } catch (e: Exception) {
                 retries++
@@ -1405,8 +1477,16 @@ val code = conn.responseCode
                 cachedFiles[fileId] = result.stream.tempFile
                 evictCache(fileId)
             } else {
-                Log.d(TAG, "Partial download deleted for $fileId")
-                try { result.stream.tempFile.delete() } catch (_: Exception) {}
+                writeChunkBitmap(result.stream)
+                if (result.stream.tempFile.length() > 0) {
+                    Log.d(TAG, "Partial download kept for resume: ${result.stream.tempFile.name} (${result.stream.tempFile.length() / 1024 / 1024}MB, ${result.stream.availableChunks.size} chunks)")
+                } else {
+                    try { result.stream.tempFile.delete() } catch (_: Exception) {}
+                    val pc = progressFile(result.stream)
+                    if (pc.exists()) try { pc.delete() } catch (_: Exception) {}
+                    Log.d(TAG, "Empty download deleted for $fileId")
+                }
+                enforceCacheLimits(fileId)
             }
         }
     }
@@ -1431,6 +1511,54 @@ val code = conn.responseCode
         }
     }
 
+    private fun progressFile(stream: DiskStream) = File(stream.tempFile.absolutePath + ".chunks")
+
+    private fun writeChunkBitmap(stream: DiskStream) {
+        if (stream.fromCache) return
+        try {
+            val chunks = synchronized(stream.availableChunks) { stream.availableChunks.toList() }
+            if (chunks.isEmpty()) return
+            if (chunks.size >= stream.totalChunks()) {
+                stream.downloadComplete.set(true)
+                val f = progressFile(stream)
+                if (f.exists()) f.delete()
+                return
+            }
+            if (stream.tempFile.length() > 0) {
+                progressFile(stream).writeText(chunks.sorted().joinToString(","))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Bitmap write error: ${e.message}")
+        }
+    }
+
+    private fun loadChunkBitmap(fileId: String): Set<Int> {
+        return try {
+            val f = File(cacheFile(fileId).absolutePath + ".chunks")
+            if (!f.exists()) return emptySet()
+            f.readText().trim().split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it >= 0 }.toSet()
+        } catch (e: Exception) { emptySet() }
+    }
+
+    private fun enforceCacheLimits(keepFileId: String) {
+        try {
+            val keepPaths = cachedFiles.values.map { it.absolutePath }.toSet()
+            val files = (cacheDir.listFiles() ?: emptyArray())
+                .filter { it.isFile && it.name.startsWith("mega_") && it.name.endsWith(".mp4") && it.absolutePath !in keepPaths }
+                .sortedBy { it.lastModified() }
+            var total = files.sumOf { it.length() }
+            var count = files.size
+            for (f in files) {
+                if (count <= MAX_CACHED_FILES && total <= MAX_CACHED_BYTES) break
+                if (f.name == "mega_$keepFileId.mp4") continue
+                val len = f.length()
+                if (f.delete()) { total -= len; count--; Log.d(TAG, "Evicted cached/partial ${f.name}") }
+                val c = File(f.absolutePath + ".chunks")
+                if (c.exists()) c.delete()
+            }
+        } catch (e: Exception) { Log.w(TAG, "Cache limit error: ${e.message}") }
+    }
+
     fun cleanupAll() {
         activeProxies.forEach { (fileId, result) ->
             Log.d(TAG, "Cleaning up proxy for $fileId")
@@ -1441,7 +1569,10 @@ val code = conn.responseCode
             } else if (result.stream.downloadComplete.get() && result.stream.tempFile.length() >= result.stream.fileSize) {
                 cachedFiles[fileId] = result.stream.tempFile
             } else {
-                try { result.stream.tempFile.delete() } catch (_: Exception) {}
+                writeChunkBitmap(result.stream)
+                if (result.stream.tempFile.length() <= 0) {
+                    try { result.stream.tempFile.delete() } catch (_: Exception) {}
+                }
             }
         }
         activeProxies.clear()
@@ -1485,7 +1616,19 @@ val code = conn.responseCode
                 } else if (cached != null) {
                     val stale = cachedFiles.remove(urlInfo.fileId)
                     try { stale?.delete() } catch (_: Exception) {}
+                    val staleSidecar = File((stale?.absolutePath ?: cacheFile(urlInfo.fileId).absolutePath) + ".chunks")
+                    if (staleSidecar.exists()) try { staleSidecar.delete() } catch (_: Exception) {}
                     Log.w(TAG, "Cached file for ${urlInfo.fileId} missing/invalid, re-downloading")
+                }
+
+                val partialFile = cacheFile(urlInfo.fileId)
+                val partialChunks = loadChunkBitmap(urlInfo.fileId)
+                val canResume = partialFile.exists() && partialFile.length() > 0 && partialChunks.isNotEmpty()
+                if (partialFile.exists() && !canResume) {
+                    Log.d(TAG, "Stale partial for ${urlInfo.fileId} (no bitmap), deleting")
+                    try { partialFile.delete() } catch (_: Exception) {}
+                    val staleSidecar = File(partialFile.absolutePath + ".chunks")
+                    if (staleSidecar.exists()) try { staleSidecar.delete() } catch (_: Exception) {}
                 }
 
                 val keyBytes = base64UrlDecode(urlInfo.key)
@@ -1496,7 +1639,11 @@ val code = conn.responseCode
                 Log.d(TAG, "ivHex=${iv.joinToString("") { "%02x".format(it) }}")
                 Log.d(TAG, "keyBytesLen=${keyBytes.size}, keyBytesHex=${keyBytes.take(32).joinToString("") { "%02x".format(it) }}")
 
-                val result = startStreamProxy(fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash, keyBytes, fileInfo.ufaUrl) ?: return@withContext null
+                val result = startStreamProxy(
+                    fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash, keyBytes, fileInfo.ufaUrl,
+                    partialFile = if (canResume) partialFile else null,
+                    partialChunks = if (canResume) partialChunks else null
+                ) ?: return@withContext null
                 Log.d(TAG, "Stream proxy ready: ${result.url}")
 
                 val proxyResult = MegaProxyResult(result.url, result.port, result.stream, result.serverSocket)
