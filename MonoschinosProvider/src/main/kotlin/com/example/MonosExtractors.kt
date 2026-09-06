@@ -4,6 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -42,6 +44,7 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 allowFileAccess = false
             }
             val deferred = CompletableDeferred<String?>()
+            val capturedUrls = java.util.concurrent.ConcurrentLinkedQueue<String>()
             val polls = java.util.concurrent.atomic.AtomicInteger(0)
             val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
             fun dump() {
@@ -87,13 +90,36 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 }
             }, "NativeBridge")
             webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                    try {
+                        val u = request?.url?.toString() ?: return null
+                        if (u.contains(".m3u8", ignoreCase = true) ||
+                            u.contains(".mp4", ignoreCase = true) ||
+                            u.contains("/hls/", ignoreCase = true) ||
+                            u.contains("hls2-c", ignoreCase = true) ||
+                            u.contains("master.m3u8", ignoreCase = true)
+                        ) {
+                            capturedUrls.add(u)
+                            Log.d(MONOS_TAG, "[FM-WebView] capturó URL de video: ${u.take(140)}")
+                            mainHandler.post {
+                                if (!deferred.isCompleted) {
+                                    deferred.complete("__VIDEO__" + u)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                    return null
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     polls.set(0)
-                    mainHandler.postDelayed({ pollOnce() }, 2000L)
+                    if (!deferred.isCompleted) {
+                        mainHandler.postDelayed({ pollOnce() }, 2000L)
+                    }
                 }
 
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                    if (!deferred.isCompleted) deferred.complete(null)
+                    // ignorar errores de sub-recursos, solo esperar el dump
                 }
             }
             if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
@@ -469,9 +495,19 @@ class MonosFilemoon : ExtractorApi() {
         }
 
         val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L)
-        renderedFetched = !rendered.isNullOrBlank()
         if (rendered.isNullOrBlank()) {
             Log.w(MONOS_TAG, "[FM] WebView devolvió vacío")
+            return
+        }
+        if (rendered.startsWith("__VIDEO__")) {
+            val videoUrl = rendered.removePrefix("__VIDEO__")
+            Log.d(MONOS_TAG, "[FM] video URL capturada por red: ${videoUrl.take(140)}")
+            val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+            callback.invoke(newExtractorLink(MONOS_SOURCE, "$MONOS_SOURCE - Filemoon", videoUrl, type) {
+                this.referer = mainUrl
+                this.headers = mapOf("Origin" to mainUrl)
+            })
+            renderedFetched = true
             return
         }
         Log.d(MONOS_TAG, "[FM] WebView HTML len=${rendered.length}")
