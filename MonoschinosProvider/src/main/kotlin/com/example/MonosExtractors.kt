@@ -17,12 +17,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayInputStream
 
 private const val MONOS_TAG = "MonosChinos"
 private const val MONOS_SOURCE = "MonosChinos"
 
-private const val FM_READY_JS = "h.length > 3000 && (h.includes('.m3u8') || h.includes('.mp4') || h.includes('video'))"
+private const val FM_READY_JS = "h.includes('.m3u8') || h.includes('.mp4') || h.includes('player_source') || h.includes('sources:')"
 private const val FM_DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
+private const val FM_AUTOPLAY_JS = "(function(){try{var v=document.querySelector('video');if(v){try{v.muted=true;v.play();}catch(e){}}var b=document.querySelectorAll('button');for(var i=0;i<b.length;i++){if(/play|reproducir|preview/i.test(b[i].textContent||'')||/play/i.test(b[i].className||'')){try{b[i].click();}catch(e){}}}}catch(e){}})()"
 
 // Hook que se inyecta en el HTML del SPA para capturar respuestas fetch/XHR con URLs de video
 private const val FM_HOOK_JS = """
@@ -94,6 +96,11 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
             val deferred = CompletableDeferred<String?>()
             val polls = java.util.concurrent.atomic.AtomicInteger(0)
             val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
+            var customHtml: String? = null
+            if (!embedHtml.isNullOrBlank()) {
+                customHtml = injectHook(embedHtml)
+                Log.d(MONOS_TAG, "[FM-WebView] hook inyectado (len=${customHtml.length})")
+            }
             fun dump() {
                 if (deferred.isCompleted) return
                 try {
@@ -112,6 +119,11 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 } catch (_: Exception) {
                     if (!deferred.isCompleted) deferred.complete(null)
                 }
+            }
+            fun autoplay() {
+                try {
+                    webView?.evaluateJavascript(FM_AUTOPLAY_JS, null)
+                } catch (_: Exception) {}
             }
             webView.addJavascriptInterface(object {
                 @JavascriptInterface
@@ -156,15 +168,23 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
             webView.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     try {
-                        val u = request?.url?.toString() ?: return null
+                        val reqUrl = request?.url?.toString() ?: return null
+                        val u = reqUrl.substringBefore("?")
+                        if (customHtml != null && (u == pageUrl.substringBefore("?") || u.endsWith("/e/" + pageUrl.substringAfterLast("/e/").substringBefore("/")))) {
+                            Log.d(MONOS_TAG, "[FM-WebView] sirviendo HTML inyectado para $u")
+                            return WebResourceResponse(
+                                "text/html", "UTF-8",
+                                ByteArrayInputStream(customHtml.toByteArray(Charsets.UTF_8))
+                            )
+                        }
                         if (u.contains(".m3u8", ignoreCase = true) ||
                             u.contains(".mp4", ignoreCase = true) ||
                             u.contains("/hls/", ignoreCase = true) ||
                             u.contains("hls2-c", ignoreCase = true)
                         ) {
-                            Log.d(MONOS_TAG, "[FM-WebView] red capturó URL de video: ${u.take(140)}")
+                            Log.d(MONOS_TAG, "[FM-WebView] red capturó URL de video: ${reqUrl.take(140)}")
                             mainHandler.post {
-                                if (!deferred.isCompleted) deferred.complete("__VIDEO__" + u)
+                                if (!deferred.isCompleted) deferred.complete("__VIDEO__" + reqUrl)
                             }
                         }
                     } catch (_: Exception) {}
@@ -173,20 +193,14 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     polls.set(0)
+                    autoplay()
                     if (!deferred.isCompleted) {
                         mainHandler.postDelayed({ pollOnce() }, 2000L)
                     }
                 }
             }
-            val customHtml = if (!embedHtml.isNullOrBlank()) injectHook(embedHtml) else null
-            if (customHtml != null) {
-                webView.loadDataWithBaseURL(pageUrl, customHtml, "text/html", "UTF-8", null)
-                Log.d(MONOS_TAG, "[FM-WebView] cargando HTML inyectado (len=${customHtml.length}) base=$pageUrl")
-            } else if (!referer.isNullOrBlank()) {
-                webView.loadUrl(pageUrl, mapOf("Referer" to referer))
-            } else {
-                webView.loadUrl(pageUrl)
-            }
+            if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+            else webView.loadUrl(pageUrl)
             Log.d(MONOS_TAG, "[FM-WebView] renderizando ${pageUrl.take(100)}")
             withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
         } catch (e: Exception) {

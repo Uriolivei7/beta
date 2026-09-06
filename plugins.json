@@ -321,7 +321,7 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/MonoschinosProvider.cs3",
   "status": 1,
-  "version": 6,
+  "version": 7,
   "apiVersion": 1,
   "name": "MonosChinos",
   "internalName": "MonoschinosProvider",
@@ -336,7 +336,7 @@
   ],
   "iconUrl": "https://monoschinos.st/favicon.ico?v=4.66",
   "language": "mx",
-  "fileSize": 53451
+  "fileSize": 54184
  },
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/AnimeonsenProvider.cs3",
