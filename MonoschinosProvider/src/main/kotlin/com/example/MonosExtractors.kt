@@ -541,9 +541,8 @@ class MonosFilemoon : ExtractorApi() {
         callback: (ExtractorLink) -> Unit,
     ) {
         Log.d(MONOS_TAG, "[FM] URL: $url")
-        var found = false
 
-        // 1) HTTP parse rápido (si aún sirve m3u8 directo)
+        var html: String? = null
         try {
             val resp = app.get(url, headers = mapOf(
                 "User-Agent" to USER_AGENT,
@@ -551,41 +550,17 @@ class MonosFilemoon : ExtractorApi() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             ), timeout = 20000L)
             Log.d(MONOS_TAG, "[FM] HTTP ${resp.code} len=${resp.text.length}")
-            if (parseHtml(resp.text, MONOS_SOURCE, callback)) return
+            html = resp.text
+            if (parseHtml(html, MONOS_SOURCE, callback)) return
         } catch (e: Exception) {
             Log.e(MONOS_TAG, "[FM] HTTP Error: ${e.message}")
         }
 
-        try {
-            val parent = referer ?: url
-            val site = runCatching { "https://${java.net.URI(referer ?: url).host}" }.getOrDefault("https://monoschinos.st")
-            Log.d(MONOS_TAG, "[FM] intentando Byse HTTP (site=$site)")
-            val sources = ByseHttpExtractor().extract(url, parent, site)
-            Log.d(MONOS_TAG, "[FM] Byse sources=${sources.size}")
-            for (s in sources) {
-                Log.d(MONOS_TAG, "[FM] Byse source: ${s.url.take(140)} label=${s.label}")
-                for (sub in s.subtitles) subtitleCallback(sub)
-                val serverTag = if (url.contains("byse", ignoreCase = true)) "Byse" else "Filemoon"
-                callback.invoke(
-                    newExtractorLink(
-                        MONOS_SOURCE,
-                        "$MONOS_SOURCE - $serverTag${s.label?.let { " - $it" } ?: ""}",
-                        s.url,
-                        if (s.url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
-                    ) {
-                        this.referer = site
-                        this.headers = mapOf("Origin" to site)
-                    }
-                )
-                found = true
-            }
-            if (found) {
-                Log.d(MONOS_TAG, "[FM] done via Byse HTTP")
-                return
-            }
-        } catch (e: Exception) {
-            Log.w(MONOS_TAG, "[FM] Byse HTTP error: ${e.message}")
+        if (html != null && !html.contains("Byse Frontend")) {
+            Log.w(MONOS_TAG, "[FM] el embed no es Byse Frontend, omitiendo flujo Byse")
+            return
         }
+        if (tryByseHttp(url, referer, subtitleCallback, callback)) return
 
         val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L, embedHtml = null)
         if (rendered.isNullOrBlank()) {
@@ -608,6 +583,76 @@ class MonosFilemoon : ExtractorApi() {
             Log.w(MONOS_TAG, "[FM] WebView sin m3u8/mp4, snippet=${rendered.take(300).replace("\n", " ")}")
         }
         Log.d(MONOS_TAG, "[FM] done found=$wvFound")
+    }
+
+    suspend fun tryResolveByseGeneric(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        if (!url.contains("/e/", ignoreCase = true)) return false
+        Log.d(MONOS_TAG, "[FM] comprobando embed genérico (posible BYFMS): $url")
+        var html: String? = null
+        try {
+            val resp = app.get(url, headers = mapOf(
+                "User-Agent" to USER_AGENT,
+                "Referer" to (referer ?: url),
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ), timeout = 15000L)
+            Log.d(MONOS_TAG, "[FM] gen HTTP ${resp.code} len=${resp.text.length}")
+            html = resp.text
+            if (parseHtml(html, MONOS_SOURCE, callback)) return true
+        } catch (e: Exception) {
+            Log.d(MONOS_TAG, "[FM] gen HTTP error: ${e.message}")
+            return false
+        }
+        if (html == null || !html.contains("Byse Frontend")) {
+            Log.d(MONOS_TAG, "[FM] gen: no es Byse Frontend, se usa extractor por defecto")
+            return false
+        }
+        Log.d(MONOS_TAG, "[FM] gen: embed Byse detectado, flujo HTTP")
+        return tryByseHttp(url, referer, subtitleCallback, callback)
+    }
+
+    private suspend fun tryByseHttp(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        try {
+            val parent = referer ?: url
+            val site = runCatching { "https://${java.net.URI(referer ?: url).host}" }.getOrDefault("https://monoschinos.st")
+            Log.d(MONOS_TAG, "[FM] intentando Byse HTTP (site=$site)")
+            val sources = ByseHttpExtractor().extract(url, parent, site)
+            Log.d(MONOS_TAG, "[FM] Byse sources=${sources.size}")
+            var found = false
+            for (s in sources) {
+                Log.d(MONOS_TAG, "[FM] Byse source: ${s.url.take(140)} label=${s.label}")
+                for (sub in s.subtitles) subtitleCallback(sub)
+                val serverTag = if (url.contains("byse", ignoreCase = true)) "Byse" else "Filemoon"
+                callback.invoke(
+                    newExtractorLink(
+                        MONOS_SOURCE,
+                        "$MONOS_SOURCE - $serverTag${s.label?.let { " - $it" } ?: ""}",
+                        s.url,
+                        if (s.url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                    ) {
+                        this.referer = site
+                        this.headers = mapOf("Origin" to site)
+                    }
+                )
+                found = true
+            }
+            if (found) {
+                Log.d(MONOS_TAG, "[FM] done via Byse HTTP")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(MONOS_TAG, "[FM] Byse HTTP error: ${e.message}")
+        }
+        return false
     }
 
     suspend fun parseHtml(

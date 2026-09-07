@@ -267,7 +267,10 @@ class MonoschinosProvider : MainAPI() {
                     Log.w(TAG, "loadLinks: mega.nz requiere proxy AES local, omitido: $host")
                 }
                 else -> {
-                    loadExtractor(url, mainUrl, subtitleCallback, countingCallback)
+                    val byseHandled = MonosFilemoon().tryResolveByseGeneric(url, mainUrl, subtitleCallback, countingCallback)
+                    if (!byseHandled) {
+                        loadExtractor(url, mainUrl, subtitleCallback, countingCallback)
+                    }
                 }
             }
             found = found || serverEmitted
