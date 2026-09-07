@@ -260,7 +260,7 @@ class MonoschinosProvider : MainAPI() {
                 host.contains("voe") -> {
                     MonosVoe().getUrl(url, mainUrl, subtitleCallback, countingCallback)
                 }
-                host.contains("filemoon") -> {
+                host.contains("filemoon") || host.contains("byse") -> {
                     MonosFilemoon().getUrl(url, mainUrl, subtitleCallback, countingCallback)
                 }
                 host.contains("mega") -> {

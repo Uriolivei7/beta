@@ -565,10 +565,11 @@ class MonosFilemoon : ExtractorApi() {
             for (s in sources) {
                 Log.d(MONOS_TAG, "[FM] Byse source: ${s.url.take(140)} label=${s.label}")
                 for (sub in s.subtitles) subtitleCallback(sub)
+                val serverTag = if (url.contains("byse", ignoreCase = true)) "Byse" else "Filemoon"
                 callback.invoke(
                     newExtractorLink(
                         MONOS_SOURCE,
-                        "$MONOS_SOURCE - Filemoon${s.label?.let { " - $it" } ?: ""}",
+                        "$MONOS_SOURCE - $serverTag${s.label?.let { " - $it" } ?: ""}",
                         s.url,
                         if (s.url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
                     ) {
