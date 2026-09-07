@@ -16,8 +16,9 @@ class MonoschinosProvider : MainAPI() {
     companion object {
         private val TAG = "MonosChinos"
         fun getType(t: String): TvType {
-            return if (t.contains("OVA") || t.contains("Especial")) TvType.OVA
-            else if (t.contains("Pelicula")) TvType.AnimeMovie
+            val lower = t.lowercase(Locale.ROOT)
+            return if (lower.contains("ova") || lower.contains("especial")) TvType.OVA
+            else if (lower.contains("película") || lower.contains("pelicula")) TvType.AnimeMovie
             else TvType.Anime
         }
         fun getDubStatus(title: String): DubStatus {
@@ -71,9 +72,12 @@ class MonoschinosProvider : MainAPI() {
             val home = app.get(url, timeout = 120).document.select("a.card-wrap").map {
                 val title = it.selectFirst("h3.card-title")?.text() ?: ""
                 val poster = it.selectFirst("img.card-img")?.attr("data-src") ?: ""
+                val year = it.selectFirst("div.mt-1 span")?.text()?.toIntOrNull()
+                val typeBadge = it.select("div.absolute.top-2 span").firstOrNull()?.text() ?: it.select("div.absolute.top-2").firstOrNull()?.text() ?: ""
 
-                newAnimeSearchResponse(title, fixUrl(it.attr("href"))) {
+                newAnimeSearchResponse(title, fixUrl(it.attr("href")), getType(typeBadge)) {
                     this.posterUrl = fixUrl(poster)
+                    this.year = year
                     addDubStatus(getDubStatus(title))
                 }
             }
@@ -103,9 +107,12 @@ class MonoschinosProvider : MainAPI() {
                     val title = el.selectFirst("h3.card-title")?.text() ?: return@mapNotNull null
                     val href = el.attr("href") ?: return@mapNotNull null
                     val image = el.selectFirst("img.card-img")?.attr("data-src") ?: el.selectFirst("img.card-img")?.attr("src") ?: ""
-                    Log.d(TAG, "search: item title='$title' href=$href")
-                    newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
+                    val year = el.selectFirst("div.mt-1 span")?.text()?.toIntOrNull()
+                    val typeBadge = el.select("div.absolute.top-2 span").firstOrNull()?.text() ?: el.select("div.absolute.top-2").firstOrNull()?.text() ?: ""
+                    Log.d(TAG, "search: item title='$title' href=$href year=$year type='$typeBadge'")
+                    newAnimeSearchResponse(title, fixUrl(href), getType(typeBadge)) {
                         this.posterUrl = fixUrl(image)
+                        this.year = year
                         addDubStatus(if (title.contains("Latino") || title.contains("Castellano")) DubStatus.Dubbed else DubStatus.Subbed)
                     }
                 } catch (e: Exception) {
@@ -166,7 +173,10 @@ class MonoschinosProvider : MainAPI() {
             "En emisión" -> ShowStatus.Ongoing
             else -> null
         }
-        Log.d(TAG, "load: title='$title' type='$type' status=$status poster=$poster")
+        val year = doc.select("dd.text-right").mapNotNull { dd ->
+            Regex("(\\d{4})").find(dd.text())?.groupValues?.get(1)?.toIntOrNull()
+        }.firstOrNull()
+        Log.d(TAG, "load: title='$title' type='$type' status=$status year=$year poster=$poster")
 
         val caplistHost = caplist.substringAfter("://").substringBefore("/")
         Log.d(TAG, "load: POST a caplist (host=$caplistHost) con token='${token.take(20)}' y ${cookies.size} cookies")
@@ -215,6 +225,7 @@ class MonoschinosProvider : MainAPI() {
             addEpisodes(DubStatus.Subbed, epList)
             showStatus = status
             plot = description
+            this.year = year
             tags = genres
         }
     }

@@ -22,13 +22,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-/**
- * Client for "Byse" behind BYFMS server (filemoon).
- *
- * Port of lib:filemoonextractor's challenge implemented in
- * yuzono/anime-extensions (AniWaves ByseExtractor) — HTTP puro, sin WebView.
- * Flujo: challenge -> ECDSA attest -> PoW captcha/verify -> AES-GCM playback.
- */
 class ByseHttpExtractor {
 
     class ByseSource(val url: String, val label: String?, val subtitles: List<SubtitleFile>)

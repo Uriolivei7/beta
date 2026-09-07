@@ -25,8 +25,6 @@ private const val FM_READY_JS = "h.includes('.m3u8')"
 private const val FM_DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
 private const val FM_AUTOPLAY_JS = "(function(){try{var v=document.querySelector('video');if(v){try{v.muted=true;v.play();}catch(e){}}var b=document.querySelectorAll('button');for(var i=0;i<b.length;i++){if(/play|reproducir|preview/i.test(b[i].textContent||'')||/play/i.test(b[i].className||'')){try{b[i].click();}catch(e){}}}}catch(e){}})()"
 
-// Hook inyectado por evaluateJavascript tras onPageFinished (NO ensucia el DOM, cookies intactas)
-// Reporta tanto URLs de petición como bodies de fetch/XHR al NativeBridge.
 private const val FM_HOOK_JS = """
 (function() {
     function probe(url, text) {
@@ -558,7 +556,6 @@ class MonosFilemoon : ExtractorApi() {
             Log.e(MONOS_TAG, "[FM] HTTP Error: ${e.message}")
         }
 
-        // 2) Flujo Byse HTTP puro (BYFMS server: challenge->ECDSA attest->PoW captcha->AES-GCM playback)
         try {
             val parent = referer ?: url
             val site = runCatching { "https://${java.net.URI(referer ?: url).host}" }.getOrDefault("https://monoschinos.st")
@@ -589,7 +586,6 @@ class MonosFilemoon : ExtractorApi() {
             Log.w(MONOS_TAG, "[FM] Byse HTTP error: ${e.message}")
         }
 
-        // 3) fallback WebView (por si cambia el server)
         val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L, embedHtml = null)
         if (rendered.isNullOrBlank()) {
             Log.w(MONOS_TAG, "[FM] WebView devolvió vacío")
