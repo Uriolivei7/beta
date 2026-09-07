@@ -17,36 +17,40 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.ByteArrayInputStream
 
 private const val MONOS_TAG = "MonosChinos"
 private const val MONOS_SOURCE = "MonosChinos"
 
-private const val FM_READY_JS = "h.includes('.m3u8') || h.includes('.mp4') || h.includes('player_source') || h.includes('sources:')"
+private const val FM_READY_JS = "h.includes('.m3u8')"
 private const val FM_DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
 private const val FM_AUTOPLAY_JS = "(function(){try{var v=document.querySelector('video');if(v){try{v.muted=true;v.play();}catch(e){}}var b=document.querySelectorAll('button');for(var i=0;i<b.length;i++){if(/play|reproducir|preview/i.test(b[i].textContent||'')||/play/i.test(b[i].className||'')){try{b[i].click();}catch(e){}}}}catch(e){}})()"
 
-// Hook que se inyecta en el HTML del SPA para capturar respuestas fetch/XHR con URLs de video
+// Hook inyectado por evaluateJavascript tras onPageFinished (NO ensucia el DOM, cookies intactas)
+// Reporta tanto URLs de petición como bodies de fetch/XHR al NativeBridge.
 private const val FM_HOOK_JS = """
 (function() {
-    var lim = 300000;
     function probe(url, text) {
         try {
-            if (!text || text.length > lim) return;
-            if (text.indexOf('m3u8') >= 0 || text.indexOf('.mp4') >= 0 || text.indexOf('direct_access') >= 0) {
-                NativeBridge.onIntercept(String(url), text);
+            var u = String(url);
+            if (u.indexOf('.m3u8') >= 0 || u.indexOf('.mp4') >= 0) {
+                NativeBridge.onIntercept(u, '');
+                return;
             }
+            if (!text || text.length > 300000) return;
+            if (text.indexOf('m3u8') >= 0 || text.indexOf('.mp4') >= 0 || text.indexOf('direct_access') >= 0) {
+                NativeBridge.onIntercept(u, text);
+            }
+        } catch(e) {}
+    }
+    function capture(res) {
+        try {
+            res.clone().text().then(function(t){ probe(res.url || '', t); });
         } catch(e) {}
     }
     var f0 = window.fetch;
     if (f0) window.fetch = function() {
-        var url = arguments[0];
-        var p = f0.apply(this, arguments);
-        try {
-            p.then(function(res) {
-                try { res.clone().text().then(function(t){ probe(url, t); }); } catch(e){}
-            });
-        } catch(e) {}
+        var url = arguments[0], p = f0.apply(this, arguments);
+        try { p.then(capture); } catch(e) {}
         return p;
     };
     var XHR = window.XMLHttpRequest;
@@ -55,24 +59,12 @@ private const val FM_HOOK_JS = """
         XHR.prototype.open = function(m, u) { this.__u = String(u); return oOpen.apply(this, arguments); };
         XHR.prototype.send = function() {
             var that = this, url = this.__u;
-            try {
-                this.addEventListener('load', function() {
-                    try { probe(url, that.responseText); } catch(e){}
-                });
-            } catch(e) {}
+            try { this.addEventListener('load', function(){ try { probe(url, that.responseText); } catch(e){} }); } catch(e) {}
             return oSend.apply(this, arguments);
         };
     }
 })();
 """
-
-private fun injectHook(html: String): String {
-    if (html.contains("FM_HOOK_INJECTED")) return html
-    val script = "<script id=\"FM_HOOK_INJECTED\">$FM_HOOK_JS</script>"
-    return if (html.contains("</head>")) html.replace("</head>", script + "</head>")
-    else if (html.contains("<body")) html.replaceFirst("<body", script + "<body")
-    else script + html
-}
 
 private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, embedHtml: String? = null): String? {
     return withContext(Dispatchers.Main) {
@@ -96,11 +88,6 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
             val deferred = CompletableDeferred<String?>()
             val polls = java.util.concurrent.atomic.AtomicInteger(0)
             val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
-            var customHtml: String? = null
-            if (!embedHtml.isNullOrBlank()) {
-                customHtml = injectHook(embedHtml)
-                Log.d(MONOS_TAG, "[FM-WebView] hook inyectado (len=${customHtml.length})")
-            }
             fun dump() {
                 if (deferred.isCompleted) return
                 try {
@@ -108,6 +95,11 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 } catch (_: Exception) {
                     if (!deferred.isCompleted) deferred.complete(null)
                 }
+            }
+            fun autoplay() {
+                try {
+                    webView?.evaluateJavascript(FM_AUTOPLAY_JS, null)
+                } catch (_: Exception) {}
             }
             fun pollOnce() {
                 if (deferred.isCompleted) return
@@ -120,11 +112,6 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                     if (!deferred.isCompleted) deferred.complete(null)
                 }
             }
-            fun autoplay() {
-                try {
-                    webView?.evaluateJavascript(FM_AUTOPLAY_JS, null)
-                } catch (_: Exception) {}
-            }
             webView.addJavascriptInterface(object {
                 @JavascriptInterface
                 fun onHtml(html: String) {
@@ -136,7 +123,7 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                     mainHandler.post {
                         if (deferred.isCompleted) return@post
                         if (ready) {
-                            Log.d(MONOS_TAG, "[FM-WebView] listo antes de tiempo, dumpeando")
+                            Log.d(MONOS_TAG, "[FM-WebView] llegó a m3u8 en DOM")
                             dump()
                             return@post
                         }
@@ -152,6 +139,11 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 fun onIntercept(url: String, body: String) {
                     mainHandler.post {
                         if (deferred.isCompleted) return@post
+                        if (url.isNotBlank() && (url.contains(".m3u8") || url.contains(".mp4"))) {
+                            Log.d(MONOS_TAG, "[FM-WebView] hook capturó por URL de petición: ${url.take(140)}")
+                            deferred.complete("__VIDEO__" + url)
+                            return@post
+                        }
                         try {
                             val first = Regex("""https?://[^"'\s<>\\]+?(?:\.m3u8|\.mp4)[^"'\s<>\\]*""").find(body)
                             if (first != null) {
@@ -160,7 +152,7 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                                 deferred.complete("__VIDEO__" + clean)
                                 return@post
                             }
-                            Log.d(MONOS_TAG, "[FM-WebView] hook body sin video (len=${body.length}, snippet=${body.take(160).replace("\n"," ")})")
+                            Log.d(MONOS_TAG, "[FM-WebView] hook body sin video (len=${body.length}, snippet=${body.take(160).replace("\n", " ")})")
                         } catch (_: Exception) {}
                     }
                 }
@@ -170,13 +162,6 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                     try {
                         val reqUrl = request?.url?.toString() ?: return null
                         val u = reqUrl.substringBefore("?")
-                        if (customHtml != null && (u == pageUrl.substringBefore("?") || u.endsWith("/e/" + pageUrl.substringAfterLast("/e/").substringBefore("/")))) {
-                            Log.d(MONOS_TAG, "[FM-WebView] sirviendo HTML inyectado para $u")
-                            return WebResourceResponse(
-                                "text/html", "UTF-8",
-                                ByteArrayInputStream(customHtml.toByteArray(Charsets.UTF_8))
-                            )
-                        }
                         if (u.contains(".m3u8", ignoreCase = true) ||
                             u.contains(".mp4", ignoreCase = true) ||
                             u.contains("/hls/", ignoreCase = true) ||
@@ -192,6 +177,7 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    try { webView?.evaluateJavascript(FM_HOOK_JS, null) } catch (_: Exception) {}
                     polls.set(0)
                     autoplay()
                     if (!deferred.isCompleted) {
@@ -557,8 +543,9 @@ class MonosFilemoon : ExtractorApi() {
         callback: (ExtractorLink) -> Unit,
     ) {
         Log.d(MONOS_TAG, "[FM] URL: $url")
-        var renderedFetched = false
-        var embedHtml: String? = null
+        var found = false
+
+        // 1) HTTP parse rápido (si aún sirve m3u8 directo)
         try {
             val resp = app.get(url, headers = mapOf(
                 "User-Agent" to USER_AGENT,
@@ -567,13 +554,43 @@ class MonosFilemoon : ExtractorApi() {
             ), timeout = 20000L)
             Log.d(MONOS_TAG, "[FM] HTTP ${resp.code} len=${resp.text.length}")
             if (parseHtml(resp.text, MONOS_SOURCE, callback)) return
-            embedHtml = resp.text
-            Log.w(MONOS_TAG, "[FM] sin m3u8/mp4 vía HTTP (len=${resp.text.length}), probable SPA Byse -> WebView")
         } catch (e: Exception) {
             Log.e(MONOS_TAG, "[FM] HTTP Error: ${e.message}")
         }
 
-        val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L, embedHtml = embedHtml)
+        // 2) Flujo Byse HTTP puro (BYFMS server: challenge->ECDSA attest->PoW captcha->AES-GCM playback)
+        try {
+            val parent = referer ?: url
+            val site = runCatching { "https://${java.net.URI(referer ?: url).host}" }.getOrDefault("https://monoschinos.st")
+            Log.d(MONOS_TAG, "[FM] intentando Byse HTTP (site=$site)")
+            val sources = ByseHttpExtractor().extract(url, parent, site)
+            Log.d(MONOS_TAG, "[FM] Byse sources=${sources.size}")
+            for (s in sources) {
+                Log.d(MONOS_TAG, "[FM] Byse source: ${s.url.take(140)} label=${s.label}")
+                for (sub in s.subtitles) subtitleCallback(sub)
+                callback.invoke(
+                    newExtractorLink(
+                        MONOS_SOURCE,
+                        "$MONOS_SOURCE - Filemoon${s.label?.let { " - $it" } ?: ""}",
+                        s.url,
+                        if (s.url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                    ) {
+                        this.referer = site
+                        this.headers = mapOf("Origin" to site)
+                    }
+                )
+                found = true
+            }
+            if (found) {
+                Log.d(MONOS_TAG, "[FM] done via Byse HTTP")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(MONOS_TAG, "[FM] Byse HTTP error: ${e.message}")
+        }
+
+        // 3) fallback WebView (por si cambia el server)
+        val rendered = renderViaWebView(url, referer ?: url, waitMs = 15000L, embedHtml = null)
         if (rendered.isNullOrBlank()) {
             Log.w(MONOS_TAG, "[FM] WebView devolvió vacío")
             return
@@ -586,15 +603,14 @@ class MonosFilemoon : ExtractorApi() {
                 this.referer = mainUrl
                 this.headers = mapOf("Origin" to mainUrl)
             })
-            renderedFetched = true
             return
         }
         Log.d(MONOS_TAG, "[FM] WebView HTML len=${rendered.length}")
-        val found = parseHtml(rendered, MONOS_SOURCE, callback, isWebView = true)
-        if (!found) {
+        val wvFound = parseHtml(rendered, MONOS_SOURCE, callback, isWebView = true)
+        if (!wvFound) {
             Log.w(MONOS_TAG, "[FM] WebView sin m3u8/mp4, snippet=${rendered.take(300).replace("\n", " ")}")
         }
-        Log.d(MONOS_TAG, "[FM] done renderedFetched=$renderedFetched found=$found")
+        Log.d(MONOS_TAG, "[FM] done found=$wvFound")
     }
 
     suspend fun parseHtml(
