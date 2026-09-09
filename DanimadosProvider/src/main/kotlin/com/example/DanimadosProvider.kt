@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import okhttp3.Interceptor
 import org.jsoup.nodes.Element
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -33,13 +34,14 @@ class DanimadosProvider : MainAPI() {
             val keywords = match.groupValues[4].split("|")
             if (count != keywords.size) return null
             var result = packed
-            for (i in 0 until count) {
-                val kw = keywords[i]
+            for (i in count - 1 downTo 0) {
+                val kw = keywords.getOrElse(i) { "" }
                 if (kw.isNotEmpty()) {
-                    result = result.replace(Regex("\\b${i.toString(base)}\\b"), kw)
+                    val keyRegex = Regex("\\b${Regex.escape(i.toString(base))}\\b")
+                    result = result.replace(keyRegex, Regex.escapeReplacement(kw))
                 }
             }
-            return result
+            return result.replace("\\'", "'")
         }
 
         private fun hexToBytes(hex: String): ByteArray {
@@ -182,6 +184,28 @@ class DanimadosProvider : MainAPI() {
     // Hosts con página challenge JS que loadExtractor ya maneja; fetch directo es inútil
     private val challengeHosts = listOf("voe.", "hglink", "streamwish", "johnbeyondnation")
 
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val cdnDomains = listOf("acek-cdn", "dramiyos", "vidhidepro", "vidhide", "premilkyway", "cyou")
+        val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/")
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            val isCdn = cdnDomains.any { url.contains(it, ignoreCase = true) } ||
+                cdnPaths.any { url.contains(it, ignoreCase = true) }
+            if (!isCdn) return@Interceptor chain.proceed(request)
+
+            Log.d("Danimados", "[intercept] CDN request: ${url.take(120)}")
+            val newRequest = request.newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
+                .header("Referer", extractorLink.referer ?: BASE_URL)
+                .header("Origin", runCatching { java.net.URL(url).let { "${it.protocol}://${it.host}" } }.getOrDefault(BASE_URL))
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .build()
+            chain.proceed(newRequest)
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -254,6 +278,35 @@ class DanimadosProvider : MainAPI() {
                 else -> "Server$nume"
             }
             Log.d("Danimados", "loadLinks $embedLabel: $videoUrl")
+
+            val customHandled = try {
+                when {
+                    videoUrl.contains("bysedikamoum.com") || videoUrl.contains("4meplayer.pro") -> {
+                        Log.d("Danimados", "loadLinks Byse -> flujo HTTP")
+                        tryByseHttpDanimados(videoUrl, data, subtitleCallback, callback)
+                    }
+
+                    videoUrl.contains("callistanise.com") || videoUrl.contains("minochinos.com") ||
+                        videoUrl.contains("vidhidepro") || videoUrl.contains("vidhide") -> {
+                        Log.d("Danimados", "loadLinks VidHide -> unpack links{hls}")
+                        tryVidHideProExtractDanimados(videoUrl, data, subtitleCallback, callback)
+                    }
+
+                    videoUrl.contains("voe.") -> {
+                        Log.d("Danimados", "loadLinks VOE -> F7 + mirrors")
+                        tryVoeExtractDanimados(videoUrl, data, subtitleCallback, callback)
+                    }
+
+                    else -> false
+                }
+            } catch (e: Exception) {
+                Log.e("Danimados", "loadLinks $embedLabel custom fallo: ${e.message}")
+                false
+            }
+            if (customHandled) {
+                anySuccess = true
+                continue
+            }
 
             val extracted = try {
                 loadExtractor(videoUrl, data, subtitleCallback, callback)
