@@ -161,6 +161,13 @@ class UniqueStreamProvider : MainAPI() {
     }
 
     private val keyRegex = Regex("/([A-Za-z0-9]+)_[^/]+/master\\.m3u8")
+    private val nfMasterRegex = Regex("/episode/[^/]+/[^/]+/([^/]+)/master_[^/]+\\.m3u8")
+    private val nfKeyRegex = Regex("/episode/[^/]+/[^/]+/([^/]+)/(?:audio|video)/keys/key\\.bin")
+
+    private fun normalizeNfMediaId(segment: String?): String? {
+        if (segment == null) return null
+        return Regex("^nf_(\\d+)$").find(segment)?.groupValues?.get(1) ?: segment
+    }
 
     private fun sha256(data: ByteArray): ByteArray =
         java.security.MessageDigest.getInstance("SHA-256").digest(data)
@@ -185,7 +192,9 @@ class UniqueStreamProvider : MainAPI() {
         val linkUrl = extractorLink.url
         val mediaIdFromLink = keyRegex.find(linkUrl)?.groupValues?.get(1)
             ?: Regex("/([0-9a-f]{32})_[^/]+/").find(linkUrl)?.groupValues?.get(1)
+            ?: normalizeNfMediaId(nfMasterRegex.find(linkUrl)?.groupValues?.get(1))
         val mediaIdFromKeyUrl = Regex("/([A-Za-z0-9]+)_[^/]+/keys/key\\.bin").find(linkUrl)?.groupValues?.get(1)
+            ?: normalizeNfMediaId(nfKeyRegex.find(linkUrl)?.groupValues?.get(1))
         var mediaId = mediaIdFromLink ?: mediaIdFromKeyUrl
 
         val fallbackKey: ByteArray? = try {
@@ -215,6 +224,7 @@ class UniqueStreamProvider : MainAPI() {
                     if (url.contains("keys/") && url.contains("key.bin")) {
                         if (mediaId == null) {
                             mediaId = Regex("/([A-Za-z0-9]+)_[^/]+/keys/key\\.bin").find(url)?.groupValues?.get(1)
+                                ?: normalizeNfMediaId(nfKeyRegex.find(url)?.groupValues?.get(1))
                         }
                         if (mediaId != null) {
                             val theMediaId = mediaId!!
