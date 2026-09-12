@@ -201,64 +201,69 @@ class UniqueStreamProvider : MainAPI() {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
                 val url = request.url.toString()
+                val host = request.url.host
+                val path = request.url.encodedPath
+                val tracePlaylist = path.endsWith(".m3u8")
 
-                if (request.url.host == "yte.mediacache.cc") {
-                    return try {
+                return try {
+                    if (host == "yte.mediacache.cc" || (host.endsWith("mediacache.cc") && tracePlaylist)) {
                         val response = chain.proceed(request)
-                        Log.d(TAG, "YTE ${request.method} ${request.url.encodedPath} -> ${response.code} ${response.header("Content-Type", "?")}")
-                        response
-                    } catch (e: Exception) {
-                        Log.w(TAG, "YTE ${request.method} ${request.url.encodedPath} falló: ${e.message}")
-                        throw e
+                        Log.d(TAG, "CDN ${request.method} $host$path -> ${response.code} ${response.header("Content-Type", "?")}")
+                        return response
                     }
-                }
 
-                if (url.contains("keys/") && url.contains("key.bin")) {
-                    if (mediaId == null) {
-                        mediaId = Regex("/([A-Za-z0-9]+)_[^/]+/keys/key\\.bin").find(url)?.groupValues?.get(1)
-                    }
-                    if (mediaId != null) {
-                        val theMediaId = mediaId!!
-                        val realRequest = request.newBuilder()
-                            .header("x-am-media-id", theMediaId)
-                            .build()
-                        val rawBody = try {
-                            chain.proceed(realRequest).body?.bytes()
-                        } catch (e: Exception) {
-                            Log.w(TAG, "key.bin fetch error: ${e.message}")
-                            null
+                    if (url.contains("keys/") && url.contains("key.bin")) {
+                        if (mediaId == null) {
+                            mediaId = Regex("/([A-Za-z0-9]+)_[^/]+/keys/key\\.bin").find(url)?.groupValues?.get(1)
                         }
-
-                        val derivedKey: ByteArray? = rawBody?.let { body ->
-                            val b64 = String(body).trim()
-                            val encrypted = try {
-                                android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        if (mediaId != null) {
+                            val theMediaId = mediaId!!
+                            val realRequest = request.newBuilder()
+                                .header("x-am-media-id", theMediaId)
+                                .build()
+                            val rawBody = try {
+                                chain.proceed(realRequest).body?.bytes()
                             } catch (e: Exception) {
-                                Log.w(TAG, "key.bin base64 error: ${e.message}")
+                                Log.w(TAG, "key.bin fetch error: ${e.message}")
                                 null
                             }
-                            if (encrypted != null) {
-                                val dek = sha256("key$theMediaId".toByteArray()).copyOfRange(0, 16)
-                                val div = sha256("iv$theMediaId".toByteArray()).copyOfRange(0, 16)
-                                aesCbcDecrypt(encrypted, dek, div)
-                            } else null
-                        }
 
-                        val realKey = derivedKey ?: fallbackKey
-                        if (realKey != null) {
-                            Log.d(TAG, "Interceptando key.bin -> ${realKey.toHex()} (derived=${derivedKey != null})")
-                            return Response.Builder()
-                                .request(request)
-                                .protocol(okhttp3.Protocol.HTTP_1_1)
-                                .code(200)
-                                .message("OK")
-                                .header("Content-Type", "application/octet-stream")
-                                .body(ResponseBody.create("application/octet-stream".toMediaTypeOrNull(), realKey))
-                                .build()
+                            val derivedKey: ByteArray? = rawBody?.let { body ->
+                                val b64 = String(body).trim()
+                                val encrypted = try {
+                                    android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "key.bin base64 error: ${e.message}")
+                                    null
+                                }
+                                if (encrypted != null) {
+                                    val dek = sha256("key$theMediaId".toByteArray()).copyOfRange(0, 16)
+                                    val div = sha256("iv$theMediaId".toByteArray()).copyOfRange(0, 16)
+                                    aesCbcDecrypt(encrypted, dek, div)
+                                } else null
+                            }
+
+                            val realKey = derivedKey ?: fallbackKey
+                            if (realKey != null) {
+                                Log.d(TAG, "Interceptando key.bin -> ${realKey.toHex()} (derived=${derivedKey != null})")
+                                return Response.Builder()
+                                    .request(request)
+                                    .protocol(okhttp3.Protocol.HTTP_1_1)
+                                    .code(200)
+                                    .message("OK")
+                                    .header("Content-Type", "application/octet-stream")
+                                    .body(ResponseBody.create("application/octet-stream".toMediaTypeOrNull(), realKey))
+                                    .build()
+                            }
                         }
                     }
+                    return chain.proceed(request)
+                } catch (e: Exception) {
+                    if (host.endsWith("mediacache.cc")) {
+                        Log.w(TAG, "CDN ${request.method} $host$path falló: ${e.message}")
+                    }
+                    throw e
                 }
-                return chain.proceed(request)
             }
         }
     }
