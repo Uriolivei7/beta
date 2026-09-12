@@ -202,6 +202,17 @@ class UniqueStreamProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
+                if (request.url.host == "yte.mediacache.cc") {
+                    return try {
+                        val response = chain.proceed(request)
+                        Log.d(TAG, "YTE ${request.method} ${request.url.encodedPath} -> ${response.code} ${response.header("Content-Type", "?")}")
+                        response
+                    } catch (e: Exception) {
+                        Log.w(TAG, "YTE ${request.method} ${request.url.encodedPath} falló: ${e.message}")
+                        throw e
+                    }
+                }
+
                 if (url.contains("keys/") && url.contains("key.bin")) {
                     if (mediaId == null) {
                         mediaId = Regex("/([A-Za-z0-9]+)_[^/]+/keys/key\\.bin").find(url)?.groupValues?.get(1)
@@ -256,8 +267,6 @@ class UniqueStreamProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
-            Log.d(TAG, "Cargando MainPage...")
-
             val sections = listOf(
                 Triple("Nuevos", "$apiUrl/videos/new?limit=20", false),
                 Triple("Populares", "$apiUrl/videos/popular?limit=20", false),
@@ -277,7 +286,6 @@ class UniqueStreamProvider : MainAPI() {
                 if (now - timestamp > 10 * 60 * 1000L) null else list
             }
             if (cachedLists.size == sections.size) {
-                Log.d(TAG, "MainPage desde caché (${cachedLists.size} secciones)")
                 return newHomePageResponse(cachedLists, false)
             }
 
@@ -315,7 +323,6 @@ class UniqueStreamProvider : MainAPI() {
                 }.mapNotNull { it.await() }
             }
 
-            Log.d(TAG, "Secciones cargadas: ${homeItems.size}")
             newHomePageResponse(homeItems, false)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -346,7 +353,6 @@ class UniqueStreamProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val cleanId = url.split("/").lastOrNull { it.isNotBlank() } ?: url
-        Log.d(TAG, "Cargando contenido con ID: $cleanId")
 
         val isMovie = if (cleanId in movieIds) {
             true
@@ -361,6 +367,7 @@ class UniqueStreamProvider : MainAPI() {
             seriesText = readSeriesCache(cleanId)
         }
         if (seriesText == null) {
+            var lastSeriesError: String? = null
             repeat(3) { i ->
                 try {
                     val response = app.get("$apiUrl/series/$cleanId", headers = baseHeaders, timeout = 30L)
@@ -369,13 +376,16 @@ class UniqueStreamProvider : MainAPI() {
                         writeSeriesCache(cleanId, seriesText!!)
                         return@repeat
                     }
-                    Log.w(TAG, "series HTTP ${response.code} (intento ${i + 1})")
+                    lastSeriesError = "HTTP ${response.code}"
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w(TAG, "series fetch error (intento ${i + 1}): ${e.message}")
+                    lastSeriesError = e.message
                 }
                 if (i < 2) delay(1500L * (i + 1))
+            }
+            if (seriesText == null) {
+                Log.e(TAG, "Serie $cleanId sin detalle (${lastSeriesError ?: "error desconocido"})")
             }
         }
         val details = seriesCache[cleanId] ?: seriesText?.let {
@@ -418,7 +428,9 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        Log.d(TAG, "Total episodios cargados: ${episodesList.size}")
+        if (episodesList.isEmpty()) {
+            Log.w(TAG, "Serie $cleanId sin episodios")
+        }
 
         val audioText = details.audio_locales?.joinToString(", ") { localeLabel(it) }
         val subText = details.subtitle_locales?.joinToString(", ") { localeLabel(it) }
@@ -457,13 +469,12 @@ class UniqueStreamProvider : MainAPI() {
     }
 
     private suspend fun loadMovie(id: String, url: String): LoadResponse {
-        Log.d(TAG, "Cargando película con ID: $id")
-
         var movieText: String? = movieCache[id]?.let { null }
         if (movieText == null) {
             movieText = readCacheFile(movieCacheFile(id))
         }
         if (movieText == null) {
+            var lastMovieError: String? = null
             repeat(3) { i ->
                 try {
                     val response = app.get("$apiUrl/movie/$id", headers = baseHeaders, timeout = 30L)
@@ -472,13 +483,16 @@ class UniqueStreamProvider : MainAPI() {
                         writeCacheFile(movieCacheFile(id), movieText!!)
                         return@repeat
                     }
-                    Log.w(TAG, "movie HTTP ${response.code} (intento ${i + 1})")
+                    lastMovieError = "HTTP ${response.code}"
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w(TAG, "movie fetch error (intento ${i + 1}): ${e.message}")
+                    lastMovieError = e.message
                 }
                 if (i < 2) delay(1500L * (i + 1))
+            }
+            if (movieText == null) {
+                Log.e(TAG, "Película $id sin detalle (${lastMovieError ?: "error desconocido"})")
             }
         }
         val details = movieCache[id] ?: movieText?.let {
@@ -511,6 +525,8 @@ class UniqueStreamProvider : MainAPI() {
         timeout: Long = 45L
     ): String? {
         var lastError: Exception? = null
+        var lastStatus = 0
+        var lastBodyKind: String? = null
         repeat(attempts) { i ->
             val permit = try {
                 apiSemaphore.acquire()
@@ -525,22 +541,21 @@ class UniqueStreamProvider : MainAPI() {
                     if (response.isSuccessful) {
                         val text = response.text
                         if (text.trim().startsWith("[")) return text
-                        Log.w(TAG, "getWithRetry respuesta no-JSON en $url (intento ${i + 1})")
+                        lastBodyKind = "no-JSON"
                     } else {
-                        Log.w(TAG, "getWithRetry HTTP ${response.code} en $url (intento ${i + 1})")
+                        lastStatus = response.code
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 lastError = e
-                Log.w(TAG, "getWithRetry error en $url (intento ${i + 1}): ${e.message}")
             } finally {
                 if (permit) apiSemaphore.release()
             }
             if (i < attempts - 1) delay(1500L * (i + 1))
         }
-        Log.e(TAG, "getWithRetry falló tras $attempts intentos: $url (${lastError?.message})")
+        Log.e(TAG, "getWithRetry falló tras $attempts intentos: $url (status=$lastStatus body=$lastBodyKind error=${lastError?.message})")
         return null
     }
 
@@ -548,7 +563,6 @@ class UniqueStreamProvider : MainAPI() {
         val seasonId = season.content_id
         episodeCache[seasonId]?.let { return it }
         readSeasonCache(seasonId)?.let { cached ->
-            Log.d(TAG, "loadSeasonEpisodes($seasonId): desde disco (${cached.size})")
             episodeCache[seasonId] = cached
             return cached
         }
@@ -578,8 +592,6 @@ class UniqueStreamProvider : MainAPI() {
                 pageResults.add(job.await())
             }
         }
-
-        Log.d(TAG, "loadSeasonEpisodes($seasonId): pages=$totalPages count=$episodeCount")
 
         val allEps = pageResults.flatten().toMutableList()
 
@@ -655,9 +667,7 @@ class UniqueStreamProvider : MainAPI() {
             data.trim()
         }
 
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "Episode ID: $episodeId")
-        Log.d(TAG, "========================================")
+        Log.d(TAG, "Episode $episodeId")
 
         val isMovie = episodeId in movieIds || probeContentType(episodeId)
 
@@ -683,14 +693,7 @@ class UniqueStreamProvider : MainAPI() {
                     val response = app.get(mediaUrl, headers = apiHeaders, timeout = 15L)
 
                     if (response.code == 200) {
-                        Log.d(TAG, "✓ API 200 para $locale")
-
                         val videoData = AppUtils.parseJson<VideoResponse>(response.text)
-
-                        Log.d(TAG, "DEBUG - DASH disponible: ${videoData.versions?.dash != null}")
-                        Log.d(TAG, "DEBUG - HLS disponible: ${videoData.versions?.hls != null}")
-                        Log.d(TAG, "DEBUG - Cantidad DASH: ${videoData.versions?.dash?.size ?: 0}")
-                        Log.d(TAG, "DEBUG - Cantidad HLS: ${videoData.versions?.hls?.size ?: 0}")
 
                         val dashVersions = videoData.versions?.dash ?: emptyList()
                         val hlsVersions = mutableListOf<HlsVersion>()
@@ -699,10 +702,8 @@ class UniqueStreamProvider : MainAPI() {
 
                         // DASH
                         if (dashVersions.isNotEmpty()) {
-                            Log.d(TAG, "Procesando ${dashVersions.size} versiones DASH")
                             dashVersions.forEach { dashVersion ->
                                 if (dashVersion.playlist.isNotBlank()) {
-                                    Log.d(TAG, "✓ DASH ${dashVersion.locale}")
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
@@ -725,7 +726,6 @@ class UniqueStreamProvider : MainAPI() {
                         }
 
                         if (hlsVersions.isNotEmpty()) {
-                            Log.d(TAG, "Procesando ${hlsVersions.size} versiones HLS")
                             val commonHeaders = mapOf(
                                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                                 "Accept" to "*/*",
@@ -736,7 +736,16 @@ class UniqueStreamProvider : MainAPI() {
                                 if (hlsVersion.playlist.isNotBlank()) {
                                     val masterUrl = hlsVersion.playlist
                                     val localeTag = hlsVersion.locale.uppercase()
-                                    Log.d(TAG, "Master URL: $masterUrl")
+                                    if (masterUrl.contains("yte.mediacache.cc/yt/")) {
+                                        try {
+                                            val probe = app.get(masterUrl, headers = commonHeaders, timeout = 15L)
+                                            val probeBody = probe.text
+                                            val variants = Regex("#EXT-X-STREAM-INF").findAll(probeBody).count()
+                                            Log.d(TAG, "YTE probe master -> ${probe.code} len=${probeBody.length} variants=$variants")
+                                        } catch (e: Exception) {
+                                            Log.w(TAG, "YTE probe master falló: ${e.message}")
+                                        }
+                                    }
                                     callback(
                                         newExtractorLink(
                                             source = this.name,
@@ -753,7 +762,6 @@ class UniqueStreamProvider : MainAPI() {
 
                                     hlsVersion.subtitles?.forEach { sub ->
                                         if (sub.url.isNotBlank()) {
-                                            Log.d(TAG, "✓ Subtitle ${sub.language}: ${sub.url}")
                                             subtitleCallback(newSubtitleFile(sub.language, sub.url))
                                         }
                                     }
@@ -761,7 +769,6 @@ class UniqueStreamProvider : MainAPI() {
                                     hlsVersion.hard_subs?.forEach { hs ->
                                         if (hs.playlist.isNotBlank()) {
                                             val hsUrl = hs.playlist
-                                            Log.d(TAG, "✓ HardSub ${hs.locale}: $hsUrl")
                                             callback(
                                                 newExtractorLink(
                                                     source = this.name,
@@ -782,6 +789,8 @@ class UniqueStreamProvider : MainAPI() {
                         }
 
                         if (linksEnviados > 0) break
+                    } else {
+                        Log.w(TAG, "Episode $episodeId: media HTTP ${response.code} ($locale)")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error con locale $locale: ${e.message}")
@@ -789,9 +798,9 @@ class UniqueStreamProvider : MainAPI() {
                 }
             }
 
-            Log.d(TAG, "========================================")
-            Log.d(TAG, "TOTAL LINKS: $linksEnviados")
-            Log.d(TAG, "========================================")
+            if (linksEnviados == 0) {
+                Log.w(TAG, "Episode $episodeId: sin links")
+            }
 
             linksEnviados > 0
 
