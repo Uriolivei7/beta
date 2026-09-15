@@ -284,6 +284,7 @@ class TelelibreProvider : MainAPI() {
                 java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
                 this.referer = finalReferer
                 this.headers = headers
+                this.kty = "oct"
                 this.kid = hexToB64Url(kid)
                 this.key = hexToB64Url(key)
             })
@@ -400,6 +401,7 @@ class TelelibreProvider : MainAPI() {
                     java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
                     this.referer = referer
                     this.headers = desktopHeaders + mapOf("Referer" to referer)
+                    this.kty = "oct"
                     this.kid = hexToB64Url(finalKeyId)
                     this.key = hexToB64Url(finalKey)
                 })
