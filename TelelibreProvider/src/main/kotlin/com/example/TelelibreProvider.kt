@@ -28,6 +28,27 @@ class TelelibreProvider : MainAPI() {
         "Accept-Language" to "es-AR,es;q=0.9"
     )
 
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): okhttp3.Interceptor? {
+        return okhttp3.Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            val host = request.url.host
+            if (!host.contains("sensa.com.ar") && !host.contains("cvattv.com.ar")) {
+                return@Interceptor chain.proceed(request)
+            }
+            // Diagnóstico: MPD suele dar 200; si los segmentos dan 401/403 el live se queda negro
+            return@Interceptor try {
+                val response = chain.proceed(request)
+                val path = request.url.encodedPath.substringAfterLast("/")
+                Log.d("Telelibre", "[cdn] ${request.method} $host/$path -> ${response.code} ${response.header("Content-Type", "?")}")
+                response
+            } catch (e: Exception) {
+                Log.w("Telelibre", "[cdn] $host fallo: ${e.message}")
+                throw e
+            }
+        }
+    }
+
     private suspend fun safeGet(url: String, referer: String? = null): String? {
         return try {
             val h = if (referer != null) desktopHeaders + mapOf("Referer" to referer) else desktopHeaders
@@ -255,6 +276,8 @@ class TelelibreProvider : MainAPI() {
         val headers = desktopHeaders.toMutableMap()
         headers["Referer"] = finalReferer
         if (origin != null) headers["Origin"] = origin!!
+        // webtoken: cabecera que el CDN sensa espera en MPD y segmentos
+        headers["webtoken"] = "1.0"
         Log.d("Telelibre", "sensa DASH mpd=$mpd kid=$kid")
         if (kid != null && key != null) {
             callback(newDrmExtractorLink(name, "$name - DASH", mpd, ExtractorLinkType.DASH,
