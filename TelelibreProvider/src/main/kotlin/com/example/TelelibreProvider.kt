@@ -89,9 +89,11 @@ class TelelibreProvider : MainAPI() {
         }
         val html = safeGet(url) ?: return null
         val doc = Jsoup.parse(html)
-        val title = doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotBlank() && !it.contains("Tele-libre", true) }
-            ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()?.takeIf { it.length < 60 && !it.contains("Tele-libre", true) }
-            ?: "Canal"
+        val title = cleanTitle(
+            doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotBlank() && !it.contains("Tele-libre", true) }
+                ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()?.takeIf { it.length < 60 && !it.contains("Tele-libre", true) }
+                ?: "Canal"
+        )
         val poster = doc.selectFirst("img.imgCanal")?.attr("src")?.let { fixUrl(it) }
             ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
         val plot = doc.selectFirst("p.card-text")?.text()?.take(500)
@@ -207,6 +209,30 @@ class TelelibreProvider : MainAPI() {
         return false
     }
 
+    private fun hexToB64Url(hex: String): String {
+        val clean = hex.trim().removePrefix("0x")
+        // Solo convierte si es hex válido de 16 bytes (32 chars); si no, se pasa tal cual
+        if (clean.length != 32 || clean.any { it !in '0'..'9' && it !in 'a'..'f' && it !in 'A'..'F' }) {
+            return clean
+        }
+        val bytes = ByteArray(16) { i ->
+            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+        return android.util.Base64.encodeToString(
+            bytes,
+            android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+        )
+    }
+
+    private fun cleanTitle(t: String): String {
+        var s = t.trim()
+        s = s.replace(Regex("^Ver\\s+", RegexOption.IGNORE_CASE), "")
+        s = s.replace(Regex("\\s+en VIVO( Online)?( Por internet)?\\s*$", RegexOption.IGNORE_CASE), "")
+        s = s.replace(Regex("\\s+Online Por internet\\s*$", RegexOption.IGNORE_CASE), "")
+        s = s.substringBefore("|").trim()
+        return s.ifBlank { t.trim() }
+    }
+
     private suspend fun handleSensaConfig(html: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
         // tele-libre.live embed: var config = {"url":"...mpd","k1":"kid","k2":"key"} + var HEADERS='b64'
         val cfgRaw = Regex("""var config\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)
@@ -235,8 +261,8 @@ class TelelibreProvider : MainAPI() {
                 java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
                 this.referer = finalReferer
                 this.headers = headers
-                this.kid = kid
-                this.key = key
+                this.kid = hexToB64Url(kid)
+                this.key = hexToB64Url(key)
             })
         } else {
             Log.w("Telelibre", "sensa sin clearkey, emitiendo MPD sin keys")
@@ -351,8 +377,8 @@ class TelelibreProvider : MainAPI() {
                     java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
                     this.referer = referer
                     this.headers = desktopHeaders + mapOf("Referer" to referer)
-                    this.kid = finalKeyId
-                    this.key = finalKey
+                    this.kid = hexToB64Url(finalKeyId)
+                    this.key = hexToB64Url(finalKey)
                 })
                 return true
             } else {
