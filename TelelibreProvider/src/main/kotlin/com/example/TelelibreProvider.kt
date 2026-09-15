@@ -1,17 +1,19 @@
 package com.example
 
+import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 
 class TelelibreProvider : MainAPI() {
     companion object {
         var pluginContext: android.content.Context? = null
     }
-    override var mainUrl = "https://tele-libre.buzz"
+    override var mainUrl = "https://tele-libre.live"
     override var name = "TeleLibre"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "mx"
@@ -150,6 +152,8 @@ class TelelibreProvider : MainAPI() {
         var depth = 0
         while (html != null && depth < 8) {
             depth++
+            // Nuevo tele-libre.live: var config = {"url": MPD, "k1": kid, "k2": key} (sensa ClearKey)
+            if (handleSensaConfig(html, nextUrl, callback)) return true
             // Buscar playbackURL directo (la18hd)
             val playback = Regex("""playbackURL\s*=\s*["']([^"']+\.m3u8[^"']*)["']""").find(html)?.groupValues?.get(1)
             if (playback != null) {
@@ -181,7 +185,7 @@ class TelelibreProvider : MainAPI() {
                     nextIframe.startsWith("http") -> nextIframe
                     nextIframe.startsWith("/") -> {
                         val base = try { val u = java.net.URL(nextUrl); "${u.protocol}://${u.host}" } catch (_: Exception) { mainUrl }
-                        if (nextIframe.startsWith("/mpd")) "https://tele-libre.buzz$nextIframe" else "$base$nextIframe"
+                        if (nextIframe.startsWith("/mpd")) "$mainUrl$nextIframe" else "$base$nextIframe"
                     }
                     else -> nextIframe
                 }
@@ -201,6 +205,47 @@ class TelelibreProvider : MainAPI() {
         }
         Log.w("Telelibre", "sin m3u8 tras $depth pasos, url=$nextUrl")
         return false
+    }
+
+    private suspend fun handleSensaConfig(html: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
+        // tele-libre.live embed: var config = {"url":"...mpd","k1":"kid","k2":"key"} + var HEADERS='b64'
+        val cfgRaw = Regex("""var config\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)
+            ?: return false
+        val mpd = Regex(""""url"\s*:\s*"([^"]+)"""").find(cfgRaw)?.groupValues?.get(1)?.replace("\\/", "/")
+            ?: return false
+        if (!mpd.contains(".mpd")) return false
+        val kid = Regex(""""k1"\s*:\s*"([^"]+)"""").find(cfgRaw)?.groupValues?.get(1)
+        val key = Regex(""""k2"\s*:\s*"([^"]+)"""").find(cfgRaw)?.groupValues?.get(1)
+        var origin: String? = null
+        var ref: String? = null
+        Regex("""var HEADERS\s*=\s*'([^']+)'""").find(html)?.groupValues?.get(1)?.let { b64 ->
+            try {
+                val json = JSONObject(String(Base64.decode(b64, Base64.DEFAULT)))
+                origin = json.optString("origin").takeIf { it.isNotBlank() }
+                ref = json.optString("referer").takeIf { it.isNotBlank() }
+            } catch (_: Exception) {}
+        }
+        val finalReferer = ref ?: referer
+        val headers = desktopHeaders.toMutableMap()
+        headers["Referer"] = finalReferer
+        if (origin != null) headers["Origin"] = origin!!
+        Log.d("Telelibre", "sensa DASH mpd=$mpd kid=$kid")
+        if (kid != null && key != null) {
+            callback(newDrmExtractorLink(name, "$name - DASH", mpd, ExtractorLinkType.DASH,
+                java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
+                this.referer = finalReferer
+                this.headers = headers
+                this.kid = kid
+                this.key = key
+            })
+        } else {
+            Log.w("Telelibre", "sensa sin clearkey, emitiendo MPD sin keys")
+            callback(newExtractorLink(name, "$name - DASH", mpd, ExtractorLinkType.DASH) {
+                this.referer = finalReferer
+                this.headers = headers
+            })
+        }
+        return true
     }
 
     private suspend fun resolveZonatvChain(url: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
@@ -302,9 +347,12 @@ class TelelibreProvider : MainAPI() {
             }
             if (finalKeyId != null && finalKey != null) {
                 Log.d("Telelibre", "ClearKey $finalKeyId:$finalKey for $decodedGet mpdCheck=$mpdCheck")
-                callback(newExtractorLink(name, "$name - DASH", mpdUrl, ExtractorLinkType.DASH) {
+                callback(newDrmExtractorLink(name, "$name - DASH", mpdUrl, ExtractorLinkType.DASH,
+                    java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
                     this.referer = referer
                     this.headers = desktopHeaders + mapOf("Referer" to referer)
+                    this.kid = finalKeyId
+                    this.key = finalKey
                 })
                 return true
             } else {

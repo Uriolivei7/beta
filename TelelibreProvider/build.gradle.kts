@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 1
+version = 2
 
 cloudstream {
     language = "mx"
@@ -8,5 +8,5 @@ cloudstream {
     tvTypes = listOf(
         "Live",
     )
-    iconUrl = "https://tele-libre.buzz/img/logo.png"
+    iconUrl = "https://tele-libre.live/img/logo.png"
 }
