@@ -95,18 +95,18 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
   "status": 1,
-  "version": 1,
+  "version": 2,
   "apiVersion": 1,
   "name": "TeleLibre",
   "internalName": "TelelibreProvider",
   "authors": [
    "Ranita"
   ],
-  "description": "https://tele-libre.buzz/",
+  "description": "https://tele-libre.live/",
   "tvTypes": [
    "Live"
   ],
-  "iconUrl": "https://tele-libre.buzz/favicon.ico",
+  "iconUrl": "https://tele-libre.live/favicon.ico",
   "language": "mx",
   "fileSize": 23000
  },
@@ -1261,6 +1261,6 @@
   ],
   "iconUrl": "https://flixlatam.com/themes/dooplay/assets/img/favicon.png ",
   "language": "mx",
-  "fileSize": 0
+  "fileSize": 30000
  }
 ]
