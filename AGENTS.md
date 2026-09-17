@@ -971,3 +971,27 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Plugin: `:RetrotveProvider:make` → `RetrotveProvider/build/RetrotveProvider.cs3` (101190 B)
 - `plugins.json`: version 74, fileSize 99071 → 101190 (JSON válido, 66 entradas)
 - ⏸️ **Pendiente**: instalar cs3 v74 y probar: (1) ep1 con seek AVANTE — log `On-demand UFA fetch chunk N` y reproducción sin 2001; (2) ep5 — el probe puede tardar pero el play debe continuar con `On-demand UFA fetch chunk 35+` según llegue el playhead.
+
+---
+
+## TelelibreProvider - Migracion a tele-libre.live + ClearKey sensa (15 Sep 2026)
+
+### Dominio nuevo
+- `mainUrl` cambiado `tele-libre.buzz` -> `https://tele-libre.live` (v2). Mismo motor (cards `a.channel-link`, `embed2.php`).
+
+### Flujo sensa ClearKey (verificado en universaltv/axn/golden/studio-universal)
+- Embed trae `var config = {"url":"...mpd","k1":"kid-hex","k2":"key-hex"}` + `var HEADERS='b64({"origin","referer"})'`.
+- MPD en `cdn.sensa.com.ar` (302 a `cdn5x`/`smt-usr-edgeXX`), `cenc:default_KID` == k1. Requiere UA Chrome completo (UA corto -> 403).
+- Segmentos son byte-ranges sobre la URL del MPD; desde IP 148.222.x.x dan 401 con cualquier header (posible bloqueo por IP o webtoken JWT de la extension).
+- `handleSensaConfig()` emite `newDrmExtractorLink` DASH + `hexToB64Url()` (ClearKey exige kid/key base64url, el sitio da hex).
+- `handleTokHtml` (?r=/cvattv) tambien emite keys ahora (antes las descartaba).
+- `getVideoInterceptor` diagnostico: loguea `[cdn] METODO host/archivo -> codigo tipo` para sensa/cvattv.
+- `load()`: `cleanTitle()` quita "Ver ... en VIVO Online Por internet".
+
+### BLOQUEADOR: typo en CLEARKEY_DRM_UUID de CloudStream (app, no plugin)
+- `ExtractorApi.kt:468`: `CLEARKEY_DRM_UUID = Uuid.fromLongs(-0x1d8e62a7567a4c37L, 0x781AB030AF78D30EL)`.
+- LSB correcto (W3C EME / Android CDM / ExoPlayer C.CLEARKEY_UUID): `0x781A059057B03BAC`.
+- LSB en CloudStream: `0x781AB030AF78D30E` (digitos traspuestos; coincide con el ID del registro DASH-IF, que NO es el UUID del CDM).
+- Efecto: `CS3IPlayer when (drm.uuid)` no matchea el UUID correcto -> log `DRM Metadata class is not supported: DrmMetadata` -> DRM descartado -> contenido cenc en negro/silencio (MPD 200 en loop, 0 segmentos pedidos).
+- Ningun provider puede reproducir ClearKey hasta que upstream corrija la constante a `0x781A059057B03BAC`.
+- Verificado por bytecode: default `kty="oct"`, default `uuid=CLEARKEY_UUID`; licencia `{"keys":[{"kty","k","kid"}],"type":"temporary"}`.
