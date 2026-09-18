@@ -689,17 +689,25 @@ class ReanimeProvider : MainAPI() {
 
                 val response = chain.proceed(request)
                 return try {
-                    val bytes = response.body?.bytes() ?: return response
-                    if (bytes.size < 12) return response
+                    
+                    val head = try {
+                        response.peekBody(12).bytes()
+                    } catch (_: Exception) {
+                        return response
+                    }
 
-                    val isPng = bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
-                        bytes[2] == 0x4e.toByte() && bytes[3] == 0x47.toByte()
-                    val isRiffWebp = bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() &&
-                        bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() &&
-                        bytes[8] == 0x57.toByte() && bytes[9] == 0x45.toByte() &&
-                        bytes[10] == 0x42.toByte() && bytes[11] == 0x50.toByte()
+                    val isPng = head.size >= 4 &&
+                        head[0] == 0x89.toByte() && head[1] == 0x50.toByte() &&
+                        head[2] == 0x4e.toByte() && head[3] == 0x47.toByte()
+                    val isRiffWebp = head.size >= 12 &&
+                        head[0] == 0x52.toByte() && head[1] == 0x49.toByte() &&
+                        head[2] == 0x46.toByte() && head[3] == 0x46.toByte() &&
+                        head[8] == 0x57.toByte() && head[9] == 0x45.toByte() &&
+                        head[10] == 0x42.toByte() && head[11] == 0x50.toByte()
 
                     if (!isPng && !isRiffWebp) return response
+
+                    val bytes = response.body?.bytes() ?: return response
 
                     val skip = if (isRiffWebp) 12 else 8
                     val payload = bytes.copyOfRange(skip, bytes.size)
