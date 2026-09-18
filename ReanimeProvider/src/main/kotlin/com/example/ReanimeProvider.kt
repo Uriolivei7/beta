@@ -33,7 +33,6 @@ class ReanimeProvider : MainAPI() {
             MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
 
-        // PBKDF2-HMAC-SHA256 con password de bytes crudos (semántica WebCrypto)
         private fun pbkdf2Sha256(password: ByteArray, salt: ByteArray, iterations: Int, dkLen: Int): ByteArray {
             val mac = Mac.getInstance("HmacSHA256")
             mac.init(SecretKeySpec(password, "HmacSHA256"))
@@ -64,8 +63,8 @@ class ReanimeProvider : MainAPI() {
         class MiniWasm(data: ByteArray) {
             val mem = ByteArray(65536)
             private var global0 = 0
-            private val funcs = mutableListOf<Triple<Int, Int, ByteArray>>() // nlocals, start, code
-            private val endsList = mutableListOf<Map<Int, Int>>()             // headerIdx(blocktype) -> endPc
+            private val funcs = mutableListOf<Triple<Int, Int, ByteArray>>()
+            private val endsList = mutableListOf<Map<Int, Int>>()
             private val exports = HashMap<String, Int>()
 
             private fun lebU(buf: ByteArray, p: Int): Pair<Int, Int> {
@@ -123,7 +122,7 @@ class ReanimeProvider : MainAPI() {
                             var p = pos
                             val (cnt, p1) = lebU(data, p); p = p1
                             repeat(cnt) {
-                                val (_, pf) = lebU(data, p); p = pf // flags
+                                val (_, pf) = lebU(data, p); p = pf
                                 require(data[p].toInt() == 0x41) { "data offset expr" }
                                 p += 1
                                 val (off, po) = lebS(data, p); p = po
@@ -145,7 +144,7 @@ class ReanimeProvider : MainAPI() {
                                 var totalLocals = 0
                                 repeat(ng) {
                                     val (c, pc1) = lebU(fb, fp); fp = pc1
-                                    fp += 1 // tipo
+                                    fp += 1
                                     totalLocals += c
                                 }
 
@@ -602,28 +601,28 @@ class ReanimeProvider : MainAPI() {
             any = true
             if (subsEmitted) continue
             val label = "Re:ANIME $srvName"
-                Log.d("Reanime", "loadLinks $label OK")
+            Log.d("Reanime", "loadLinks $label OK")
 
-                callback(newExtractorLink(name, label, resolved.masterUrl, ExtractorLinkType.M3U8) {
-                    this.referer = FLIX_REFERER
-                    this.headers = browserHeaders + mapOf(
-                        "Referer" to FLIX_REFERER,
-                        "Origin" to FLIX_BASE,
-                        "Accept" to "*/*",
-                    )
-                    this.quality = Qualities.P1080.value
-                })
+            callback(newExtractorLink(name, label, resolved.masterUrl, ExtractorLinkType.M3U8) {
+                this.referer = FLIX_REFERER
+                this.headers = browserHeaders + mapOf(
+                    "Referer" to FLIX_REFERER,
+                    "Origin" to FLIX_BASE,
+                    "Accept" to "*/*",
+                )
+                this.quality = Qualities.P1080.value
+            })
 
-                for ((lang, subUrl) in resolved.subtitles) {
-                    if (!emittedSubs.add(subUrl)) continue
-                    val ext = subUrl.substringAfterLast(".", "").substringBefore("?").uppercase()
-                        .takeIf { it in listOf("ASS", "SSA", "SRT", "VTT") }
-                    val subName = if (ext != null) "$lang ($ext)" else lang
-                    subtitleCallback(newSubtitleFile(subName, subUrl))
-                }
-                subsEmitted = true
-                Log.d("Reanime", "loadLinks $label: ${resolved.subtitles.size} subs emitidos")
+            for ((lang, subUrl) in resolved.subtitles) {
+                if (!emittedSubs.add(subUrl)) continue
+                val ext = subUrl.substringAfterLast(".", "").substringBefore("?").uppercase()
+                    .takeIf { it in listOf("ASS", "SSA", "SRT", "VTT") }
+                val subName = if (ext != null) "$lang ($ext)" else lang
+                subtitleCallback(newSubtitleFile(subName, subUrl))
             }
+            subsEmitted = true
+            Log.d("Reanime", "loadLinks $label: ${resolved.subtitles.size} subs emitidos")
+        }
 
         if (!any) Log.w("Reanime", "loadLinks ep $ep: ningún servidor resolvió")
         return any
@@ -689,7 +688,7 @@ class ReanimeProvider : MainAPI() {
 
                 val response = chain.proceed(request)
                 return try {
-                    
+
                     val head = try {
                         response.peekBody(12).bytes()
                     } catch (_: Exception) {
