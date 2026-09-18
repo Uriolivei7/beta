@@ -371,7 +371,7 @@ class AnizoneProvider : MainAPI() {
         }
         return null
     }
-    
+
     private suspend fun findEnglishTitle(detailUrl: String, queryTitle: String): String? {
         return try {
             val slug = detailUrl.trimEnd('/').substringAfterLast("/")

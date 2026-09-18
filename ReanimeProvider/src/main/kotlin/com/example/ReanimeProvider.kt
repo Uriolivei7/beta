@@ -61,11 +61,6 @@ class ReanimeProvider : MainAPI() {
         private fun b64decode(s: String): ByteArray =
             Base64.decode(s.trim(), Base64.DEFAULT)
 
-        /**
-         * Intérprete mínimo del subset WASM usado por flixcloud.
-         * El módulo tiene 3 funciones (_s/_r/_c), memoria lineal y 1 global mutable.
-         * Las constantes y operaciones se randomizan por carga, así que se ejecuta de verdad.
-         */
         class MiniWasm(data: ByteArray) {
             val mem = ByteArray(65536)
             private var global0 = 0
@@ -113,7 +108,7 @@ class ReanimeProvider : MainAPI() {
                     pos = np
                     val bodyEnd = minOf(pos + size, data.size)
                     when (secId) {
-                        7 -> { // export
+                        7 -> {
                             var p = pos
                             val (cnt, p1) = lebU(data, p); p = p1
                             repeat(cnt) {
@@ -124,7 +119,7 @@ class ReanimeProvider : MainAPI() {
                                 if (kind == 0) exports[name] = idx
                             }
                         }
-                        11 -> { // data: inicializa memoria (clave PK del player en 2000)
+                        11 -> {
                             var p = pos
                             val (cnt, p1) = lebU(data, p); p = p1
                             repeat(cnt) {
@@ -139,7 +134,7 @@ class ReanimeProvider : MainAPI() {
                                 p += dsz
                             }
                         }
-                        10 -> { // code
+                        10 -> {
                             var p = pos
                             val (cnt, p1) = lebU(data, p); p = p1
                             repeat(cnt) {
@@ -153,7 +148,7 @@ class ReanimeProvider : MainAPI() {
                                     fp += 1 // tipo
                                     totalLocals += c
                                 }
-                                // pre-calcular ends de block/loop/if
+
                                 val ends = HashMap<Int, Int>()
                                 val stack = ArrayList<Int>()
                                 var q = fp
@@ -190,7 +185,7 @@ class ReanimeProvider : MainAPI() {
                 val loc = IntArray(args.size + nlocals)
                 System.arraycopy(args, 0, loc, 0, args.size)
                 val stack = ArrayList<Int>()
-                val labels = ArrayList<Triple<Boolean, Int, Int>>() // isLoop, hdrPc, endPc
+                val labels = ArrayList<Triple<Boolean, Int, Int>>()
                 var pc = start
 
                 while (true) {
@@ -203,14 +198,14 @@ class ReanimeProvider : MainAPI() {
                         0x23 -> { val (_, np) = lebU(code, pc); pc = np; stack.add(global0) }
                         0x24 -> { val (_, np) = lebU(code, pc); pc = np; global0 = stack.removeAt(stack.size - 1) }
                         0x41 -> { val (v, np) = lebS(code, pc); pc = np; stack.add(v) }
-                        0x2d -> { // i32.load8_u
+                        0x2d -> {
                             var np = pc
                             val (_, na) = lebU(code, np); np = na
                             val (_, nb) = lebU(code, np); pc = nb
                             val addr = stack.removeAt(stack.size - 1) and 0xFFFFFFFF.toInt()
                             stack.add(mem[addr].toInt() and 0xFF)
                         }
-                        0x3a -> { // i32.store8
+                        0x3a -> {
                             var np = pc
                             val (_, na) = lebU(code, np); np = na
                             val (_, nb) = lebU(code, np); pc = nb
@@ -232,7 +227,7 @@ class ReanimeProvider : MainAPI() {
                             val a = stack.removeAt(stack.size - 1)
                             stack.add(if (b == 0) a else (a shl b) or (a ushr (32 - b)))
                         }
-                        0x78 -> { // rotr
+                        0x78 -> {
                             val b = stack.removeAt(stack.size - 1) and 31
                             val a = stack.removeAt(stack.size - 1)
                             stack.add(if (b == 0) a else (a ushr b) or (a shl (32 - b)))
@@ -249,20 +244,20 @@ class ReanimeProvider : MainAPI() {
                         0x02, 0x03, 0x04 -> {
                             val hdr = pc - 1
                             val btIdx = pc
-                            pc++ // blocktype
+                            pc++
                             labels.add(Triple(op == 0x03, hdr, ends[btIdx] ?: -1))
                         }
                         0x0b -> {
                             if (labels.isNotEmpty()) labels.removeAt(labels.size - 1) else return stack
                         }
-                        0x0c -> { // br
+                        0x0c -> {
                             val (d, np) = lebU(code, pc); pc = np
                             val target = labels[labels.size - 1 - d]
                             for (k in labels.size - 1 downTo labels.size - 1 - d) labels.removeAt(k)
                             if (target.first) pc = target.second
                             else pc = target.third
                         }
-                        0x0d -> { // br_if
+                        0x0d -> {
                             val (d, np) = lebU(code, pc); pc = np
                             val cond = stack.removeAt(stack.size - 1)
                             if (cond != 0) {
@@ -318,7 +313,7 @@ class ReanimeProvider : MainAPI() {
                 }
             }.distinctBy { it.url }
             if (items.isEmpty()) {
-                // diagnóstico: por qué se descartaron los anchors
+
                 val sample = anchors.take(3).mapIndexed { i, el ->
                     "[$i] href=${el.attr("href").take(40)} text='${el.text().take(30)}' imgAlt='${el.selectFirst("img")?.attr("alt")?.take(30)}'"
                 }
@@ -454,208 +449,8 @@ class ReanimeProvider : MainAPI() {
 
     private data class FlixResolve(val masterUrl: String, val subtitles: List<Pair<String, String>>)
 
-        // Claves XOR activas de los playlists (una por resolve de embed)
         private val activePks = mutableListOf<ByteArray>()
 
-        // Subtítulos ya convertidos a SRT, servidos por el interceptor sin red
-        private val subCache = HashMap<Int, String>()
-        private var subCounter = 0
-        private val FAKE_SUB_PREFIX = "$FLIX_BASE/__sub/"
-
-        /** Convierte subtítulos ASS/SSA a SRT plano */
-        private fun assToSrt(ass: String): String? {
-            val out = StringBuilder()
-            var inEvents = false
-            var startIdx = 1
-            var endIdx = 2
-            var textIdx = 9
-            var cueCount = 0
-
-            fun assTimeToSrt(t: String): String? {
-                val m = Regex("""(\d+):(\d+):(\d+)[.,](\d{1,3})""").find(t.trim()) ?: return null
-                val (h, mi, s, cs) = m.destructured
-                return "%02d:%02d:%02d,%s".format(
-                    h.toIntOrNull() ?: 0,
-                    mi.toIntOrNull() ?: 0,
-                    s.toIntOrNull() ?: 0,
-                    cs.padEnd(3, '0')
-                )
-            }
-
-            for (raw in ass.lineSequence()) {
-                val line = raw.trim()
-                if (line.startsWith("[")) {
-                    inEvents = line.equals("[Events]", ignoreCase = true)
-                    continue
-                }
-                if (!inEvents) continue
-                when {
-                    line.startsWith("Format:", ignoreCase = true) -> {
-                        val fields = line.substringAfter(":").split(",").map { it.trim().lowercase() }
-                        startIdx = fields.indexOf("start").takeIf { it >= 0 } ?: startIdx
-                        endIdx = fields.indexOf("end").takeIf { it >= 0 } ?: endIdx
-                        textIdx = fields.indexOf("text").takeIf { it >= 0 } ?: textIdx
-                    }
-                    line.startsWith("Dialogue:", ignoreCase = true) -> {
-                        val parts = line.substringAfter(":").split(",", limit = textIdx + 1)
-                        if (parts.size <= textIdx) continue
-                        val start = assTimeToSrt(parts[startIdx]) ?: continue
-                        val end = assTimeToSrt(parts[endIdx]) ?: continue
-                        val text = parts[textIdx]
-                            .replace(Regex("\\{[^}]*\\}"), "")
-                            .replace("\\N", "\n")
-                            .replace("\\n", "\n")
-                            .trim()
-                        if (text.isEmpty()) continue
-                        cueCount++
-                        out.append(cueCount).append('\n')
-                        out.append(start).append(" --> ").append(end).append('\n')
-                        out.append(text).append("\n\n")
-                    }
-                }
-            }
-            return if (cueCount > 0) out.toString() else null
-        }
-
-        /** Convierte subtítulos ASS/SSA a VTT conservando posiciones (top/medio/bottom, izq/centro/der) */
-        private fun assToVtt(ass: String): String? {
-            val styleAlign = HashMap<String, Int>()
-            var section = ""
-            var inEvents = false
-            var inStyles = false
-            var si = 1; var ei = 2; var ti = 9; var sti = 3
-            var nameI = 0; var alignI = 14
-            var playResY = 720f
-            var cueCount = 0
-            val out = StringBuilder("WEBVTT\n\n")
-
-            fun vttTime(t: String): String? {
-                val m = Regex("""(\d+):(\d+):(\d+)[.,](\d{1,3})""").find(t.trim()) ?: return null
-                val (h, mi, s, cs) = m.destructured
-                return "%02d:%02d:%02d.%s".format(
-                    h.toIntOrNull() ?: 0,
-                    mi.toIntOrNull() ?: 0,
-                    s.toIntOrNull() ?: 0,
-                    cs.padEnd(3, '0')
-                )
-            }
-
-            fun cueSettings(alignment: Int): String = when (alignment.coerceIn(1, 9)) {
-                1 -> "align:left"
-                3 -> "align:right"
-                4 -> "line:50% align:left"
-                5 -> "line:50%"
-                6 -> "line:50% align:right"
-                7 -> "line:0 align:left"
-                8 -> "line:0"
-                9 -> "line:0 align:right"
-                else -> "" // 2 = abajo-centro (default)
-            }
-
-            // Deriva alineación numérica desde coordenadas \pos/\move proporcionales
-            fun alignFromXY(rawText: String): Int? {
-                val m = Regex("""\\(?:pos|move)\(([^)]*)\)""").find(rawText) ?: return null
-                val coords = m.groupValues[1].split(",").map { it.trim().toFloatOrNull() }
-                if (coords.size < 2) return null
-                val x = coords[0] ?: return null
-                val y = (if (m.value.startsWith("\\move", true) && coords.size >= 4) coords[3] else coords[1])
-                    ?: return null
-                if (playResY <= 0f) return null
-                val yr = y / playResY
-                val xr = x / 1280f // referencia horizontal aproximada
-                val row = when {
-                    yr < 0.32f -> 7   // fila superior
-                    yr < 0.68f -> 4   // fila media
-                    else -> 1         // fila inferior
-                }
-                val col = when {
-                    xr < 0.32f -> 0
-                    xr > 0.68f -> 2
-                    else -> 1
-                }
-                return row + col
-            }
-
-            for (raw in ass.lineSequence()) {
-                val line = raw.trim()
-                if (line.startsWith("[")) {
-                    section = line
-                    inEvents = section.equals("[Events]", ignoreCase = true)
-                    inStyles = section.startsWith("[V4", ignoreCase = true)
-                    continue
-                }
-                if (!inEvents && !inStyles) continue
-                val lower = line.lowercase()
-                when {
-                    lower.startsWith("playresy:") -> {
-                        playResY = line.substringAfter(":").trim().toFloatOrNull() ?: playResY
-                    }
-                    inStyles && lower.startsWith("format:") -> {
-                        val f = line.substringAfter(":").split(",").map { it.trim().lowercase() }
-                        nameI = f.indexOfFirst { it == "name" }.takeIf { it >= 0 } ?: 0
-                        alignI = f.indexOfFirst { it == "alignment" }.takeIf { it >= 0 } ?: 14
-                    }
-                    inStyles && lower.startsWith("style:") -> {
-                        val parts = line.substringAfter(":").split(",")
-                        val name = parts.getOrNull(nameI)?.trim()?.lowercase() ?: ""
-                        val al = parts.getOrNull(alignI)?.trim()?.toIntOrNull()
-                        if (name.isNotBlank() && al != null) styleAlign[name] = al
-                    }
-                    inEvents && lower.startsWith("format:") -> {
-                        val f = line.substringAfter(":").split(",").map { it.trim().lowercase() }
-                        si = f.indexOfFirst { it == "start" }.takeIf { it >= 0 } ?: si
-                        ei = f.indexOfFirst { it == "end" }.takeIf { it >= 0 } ?: ei
-                        ti = f.indexOfFirst { it == "text" }.takeIf { it >= 0 } ?: ti
-                        sti = f.indexOfFirst { it == "style" }.takeIf { it >= 0 } ?: sti
-                    }
-                    inEvents && lower.startsWith("dialogue:") -> {
-                        val parts = line.substringAfter(":").split(",", limit = ti + 1)
-                        if (parts.size <= ti) continue
-                        val start = vttTime(parts[si]) ?: continue
-                        val end = vttTime(parts[ei]) ?: continue
-
-                        val rawText = parts[ti]
-                        val styleName = parts.getOrNull(sti)?.trim()?.lowercase() ?: ""
-
-                        // Prioridad: \anN > \pos/\move proporcional > estilo > 2
-                        val alignment = Regex("""\\an(\d)""", RegexOption.IGNORE_CASE).find(rawText)
-                            ?.groupValues?.get(1)?.toIntOrNull()
-                            ?: alignFromXY(rawText)
-                            ?: styleAlign[styleName]
-                            ?: styleAlign.entries.firstOrNull { styleName.contains(it.key) }?.value
-                            ?: 2
-
-                        val text = rawText
-                            .replace(Regex("\\{[^}]*\\}"), "")
-                            .replace("\\N", "\n")
-                            .replace("\\n", "\n")
-                            .trim()
-                        if (text.isEmpty()) continue
-
-                        cueCount++
-                        out.append(cueCount).append('\n')
-                        out.append(start).append(" --> ").append(end)
-                        val settings = cueSettings(alignment)
-                        if (settings.isNotEmpty()) out.append(' ').append(settings)
-                        out.append('\n').append(text).append("\n\n")
-                    }
-                }
-            }
-            if (cueCount > 0) {
-                Log.d("Reanime", "ASS: ${styleAlign.size} estilos, playResY=${playResY.toInt()}, ${cueCount} cues")
-            }
-            return if (cueCount > 0) out.toString() else null
-        }
-
-        /** Registra subtítulo y devuelve URL falsa .vtt servida por el interceptor */
-        @Synchronized
-        private fun registerSub(content: String): String {
-            val idx = subCounter++
-            subCache[idx] = content
-            return "${FAKE_SUB_PREFIX}$idx.vtt"
-        }
-
-        // Clave XOR fija de segmentos (del hls.js parcheado de flixcloud)
         private val SEG_XOR_KEY = byteArrayOf(
             0x9d.toByte(), 0x2a.toByte(), 0xf1.toByte(), 0x47,
             0xb3.toByte(), 0x8e.toByte(), 0x5c.toByte(), 0x70.toByte(),
@@ -667,12 +462,9 @@ class ReanimeProvider : MainAPI() {
         Regex("\"$name\":\"([^\"]*)\"").find(html)?.groupValues?.get(1)
             ?: Regex("$name:\"([^\"]*)\"").find(html)?.groupValues?.get(1)
 
-    /**
-     * Cadena completa de descifrado de flixcloud:
-     * seed -> SHA-256 field mapping -> token API -> WASM(_s/_r) -> PBKDF2 -> AES-CBC -> master URL
-     */
+
     private suspend fun resolveFlix(embedUrl: String): FlixResolve? {
-        // La página a veces llega incompleta (bot-detection): reintentar con carga fresca
+
         repeat(3) { attempt ->
             try {
                 val html = app.get(embedUrl, headers = browserHeaders).text
@@ -690,7 +482,6 @@ class ReanimeProvider : MainAPI() {
                 val ivB64 = Regex("""ivf_[0-9a-f]+:"([^"]+)"""").find(odBlock)?.groupValues?.get(1)
                     ?: return@repeat
 
-                // field mapping (SHA-256 chains)
                 var eS = seed
                 for (o in 0..2) eS = sha256Hex(eS + o.toString())
                 var sS = eS
@@ -701,14 +492,12 @@ class ReanimeProvider : MainAPI() {
                 val token = extractField(html, tokenField) ?: return@repeat
                 val frag2B64 = extractField(html, frag2Field) ?: return@repeat
 
-                // API del token: enc_url + key material
                 val apiJson = JSONObject(app.get("$FLIX_BASE/api/m3u8/$token", headers = browserHeaders).text)
                 val vidKey = sha256Hex(token + "vid").take(10)
                 val keyKey = sha256Hex(token + "key").take(10)
                 val encUrlB64 = apiJson.optString(vidKey).takeIf { it.isNotEmpty() } ?: return@repeat
                 val keyMatB64 = apiJson.optString(keyKey).takeIf { it.isNotEmpty() } ?: return@repeat
 
-                // Ejecutar el WASM embebido (constantes randomizadas por carga)
                 val wasm = MiniWasm(b64decode(wPayloadB64))
                 val a = b64decode(kfB64)
                 val b = b64decode(frag2B64)
@@ -716,7 +505,6 @@ class ReanimeProvider : MainAPI() {
                 val k = minOf(a.size, b.size, c.size)
                 val seedInt = seed.substring(0, 8).toLong(16).toInt()
 
-                // Escribir fragmentos en la memoria lineal (offsets idénticos al JS original)
                 System.arraycopy(a, 0, wasm.mem, 1000, a.size)
                 System.arraycopy(b, 0, wasm.mem, 1000 + k, b.size)
                 System.arraycopy(c, 0, wasm.mem, 1000 + 2 * k, c.size)
@@ -726,7 +514,6 @@ class ReanimeProvider : MainAPI() {
 
                 val p = wasm.mem.copyOfRange(1000 + 3 * k, 1000 + 4 * k)
 
-                // PK: clave XOR de los playlists (data section: 64 bytes en 2000)
                 val pk = ByteArray(32)
                 for (i in 0 until 32) {
                     pk[i] = (wasm.mem[2000 + i].toInt() xor wasm.mem[2032 + i].toInt()).toByte()
@@ -736,7 +523,6 @@ class ReanimeProvider : MainAPI() {
                     activePks.add(pk)
                 }
 
-                // PBKDF2 -> XOR seed -> SHA-256 = clave AES
                 val derived = pbkdf2Sha256(p, seed.toByteArray(Charsets.UTF_8), 1000, 32)
                 val seedBytes = seed.toByteArray(Charsets.UTF_8)
                 val j = ByteArray(32)
@@ -745,13 +531,11 @@ class ReanimeProvider : MainAPI() {
                 }
                 val aesKey = MessageDigest.getInstance("SHA-256").digest(j)
 
-                // AES-256-CBC decrypt de la URL del master
                 val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
                 cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(b64decode(ivB64)))
                 val masterUrl = String(cipher.doFinal(b64decode(encUrlB64)), Charsets.UTF_8).trim()
                 if (!masterUrl.startsWith("http")) return@repeat
 
-                // Subtítulos externos del embed
                 val subs = mutableListOf<Pair<String, String>>()
                 Regex("""subtitles:\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)?.let { subArr ->
                     Regex("""\{url:"([^"]+)",language:"([^"]*)",format:"([^"]*)"""").findAll(subArr).forEach { m ->
@@ -796,7 +580,6 @@ class ReanimeProvider : MainAPI() {
             return false
         }
 
-        // Servidores únicos, preferencia HD-2 -> HD-1 -> resto
         val seen = LinkedHashSet<String>()
         val preferred = mutableListOf<Pair<String, String>>()
         val arr = serversJson.optJSONArray("servers") ?: return false
@@ -817,7 +600,7 @@ class ReanimeProvider : MainAPI() {
         for ((srvName, embedLink) in preferred) {
             val resolved = resolveFlix(embedLink) ?: continue
             any = true
-            if (subsEmitted) continue  // subs ya emitidos por el primer servidor que resolvió
+            if (subsEmitted) continue
             val label = "Re:ANIME $srvName"
                 Log.d("Reanime", "loadLinks $label OK")
 
@@ -833,22 +616,10 @@ class ReanimeProvider : MainAPI() {
 
                 for ((lang, subUrl) in resolved.subtitles) {
                     if (!emittedSubs.add(subUrl)) continue
-                    try {
-                        val subHeaders = browserHeaders + mapOf("Referer" to FLIX_REFERER)
-                        val raw = app.get(subUrl, headers = subHeaders).text
-                        val srt = if (subUrl.endsWith(".ass", true) || subUrl.endsWith(".ssa", true)) {
-                            assToVtt(raw)
-                        } else {
-                            raw
-                        }
-                        if (srt.isNullOrBlank()) {
-                            Log.w("Reanime", "sub '$lang' vacío tras conversión")
-                            continue
-                        }
-                        subtitleCallback(newSubtitleFile(lang, registerSub(srt)))
-                    } catch (e: Exception) {
-                        Log.w("Reanime", "sub '$lang' fallo: ${e.message}")
-                    }
+                    val ext = subUrl.substringAfterLast(".", "").substringBefore("?").uppercase()
+                        .takeIf { it in listOf("ASS", "SSA", "SRT", "VTT") }
+                    val subName = if (ext != null) "$lang ($ext)" else lang
+                    subtitleCallback(newSubtitleFile(subName, subUrl))
                 }
                 subsEmitted = true
                 Log.d("Reanime", "loadLinks $label: ${resolved.subtitles.size} subs emitidos")
@@ -869,23 +640,6 @@ class ReanimeProvider : MainAPI() {
                 val request = chain.request()
                 val url = request.url.toString()
 
-                // Subtítulos convertidos servidos localmente (URLs falsas .srt)
-                if (url.startsWith(FAKE_SUB_PREFIX)) {
-                    val idx = url.substringAfterLast("/").substringBefore(".").toIntOrNull()
-                    val content = idx?.let { synchronized(subCache) { subCache[it] } }
-                    return Response.Builder()
-                        .request(request)
-                        .protocol(okhttp3.Protocol.HTTP_1_1)
-                        .code(if (content != null) 200 else 404)
-                        .message(if (content != null) "OK" else "Not Found")
-                        .body(okhttp3.ResponseBody.create(
-                            "application/x-subrip".toMediaTypeOrNull(),
-                            content ?: ""
-                        ))
-                        .build()
-                }
-
-                // Subtítulos (vault94.slopnet.site): exigen User-Agent de navegador
                 if (url.contains("slopnet.site")) {
                     val newReq = request.newBuilder()
                         .header("User-Agent", browserHeaders["User-Agent"]!!)
@@ -894,7 +648,6 @@ class ReanimeProvider : MainAPI() {
                     return chain.proceed(newReq)
                 }
 
-                // Playlists flixcloud: b64 (+XOR con PK si viene cifrado)
                 if (url.contains("flixcloud.cc") && url.contains(".m3u8")) {
                     val response = chain.proceed(request)
                     return try {
@@ -934,7 +687,6 @@ class ReanimeProvider : MainAPI() {
                     }
                 }
 
-                // Segmentos disfrazados (.png/.webp): firma PNG/RIFF + TS plano o XOR con clave fija
                 val response = chain.proceed(request)
                 return try {
                     val bytes = response.body?.bytes() ?: return response
@@ -953,7 +705,7 @@ class ReanimeProvider : MainAPI() {
                     val payload = bytes.copyOfRange(skip, bytes.size)
 
                     val transformed = if (payload.isNotEmpty() && payload[0] == 0x47.toByte()) {
-                        payload // TS plano tras la firma
+                        payload
                     } else {
                         ByteArray(payload.size) { i ->
                             (payload[i].toInt() xor SEG_XOR_KEY[i and 15].toInt()).toByte()
