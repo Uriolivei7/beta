@@ -355,6 +355,14 @@ class ReanimeProvider : MainAPI() {
     // Load (detalle + episodios)
     // ------------------------------------------------------------------
 
+    private data class AnimeRelation(
+        val slug: String,
+        val title: String,
+        val poster: String?,
+        val year: Int?,
+        val isMovie: Boolean,
+    )
+
     private data class AnimeMeta(
         val slug: String,
         val anilistId: Int,
@@ -366,7 +374,15 @@ class ReanimeProvider : MainAPI() {
         val year: Int?,
         val score: Int?,
         val status: String?,
+        val relations: List<AnimeRelation>,
     )
+
+    private fun relationTitle(o: JSONObject): String {
+        val titleObj = o.optJSONObject("title")
+        return titleObj?.optString("english")?.takeIf { it.isNotBlank() }
+            ?: titleObj?.optString("romaji")?.takeIf { it.isNotBlank() }
+            ?: o.optString("anime_id")
+    }
 
     private suspend fun fetchMeta(slug: String): AnimeMeta? {
         return try {
@@ -387,6 +403,20 @@ class ReanimeProvider : MainAPI() {
                 year = json.optInt("season_year", 0).takeIf { it > 0 },
                 score = json.optInt("average_score", 0).takeIf { it > 0 },
                 status = json.optString("status").takeIf { it.isNotBlank() },
+                relations = json.optJSONArray("relations")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { i ->
+                        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                        val relSlug = o.optString("anime_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        if (relSlug == slug) return@mapNotNull null // fuera el mismo anime
+                        AnimeRelation(
+                            slug = relSlug,
+                            title = relationTitle(o),
+                            poster = o.optJSONObject("cover_image")?.optString("large")?.takeIf { it.isNotBlank() },
+                            year = o.optInt("season_year", 0).takeIf { it > 0 },
+                            isMovie = o.optString("format") == "MOVIE",
+                        )
+                    }
+                } ?: emptyList(),
             )
         } catch (e: Exception) {
             Log.e("Reanime", "fetchMeta $slug fallo: ${e.message}")
@@ -439,6 +469,13 @@ class ReanimeProvider : MainAPI() {
                 "Finished" -> ShowStatus.Completed
                 else -> null
             }
+            this.recommendations = meta.relations.map { rel ->
+                newAnimeSearchResponse(rel.title, "$mainUrl/anime/${rel.slug}",
+                    if (rel.isMovie) TvType.AnimeMovie else TvType.Anime) {
+                    this.posterUrl = rel.poster
+                    this.year = rel.year
+                }
+            }.takeIf { it.isNotEmpty() }
         }
     }
 
