@@ -29,6 +29,7 @@ class UniqueStreamProvider : MainAPI() {
 
     private val apiUrl = "https://anime.uniquestream.net/api/v1"
     private val TAG = "UniqueStream"
+    private var dubWarned = false
 
     companion object {
         private val apiSemaphore = Semaphore(12)
@@ -133,8 +134,7 @@ class UniqueStreamProvider : MainAPI() {
             newAnimeSearchResponse(labeledTitle(this.content_id, this.title), this.content_id)
         }
         resp.posterUrl = image?.replace("posters/60x90/", "posters/480x720/")
-        // Badges SUB/DUB sobre el poster (igual que el sitio): la API trae los
-        // flags; si faltan, los items de Crunchyroll (cr_) traen ambos.
+        
         val dubs = java.util.EnumSet.noneOf(DubStatus::class.java)
         if (this.subbed == true) dubs.add(DubStatus.Subbed)
         if (this.dubbed == true) dubs.add(DubStatus.Dubbed)
@@ -142,7 +142,17 @@ class UniqueStreamProvider : MainAPI() {
             dubs.add(DubStatus.Subbed)
             dubs.add(DubStatus.Dubbed)
         }
-        if (dubs.isNotEmpty()) resp.dubStatus = dubs
+        if (dubs.isNotEmpty()) {
+
+            try {
+                resp.dubStatus = dubs
+            } catch (_: NoSuchMethodError) {
+                if (!dubWarned) {
+                    dubWarned = true
+                    Log.w(TAG, "app sin soporte dubStatus, sin badges SUB/DUB")
+                }
+            }
+        }
         return resp
     }
 
