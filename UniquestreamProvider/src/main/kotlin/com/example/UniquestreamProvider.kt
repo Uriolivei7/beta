@@ -29,7 +29,6 @@ class UniqueStreamProvider : MainAPI() {
 
     private val apiUrl = "https://anime.uniquestream.net/api/v1"
     private val TAG = "UniqueStream"
-    private var dubWarned = false
 
     companion object {
         private val apiSemaphore = Semaphore(12)
@@ -129,42 +128,17 @@ class UniqueStreamProvider : MainAPI() {
         val isMovie = this.type == "movie"
         if (isMovie) movieIds.add(this.content_id)
         val resp = if (isMovie) {
-            newAnimeSearchResponse(labeledTitle(this.content_id, this.title), this.content_id, TvType.AnimeMovie)
+            newAnimeSearchResponse(this.title, this.content_id, TvType.AnimeMovie)
         } else {
-            newAnimeSearchResponse(labeledTitle(this.content_id, this.title), this.content_id)
+            newAnimeSearchResponse(this.title, this.content_id)
         }
         resp.posterUrl = image?.replace("posters/60x90/", "posters/480x720/")
-        
-        val dubs = java.util.EnumSet.noneOf(DubStatus::class.java)
-        if (this.subbed == true) dubs.add(DubStatus.Subbed)
-        if (this.dubbed == true) dubs.add(DubStatus.Dubbed)
-        if (dubs.isEmpty() && this.content_id.startsWith("cr_")) {
-            dubs.add(DubStatus.Subbed)
-            dubs.add(DubStatus.Dubbed)
-        }
-        if (dubs.isNotEmpty()) {
-
-            try {
-                resp.dubStatus = dubs
-            } catch (_: NoSuchMethodError) {
-                if (!dubWarned) {
-                    dubWarned = true
-                    Log.w(TAG, "app sin soporte dubStatus, sin badges SUB/DUB")
-                }
-            }
-        }
         return resp
     }
 
     private fun sourceLabel(id: String): String? = when {
         id.startsWith("nf_") -> "Netflix"
         else -> null
-    }
-
-    private fun labeledTitle(id: String, title: String?): String {
-        val t = title?.takeIf { it.isNotBlank() } ?: "Sin Título"
-        val src = sourceLabel(id)
-        return if (src != null) "[$src] $t" else t
     }
 
     private fun String?.upgradePoster(): String? =
@@ -490,7 +464,7 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        return newTvSeriesLoadResponse(labeledTitle(cleanId, details.title), url, TvType.TvSeries, episodesList) {
+        return newTvSeriesLoadResponse(details.title ?: "Sin Título", url, TvType.TvSeries, episodesList) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url?.upgradePoster()
             this.plot = fullPlot
             this.tags = (details.genre?.mapNotNull { it.name } ?: emptyList()) +
@@ -556,7 +530,7 @@ class UniqueStreamProvider : MainAPI() {
             }
         }
 
-        return newMovieLoadResponse(labeledTitle(id, details.title), url, TvType.AnimeMovie, url) {
+        return newMovieLoadResponse(details.title ?: "Sin Título", url, TvType.AnimeMovie, url) {
             this.posterUrl = details.images?.find { it.type == "poster_tall" }?.url?.upgradePoster()
             this.plot = plot
             this.tags = (details.genre?.mapNotNull { it.name } ?: emptyList()) +
@@ -864,9 +838,7 @@ class UniqueStreamProvider : MainAPI() {
         val content_id: String,
         val title: String,
         val image: String? = null,
-        val type: String? = null,
-        val subbed: Boolean? = null,
-        val dubbed: Boolean? = null
+        val type: String? = null
     )
 
     @Serializable
