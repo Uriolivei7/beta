@@ -86,13 +86,12 @@ class MhdflixStreamWish : ExtractorApi() {
             return
         }
 
-        // Try eval packed JS: find }('...' pattern
         val evalFn = "eval(function(p,a,c,k,e,d){"
         val evalStart = html.indexOf(evalFn)
         if (evalStart >= 0) {
             val callStart = html.indexOf("}('", evalStart)
             if (callStart >= 0) {
-                var argIdx = callStart + 2 // point to ' (opening quote of p-string)
+                var argIdx = callStart + 2
                 if (argIdx < html.length && html[argIdx] == '\'') argIdx++ else return
                 val pStart = argIdx
                 while (argIdx < html.length && html[argIdx] != '\'') argIdx++
@@ -165,23 +164,20 @@ class MhdflixVidHide : ExtractorApi() {
         Log.d("MhdflixVidHide", "callStart='}' index=$callStart")
         if (callStart < 0) { Log.d("MhdflixVidHide", "}(' not found"); return }
 
-        // Parse: }('p_string',a,c,'k_string'.split('|'))
-        var argIdx = callStart + 2 // point to ' (opening quote of p-string)
+        var argIdx = callStart + 2
         if (argIdx >= html.length || html[argIdx] != '\'') { Log.d("MhdflixVidHide", "no opening ' at argIdx=$argIdx"); return }
         argIdx++
         val pStart = argIdx
-        // Find closing ' of p string (it's the first ' after p)
+
         while (argIdx < html.length && html[argIdx] != '\'') argIdx++
         if (argIdx >= html.length) return
         val p = html.substring(pStart, argIdx)
         Log.d("MhdflixVidHide", "p len=${p.length} start='${p.take(50)}'")
         argIdx++
 
-        // skip comma
         if (argIdx < html.length && html[argIdx] == ',') argIdx++
         while (argIdx < html.length && html[argIdx] == ' ') argIdx++
 
-        // read a
         val aStart = argIdx
         while (argIdx < html.length && html[argIdx].isDigit()) argIdx++
         val a = html.substring(aStart, argIdx).toIntOrNull() ?: 36
@@ -195,7 +191,6 @@ class MhdflixVidHide : ExtractorApi() {
         if (argIdx < html.length && html[argIdx] == ',') argIdx++
         while (argIdx < html.length && html[argIdx] == ' ') argIdx++
 
-        // read k string: '...'
         if (argIdx >= html.length || html[argIdx] != '\'') { Log.d("MhdflixVidHide", "no opening ' for k"); return }
         argIdx++
         val kStart = argIdx
@@ -376,7 +371,6 @@ open class MhdflixVoe : ExtractorApi() {
     override val requiresReferer = true
 
     companion object {
-        // donaldlineelse.com excluido: DNS se cuelga 60-115s
         val voeMirrors = listOf(
             "https://yip.su",
             "https://tubelessceliolymph.com",
@@ -419,7 +413,6 @@ open class MhdflixVoe : ExtractorApi() {
         val pageText = res.text
         if (parseHtml(pageText, currentUrl, subtitleCallback, callback)) return
 
-        // Mirrors con el mismo hash /e/ (portable en la red voe)
         val id = Regex("""/e/([A-Za-z0-9_-]+)""").find(url)?.groupValues?.get(1)
         if (!id.isNullOrBlank()) {
             Log.d("MhdflixVoe", "[Voe] probando mirrors (id=$id)")
@@ -455,10 +448,6 @@ open class MhdflixVoe : ExtractorApi() {
             "${u.protocol}://${u.host}"
         } catch (_: Exception) { pageUrl }
 
-        // Candidatos: primero application/json, luego TODOS los strings largos
-        // de los scripts (con charset de ofuscación). Cada candidato se valida
-        // con trial-decrypt: solo vale el que produce source/direct_access_url.
-        // (El primer match a ciegas falla con "pad bits must be zeros".)
         val candidates = mutableListOf<String>()
         Regex(
             """<script[^>]*type=["']application/json["'][^>]*>(.*?)</script>""",

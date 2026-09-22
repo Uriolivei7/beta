@@ -516,7 +516,7 @@ class MhdflixProvider : MainAPI() {
         return try {
             val k = dictRaw.split("|").toTypedArray()
             val result = StringBuilder(packed)
-            // alto->bajo como el packer JS (si no, palabras cortas corrompen URLs)
+
             for (idx in count - 1 downTo 0) {
                 val key = idx.toString(base)
                 val value = k.getOrElse(idx) { "" }
@@ -550,8 +550,6 @@ class MhdflixProvider : MainAPI() {
         return out
     }
 
-    // Variantes hls2/hls3/hls4 como links separados (estilo SoloLatino/Plushd).
-    // Retorna cuántos emitió; 0 = fallback a loadExtractor.
     private suspend fun tryVidHideProMh(
         url: String,
         referer: String,
@@ -607,7 +605,6 @@ class MhdflixProvider : MainAPI() {
             }
             if (resolved.isEmpty()) return 0
 
-            // Probe: solo variantes con master real (200 + #EXTM3U)
             val probeHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
                 "Referer" to url,
@@ -782,7 +779,6 @@ class MhdflixProvider : MainAPI() {
             }
         }
 
-        // Process direct media URLs immediately
         var found = false
         for (item in directLinks) {
             val videoUrl = item.url ?: item.embedUrl ?: item.iframeUrl ?: continue
@@ -806,7 +802,6 @@ class MhdflixProvider : MainAPI() {
             }
         }
 
-        // Process embed URLs via extractors in parallel, with inline fallback
         if (extractorLinks.isNotEmpty()) {
             coroutineScope {
                 extractorLinks.map { (item, videoUrl) ->
@@ -816,8 +811,7 @@ class MhdflixProvider : MainAPI() {
                         val linkName = "$serverName - $languageName"
                         val fixedUrl = fixEmbedUrl(videoUrl)
                         var foundByExtractor = false
-                        // VidHide (filelions/vidhidepro): variantes hls2/hls3/hls4
-                        // separadas estilo SoloLatino/Plushd; si emite, no se repite
+
                         if (isVidHideFamily(fixedUrl)) {
                             try {
                                 val n = tryVidHideProMh(fixedUrl, referer, languageName, subtitleCallback) { link ->
@@ -865,7 +859,6 @@ class MhdflixProvider : MainAPI() {
                         }
                         }
 
-                        // Inline fallback: fetch embed page, try eval/M3U8/iframe
                         if (!foundByExtractor) {
                             Log.d("Mhdflix-Links", "Inline fallback for: $fixedUrl")
                             try {
