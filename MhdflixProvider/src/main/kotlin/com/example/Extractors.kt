@@ -12,6 +12,7 @@ import java.net.URL
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import kotlinx.coroutines.withTimeoutOrNull
 
 class ByseExtractor : ExtractorApi() {
     override var mainUrl = "https://bysedikamoum.com"
@@ -374,6 +375,21 @@ open class MhdflixVoe : ExtractorApi() {
     override val mainUrl = "https://voe.sx"
     override val requiresReferer = true
 
+    companion object {
+        // donaldlineelse.com excluido: DNS se cuelga 60-115s
+        val voeMirrors = listOf(
+            "https://yip.su",
+            "https://tubelessceliolymph.com",
+            "https://charlestoughrace.com",
+            "https://simpulumlamerop.com",
+            "https://urochsunloath.com",
+            "https://nathanfromsubject.com",
+            "https://metagnathtuggers.com",
+            "https://pamelachangemission.com",
+            "https://eugenemakedraw.com",
+        )
+    }
+
     override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
         Log.d("MhdflixVoe", "[Voe] URL: $url")
         val voeHeaders = mapOf(
@@ -401,48 +417,103 @@ open class MhdflixVoe : ExtractorApi() {
         }
 
         val pageText = res.text
-        if (pageText.contains("altcha-widget") || pageText.contains("Confirm you&#039;re human")) {
-            Log.w("MhdflixVoe", "[Voe] CAPTCHA page detected")
-            return
-        }
+        if (parseHtml(pageText, currentUrl, subtitleCallback, callback)) return
 
-        var encodedString: String? = null
-        encodedString = res.document.selectFirst("script[type=application/json]")
-            ?.data()?.trim()
+        // Mirrors con el mismo hash /e/ (portable en la red voe)
+        val id = Regex("""/e/([A-Za-z0-9_-]+)""").find(url)?.groupValues?.get(1)
+        if (!id.isNullOrBlank()) {
+            Log.d("MhdflixVoe", "[Voe] probando mirrors (id=$id)")
+            withTimeoutOrNull(25000L) {
+                for (mirror in voeMirrors) {
+                    val mUrl = "$mirror/e/$id"
+                    if (mUrl == currentUrl) continue
+                    try {
+                        val mHtml = app.get(mUrl, headers = voeHeaders + ("Referer" to currentUrl), timeout = 10000L).text
+                        if (parseHtml(mHtml, mUrl, subtitleCallback, callback)) {
+                            Log.d("MhdflixVoe", "[Voe] mirror OK: $mirror")
+                            return@withTimeoutOrNull
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+        Log.w("MhdflixVoe", "[Voe] sin fuentes para $url")
+    }
+
+    suspend fun parseHtml(
+        html: String,
+        pageUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        if (html.contains("altcha-widget") || html.contains("Confirm you&#039;re human")) {
+            Log.w("MhdflixVoe", "[Voe] CAPTCHA page, no parse: ${pageUrl.take(100)}")
+            return false
+        }
+        val pageOrigin = try {
+            val u = java.net.URL(pageUrl)
+            "${u.protocol}://${u.host}"
+        } catch (_: Exception) { pageUrl }
+
+        // Candidatos: primero application/json, luego TODOS los strings largos
+        // de los scripts (con charset de ofuscación). Cada candidato se valida
+        // con trial-decrypt: solo vale el que produce source/direct_access_url.
+        // (El primer match a ciegas falla con "pad bits must be zeros".)
+        val candidates = mutableListOf<String>()
+        Regex(
+            """<script[^>]*type=["']application/json["'][^>]*>(.*?)</script>""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(html)?.groupValues?.get(1)?.trim()
+            ?.takeIf { it.contains("[\"") }
             ?.substringAfter("[\"")
             ?.substringBeforeLast("\"]")
+            ?.let { candidates.add(it) }
+        val scripts = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(html).map { it.groupValues[1] }
+        for (body in scripts) {
+            for (m in Regex("""["']([A-Za-z0-9+/=@\^~\*\?&#!%$]{100,})["']""").findAll(body)) {
+                val cand = m.groupValues[1]
+                if (!candidates.contains(cand)) candidates.add(cand)
+            }
+        }
+        Log.d("MhdflixVoe", "[Voe] ${candidates.size} candidatos en $pageUrl")
 
-        if (encodedString == null) {
-            encodedString = res.document.select("script").mapNotNull { script ->
-                Regex("""["']([A-Za-z0-9+/=]{100,})["']""").find(script.html())?.groupValues?.get(1)
-            }.firstOrNull()
+        var encodedString: String? = null
+        for (cand in candidates) {
+            val test = decryptVoeF7(cand, quiet = true)
+            if (test?.source != null || test?.directAccessUrl != null) {
+                encodedString = cand
+                break
+            }
         }
 
         if (encodedString == null) {
-            Log.w("MhdflixVoe", "[Voe] encoded string not found")
-            return
+            Log.w("MhdflixVoe", "[Voe] encoded string not found: ${pageUrl.take(100)}")
+            return false
         }
 
         val decryptedJson = decryptVoeF7(encodedString)
         val m3u8 = decryptedJson?.source
         val mp4 = decryptedJson?.directAccessUrl
+        var emitted = false
         if (m3u8 != null) {
             Log.d("MhdflixVoe", "[Voe] Found M3U8: ${m3u8.take(100)}")
-            M3u8Helper.generateM3u8(name, m3u8, "$mainUrl/", headers = mapOf("Origin" to "$mainUrl/")).forEach(callback)
+            M3u8Helper.generateM3u8(name, m3u8, "$pageOrigin/", headers = mapOf("Origin" to "$pageOrigin/")).forEach(callback)
+            emitted = true
         }
         if (mp4 != null) {
             Log.d("MhdflixVoe", "[Voe] Found MP4: ${mp4.take(100)}")
             callback.invoke(newExtractorLink("$name MP4", "$name MP4", mp4, INFER_TYPE) {
-                this.referer = url
+                this.referer = pageUrl
                 this.quality = Qualities.Unknown.value
             })
+            emitted = true
         }
-        if (m3u8 == null && mp4 == null) {
-            Log.e("MhdflixVoe", "[Voe] No source after decryption")
-        }
+        if (!emitted) Log.w("MhdflixVoe", "[Voe] No source found after decryption")
+        return emitted
     }
 
-    private fun decryptVoeF7(p8: String): VoeDecrypted? {
+    private fun decryptVoeF7(p8: String, quiet: Boolean = false): VoeDecrypted? {
         return try {
             val vF = rot13(p8)
             val vF2 = replacePatterns(vF)
@@ -453,7 +524,7 @@ open class MhdflixVoe : ExtractorApi() {
             val vAtob = base64Decode(vF6)
             parseJson<VoeDecrypted>(vAtob)
         } catch (e: Exception) {
-            Log.e("MhdflixVoe", "[Voe] decrypt error: ${e.message}")
+            if (!quiet) Log.e("MhdflixVoe", "[Voe] decrypt error: ${e.message}")
             null
         }
     }

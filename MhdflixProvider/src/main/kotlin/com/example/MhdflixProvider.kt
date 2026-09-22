@@ -7,6 +7,8 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -510,6 +512,146 @@ class MhdflixProvider : MainAPI() {
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
     }
 
+    private fun unpackDeanEdwards(packed: String, base: Int, count: Int, dictRaw: String): String? {
+        return try {
+            val k = dictRaw.split("|").toTypedArray()
+            val result = StringBuilder(packed)
+            // alto->bajo como el packer JS (si no, palabras cortas corrompen URLs)
+            for (idx in count - 1 downTo 0) {
+                val key = idx.toString(base)
+                val value = k.getOrElse(idx) { "" }
+                if (key.isNotEmpty() && value.isNotEmpty()) {
+                    val replaced = Regex("\\b${Regex.escape(key)}\\b").replace(result, Regex.escapeReplacement(value))
+                    result.clear()
+                    result.append(replaced)
+                }
+            }
+            result.toString().replace("\\'", "'")
+        } catch (_: Exception) { null }
+    }
+
+    private fun isVidHideFamily(url: String): Boolean {
+        val h = try { java.net.URL(url).host.lowercase() } catch (_: Exception) { "" }
+        return h.contains("vidhide") || h.contains("filelions")
+    }
+
+    private fun parseHlsLinksMap(unpacked: String): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        Regex("""links\s*[=:]\s*\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL).find(unpacked)?.let { block ->
+            Regex(""""(hls\d)"\s*:\s*"([^"]+)"""").findAll(block.groupValues[1]).forEach { m ->
+                out[m.groupValues[1]] = m.groupValues[2]
+            }
+        }
+        if (out.isEmpty()) {
+            Regex(""""(hls\d)"\s*:\s*"([^"]+)"""").findAll(unpacked).forEach { m ->
+                out[m.groupValues[1]] = m.groupValues[2]
+            }
+        }
+        return out
+    }
+
+    // Variantes hls2/hls3/hls4 como links separados (estilo SoloLatino/Plushd).
+    // Retorna cuántos emitió; 0 = fallback a loadExtractor.
+    private suspend fun tryVidHideProMh(
+        url: String,
+        referer: String,
+        languageName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Int {
+        try {
+            Log.d("Mhdflix-Links", "[VH-Pro] trying $url")
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Referer" to referer,
+            )
+            val res = app.get(url, headers = headers, timeout = 20000L)
+            if (!res.isSuccessful) {
+                Log.w("Mhdflix-Links", "[VH-Pro] HTTP ${res.code}")
+                return 0
+            }
+            val html = res.text
+
+            var linksMap: Map<String, String>? = null
+            val packerRegex = Regex("""\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
+            for (pm in packerRegex.findAll(html)) {
+                val decoded = unpackDeanEdwards(
+                    pm.groupValues[1],
+                    pm.groupValues[2].toIntOrNull() ?: 36,
+                    pm.groupValues[3].toIntOrNull() ?: 0,
+                    pm.groupValues[4]
+                ) ?: continue
+                val found = parseHlsLinksMap(decoded)
+                if (found.isNotEmpty()) {
+                    linksMap = found
+                    break
+                }
+            }
+            if (linksMap.isNullOrEmpty()) {
+                Log.w("Mhdflix-Links", "[VH-Pro] sin links{hls} en $url")
+                return 0
+            }
+
+            val preferOrder = listOf("hls2", "hls3", "hls4")
+            val orderedKeys = preferOrder.filter { linksMap.containsKey(it) } +
+                linksMap.keys.filter { it !in preferOrder }
+
+            data class Variant(val key: String, val url: String)
+            val resolved = orderedKeys.mapNotNull { key ->
+                var u = linksMap[key] ?: return@mapNotNull null
+                if (u.startsWith("//")) u = "https:$u"
+                if (u.startsWith("/")) u = "https://vidhidepro.com$u"
+                if (!u.startsWith("http")) return@mapNotNull null
+                Variant(key, u)
+            }
+            if (resolved.isEmpty()) return 0
+
+            // Probe: solo variantes con master real (200 + #EXTM3U)
+            val probeHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Referer" to url,
+            )
+            val reachable = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
+            coroutineScope {
+                resolved.map { v ->
+                    async {
+                        try {
+                            val r = app.get(v.url, headers = probeHeaders, timeout = 10000L)
+                            val ok = r.isSuccessful && r.text.trimStart().startsWith("#EXTM3U")
+                            Log.d("Mhdflix-Links", "[VH-Pro] probe ${v.key} -> ${r.code} m3u8=$ok")
+                            if (ok) reachable.add(v)
+                        } catch (_: Exception) { }
+                    }
+                }.awaitAll()
+            }
+            val toEmit = if (reachable.isNotEmpty()) {
+                orderedKeys.mapNotNull { k -> reachable.firstOrNull { it.key == k } }
+            } else {
+                Log.w("Mhdflix-Links", "[VH-Pro] ningún master responde, emitiendo todos igual")
+                resolved
+            }
+
+            val vidHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Referer" to url,
+                "Origin" to url.substringBeforeLast("/"),
+            )
+            for (v in toEmit) {
+                Log.d("Mhdflix-Links", "[VH-Pro] emit ${v.key} url=${v.url.take(120)}")
+                callback(newExtractorLink("MHDFLIX", "VidHidePro - ${v.key} [$languageName]", v.url, ExtractorLinkType.M3U8) {
+                    this.referer = url
+                    this.headers = vidHeaders
+                })
+            }
+            Log.d("Mhdflix-Links", "[VH-Pro] emitted ${toEmit.size} variants")
+            return toEmit.size
+        } catch (e: Exception) {
+            Log.e("Mhdflix-Links", "[VH-Pro] error: ${e.message}")
+            return 0
+        }
+    }
+
     @Suppress("DEPRECATION")
     private suspend fun inlineExtract(
         url: String,
@@ -674,6 +816,23 @@ class MhdflixProvider : MainAPI() {
                         val linkName = "$serverName - $languageName"
                         val fixedUrl = fixEmbedUrl(videoUrl)
                         var foundByExtractor = false
+                        // VidHide (filelions/vidhidepro): variantes hls2/hls3/hls4
+                        // separadas estilo SoloLatino/Plushd; si emite, no se repite
+                        if (isVidHideFamily(fixedUrl)) {
+                            try {
+                                val n = tryVidHideProMh(fixedUrl, referer, languageName, subtitleCallback) { link ->
+                                    callback.invoke(link)
+                                    found = true
+                                }
+                                if (n > 0) {
+                                    foundByExtractor = true
+                                    Log.d("Mhdflix-Links", "VidHide custom OK: $serverName ($n links)")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("Mhdflix-Links", "VidHide custom falló: ${e.message}")
+                            }
+                        }
+                        if (!foundByExtractor) {
                         try {
                             val ok = withTimeout(20000L) {
                                 loadExtractor(fixedUrl, referer, subtitleCallback) { link ->
@@ -703,6 +862,7 @@ class MhdflixProvider : MainAPI() {
                             Log.w("Mhdflix-Links", "Extractor timed out (20s): $serverName")
                         } catch (e: Exception) {
                             Log.e("Mhdflix-Links", "Extractor failed: $serverName - ${e.message}")
+                        }
                         }
 
                         // Inline fallback: fetch embed page, try eval/M3U8/iframe
