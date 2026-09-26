@@ -52,7 +52,7 @@ class SoloLatinoProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
-    
+
     private val cloudflareKiller = CloudflareKiller()
 
     private val baseHeaders = mapOf(
