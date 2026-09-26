@@ -422,7 +422,7 @@ class SerieskaoProvider : MainAPI() {
         val langMap = mapOf("LAT" to "LATINO", "ESP" to "CASTELLANO", "SUB" to "SUBTITULADO")
         Log.d(TAG, "loadLinks resolviendo PoW...")
         val aesKey = try {
-            
+
             withTimeout(30000L) {
                 withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
             }
