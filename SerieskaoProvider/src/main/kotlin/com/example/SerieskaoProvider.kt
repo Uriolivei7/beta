@@ -77,7 +77,7 @@ class SerieskaoProvider : MainAPI() {
                 .build()
             val response = chain
                 .withConnectTimeout(30, TimeUnit.SECONDS)
-                .withReadTimeout(60, TimeUnit.SECONDS)
+                .withReadTimeout(30, TimeUnit.SECONDS)
                 .proceed(newRequest)
             Log.d(TAG, "[intercept] CDN response: ${response.code} ${response.header("content-type","?")} url=${url.take(100)}")
             response
