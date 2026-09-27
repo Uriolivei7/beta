@@ -839,7 +839,17 @@ suspend fun loadSourceNameExtractor(
                 if (rendered != null) {
                     SoloStreamWish().parseHtml(rendered, url, referer ?: url, "SoloLatino") { link ->
                         count++
-                        outerScope.launch { callback.invoke(link) }
+                        outerScope.launch {
+                            callback.invoke(
+                                newExtractorLink("SoloLatino", "$source[StreamWish]", link.url) {
+                                    this.quality = link.quality
+                                    this.type = link.type
+                                    this.referer = link.referer
+                                    this.headers = link.headers
+                                    this.extractorData = link.extractorData
+                                }
+                            )
+                        }
                     }
                 }
                 if (count == 0) Log.w("SoloLatino", "[SW] WebView sin links: $url")
