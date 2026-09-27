@@ -377,7 +377,8 @@ class PoseidonHDProvider : MainAPI() {
                     }
                     if (link.contains("player.poseidonhd2.co")) {
                         try {
-                            val playerHtml = app.get(link).text
+                            
+                            val playerHtml = app.get(link, timeout = 30000L).text
                             Log.d("PoseidonHD", "loadLinks: player html ${playerHtml.length}")
                             val realUrl = Regex("""var url = '([^']+)';?""").find(playerHtml)?.groupValues?.get(1)
                                 ?: Regex("""iframe[^>]+src=['"]([^'"]+)['"]""").find(playerHtml)?.groupValues?.get(1)
