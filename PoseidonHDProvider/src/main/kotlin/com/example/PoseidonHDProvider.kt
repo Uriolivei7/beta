@@ -194,6 +194,71 @@ class PoseidonHDProvider : MainAPI() {
         }
     }
 
+    private suspend fun wrapWithLang(langTag: String, link: ExtractorLink): ExtractorLink {
+        return newExtractorLink("PoseidonHD2", "$langTag[${link.source}]", link.url) {
+            this.quality = link.quality
+            this.type = link.type
+            this.referer = link.referer
+            this.headers = link.headers
+            this.extractorData = link.extractorData
+        }
+    }
+    
+    private suspend fun loadExtractorWrapped(
+        url: String,
+        referer: String,
+        langTag: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val collected = java.util.Collections.synchronizedList(mutableListOf<ExtractorLink>())
+        loadExtractor(url, referer, subtitleCallback) { collected.add(it) }
+        for (l in collected) callback(wrapWithLang(langTag, l))
+    }
+
+    private suspend fun tryBysePoseidon(
+        embedUrl: String,
+        parent: String,
+        languageName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val probe = try {
+                app.get(embedUrl, headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "Referer" to parent,
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                ), timeout = 15000L).text
+            } catch (_: Exception) { null }
+            if (probe == null || !probe.contains("Byse Frontend")) {
+                Log.d("PoseidonHD", "[Byse] no es Byse Frontend, se omite")
+                return false
+            }
+            val site = runCatching { "https://${java.net.URI(parent).host}" }.getOrDefault(mainUrl)
+            Log.d("PoseidonHD", "[Byse] flujo HTTP (site=$site) $embedUrl")
+            val sources = ByseHttpExtractor().extract(embedUrl, parent, site)
+            var found = false
+            for (s in sources) {
+                Log.d("PoseidonHD", "[Byse] source: ${s.url.take(140)} label=${s.label}")
+                for (sub in s.subtitles) subtitleCallback(sub)
+                val type = if (s.url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                callback(
+                    newExtractorLink("PoseidonHD2", "Byse${s.label?.let { " - $it" } ?: ""} [$languageName]", s.url, type) {
+                        this.referer = site
+                        this.headers = mapOf("Origin" to site)
+                    }
+                )
+                found = true
+            }
+            if (found) Log.d("PoseidonHD", "[Byse] done vía HTTP")
+            found
+        } catch (e: Exception) {
+            Log.w("PoseidonHD", "[Byse] HTTP error: ${e.message}")
+            false
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -224,6 +289,13 @@ class PoseidonHDProvider : MainAPI() {
         if (videos != null) {
             for (key in listOf("latino","spanish","english")) {
                 val arr = videos.optJSONArray(key) ?: continue
+
+                val langTag = when (key) {
+                    "latino" -> "LATINO"
+                    "spanish" -> "CASTELLANO"
+                    "english" -> "SUBTITULADO"
+                    else -> key.uppercase()
+                }
                 Log.d("PoseidonHD", "loadLinks: $key -> ${arr.length()} links")
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
@@ -241,17 +313,29 @@ class PoseidonHDProvider : MainAPI() {
                                 ?: Regex("""iframe[^>]+src=['"]([^'"]+)['"]""").find(playerHtml)?.groupValues?.get(1)
                             if (realUrl != null) {
                                 Log.d("PoseidonHD", "loadLinks: resolved -> $realUrl")
-                                loadExtractor(realUrl, data, countingSub, countingCallback)
+                                val realHost = runCatching { java.net.URI(realUrl).host }.getOrNull().orEmpty()
+                                if ((realHost.contains("byse", ignoreCase = true) || realHost.contains("filemoon", ignoreCase = true)) &&
+                                    tryBysePoseidon(realUrl, data, langTag, countingSub) { countingCallback(it) }) {
+                                    Log.d("PoseidonHD", "loadLinks: Byse OK [$langTag]")
+                                } else {
+                                    loadExtractorWrapped(realUrl, data, langTag, countingSub, countingCallback)
+                                }
                             } else {
                                 Log.w("PoseidonHD", "loadLinks: no url found in $link html=${playerHtml.take(200)}")
-                                loadExtractor(link, data, countingSub, countingCallback)
+                                loadExtractorWrapped(link, data, langTag, countingSub, countingCallback)
                             }
                         } catch (e: Exception) {
                             Log.w("PoseidonHD", "loadLinks: player error $link: ${e.message}")
-                            loadExtractor(link, data, countingSub, countingCallback)
+                            loadExtractorWrapped(link, data, langTag, countingSub, countingCallback)
                         }
                     } else {
-                        loadExtractor(link, data, countingSub, countingCallback)
+                        val directHost = runCatching { java.net.URI(link).host }.getOrNull().orEmpty()
+                        if ((directHost.contains("byse", ignoreCase = true) || directHost.contains("filemoon", ignoreCase = true)) &&
+                            tryBysePoseidon(link, data, langTag, countingSub) { countingCallback(it) }) {
+                            Log.d("PoseidonHD", "loadLinks: Byse OK directo [$langTag]")
+                        } else {
+                            loadExtractorWrapped(link, data, langTag, countingSub, countingCallback)
+                        }
                     }
                 }
             }
