@@ -5,10 +5,19 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
 
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
@@ -18,6 +27,10 @@ class GnulaProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
 
     private val TAG = "GNULA"
+
+    companion object {
+        var pluginContext: Context? = null
+    }
 
     private fun getNextData(res: String): PageProps? {
         return try {
@@ -380,6 +393,21 @@ class GnulaProvider : MainAPI() {
                 "Referer" to referer,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             ), timeout = 15000L).text
+            parseStreamWishHtmlGnula(html, url, referer, lang, callback)
+        } catch (e: Exception) {
+            Log.d(TAG, "[SW] estático falló: ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun parseStreamWishHtmlGnula(
+        html: String,
+        pageUrl: String,
+        referer: String,
+        lang: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
             var found = false
             suspend fun emit(raw: String) {
                 var r = raw.replace("\\/", "/").trim()
@@ -387,7 +415,7 @@ class GnulaProvider : MainAPI() {
                 if (!r.startsWith("http")) return
                 if (!r.contains(".m3u8") && !r.contains(".mp4")) return
                 val type = if (r.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
-                Log.d(TAG, "[SW] estático: ${r.take(120)}")
+                Log.d(TAG, "[SW] hallado: ${r.take(120)}")
                 callback(newExtractorLink("GNULA", "StreamWish [$lang]", r, type) {
                     this.referer = referer
                     this.headers = mapOf(
@@ -419,13 +447,13 @@ class GnulaProvider : MainAPI() {
                 }
             }
             if (found) {
-                Log.d(TAG, "[SW] estático OK: $url")
+                Log.d(TAG, "[SW] OK: $pageUrl")
             } else {
-                Log.d(TAG, "[SW] estático: 0 links (challenge?) len=${html.length} url=${url.take(80)}")
+                Log.d(TAG, "[SW] 0 links (challenge?) len=${html.length} url=${pageUrl.take(80)}")
             }
             found
         } catch (e: Exception) {
-            Log.d(TAG, "[SW] estático falló: ${e.message}")
+            Log.d(TAG, "[SW] parse falló: ${e.message}")
             false
         }
     }
@@ -466,9 +494,29 @@ class GnulaProvider : MainAPI() {
                     Log.d(TAG, "processLinks [$lang][$idx]: Video URL extraído -> $videoUrl")
 
                     val vHost = runCatching { java.net.URI(videoUrl).host }.getOrNull().orEmpty()
-                    if (vHost.contains("streamwish", ignoreCase = true) &&
-                        tryStreamWishStaticGnula(videoUrl, targetUrl, lang) { callback(it) }) {
-                        Log.d(TAG, "processLinks [$lang][$idx]: SW estático OK")
+                    if (vHost.contains("streamwish", ignoreCase = true)) {
+
+                        if (tryStreamWishStaticGnula(videoUrl, targetUrl, lang) { callback(it) }) {
+                            Log.d(TAG, "processLinks [$lang][$idx]: SW estático OK")
+                        } else if (runCatching {
+                                val rendered = renderViaWebViewGnula(videoUrl, targetUrl, readyJs = SW_READY_JS_GNULA)
+                                rendered != null && parseStreamWishHtmlGnula(rendered, videoUrl, targetUrl, lang) { callback(it) }
+                            }.getOrDefault(false)) {
+                            Log.d(TAG, "processLinks [$lang][$idx]: SW WebView OK")
+                        } else {
+                            loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
+                                ioSafe {
+                                    Log.d(TAG, "processLinks [$lang][$idx]: Extractor devolvió link source=${link.source} url=${link.url.take(80)}")
+                                    val finalLink = newExtractorLink(
+                                        source = link.source,
+                                        name = "${link.name} [$lang]",
+                                        url = link.url,
+                                        type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                    )
+                                    callback.invoke(finalLink)
+                                }
+                            }
+                        }
                     } else {
                         loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
                             ioSafe {
@@ -585,4 +633,98 @@ class GnulaProvider : MainAPI() {
         val image: String? = null,
         val overview: String? = null
     )
+}
+
+private const val SW_READY_JS_GNULA = "h.includes('.m3u8')||h.includes('jwplayer')"
+private const val DUMP_JS_GNULA = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
+
+private suspend fun renderViaWebViewGnula(pageUrl: String, referer: String?, waitMs: Long = 12000L, readyJs: String? = null): String? {
+    return withContext(Dispatchers.Main) {
+        val appCtx = GnulaProvider.pluginContext?.applicationContext ?: run {
+            Log.d("GNULA", "[WebView] sin context")
+            return@withContext null
+        }
+        var webView: WebView? = null
+        val mainHandler = Handler(Looper.getMainLooper())
+        try {
+            webView = WebView(appCtx)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                cacheMode = WebSettings.LOAD_NO_CACHE
+                userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+            }
+            val deferred = CompletableDeferred<String?>()
+            val polls = java.util.concurrent.atomic.AtomicInteger(0)
+            val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
+            fun dump() {
+                if (deferred.isCompleted) return
+                try {
+                    webView?.evaluateJavascript(DUMP_JS_GNULA, null)
+                } catch (_: Exception) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            fun pollOnce() {
+                if (deferred.isCompleted) return
+                try {
+                    webView?.evaluateJavascript(
+                        "(function(){try{var h=document.documentElement.outerHTML;NativeBridge.onPoll(($readyJs));}catch(e){NativeBridge.onPoll(false);}})()",
+                        null
+                    )
+                } catch (_: Exception) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            webView.addJavascriptInterface(object {
+                @JavascriptInterface
+                fun onHtml(html: String) {
+                    if (!deferred.isCompleted) deferred.complete(html)
+                }
+
+                @JavascriptInterface
+                fun onPoll(ready: Boolean) {
+                    mainHandler.post {
+                        if (deferred.isCompleted) return@post
+                        if (ready) {
+                            Log.d("GNULA", "[WebView] listo antes de tiempo, dumpeando")
+                            dump()
+                            return@post
+                        }
+                        if (polls.incrementAndGet() >= maxPolls) {
+                            dump()
+                        } else {
+                            mainHandler.postDelayed({ pollOnce() }, 2000L)
+                        }
+                    }
+                }
+            }, "NativeBridge")
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    polls.set(0)
+                    if (readyJs != null) {
+                        mainHandler.postDelayed({ pollOnce() }, 2000L)
+                    } else {
+                        mainHandler.postDelayed({ dump() }, waitMs)
+                    }
+                }
+
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    if (!deferred.isCompleted) deferred.complete(null)
+                }
+            }
+            if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+            else webView.loadUrl(pageUrl)
+            Log.d("GNULA", "[WebView] renderizando ${pageUrl.take(100)}")
+            withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
+        } catch (e: Exception) {
+            Log.w("GNULA", "[WebView] error: ${e.message}")
+            null
+        } finally {
+            try { mainHandler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
+            try { webView?.destroy() } catch (_: Exception) {}
+        }
+    }
 }
