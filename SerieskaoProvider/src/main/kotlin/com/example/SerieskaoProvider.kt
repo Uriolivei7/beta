@@ -394,8 +394,6 @@ class SerieskaoProvider : MainAPI() {
             return@coroutineScope false
         }
 
-        // dataLink crudo primero; si viene envuelto (JSON.parse/decodeURIComponent/atob,
-        // como ya contempla la extensión yuzono) se desenvuelve antes de parsear.
         val rawMatch = Regex("""dataLink\s*=\s*(\[.*?\])\s*;""").find(playerHtml)?.groupValues?.get(1)
             ?: Regex("""dataLink\s*=\s*([^;]+);""", RegexOption.DOT_MATCHES_ALL)
                 .find(playerHtml)?.groupValues?.get(1)?.let { resolveDataLinkExpr(it) }
@@ -458,8 +456,6 @@ class SerieskaoProvider : MainAPI() {
         return@coroutineScope true
     }
 
-    // Port de resolveDataLink (yuzono/anime-extensions): desenvuelve dataLink cuando
-    // viene como JSON.parse('...'), decodeURIComponent('...') o atob('...').
     private fun resolveDataLinkExpr(rawExpression: String?): String? {
         if (rawExpression.isNullOrBlank()) return null
         var expr = rawExpression.trim().trimEnd(';')

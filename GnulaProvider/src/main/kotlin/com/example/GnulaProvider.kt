@@ -414,6 +414,77 @@ class GnulaProvider : MainAPI() {
         }
     }
 
+    private suspend fun tryStreamWishStaticGnula(
+        url: String,
+        referer: String,
+        lang: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val html = app.get(url, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Referer" to referer,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ), timeout = 15000L).text
+            var found = false
+            suspend fun emit(raw: String) {
+                var r = raw.replace("\\/", "/").trim()
+                if (r.startsWith("//")) r = "https:$r"
+                if (!r.startsWith("http")) return
+                if (!r.contains(".m3u8") && !r.contains(".mp4")) return
+                val type = if (r.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                Log.d(TAG, "[SW] estático: ${r.take(120)}")
+                callback(newExtractorLink("GNULA", "StreamWish [$lang]", r, type) {
+                    this.referer = referer
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                        "Referer" to referer,
+                        "Accept" to "*/*",
+                    )
+                })
+                found = true
+            }
+            val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+            val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|m4v)[^"'\s<>]*)""")
+            val fileRegex = Regex("""(?:file|src)\s*:\s*["']((?:https?:)?//[^"']+)["']""")
+            m3u8Regex.findAll(html).forEach { emit(it.groupValues[1]) }
+            if (!found) fileRegex.findAll(html).forEach { emit(it.groupValues[1]) }
+            if (!found) mp4Regex.findAll(html).forEach { emit(it.groupValues[1]) }
+            if (!found) {
+                val packerRegex = Regex("""\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
+                for (pm in packerRegex.findAll(html)) {
+                    val decoded = unpackDeanEdwardsGnula(
+                        pm.groupValues[1],
+                        pm.groupValues[2].toIntOrNull() ?: 36,
+                        pm.groupValues[3].toIntOrNull() ?: 0,
+                        pm.groupValues[4]
+                    ) ?: continue
+                    m3u8Regex.findAll(decoded).forEach { emit(it.groupValues[1]) }
+                    if (!found) fileRegex.findAll(decoded).forEach { emit(it.groupValues[1]) }
+                    if (found) break
+                }
+            }
+            if (found) Log.d(TAG, "[SW] estático OK: $url")
+            found
+        } catch (e: Exception) {
+            Log.d(TAG, "[SW] estático falló: ${e.message}")
+            false
+        }
+    }
+
+    private fun unpackDeanEdwardsGnula(p: String, a: Int, c: Int, kRaw: String): String? {
+        return try {
+            val kList = kRaw.split('|')
+            var decoded = p
+            for (i in kList.indices.reversed()) {
+                val w = kList[i]
+                if (w.isBlank()) continue
+                decoded = decoded.replace(Regex("\\b${i.toString(a)}\\b"), Regex.escapeReplacement(w))
+            }
+            decoded.replace("\\'", "'")
+        } catch (_: Exception) { null }
+    }
+
     private suspend fun processLinks(
         list: List<Region>,
         lang: String,
@@ -437,16 +508,23 @@ class GnulaProvider : MainAPI() {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
                     Log.d(TAG, "processLinks [$lang][$idx]: Video URL extraído -> $videoUrl")
 
-                    loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
-                        ioSafe {
-                            Log.d(TAG, "processLinks [$lang][$idx]: Extractor devolvió link source=${link.source} url=${link.url.take(80)}")
-                            val finalLink = newExtractorLink(
-                                source = link.source,
-                                name = "${link.name} [$lang]",
-                                url = link.url,
-                                type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            )
-                            callback.invoke(finalLink)
+                    
+                    val vHost = runCatching { java.net.URI(videoUrl).host }.getOrNull().orEmpty()
+                    if (vHost.contains("streamwish", ignoreCase = true) &&
+                        tryStreamWishStaticGnula(videoUrl, targetUrl, lang) { callback(it) }) {
+                        Log.d(TAG, "processLinks [$lang][$idx]: SW estático OK")
+                    } else {
+                        loadExtractor(videoUrl, refererUrl, subtitleCallback = { }) { link ->
+                            ioSafe {
+                                Log.d(TAG, "processLinks [$lang][$idx]: Extractor devolvió link source=${link.source} url=${link.url.take(80)}")
+                                val finalLink = newExtractorLink(
+                                    source = link.source,
+                                    name = "${link.name} [$lang]",
+                                    url = link.url,
+                                    type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                )
+                                callback.invoke(finalLink)
+                            }
                         }
                     }
                 } else {
