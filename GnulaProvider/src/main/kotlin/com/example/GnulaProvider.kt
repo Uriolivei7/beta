@@ -18,6 +18,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import okhttp3.Interceptor
+import java.util.concurrent.TimeUnit
 
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
@@ -30,6 +32,33 @@ class GnulaProvider : MainAPI() {
 
     companion object {
         var pluginContext: Context? = null
+    }
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val cdnDomains = listOf("premilkyway", "dramiyos", "acek-cdn", "vidhidepro", "vidhide", "cyou")
+        val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/")
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            val isCdn = cdnDomains.any { url.contains(it, ignoreCase = true) } ||
+                cdnPaths.any { url.contains(it, ignoreCase = true) }
+            if (!isCdn) return@Interceptor chain.proceed(request)
+
+            Log.d(TAG, "[intercept] CDN request: ${url.take(120)}")
+            val newRequest = request.newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+                .header("Referer", extractorLink.referer)
+                .header("Origin", "https://vidhidepro.com")
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .build()
+            val response = chain
+                .withConnectTimeout(30, TimeUnit.SECONDS)
+                .withReadTimeout(30, TimeUnit.SECONDS)
+                .proceed(newRequest)
+            Log.d(TAG, "[intercept] CDN response: ${response.code} ${response.header("content-type", "?")} url=${url.take(100)}")
+            response
+        }
     }
 
     private fun getNextData(res: String): PageProps? {
