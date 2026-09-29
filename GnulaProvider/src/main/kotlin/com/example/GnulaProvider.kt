@@ -508,7 +508,6 @@ class GnulaProvider : MainAPI() {
                     val videoUrl = playerPage.substringAfter("var url = '").substringBefore("';")
                     Log.d(TAG, "processLinks [$lang][$idx]: Video URL extraído -> $videoUrl")
 
-                    
                     val vHost = runCatching { java.net.URI(videoUrl).host }.getOrNull().orEmpty()
                     if (vHost.contains("streamwish", ignoreCase = true) &&
                         tryStreamWishStaticGnula(videoUrl, targetUrl, lang) { callback(it) }) {
