@@ -18,7 +18,7 @@ class GnulaProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
 
     private val TAG = "GNULA"
- 
+
     private fun getNextData(res: String): PageProps? {
         return try {
             val marker = "id=\"__NEXT_DATA__\" type=\"application/json\">"
