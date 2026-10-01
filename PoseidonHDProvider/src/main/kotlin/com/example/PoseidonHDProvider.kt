@@ -42,6 +42,8 @@ class PoseidonHDProvider : MainAPI() {
         }
     }
 
+    private val TAG = "PoseidonHD"
+
     private fun parseNextData(html: String): JSONObject? {
         return try {
             val m = Regex("""<script id="__NEXT_DATA__"[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
@@ -290,7 +292,7 @@ class PoseidonHDProvider : MainAPI() {
             false
         }
     }
-    
+
     private suspend fun parseStreamWishHtmlPoseidon(
         html: String,
         pageUrl: String,
@@ -300,13 +302,10 @@ class PoseidonHDProvider : MainAPI() {
     ): Boolean {
         return try {
             var found = false
-            suspend fun emit(raw: String) {
-                var r = raw.replace("\\/", "/").trim()
-                if (r.startsWith("//")) r = "https:$r"
-                if (!r.startsWith("http")) return
-                if (!r.contains(".m3u8") && !r.contains(".mp4")) return
-                val type = if (r.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
-                Log.d("PoseidonHD", "[SW] hallado: ${r.take(120)}")
+            var emittedAny = false
+            val pending = mutableListOf<Pair<String, ExtractorLinkType?>>()
+            suspend fun emitLink(r: String, type: ExtractorLinkType?) {
+                Log.d(TAG, "[SW] hallado: ${r.take(120)}")
                 callback(newExtractorLink("PoseidonHD2", "$langTag[StreamWish]", r, type) {
                     this.referer = referer
                     this.headers = mapOf(
@@ -315,7 +314,20 @@ class PoseidonHDProvider : MainAPI() {
                         "Accept" to "*/*",
                     )
                 })
+                emittedAny = true
+            }
+            suspend fun emit(raw: String) {
+                var r = raw.replace("\\/", "/").trim()
+                if (r.startsWith("//")) r = "https:$r"
+                if (!r.startsWith("http")) return
+                if (!r.contains(".m3u8") && !r.contains(".mp4")) return
+                val type = if (r.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
                 found = true
+                if (probeSwMaster(r, referer)) {
+                    emitLink(r, type)
+                } else {
+                    pending.add(r to type)
+                }
             }
             val m3u8Regex = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
             val mp4Regex = Regex("""(https?://[^"'\s<>]+\.(?:mp4|m4v)[^"'\s<>]*)""")
@@ -337,14 +349,36 @@ class PoseidonHDProvider : MainAPI() {
                     if (found) break
                 }
             }
-            if (found) {
-                Log.d("PoseidonHD", "[SW] OK: $pageUrl")
-            } else {
-                Log.d("PoseidonHD", "[SW] 0 links (challenge?) len=${html.length} url=${pageUrl.take(80)}")
+            if (!emittedAny && pending.isNotEmpty()) {
+                Log.w(TAG, "[SW] ningún master responde, emitiendo todos igual")
+                for ((pu, ptype) in pending) emitLink(pu, ptype)
+            }
+            if (emittedAny) {
+                Log.d(TAG, "[SW] OK: $pageUrl")
+            } else if (!found) {
+                Log.d(TAG, "[SW] 0 links (challenge?) len=${html.length} url=${pageUrl.take(80)}")
             }
             found
         } catch (e: Exception) {
             Log.d("PoseidonHD", "[SW] parse falló: ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun probeSwMaster(url: String, referer: String): Boolean {
+        return try {
+            val ok = kotlinx.coroutines.withTimeoutOrNull(12000L) {
+                val r = app.get(url, headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                    "Referer" to referer,
+                    "Accept" to "*/*",
+                ), timeout = 12000L)
+                r.isSuccessful && r.text.trimStart().startsWith("#EXTM3U")
+            } ?: false
+            Log.d(TAG, "[SW] probe master -> $ok url=${url.take(80)}")
+            ok
+        } catch (e: Exception) {
+            Log.d(TAG, "[SW] probe master error: ${e.message}")
             false
         }
     }
