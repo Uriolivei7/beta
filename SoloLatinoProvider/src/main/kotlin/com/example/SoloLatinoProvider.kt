@@ -490,9 +490,7 @@ class SoloLatinoProvider : MainAPI() {
                             .trim()
                         Log.d("SoloLatino", "embed69 - dataLink JSON: ${dataLinkJson.take(300)}")
 
-                        // dataLink crudo primero; si viene envuelto (JSON.parse/
-                        // decodeURIComponent/atob, como contempla la extensión yuzono)
-                        // se desenvuelve antes de parsear.
+
                         val serversList = tryParseJson<List<ServersByLang>>(dataLinkJson)
                             ?: resolveDataLinkExpr(dataLinkJson)?.let { tryParseJson<List<ServersByLang>>(it) }
 
@@ -618,8 +616,7 @@ private suspend fun solveEmbed69PoW(challenge: String, salt: String): ByteArray?
     return null
 }
 
-// Port de resolveDataLink (yuzono/anime-extensions): desenvuelve dataLink cuando
-// viene como JSON.parse('...'), decodeURIComponent('...') o atob('...').
+
 private fun resolveDataLinkExpr(rawExpression: String?): String? {
     if (rawExpression.isNullOrBlank()) return null
     var expr = rawExpression.trim().trimEnd(';')

@@ -42,7 +42,7 @@ class UniqueStreamProvider : MainAPI() {
             File(appContext?.filesDir ?: File(System.getProperty("java.io.tmpdir")), "uniquestream_cache")
         }
         private const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
-        private const val CACHE_VERSION = 2
+        private const val CACHE_VERSION = 3
     }
 
     private fun seasonCacheFile(seasonId: String): File =
@@ -439,8 +439,15 @@ class UniqueStreamProvider : MainAPI() {
         seasonResults.sortedBy { it.first }.forEach { (displaySeason, eps) ->
             eps.forEach { ep ->
                 episodesList.add(newEpisode(ep.content_id) {
-                    this.name = ep.title
-                    this.episode = ep.episode_number?.toInt()
+                    val epNum = ep.episode_number ?: 0.0
+                    // Recaps fraccionales (18.5) muestran su etiqueta para no
+                    // duplicar el número del episodio entero en la UI.
+                    this.name = if (epNum % 1.0 != 0.0 && !ep.episode.isNullOrBlank()) {
+                        "${ep.episode} - ${ep.title}"
+                    } else {
+                        ep.title
+                    }
+                    this.episode = epNum.toInt()
                     this.season = displaySeason
                     this.posterUrl = ep.image
                     ep.duration_ms?.let { this.runTime = (it / 60000).toInt().coerceAtLeast(1) }
@@ -647,8 +654,6 @@ class UniqueStreamProvider : MainAPI() {
             .distinctBy { it.content_id }
             .filter { it.is_clip != true }
 
-        val hasFractional = baseEps.any { (it.episode_number ?: 0.0) % 1.0 != 0.0 }
-
         val regulars = baseEps.filterNot(isSpecialFn)
         val specials = baseEps
             .filter(isSpecialFn)
@@ -660,11 +665,17 @@ class UniqueStreamProvider : MainAPI() {
             s.copy(episode_number = maxRegular + i + 1)
         }
 
-        val renumberNeeded = hasFractional || regulars.any { ep ->
+        // Solo se renumera si los regulares traen datos raros (num<1 o etiqueta
+        // no numérica) o si el orden del API no es numérico. Los recaps
+        // fraccionales (x.5) por sí solos conservan su número natural
+        // (ej. 86-EIGHTYSIX: E2..E23, 18.5, 21.5) en vez de aplanarse a 1..N.
+        val regularNums = regulars.map { it.episode_number ?: 0.0 }
+        val apiOrderNumeric = regularNums.zipWithNext().all { (a, b) -> a <= b }
+        val renumberNeeded = regulars.any { ep ->
             val num = ep.episode_number ?: 0.0
             val label = ep.episode
             num < 1.0 || (label != null && label.isNotEmpty() && label.toDoubleOrNull() == null)
-        }
+        } || !apiOrderNumeric
 
         if (renumberNeeded) {
             val renumbered = merged.mapIndexed { i, ep -> ep.copy(episode_number = (i + 1).toDouble()) }
