@@ -42,7 +42,7 @@ class UniqueStreamProvider : MainAPI() {
             File(appContext?.filesDir ?: File(System.getProperty("java.io.tmpdir")), "uniquestream_cache")
         }
         private const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
-        private const val CACHE_VERSION = 3
+        private const val CACHE_VERSION = 4
     }
 
     private fun seasonCacheFile(seasonId: String): File =
@@ -440,9 +440,9 @@ class UniqueStreamProvider : MainAPI() {
             eps.forEach { ep ->
                 episodesList.add(newEpisode(ep.content_id) {
                     val epNum = ep.episode_number ?: 0.0
-                    // Recaps fraccionales (18.5) muestran su etiqueta para no
-                    // duplicar el número del episodio entero en la UI.
-                    this.name = if (epNum % 1.0 != 0.0 && !ep.episode.isNullOrBlank()) {
+
+                    val labelNum = ep.episode?.toDoubleOrNull()
+                    this.name = if (labelNum != null && labelNum % 1.0 != 0.0) {
                         "${ep.episode} - ${ep.title}"
                     } else {
                         ep.title
@@ -647,7 +647,9 @@ class UniqueStreamProvider : MainAPI() {
 
         val isSpecialFn: (EpisodeItem) -> Boolean = { ep ->
             ep.episode?.startsWith("SP", ignoreCase = true) == true ||
-                    Regex("special\\s+\\d", RegexOption.IGNORE_CASE).containsMatchIn(ep.title ?: "")
+                    Regex("special\\s+\\d", RegexOption.IGNORE_CASE).containsMatchIn(ep.title ?: "") ||
+
+                    ((ep.episode_number ?: 0.0) % 1.0 != 0.0)
         }
 
         val baseEps = allEps
@@ -665,10 +667,7 @@ class UniqueStreamProvider : MainAPI() {
             s.copy(episode_number = maxRegular + i + 1)
         }
 
-        // Solo se renumera si los regulares traen datos raros (num<1 o etiqueta
-        // no numérica) o si el orden del API no es numérico. Los recaps
-        // fraccionales (x.5) por sí solos conservan su número natural
-        // (ej. 86-EIGHTYSIX: E2..E23, 18.5, 21.5) en vez de aplanarse a 1..N.
+        
         val regularNums = regulars.map { it.episode_number ?: 0.0 }
         val apiOrderNumeric = regularNums.zipWithNext().all { (a, b) -> a <= b }
         val renumberNeeded = regulars.any { ep ->
