@@ -490,9 +490,7 @@ class MhdflixProvider : MainAPI() {
     }
 
     private fun isDirectMediaUrl(url: String): Boolean {
-        // Las páginas embed NUNCA son media directa aunque el slug termine en
-        // .mp4 (ej. streamtape.com/e/<id>/xxx.mp4, filemoon.top/e/...). Sin este
-        // filtro se emitía la página HTML como VIDEO → 3003 en ExoPlayer.
+        
         val lower = url.lowercase()
         if (lower.contains("/e/") || lower.contains("/v/") || lower.contains("/embed")) return false
         val path = url.substringAfter("://").substringAfter("/")
@@ -505,8 +503,6 @@ class MhdflixProvider : MainAPI() {
                path.contains("streamtape", ignoreCase = true)
     }
 
-    // Candidata válida a media directa: no es la propia página embed ni un
-    // endpoint embed conocido (/e/, /v/, /embed).
     private fun isMediaCandidate(cand: String, pageUrl: String): Boolean {
         val c = cand.trimEnd('/')
         if (c.equals(pageUrl.trimEnd('/'), ignoreCase = true)) return false
@@ -515,8 +511,6 @@ class MhdflixProvider : MainAPI() {
         return true
     }
 
-    // StreamTape: la URL real va en get_video?... (la página embed termina en
-    // .mp4 por el slug y NO es video). Emite "StreamTape - [Idioma]".
     private suspend fun tryStreamTapeExtract(
         url: String,
         referer: String,
