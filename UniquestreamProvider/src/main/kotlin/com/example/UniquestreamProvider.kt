@@ -667,7 +667,7 @@ class UniqueStreamProvider : MainAPI() {
             s.copy(episode_number = maxRegular + i + 1)
         }
 
-        
+
         val regularNums = regulars.map { it.episode_number ?: 0.0 }
         val apiOrderNumeric = regularNums.zipWithNext().all { (a, b) -> a <= b }
         val renumberNeeded = regulars.any { ep ->
