@@ -27,7 +27,7 @@ class TvenvivoProvider : MainAPI() {
     companion object {
         var pluginContext: android.content.Context? = null
     }
-    override var mainUrl = "https://www.tvenvivo2.com/"
+    override var mainUrl = "https://www.tvenvivo.org/"
     override var name = "TVenVIVO"
 
     override val supportedTypes = setOf(
@@ -679,7 +679,7 @@ class TvenvivoProvider : MainAPI() {
 
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                         val url = request?.url?.toString() ?: return false
-                        if (url.contains("tvenvivo2.com") || url.contains("javascript:")) {
+                        if (url.contains("tvenvivo.org") || url.contains("tvenvivo2.com") || url.contains("javascript:")) {
                             return true
                         }
                         return false
