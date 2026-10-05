@@ -249,7 +249,7 @@ class DonghualifeProvider : MainAPI() {
 val series = async { fetchDoc("$mainUrl/series?page=$page") }
         val recent = async { fetchDoc("$mainUrl/series?page=$page&sort=latest") }
         val movies = async { fetchDoc("$mainUrl/peliculas?page=$page") }
-        
+
         val genreDocs = GENRE_SECTIONS.map { g -> g to async { fetchDoc("$mainUrl/genres/${encGenre(g)}?page=$page") } }
 
         val lists = mutableListOf<HomePageList>()
@@ -568,6 +568,118 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
         else -> Qualities.Unknown.value
     }
 
+    private fun dailymotionQuality(key: String): Int = when (key.lowercase()) {
+        "1080", "hd1080" -> Qualities.P1080.value
+        "720", "hd720" -> Qualities.P720.value
+        "480", "sd" -> Qualities.P480.value
+        "380", "360" -> Qualities.P360.value
+        "240", "low" -> Qualities.P240.value
+        else -> Qualities.Unknown.value
+    }
+    
+    private fun dailymotionId(url: String): String? =
+        Regex("""[?&]video=([A-Za-z0-9]{6,})""").find(url)?.groupValues?.getOrNull(1)
+            ?: Regex("""dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]{6,})""").find(url)
+                ?.groupValues?.getOrNull(1)
+
+    private fun canonicalDailymotion(url: String): String? =
+        dailymotionId(url)?.let { "https://www.dailymotion.com/video/$it" }
+
+    private suspend fun emitDailymotion(
+        videoUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val id = dailymotionId(videoUrl) ?: return false
+        val referer = "https://www.dailymotion.com/embed/video/$id"
+
+        val meta = try {
+            app.get(
+                "https://www.dailymotion.com/player/metadata/video/$id",
+                headers = browserHeaders + ("Referer" to referer),
+                timeout = 30L,
+            ).text
+        } catch (e: Exception) {
+            Log.w(TAG, "dailymotion $id metadata falló (${e.message}), reintento sin headers")
+            try {
+                app.get("https://www.dailymotion.com/player/metadata/video/$id", timeout = 30L).text
+            } catch (e2: Exception) {
+                Log.w(TAG, "dailymotion $id metadata falló de nuevo: ${e2.message}")
+                null
+            }
+        } ?: return false
+
+        val root = try {
+            JSONObject(meta)
+        } catch (e: Exception) {
+            Log.w(TAG, "dailymotion $id metadata no es JSON (${e.message}): ${meta.take(160)}")
+            null
+        } ?: return false
+
+        try {
+            val data = root.optJSONObject("subtitles")?.optJSONObject("data")
+            if (data != null) {
+                for (key in data.keys()) {
+                    val entry = data.optJSONObject(key) ?: continue
+                    val arr = entry.optJSONArray("urls")
+                    val url = when {
+                        arr == null || arr.length() == 0 -> null
+
+                        arr.optJSONObject(0) != null -> arr.optJSONObject(0).strOrNull("url")
+                        else -> arr.optString(0).takeIf { it.isNotBlank() }
+                    } ?: continue
+                    val label = entry.strOrNull("label") ?: key
+                    subtitleCallback(SubtitleFile(label, url))
+                    Log.d(TAG, "dailymotion $id -> sub $label")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "dailymotion $id subtítulos: ${e.message}")
+        }
+
+        val qualities = root.optJSONObject("qualities")
+        if (qualities == null) {
+            Log.w(TAG, "dailymotion $id: sin qualities")
+            return false
+        }
+
+        var emitted = false
+        for (key in qualities.keys()) {
+            val arr = qualities.optJSONArray(key)
+            if (arr == null) {
+
+                val single = qualities.optJSONObject(key)?.strOrNull("url")
+                if (!single.isNullOrBlank()) {
+                    emitDmLink(key, single, referer, callback)
+                    emitted = true
+                }
+                continue
+            }
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val u = item.strOrNull("url") ?: continue
+                emitDmLink(key, u, referer, callback)
+                emitted = true
+            }
+        }
+        Log.d(TAG, "dailymotion $id -> ${if (emitted) "OK" else "0 URLs"}")
+        return emitted
+    }
+
+    private suspend fun emitDmLink(
+        key: String,
+        url: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit,
+    ) {
+        val isHls = url.contains(".m3u8")
+        callback(newExtractorLink(name, "Dailymotion ${key.uppercase()}".trim(), url, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+            this.referer = referer
+            this.headers = browserHeaders + ("Referer" to referer)
+            this.quality = if (key.equals("auto", true)) Qualities.Unknown.value else dailymotionQuality(key)
+        })
+    }
+
     private suspend fun emitOkru(videoUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
         val videoId = Regex("""ok\.ru/(?:videoembed|video)/(\d+)""").find(videoUrl)?.groupValues?.getOrNull(1)
             ?: return false
@@ -722,6 +834,31 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
             if (url.contains("ok.ru")) {
                 if (emitOkru(url, callback)) found = true
                 else Log.w(TAG, "ok.ru sin manifest: $url")
+            } else if (url.contains("dailymotion.com")) {
+                // El extractor de CS3 NO matchea geo.dailymotion.com: su getVideoId() saca el id
+                // solo del path (/video/{id}) y nunca del query ?video=, asi que devuelve null
+                // -> 0 links. Resolvemos aqui y, de fallback, pasamos la URL canonica.
+                if (emitDailymotion(url, subtitleCallback, callback)) found = true
+                else {
+                    val canonical = canonicalDailymotion(url) ?: url
+                    Log.w(TAG, "dailymotion: emitDailymotion sin resultado, probando loadExtractor con $canonical")
+                    val collected = mutableListOf<ExtractorLink>()
+                    val collector: (ExtractorLink) -> Unit = { link -> collected.add(link) }
+                    loadExtractor(canonical, pageUrl, subtitleCallback, collector)
+                    if (collected.isEmpty()) {
+                        Log.w(TAG, "sin links para ${src.label} ($url)")
+                    } else {
+                        for (link in collected) {
+                            callback(newExtractorLink(name, "${src.label} ${link.name}".trim(), link.url) {
+                                this.referer = link.referer ?: pageUrl
+                                this.quality = link.quality
+                                this.type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                this.headers = link.headers
+                            })
+                        }
+                        found = true
+                    }
+                }
             } else if (url.contains(".m3u8")) {
                 callback(newExtractorLink(name, src.label, url, ExtractorLinkType.M3U8) {
                     this.referer = pageUrl

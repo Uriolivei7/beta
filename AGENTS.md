@@ -1164,6 +1164,49 @@ Helpers anadidos: `watchUrl(id)`, `seriesUrl(slug)`, `movieUrl(slug)`.
 - **Peticion del usuario**: la fila "Ultimos episodios" del home estorba (generaba cards de episodio con MovieLoadResponse y ruido en el log). Eliminada de `getMainPage` junto con el fetch de `$mainUrl/` y la funcion `parseLatestEpisodes`. El home queda: Popular, Recientes, Peliculas y las 8 secciones de genero.
 - **Bug numeracion de temporadas**: `westward-5-0` salia como **T9** (era la T5, 64 eps). Causa: el numero se sacaba de `slug.substringAfterLast('-')` -> "0" -> no >0 -> caia en `base+1+idx` = 4+1+4 = 9. Ahora `seasonNumber(slug)` recorre los segmentos **de derecha a izquierda** y devuelve el primer entero > 0: `x-1`->1, `x-season-2`->2, **`x-5-0`->5**. Los `isSpecial` se numeran al final (base+1...).
 
+### 🐛 Fix dailymotion: loadExtractor devuelve 0 links (05 Oct 2026 v7)
+**Sintoma (logcat del usuario, v6)**: el fixUrl quedo **resuelto** (`loadLinks data='https://donghualife.com/watch/blades-guardians-1-1'` -> pagina 91401 B -> `fuentes=1 [dailymotion]` -> `source ok 141ms -> https://geo.dailymotion.com/player/xhojl.html?video=k5DBqQlgteD31hzaRfI`), pero:
+```
+sin links para dailymotion (https://geo.dailymotion.com/player/xhojl.html?video=k5DBqQlgteD31hzaRfI)
+loadLinks ... -> SIN LINKS (1 fuentes) 1717ms
+```
+
+**Investigacion (bytecode de `Dailymotion.getVideoId`, LA CAUSA RAIZ)**:
+```kotlin
+// Dailymotion.getVideoId(url) — decompilado
+Url(url).encodedPath                      // geo: "/player/xhojl.html"
+    .decodeURLPart()
+    .substringAfter("/video/")            // "/video/" NO aparece -> devuelve el path ENTERO
+    .takeIf { Regex("^[kx][a-zA-Z0-9]+$").matches(it) }   // no cumple -> null
+```
+- `getVideoId` saca el id **solo del PATH** (`/video/{id}`) y **NUNCA** del query `?video=`. Con `https://geo.dailymotion.com/player/xhojl.html?video=k5DB...` devuelve **null antes de hacer ninguna peticion** -> `loadExtractor` no emite nada -> "sin links". El manejo de `geo.dailymotion.com`/`video=` existe, pero **solo en `getEmbedUrl`**, nunca en `getVideoId`.
+- `getVideoId` NO es el problema en si mismo con urls `www.dailymotion.com/video/{id}` (esa forma si la resuelve). Lo que rompe es la forma `geo...player...?...video=` que da el sitio.
+- El endpoint que usa es `mainUrl + "/player/metadata/video/" + id` (literal en el BootstrapMethods via `StringConcatFactory.makeConcatWithConstants`) -> el mismo que usamos nosotros.
+- Desde PC ese endpoint responde **200 con cualquier UA** (sin UA, `okhttp/4.12.0`, `ExoPlayerLib`, Chrome) -> no es bloqueo por UA. El modelo de CS3 (`Map<String, List<Quality>>`, `SubtitleData(label, urls: List<String>)`) coincide **exactamente** con el JSON real.
+- El HTML de `geo.dailymotion.com/player/xhojl.html?video=ID` (200, 30 KB) es solo el shell JS del player: **no** contiene m3u8/manifestUrl (0 coincidencias) -> no sirve como fallback.
+- `https://www.dailymotion.com/cdn/H264-1920x1080?video=ID` (progresivo) -> **403** en todas las resoluciones. `stream_formats` del metadata es solo un mapa de disponibilidad (`{"1080":"mpegts",...}`), sin URLs.
+
+**Por que la version antigua no tenia este problema** (`git show d2c35036`): la version mas antigua (sitio Drupal) leia `.embed-links li a[data-video]` e `iframe[src]` de la pagina y hacia `loadExtractor(videoUrl, data, ...)` para TODO, asignando `found = true` **sin verificar** si el extractor devolvio algo. Esos iframes no eran urls `geo.dailymotion.com/player/...?video=`, asi que nuncaLocked. Desde `b415a68b` (sitio Next.js) el flujo es `resolveSource(token)` -> `geo.dailymotion.com/player/...` -> ahi se rompe. No era una regresion de `loadExtractor`: es que **la forma de la url cambio**.
+
+**Fix implementado**: `emitDailymotion()` propio en el provider, que no depende del extractor de CS3:
+- `dailymotionId(url)` saca el id de `?video=<id>`, `/video/<id>` o `/embed/video/<id>`.
+- `canonicalDailymotion(url)` -> `https://www.dailymotion.com/video/{id}` (forma que CS3 si lee) para el fallback.
+- `GET https://www.dailymotion.com/player/metadata/video/{id}` con `browserHeaders` + `Referer: https://www.dailymotion.com/embed/video/{id}`; **si falla, reintenta SIN headers** (por si el header extra provoca el rechazo).
+- **Forma real del JSON (verificada)**: `qualities` es `{"auto":[{"type":"application/x-mpegURL","url":"https://cdndirector.dailymotion.com/cdn/manifest/video/x8lg96q.m3u8?sec=..."}]}` -> la calidad es una **LISTA** de objetos, no un objeto. Se soporta tambien el formato antiguo (objeto suelto).
+- Emite cada URL como `newExtractorLink(name, "Dailymotion AUTO", url, M3U8)` con referer + headers del embed.
+- Subtitles de DM: `subtitles.data` es un mapa `etiqueta -> {label, urls:[...]}` (urls como `List<String>`; se acepta tambien el formato objeto) -> `subtitleCallback(SubtitleFile(label, url))`.
+- `loadLinks` hace dispatch por `url.contains("dailymotion.com")` **antes** del `loadExtractor` generico; si `emitDailymotion` no emite nada, reintenta con `loadExtractor(canonicalDailymotion(url))`.
+- Logs: `dailymotion <id> metadata fallo (...)`, `... no es JSON: <160 chars del body>`, `... sin qualities`, `... -> OK` / `0 URLs`, `dailymotion <id> -> sub <label>`.
+
+**Nota de compilacion**: `newExtractorLink(...)` es `suspend`, asi que las funciones que lo llaman deben ser `suspend` (`emitDmLink` y `emitDailymotion` lo son). Error tipico: *"Suspend function ... can only be called from a coroutine or another suspend function"*.
+
+**Nota de calidad**: el HLS que expone DM para `k5DBqQlgteD31hzaRfI` (blades-guardians EP1) solo tiene 2 variantes, 848x360 y 512x216 -> **360p es lo maximo que ofrece el uploader**, no un fallo del provider (el progressivo 1080p da 403).
+
+### Estado v7
+- `build.gradle.kts`: `version = 7`; `plugins.json`: version 7, `fileSize` **pendiente**.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar. Para diagnosticar: `adb logcat -s DonghuaLife:V` y buscar `dailymotion` — los 4 mensajes de log distinguishes exactamente el fallo (red / no-JSON / sin qualities / 0 URLs).
+- ⏸️ Pendiente de verificar en dispositivo: rumble / odysee / vk (siguen yendo por `loadExtractor`; si alguno falla tambien, se Vera en el log `sin links para <label>`).
+
 ### Estado v6
 - `build.gradle.kts`: `version = 6`; `plugins.json`: version 6, `fileSize` **pendiente** tras compilar.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y comprobar que `loadLinks data='https://donghualife.com/watch/...'` (con `/watch/` y **sin** `watch:`) trae `fuentes=N` y emite enlaces.
