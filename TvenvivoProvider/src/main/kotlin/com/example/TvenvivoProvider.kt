@@ -279,8 +279,7 @@ class TvenvivoProvider : MainAPI() {
             }
 
             val optionLinksBuilder = mutableListOf<String>()
-            // Formato nuevo: const SOURCES={1:".../live/core.php?canal=x",2:...}
-            // + button.source[data-source] (sin data-src ni iframes con src).
+
             Regex("""SOURCES\s*=\s*\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL).find(mainPageResponse.text)?.let { m ->
                 Regex("""["']((?:https?:)?//[^"']+)["']""").findAll(m.groupValues[1]).forEach { u ->
                     var s = u.groupValues[1]
@@ -434,7 +433,7 @@ class TvenvivoProvider : MainAPI() {
                         return@withTimeout true
                     }
 
-                    val playlistFromJs = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
+                    val playlistFromJs = Regex("""(?:(?:var|let|const)\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                         .find(streamHtml)?.groupValues?.get(1)
                         ?.replace("\\/", "/")
                         ?.replace("&amp;", "&")
@@ -499,7 +498,7 @@ class TvenvivoProvider : MainAPI() {
                     Log.w("Tvenvivo", "Opción ${displayIndex + 1}: stream.php falló ${streamResp?.code ?: "timeout"}")
                 }
 
-                val jsPlaylistUrlForWv = Regex("""(?:var\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
+                val jsPlaylistUrlForWv = Regex("""(?:(?:var|let|const)\s+src|source|file)\s*=\s*["']([^"']*playlist\.php[^"']*)["']""", RegexOption.IGNORE_CASE)
                     .find(streamResp?.text ?: "")?.groupValues?.get(1)?.replace("\\/", "/")?.replace("&amp;", "&")
                     ?.let { if (it.startsWith("http")) it else "$streamOrigin/$it" }
                 val playlistInfo = interceptPlaylistViaWebView(streamUrl, mainHeaders, canal, target, sig, streamOrigin, playlistUrl = playlistUrl, altPlaylistUrl = jsPlaylistUrlForWv)
