@@ -279,6 +279,15 @@ class TvenvivoProvider : MainAPI() {
             }
 
             val optionLinksBuilder = mutableListOf<String>()
+            // Formato nuevo: const SOURCES={1:".../live/core.php?canal=x",2:...}
+            // + button.source[data-source] (sin data-src ni iframes con src).
+            Regex("""SOURCES\s*=\s*\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL).find(mainPageResponse.text)?.let { m ->
+                Regex("""["']((?:https?:)?//[^"']+)["']""").findAll(m.groupValues[1]).forEach { u ->
+                    var s = u.groupValues[1]
+                    if (s.startsWith("//")) s = "https:$s"
+                    if (s.isNotBlank()) optionLinksBuilder.add(s)
+                }
+            }
             doc.select("button[data-src], a[data-src], [data-src]").forEach {
                 val ds = it.attr("data-src")
                 if (ds.isNotBlank()) optionLinksBuilder.add(ds)
