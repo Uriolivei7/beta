@@ -22,13 +22,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "DonghuaLife"
 
-/**
- * REGLA CRITICA: CS3 aplica `fixUrl()` (ver MainAPIKt.fixUrl) a la url que le pasas a
- * `newEpisode()` y a los `newSearchResponse*`. fixUrl = "si no empieza por 'http', prepende mainUrl".
- * Por eso TODO lo que emitimos debe ser una URL ABSOLUTA https://donghualife.com/...
- * (nunca "watch:xxx" ni "pelis:xxx": fixUrl los convierte en https://donghualife.com/watch:xxx -> 404).
- * `newMovieLoadResponse` / `newTvSeriesLoadResponse` NO pasan por fixUrl, pero se mantiene absoluto.
- */
 private fun watchUrl(id: String): String = "https://donghualife.com/watch/$id"
 private fun seriesUrl(slug: String): String = "https://donghualife.com/series/$slug"
 private fun movieUrl(slug: String): String = "https://donghualife.com/peliculas/$slug"
@@ -576,7 +569,7 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
         "240", "low" -> Qualities.P240.value
         else -> Qualities.Unknown.value
     }
-    
+
     private fun dailymotionId(url: String): String? =
         Regex("""[?&]video=([A-Za-z0-9]{6,})""").find(url)?.groupValues?.getOrNull(1)
             ?: Regex("""dailymotion\.com/(?:embed/)?video/([A-Za-z0-9]{6,})""").find(url)
