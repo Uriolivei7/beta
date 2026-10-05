@@ -1,5 +1,11 @@
 # AGENTS.md - Netmirror Plugin Development
 
+## Reglas de trabajo (OBLIGATORIAS)
+- **NUNCA ejecutar Gradle por cuenta propia.** Ni `compileReleaseKotlin`, ni `make`, ni `installDebug`, ni tests. Aunque el código "debería" compilar y aunque los errores sean obvios: **primero termina todos los cambios del proveedor, y solo compila cuando el usuario lo pida expresamente.** Si crees que hay un error de compilación, descríbelo y sigue editando; no lanc gradle para confirmarlo.
+- **NUNCA hacer `git commit`, `git push`, `git tag` ni `git rebase` sin que el usuario lo pida de forma explícita.** Al terminar un proveedor: enumera los archivos tocados y el comando de compilación exacto que debe correr el usuario, y qué queda pendiente de probar en dispositivo.
+- Al cerrar cada proveedor o fix importante, **añadir su sección a este `AGENTS.md`** con: arquitectura verificada, reglas del sitio, causa raíz, fix aplicado, estado de compilación y qué queda pendiente de probar en dispositivo. Es el único sitio donde se registra el progreso.
+
+
 ## Goal
 - Proveer streams completos desde cncverse para Netflix/PrimeVideo/JioHotstar providers en CloudStream.
 
@@ -996,3 +1002,62 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Efecto: `CS3IPlayer when (drm.uuid)` no matchea el UUID correcto -> log `DRM Metadata class is not supported: DrmMetadata` -> DRM descartado -> contenido cenc en negro/silencio (MPD 200 en loop, 0 segmentos pedidos).
 - Ningun provider puede reproducir ClearKey hasta que upstream corrija la constante a `0x781A059057B03BAC`.
 - Verificado por bytecode: default `kty="oct"`, default `uuid=CLEARKEY_UUID`; licencia `{"keys":[{"kty","k","kid"}],"type":"temporary"}`.
+
+---
+
+## DonghualifeProvider - Migracion a Next.js 15 (05 Oct 2026)
+
+El sitio fue reescrito de Drupal a **Next.js 15 (App Router)**. Todo el provider anterior quedo obsoleto; se reescribio completo con `org.json`.
+
+### Rutas verificadas
+| Ruta | Uso |
+|---|---|
+| `/series?page=N` | Catalogo series |
+| `/peliculas?page=N` | Catalogo peliculas |
+| `/series?page=N&sort=latest` | Series recientes |
+| `/series/{slug}` | Detalle serie |
+| `/peliculas/{slug}` | Detalle pelicula |
+| `/watch/{seasonSlug}-{ep}` | Reproductor |
+| `/api/series/{slug}/seasons/{seasonSlug}/episodes` | Episodios de temporada |
+| `/api/player/source` + `/api/player/refresh` | Token de reproduccion |
+| `/api/subtitles`, `/api/subtitles/{id}` | Lista / contenido de subtitulos |
+
+### Reglas del sitio (IMPORTANTE)
+- **NO existe `/search`** (404). La busqueda se hace en **dos** peticiones: `/series?q={q}` **y** `/peliculas?q={q}`. `/peliculas?search=` se ignora (siempre pagina 1).
+- Cards: `a.poster-card[href]`, titulo desde `img[alt]` (NO `.title`, que sale vacio), poster desde `img[src]`. Admite `/_next/image?url=...`.
+- Metadatos en `script[type=application/ld+json]` (`name`, `description`, `genre`, `image`, `datePublished`).
+- **ID de watch = `{seasonSlug}-{episodeNumber}`**, NO `{seriesSlug}-temporada-N-M`. Ejemplos: `swallowed-star-1-3`, `doupo-cangqiong-especial-1`, `record-mortals-journey-immortality-season-6-5`.
+- Los UUID `...-temporada-N-M` que aparecian en la portada devuelven **cero fuentes** -> no usarlos.
+- Temporadas especiales: slug con sufijo numerico (`season-6`) o texto (`-especial`); se renumeran **despues** de la ultima temporada normal para que CS3 no las ordene al principio (mismo bug que en Uniquestream).
+- Peliculas: `data = "pelis:{slug}"`.
+- `GET /api/sources?episodeId=` es una DEMO que devuelve `example.com` -> no usar.
+- En NiceHttp el JSON va en `requestBody = json.toRequestBody(...)`, **nunca** en `data = String`.
+
+### Fuentes (muestreo de 17 episodios)
+| Proveedor | Tratamiento |
+|---|---|
+| `ok.ru` | **El mas frecuente (12/17 solo ok.ru)** -> extractor HLS propio |
+| `rumble` / `dailymotion` / `odysee` | `loadExtractor` |
+| `R2` | M3U8 directo (master/init/segmentos 200) |
+| `Mg` (mega.nz) | Dejado en `loadExtractor` (no se integro `MegaExtractor`) |
+
+- **ok.ru**: GET `https://ok.ru/videoembed/{id}` con Referer -> parsear `[data-options]` -> `flashvars.metadata.hlsManifestUrl`. Master verificado con 6 variantes (144p-1080p) y segmentos 200. Fallback: URLs progresivas de `metadata.videos[]`.
+- R2: los 404 iniciales eran transitorios del CDN; `index.m3u8`, `init.mp4` y segmentos responden 200.
+
+### Subtítulos (ASS -> VTT)
+- `GET /api/subtitles/{id}` da **403 sin Referer** y 200 con el Referer de la pagina `/watch/...`.
+- El body es JSON `{content: <ASS>}`. Se convierte a VTT (respeta `\\anN`), se cachea en memoria y se sirve en URLs falsas `$mainUrl/__sub/{id}.vtt` desde `getVideoInterceptor` con `Content-Type: text/vtt`.
+- CS3 detecta el `.vtt` por extension y lo procesa nativamente.
+
+### Fixes de compilacion (05 Oct 2026)
+- **`parseJson<T>()` es INUTILIZABLE en plugins**: el CloudStream jar es JVM 11 y `build.gradle.kts` fuerza `JvmTarget.JVM_1_8` -> `Cannot inline bytecode built with JVM target 11 into bytecode that is being built with JVM target 1.8`. Por eso este provider usa **solo `org.json`** (mismo criterio que la regla de Jackson, ver SyncPlugin).
+- **`loadExtractor` NO acepta lambda final**: `loadExtractor(url, referer, subCb) { link -> ... }` -> `Suspension functions can only be called within coroutine body`. Usar el patron de callback capturado (igual que `SoloLatinoProvider.kt:547`): declarar `val collector: (ExtractorLink) -> Unit = { ... }` y pasarlo como 4to argumento.
+- `search()` debe devolver `List<SearchResponse>?`; `newSearchResponse` y `SpacerCard` no existen en esta API del plugin.
+
+### Estado
+- Compilacion OK: `.\gradlew.bat :DonghualifeProvider:make --console=plain -q`
+- Plugin: `DonghualifeProvider/build/DonghualifeProvider.cs3` (**49063 B**)
+- `build.gradle.kts`: `version = 4`; `plugins.json`: version 4, fileSize 49063 (67 entradas)
+- `load()` detecta URLs `/watch/...` y devuelve `MovieLoadResponse` con `movieData = watchId`, para que los cards de "Ultimos episodios" se reproduzcan en una pulsacion.
+- Archivos tocados: `DonghualifeProvider/src/main/kotlin/com/example/DonghualifeProvider.kt`, `DonghualifeProvider/build.gradle.kts`, `plugins.json`, `AGENTS.md`.
+- ⏸️ **Pendiente**: probar en dispositivo ok.ru (extractor + interceptor), rumble/dailymotion/odysee via `loadExtractor`, y los subtitulos ASS->VTT con Referer.

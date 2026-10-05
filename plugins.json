@@ -759,7 +759,7 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DonghualifeProvider.cs3",
   "status": 1,
-  "version": 1,
+  "version": 4,
   "apiVersion": 1,
   "name": "DonghuaLife",
   "internalName": "DonghualifeProvider",
@@ -770,9 +770,9 @@
   "tvTypes": [
    "Anime"
   ],
-  "iconUrl": "https://donghualife.com/sites/default/files/cropped-Publicacion-grafica-cuadrada-800x800-px-2-modified-1.png",
+  "iconUrl": "https://donghualife.com/logo.webp?v=1",
   "language": "mx",
-  "fileSize": 65000
+  "fileSize": 49063
  },
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SerieslanProvider.cs3",

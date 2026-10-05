@@ -46,9 +46,6 @@ class PoseidonHDProvider : MainAPI() {
 
     private val TAG = "PoseidonHD"
 
-    // Aplica a links con source="PoseidonHD2" (todos los propios: wrap, Byse, SW).
-    // UA de navegador + Referer propio + timeouts + log (diagnóstico 2004/2001).
-    // Sin override de Origin (rompería hosts que lo validan).
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val cdnMarks = listOf(
             "premilkyway", "dramiyos", "acek-cdn", "vidhidepro", "vidhide",
@@ -68,7 +65,7 @@ class PoseidonHDProvider : MainAPI() {
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
-            // Se conserva el Referer propio de cada link
+
             val withRef = if (extractorLink.referer.isNotBlank()) {
                 newRequest.newBuilder().header("Referer", extractorLink.referer).build()
             } else {

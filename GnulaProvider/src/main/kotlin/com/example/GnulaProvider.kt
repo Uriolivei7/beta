@@ -40,7 +40,7 @@ class GnulaProvider : MainAPI() {
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
-            // Se conserva el Referer propio de cada link (core o custom)
+
             val withRef = if (extractorLink.referer.isNotBlank()) {
                 newRequest.newBuilder().header("Referer", extractorLink.referer).build()
             } else {
