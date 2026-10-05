@@ -1061,3 +1061,67 @@ El sitio fue reescrito de Drupal a **Next.js 15 (App Router)**. Todo el provider
 - `load()` detecta URLs `/watch/...` y devuelve `MovieLoadResponse` con `movieData = watchId`, para que los cards de "Ultimos episodios" se reproduzcan en una pulsacion.
 - Archivos tocados: `DonghualifeProvider/src/main/kotlin/com/example/DonghualifeProvider.kt`, `DonghualifeProvider/build.gradle.kts`, `plugins.json`, `AGENTS.md`.
 - ⏸️ **Pendiente**: probar en dispositivo ok.ru (extractor + interceptor), rumble/dailymotion/odysee via `loadExtractor`, y los subtitulos ASS->VTT con Referer.
+
+### 🐛 Fix "sin episodios o temporadas" + search vacio (05 Oct 2026 v5)
+**Sintoma (logcat del usuario)**: `sin temporadas en great-ruler-2-41`, `el-cazador-de-demonios-3-28`, `combat-continent-2-la-inigualable-secta-tang-1-173` y `GET https://donghualife.com/{uuid}-temporada-1-21 fallo: StandaloneCoroutine was cancelled`. Ademas el search no mostraba ninguna tarjeta.
+
+**Causa raiz 1 (ids sueltos)**: `parseLatestEpisodes` y la lista de episodios de `load()` usaban el **watchId desnudo** como `SearchResponse.url` / `EpisodeItem.id` (`great-ruler-2-41`). `load()` solo detectaba `/watch/` en la URL, asi que un id suelto caia en la rama de serie -> `GET /{id}` -> pagina vacia -> "sin temporadas". CS3 ademas prepende `mainUrl` a las urls relativas (por eso los GET salian a `https://donghualife.com/{id}`).
+
+**Causa raiz 2 (temporadas truncadas)**: `initialEpisodes` del RSC viene **incompleto** en temporadas != 1. Verificado: `great-ruler-1` inline=52 de 52, `great-ruler-2` inline=**10 de 41** (la API `/api/series/great-ruler/seasons/great-ruler-2/episodes` devuelve los 41). `seasonEpisodes` devolvia los inline sin comprobar nada -> la T2 aparecia con 10 episodios.
+
+**Causa raiz 3 (peliculas)**: `load()` hacia `MOVIE_PREFIX + slug` con `slug = "pelis:{slug}"` (el id ya traia prefijo) -> `pelis:pelis:{slug}` -> `/peliculas/pelis:{slug}` -> 0 fuentes. Afectaba a peliculas de portada y de search.
+
+**Fixes**:
+- `parseCards` y `parseLatestEpisodes` emiten **URLs absolutas** (`$mainUrl/series/{slug}`, `$mainUrl/peliculas/{slug}`, `$mainUrl/watch/{id}`). Elimina la ambigüedad con el prepending de `mainUrl` que hace CS3.
+- Nueva `WATCH_PREFIX = "watch:"` para los ids de episodio. `load()` reconoce episodio por (a) prefijo `watch:`, (b) `/watch/` en la URL, o (c) id suelto con forma `{seasonSlug}-{ep}` (`EPISODE_SHAPE`) -> `episodeResponse()` devuelve `MovieLoadResponse` con `movieData = "watch:{id}"`. `loadLinks()` quita el prefijo al construir la URL.
+- `seasonEpisodes(seriesSlug, slug, initial, expected)`: usa la API cuando `inline.size < episodeCount` (nuevo data class `SeasonRaw`).
+- `movieData = MOVIE_PREFIX + (movieSlug ?: slug)` — evita el doble prefijo.
+- `search()`: log de entrada/salida (`search 'q' -> N series, M peliculas`), `CancellationException` re-lanzada, excepcion general -> `null`, y `null` si la lista queda vacia.
+- `plugins.json`: `tvTypes` ahora `["Anime","OVA","AnimeMovie"]` (solo declaraba `["Anime"]`, aunque `build.gradle.kts` ya tenia los tres y el provider sobrescribe `supportedTypes` en codigo).
+
+**Verificado por bytecode por que el search deberia funcionar**: `SearchViewModel.search` -> `APIRepository.search(query,page)` -> `withTimeout(getTimeout(searchTimeoutMs))` (**120000ms** por defecto, `coerceIn(5000,480000)`) -> `MainAPI.search(query,page)` -> **`invokevirtual search(String,Continuation)`** (offset 131 del `search$suspendImpl`), o sea que **si llama al override de 1 argumento** del provider. El endpoint del provider coincide con el del buscador del sitio: el JS de la home hace `router.push('/series?q=' + encodeURIComponent(q))`.
+
+**Descartado**: los UUID legacy `{uuid}-temporada-N-M` **NO** son enlaces muertos. Verificado: `/watch/1c684f19-...-temporada-1-21` tiene `sources` (rumble, dailymotion) y el token resuelve 200 a `rumble.com/embed/...`. Se habiaadded un filtro `DEAD_WATCH` que los descartaba -> **eliminado**.
+
+**Otros verificados**: `/peliculas/*` tiene `sources` (rumble/vk, dailymotion/ok.ru) y tokens que resuelven 200; los labels vienen en variantes de caja (`Ok.ru`, `Dailymotion`, `rumble`, `vk`) pero el dispatch se hace por URL resuelta, no por label; las peliculas **no** traen `episodeId` (sin subtitulos); la busqueda del sitio es server-side y correcta (0 resultados solo para titulos ausentes del catalogo: "one piece", "re:zero", "solo leveling").
+
+### Estado v5
+- `build.gradle.kts`: `version = 5`; `plugins.json`: version 5, tvTypes `[Anime, OVA, AnimeMovie]`, `fileSize` **pendiente de actualizar** tras compilar.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar. Para diagnosticar el search: `adb logcat -s DonghuaLife:V` y buscar `search() llamado:` / `search '...' -> N series`.
+- ⏸️ Verificar tambien ok.ru, rumble/dailymotion/odysee/vk y los subtitulos ASS->VTT.
+
+### 📊 Logging de diagnostico + seccion Action en home (05 Oct 2026 v5.1)
+- **Motivo**: el search no mostraba nada en dispositivo y hacia falta ver donde falla exactamente cada etapa.
+- **Seccion nueva en `getMainPage`**: `Acción` desde `/genres/Acci%C3%B3n?page=N` (verificado: 50 poster-cards en la pagina 1, paginado `?page=N`). Se usa `encGenre()` porque el sitio exige **percent-encoding UTF-8** en el path (`URLEncoder.encode` + `+`→`%20`).
+- **Logging anadido** (todo con `TAG = DonghuaLife`, ver `adb logcat -s DonghuaLife:V`):
+  | Etapa | Logs |
+  |---|---|
+  | `fetchDoc` | `GET ok {ms}ms len={n} url` / `GET fallo {ms}ms url -> Excepcion: msg` |
+  | `getMainPage` | `getMainPage page=N` + resumen `popular/recientes/pelis/accion/ultimos` + `sin listas` |
+  | `search` | `search() llamado: 'q'`, `search 'q' -> N series, M peliculas, N total`, `cancelada`, `fallo` |
+  | `load` | `load(url) -> Episodio <id>` / `-> pagina <url>`, `pagina vacia`, `jsonld=<bool> titulo=`, `temporadas=N (T1:slug=52, ...) episodios=N` |
+  | `seasonEpisodes` | `temporada <slug>: inline N/M (sin API)` / `-> consultando API` / `API devolvio N/M en Xms` / fallo con fallback a inline |
+  | `loadLinks` | `loadLinks data='..' -> pagina <url>`, `pagina no disponible`, `fuentes=N [label(provider)]`, por fuente `sin links`, y final `OK/SIN LINKS (N fuentes) Xms` |
+  | `resolveSource` | `source ok Xms -> url`, `source fallo y refresh no devolvio token`, `source ok tras refresh` |
+  | `emitOkru` | `ok.ru <id> -> HLS`, `sin manifest`, `sin URLs` |
+  | subtitulos | `subtitulos: N`, `subtitulo <id> fallo` |
+- **Mejora de robustez en `seasonEpisodes`**: si la API falla o devuelve 0, ahora **devuelve los inline** en vez de lista vacia (antes la temporada se quedaba vacia).
+- ⚠️ **TRAMPA CRITICA (no revertir)**: `fetchDoc` hace `Jsoup.parse(text, url)` — el **baseUri es obligatorio**, porque `parseCards` lee `a.attr("abs:href")`. Con `Jsoup.parse(text)` (sin baseUri) `abs:href` devuelve la ruta RELATIVA (`/series/xyz`) y se rompen los links de todas las tarjetas. Se cambiò de `.document` a `.text` + `Jsoup.parse` solo para poder loguear el tamaño real del body.
+
+### 🎬 Generos del home: como añadir mas (05 Oct 2026 v5.2)
+- **Mecanismo**: todo esta en la constante `GENRE_SECTIONS` (`DonghualifeProvider.kt:38`). **Añadir un genero = añadir una linea**. `getMainPage` hace un `async` (fetch paralelo) por genero a `/genres/{nombre}?page=N` y crea un `HomePageList` por cada uno. Los generos vacios se omiten solos (`takeIf { it.isNotEmpty() }`).
+- **El nombre debe coincidir EXACTAMENTE con el de `/genres/{nombre}`** (ver tabla). El path se codifica en UTF-8 con `encGenre()` = `URLEncoder.encode` + `+`→`%20` (`Artes marciales` → `Artes%20marciales`, `Acción` → `Acci%C3%B3n`).
+- **Lista canonica** (sacada de `https://donghualife.com/genres`, que es un indice con `a.surface[href^=/genres/]` → `h2` = etiqueta, `p` = nº de series). Total 352 series.:
+  | # | Genero | # | Genero | # | Genero | # | Genero |
+  |---|---|---|---|---|---|---|---|
+  | 272 | Acción | 74 | Artes marciales | 14 | Demonios | 6 | Militar |
+  | 150 | Aventura | 41 | Comedia | 13 | Isekai | 5 | Bélico |
+  | 149 | Cultivo | 40 | Reencarnación | 11 | Magia | 5 | Alquimia |
+  | 102 | Animación | 40 | Venganza | 10 | Seinen | 5 | Escolar |
+  | 98 | Fantasía | 33 | Ciencia Ficción | 9 | Sistema de cultivo | 5 | Historia |
+  | 96 | Romance | 30 | Misterio | 4 | Estrategia | 4 | Harem |
+  | 87 | Drama | 29 | Superpoder | 3 | Guerra y política | 4 | Conspiración |
+- **Ojo**: `/genres/{X}` responde **200 con 0 cards** para nombres inexistentes o vacios (p.ej. `Sci-Fi`, `Wuxia`, `Mecha`, `Cultura`, `Psicológico`) → la seccion simplemente no aparece, no rompe.
+- **Ojo 2**: el sitio duplica enlaces en minusculas (`/genres/acci%C3%B3n`, `/genres/acci%C3%B3n.`) y esos **NO** traen series. Usar siempre la variante con mayusculas de la tabla.
+- **Coste**: cada seccion de genero son ~180-260 KB. Con 8 generos son 12 fetches en paralelo por pagina del home (4 base+ 8 generos) → ~2 MB por paginacion. Si molesta en datos moviles, recortar `GENRE_SECTIONS`.
+- El log de `getMainPage` ahora incluye el desglose: `generos=Acción=50, Aventura=44, Cultivo=50, ...`

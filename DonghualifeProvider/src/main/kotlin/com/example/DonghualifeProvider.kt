@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -14,12 +15,29 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "DonghuaLife"
 private const val MOVIE_PREFIX = "pelis:"
+private const val WATCH_PREFIX = "watch:"
+private val EPISODE_SHAPE = Regex("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\\d+")
+
+private val GENRE_SECTIONS = listOf(
+    "Acción",
+    "Aventura",
+    "Cultivo",
+    "Animación",
+    "Fantasía",
+    "Romance",
+    "Drama",
+    "Artes marciales",
+)
+
+private fun encGenre(name: String): String =
+    java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")
 
 private data class LdInfo(
     val title: String? = null,
@@ -39,6 +57,13 @@ private data class Season(
     val slug: String,
     val number: Int,
     val episodes: List<Ep>,
+)
+
+private data class SeasonRaw(
+    val slug: String,
+    val initial: JSONArray?,
+    val special: Boolean,
+    val count: Int,
 )
 
 private data class Src(
@@ -167,11 +192,18 @@ class DonghualifeProvider : MainAPI() {
         }
     }
 
-    private suspend fun fetchDoc(url: String): Document? = try {
-        app.get(url, headers = browserHeaders, timeout = 30L).document
-    } catch (e: Exception) {
-        Log.w(TAG, "GET $url falló: ${e.message}")
-        null
+    private suspend fun fetchDoc(url: String): Document? {
+        val t0 = System.currentTimeMillis()
+        return try {
+            val text = app.get(url, headers = browserHeaders, timeout = 30L).text
+
+            val doc = Jsoup.parse(text, url)
+            Log.d(TAG, "GET ok ${System.currentTimeMillis() - t0}ms len=${text.length} $url")
+            doc
+        } catch (e: Exception) {
+            Log.w(TAG, "GET falló ${System.currentTimeMillis() - t0}ms $url -> ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
     }
 
     // ------------------------------------------------------------------
@@ -193,11 +225,11 @@ class DonghualifeProvider : MainAPI() {
             val slug = href.substringAfterLast("/").substringBefore("?")
             if (slug.isBlank()) continue
             if (href.contains("/peliculas/")) {
-                out.add(newMovieSearchResponse(title, MOVIE_PREFIX + slug, TvType.AnimeMovie) {
+                out.add(newMovieSearchResponse(title, "$mainUrl/peliculas/$slug", TvType.AnimeMovie) {
                     this.posterUrl = poster
                 })
             } else {
-                out.add(newAnimeSearchResponse(title, slug, TvType.Anime) { this.posterUrl = poster })
+                out.add(newAnimeSearchResponse(title, "$mainUrl/series/$slug", TvType.Anime) { this.posterUrl = poster })
             }
         }
         return out
@@ -215,40 +247,77 @@ class DonghualifeProvider : MainAPI() {
             val epTitle = a.select("p").lastOrNull()?.text()?.trim()?.takeIf { it.isNotEmpty() }
             val poster = absoluteImage(img?.attr("src"))
             val title = if (epTitle.isNullOrBlank() || epTitle.equals(seriesName, true)) seriesName else "$seriesName - $epTitle"
-            out.add(newAnimeSearchResponse(title, watchId, TvType.Anime) { this.posterUrl = poster })
+            out.add(newAnimeSearchResponse(title, "$mainUrl/watch/$watchId", TvType.Anime) { this.posterUrl = poster })
         }
         return out
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? = coroutineScope {
+        val t0 = System.currentTimeMillis()
+        Log.d(TAG, "getMainPage page=$page")
         val series = async { fetchDoc("$mainUrl/series?page=$page") }
         val recent = async { fetchDoc("$mainUrl/series?page=$page&sort=latest") }
         val movies = async { fetchDoc("$mainUrl/peliculas?page=$page") }
         val home = async { if (page == 1) fetchDoc("$mainUrl/") else null }
 
+        val genreDocs = GENRE_SECTIONS.map { g -> g to async { fetchDoc("$mainUrl/genres/${encGenre(g)}?page=$page") } }
+
         val lists = mutableListOf<HomePageList>()
         val suffix = if (page == 1) "" else " p.$page"
 
-        parseCards(series.await()).takeIf { it.isNotEmpty() }
+        val seriesList = parseCards(series.await())
+        val recentList = parseCards(recent.await())
+        val movieList = parseCards(movies.await())
+        val latestList = parseLatestEpisodes(home.await())
+        val genreLists = genreDocs.map { (genre, deferred) -> genre to parseCards(deferred.await()) }
+
+        seriesList.takeIf { it.isNotEmpty() }
             ?.let { lists.add(HomePageList("Popular$suffix", it)) }
-        parseCards(recent.await()).takeIf { it.isNotEmpty() }
+        recentList.takeIf { it.isNotEmpty() }
             ?.let { lists.add(HomePageList("Recientes$suffix", it)) }
-        parseCards(movies.await()).takeIf { it.isNotEmpty() }
+        movieList.takeIf { it.isNotEmpty() }
             ?.let { lists.add(HomePageList("Películas$suffix", it)) }
-        parseLatestEpisodes(home.await()).takeIf { it.isNotEmpty() }
+        genreLists.forEach { (genre, items) ->
+            items.takeIf { it.isNotEmpty() }
+                ?.let { lists.add(HomePageList("$genre$suffix", it)) }
+        }
+        latestList.takeIf { it.isNotEmpty() }
             ?.let { lists.add(HomePageList("Últimos episodios", it)) }
 
-        if (lists.isEmpty()) null else newHomePageResponse(lists, page < 12)
+        Log.d(
+            TAG,
+            "getMainPage page=$page ${System.currentTimeMillis() - t0}ms | " +
+                "popular=${seriesList.size} recientes=${recentList.size} pelis=${movieList.size} " +
+                "ultimos=${latestList.size} listas=${lists.size} | " +
+                "generos=${genreLists.joinToString { "${it.first}=${it.second.size}" }}"
+        )
+        if (lists.isEmpty()) {
+            Log.w(TAG, "getMainPage page=$page sin listas")
+            null
+        } else newHomePageResponse(lists, page < 12)
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
         val q = query.trim()
+        Log.d(TAG, "search() llamado: '$q'")
         if (q.isEmpty()) return null
         val enc = java.net.URLEncoder.encode(q, "UTF-8")
-        return coroutineScope {
-            val series = async { parseCards(fetchDoc("$mainUrl/series?q=$enc")) }
-            val movies = async { parseCards(fetchDoc("$mainUrl/peliculas?q=$enc")) }
-            (series.await() + movies.await()).distinctBy { it.url }
+        return try {
+            coroutineScope {
+                val series = async { parseCards(fetchDoc("$mainUrl/series?q=$enc")) }
+                val movies = async { parseCards(fetchDoc("$mainUrl/peliculas?q=$enc")) }
+                val s = series.await()
+                val m = movies.await()
+                val out = (s + m).distinctBy { it.url }
+                Log.d(TAG, "search '$q' -> ${s.size} series, ${m.size} peliculas, ${out.size} total")
+                if (out.isEmpty()) null else out
+            }
+        } catch (e: CancellationException) {
+            Log.w(TAG, "search '$q' cancelada: ${e.message}")
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "search '$q' falló: ${e.message}")
+            null
         }
     }
 
@@ -268,19 +337,27 @@ class DonghualifeProvider : MainAPI() {
         return out
     }
 
-    private suspend fun seasonEpisodes(seriesSlug: String, slug: String, initial: JSONArray?): List<Ep> {
+    private suspend fun seasonEpisodes(seriesSlug: String, slug: String, initial: JSONArray?, expected: Int): List<Ep> {
         val inline = parseEpisodes(initial)
-        if (inline.isNotEmpty()) return inline
+
+        if (inline.isNotEmpty() && (expected <= 0 || inline.size >= expected)) {
+            Log.d(TAG, "temporada $slug: inline ${inline.size}/$expected (sin API)")
+            return inline
+        }
+        Log.d(TAG, "temporada $slug: inline ${inline.size}/$expected -> consultando API")
+        val t0 = System.currentTimeMillis()
         return try {
             val body = app.get(
                 "$mainUrl/api/series/$seriesSlug/seasons/$slug/episodes",
                 headers = jsonHeaders + ("Referer" to "$mainUrl/series/$seriesSlug"),
                 timeout = 30L,
             ).text
-            parseEpisodes(jsonArrayOf(body, "episodes"))
+            val api = parseEpisodes(jsonArrayOf(body, "episodes"))
+            Log.d(TAG, "temporada $slug: API devolvió ${api.size}/${expected} en ${System.currentTimeMillis() - t0}ms")
+            if (api.isEmpty()) inline else api
         } catch (e: Exception) {
-            Log.w(TAG, "episodios de $slug fallaron: ${e.message}")
-            emptyList()
+            Log.w(TAG, "episodios de $slug fallaron: ${e.message} (inline ${inline.size})")
+            inline
         }
     }
 
@@ -292,43 +369,84 @@ class DonghualifeProvider : MainAPI() {
             return emptyList()
         }
 
-        val raw = mutableListOf<Triple<String, JSONArray?, Boolean>>()
+        val raw = mutableListOf<SeasonRaw>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val slug = o.strOrNull("slug") ?: continue
-            raw.add(Triple(slug, o.optArray("initialEpisodes"), o.optBoolean("isSpecial", false)))
+            raw.add(SeasonRaw(slug, o.optArray("initialEpisodes"), o.optBoolean("isSpecial", false), o.optInt("episodeCount", 0)))
         }
         if (raw.isEmpty()) return emptyList()
 
-        val numeric = raw.mapNotNull { it.first.substringAfterLast('-').toIntOrNull() }.filter { it > 0 }
+        val numeric = raw.mapNotNull { it.slug.substringAfterLast('-').toIntOrNull() }.filter { it > 0 }
         val base = (numeric.maxOrNull() ?: raw.size).let { if (it > 0) it else raw.size }
         val numbers = mutableListOf<Int>()
         var specials = 0
         raw.forEachIndexed { idx, item ->
-            val parsed = item.first.substringAfterLast('-').toIntOrNull()
+            val parsed = item.slug.substringAfterLast('-').toIntOrNull()
             numbers.add(
                 when {
                     parsed != null && parsed > 0 -> parsed
-                    item.third -> base + 1 + specials++
+                    item.special -> base + 1 + specials++
                     else -> base + 1 + idx
                 }
             )
         }
 
         val loaded = coroutineScope {
-            raw.map { item -> async { seasonEpisodes(seriesSlug, item.first, item.second) } }.awaitAll()
+            raw.map { item -> async { seasonEpisodes(seriesSlug, item.slug, item.initial, item.count) } }.awaitAll()
         }
 
-        return raw.mapIndexed { idx, item -> Season(item.first, numbers[idx], loaded.getOrElse(idx) { emptyList() }) }
+        return raw.mapIndexed { idx, item -> Season(item.slug, numbers[idx], loaded.getOrElse(idx) { emptyList() }) }
+    }
+
+    private suspend fun episodeResponse(doc: Document?, watchId: String): LoadResponse? {
+        if (doc == null) {
+            Log.w(TAG, "no se pudo cargar el episodio $watchId")
+            return null
+        }
+        val ld = parseLdJson(doc)
+        val h1 = doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotEmpty() }
+        val epTitle = h1 ?: ld?.title ?: "Episodio"
+        return newMovieLoadResponse(epTitle, watchId, TvType.AnimeMovie, WATCH_PREFIX + watchId) {
+            this.posterUrl = absoluteImage(ld?.poster)
+                ?: absoluteImage(doc.selectFirst("meta[property=og:image]")?.attr("content"))
+            this.plot = ld?.plot ?: doc.selectFirst("meta[name=description]")?.attr("content")?.trim()
+            this.tags = ld?.tags
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = fetchDoc(url) ?: return null
-        val ld = parseLdJson(doc)
-
+        val t0 = System.currentTimeMillis()
         val rawUrl = url.substringBefore("?")
         val slug = rawUrl.substringAfterLast("/").substringBefore("?")
-        val isMovie = rawUrl.contains("/peliculas/")
+        val movieSlug = if (rawUrl.startsWith(MOVIE_PREFIX)) rawUrl.removePrefix(MOVIE_PREFIX) else null
+        
+        val bareWatchId = when {
+            rawUrl.startsWith(WATCH_PREFIX) -> rawUrl.removePrefix(WATCH_PREFIX)
+            rawUrl.contains("/watch/") -> rawUrl.substringAfter("/watch/")
+            !rawUrl.contains('/') && !rawUrl.contains("://") && EPISODE_SHAPE.matches(rawUrl) -> rawUrl
+            else -> null
+        }
+        if (bareWatchId != null) {
+            Log.d(TAG, "load($url) -> Episodio $bareWatchId")
+            val res = episodeResponse(fetchDoc("$mainUrl/watch/$bareWatchId"), bareWatchId)
+            Log.d(TAG, "load($url) -> Episodio ${if (res != null) "ok" else "FALLÓ"} ${System.currentTimeMillis() - t0}ms")
+            return res
+        }
+
+        val pageUrl = when {
+            movieSlug != null -> "$mainUrl/peliculas/$movieSlug"
+            rawUrl.contains("://") -> rawUrl
+            else -> "$mainUrl/${rawUrl.trimStart('/')}"
+        }
+        Log.d(TAG, "load($url) -> pagina $pageUrl")
+        val doc = fetchDoc(pageUrl) ?: run {
+            Log.w(TAG, "load($url) -> pagina vacía/indisponible ${System.currentTimeMillis() - t0}ms")
+            return null
+        }
+        val ld = parseLdJson(doc)
+        val isMovie = movieSlug != null || pageUrl.contains("/peliculas/")
+        Log.d(TAG, "load pagina=$pageUrl | jsonld=${ld != null} titulo=${ld?.title ?: "(sin json-ld)"}")
 
         val title = ld?.title?.takeIf { it.isNotEmpty() }
             ?: doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotEmpty() }
@@ -339,20 +457,8 @@ class DonghualifeProvider : MainAPI() {
             ?: absoluteImage(doc.selectFirst("meta[property=og:image]")?.attr("content"))
         val tags = ld?.tags?.takeIf { it.isNotEmpty() }
 
-        if (rawUrl.contains("/watch/")) {
-
-            val watchId = rawUrl.substringAfter("/watch/").substringBefore("?")
-            val epTitle = doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotEmpty() } ?: title
-            return newMovieLoadResponse(epTitle, watchId, TvType.AnimeMovie, watchId) {
-                this.posterUrl = poster
-                this.plot = plot
-                this.year = ld?.year
-                this.tags = tags
-            }
-        }
-
         if (isMovie) {
-            val movieData = MOVIE_PREFIX + slug
+            val movieData = MOVIE_PREFIX + (movieSlug ?: slug)
             return newMovieLoadResponse(title, movieData, TvType.AnimeMovie, movieData) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -380,7 +486,7 @@ class DonghualifeProvider : MainAPI() {
             for ((idx, ep) in season.episodes.sortedBy { it.number }.withIndex()) {
                 val watchId = "${season.slug}-${ep.number}"
                 if (!used.add(watchId)) continue
-                episodes.add(newEpisode(watchId) {
+                episodes.add(newEpisode(WATCH_PREFIX + watchId) {
                     this.name = ep.title
                     this.episode = ep.number
                     this.season = season.number
@@ -399,6 +505,11 @@ class DonghualifeProvider : MainAPI() {
         }
 
         episodes.sortWith(compareBy({ it.season ?: 0 }, { it.episode ?: 0 }))
+        Log.d(
+            TAG,
+            "load serie=$slug ${System.currentTimeMillis() - t0}ms | temporadas=${seasons.size} " +
+                "(${seasons.joinToString { "T${it.number}:${it.slug}=${it.episodes.size}" }}) episodios=${episodes.size}"
+        )
         return newTvSeriesLoadResponse(title, slug, TvType.Anime, episodes) {
             this.posterUrl = poster
             this.plot = plot
@@ -430,18 +541,31 @@ class DonghualifeProvider : MainAPI() {
     }
 
     private suspend fun resolveSource(token: String, referer: String): String? {
+        val t0 = System.currentTimeMillis()
         val direct = urlFrom(postJson("/api/player/source", """{"token":"$token"}""", referer))
-        if (!direct.isNullOrBlank()) return direct
+        if (!direct.isNullOrBlank()) {
+            Log.d(TAG, "source ok ${System.currentTimeMillis() - t0}ms -> ${direct.take(90)}")
+            return direct
+        }
 
         val refreshed = try {
             postJson("/api/player/refresh", """{"token":"$token"}""", referer)
                 ?.let { JSONObject(it).strOrNull("token") }
         } catch (e: Exception) {
             null
-        } ?: return null
+        } ?: run {
+            Log.w(TAG, "source falló y refresh no devolvió token (${System.currentTimeMillis() - t0}ms)")
+            return null
+        }
         Log.d(TAG, "token refrescado, reintentando")
 
-        return urlFrom(postJson("/api/player/source", """{"token":"$refreshed"}""", referer))
+        val retried = urlFrom(postJson("/api/player/source", """{"token":"$refreshed"}""", referer))
+        Log.d(
+            TAG,
+            if (retried.isNullOrBlank()) "source falló tras refresh (${System.currentTimeMillis() - t0}ms)"
+            else "source ok tras refresh ${System.currentTimeMillis() - t0}ms -> ${retried.take(90)}"
+        )
+        return retried
     }
 
     private fun okruQuality(okName: String?): Int = when (okName?.lowercase()) {
@@ -565,15 +689,29 @@ class DonghualifeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
+        val t0 = System.currentTimeMillis()
         val isMovie = data.startsWith(MOVIE_PREFIX)
-        val pageUrl = if (isMovie) "$mainUrl/peliculas/${data.removePrefix(MOVIE_PREFIX)}" else "$mainUrl/watch/$data"
+        val watchId = data.removePrefix(WATCH_PREFIX).substringBefore("?")
+        val pageUrl = when {
+            isMovie -> "$mainUrl/peliculas/${data.removePrefix(MOVIE_PREFIX)}"
+            watchId.contains("://") -> watchId
+            else -> "$mainUrl/watch/$watchId"
+        }
+        Log.d(TAG, "loadLinks data='$data' -> pagina $pageUrl")
 
-        val doc = fetchDoc(pageUrl) ?: return false
+        val doc = fetchDoc(pageUrl) ?: run {
+            Log.w(TAG, "loadLinks $pageUrl -> pagina no disponible ${System.currentTimeMillis() - t0}ms")
+            return false
+        }
         val payload = unescapePayload(doc.html())
 
         val sources = parseSources(payload)
+        Log.d(
+            TAG,
+            "loadLinks fuentes=${sources.size} [${sources.joinToString { "${it.label}(${it.provider})" }}]"
+        )
         if (sources.isEmpty()) {
-            Log.w(TAG, "sin fuentes en $pageUrl")
+            Log.w(TAG, "sin fuentes en $pageUrl, delegando a loadExtractor")
             loadExtractor(pageUrl, pageUrl, subtitleCallback, callback)
             return false
         }
@@ -591,6 +729,7 @@ class DonghualifeProvider : MainAPI() {
 
             if (url.contains("ok.ru")) {
                 if (emitOkru(url, callback)) found = true
+                else Log.w(TAG, "ok.ru sin manifest: $url")
             } else if (url.contains(".m3u8")) {
                 callback(newExtractorLink(name, src.label, url, ExtractorLinkType.M3U8) {
                     this.referer = pageUrl
@@ -619,7 +758,11 @@ class DonghualifeProvider : MainAPI() {
                 }
             }
         }
-        Log.d(TAG, "loadLinks $pageUrl -> $found (${sources.size} fuentes)")
+        Log.d(
+            TAG,
+            "loadLinks $pageUrl -> ${if (found) "OK" else "SIN LINKS"} " +
+                "(${sources.size} fuentes) ${System.currentTimeMillis() - t0}ms"
+        )
         return found
     }
 

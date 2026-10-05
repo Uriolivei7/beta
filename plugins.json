@@ -759,7 +759,7 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/DonghualifeProvider.cs3",
   "status": 1,
-  "version": 4,
+  "version": 5,
   "apiVersion": 1,
   "name": "DonghuaLife",
   "internalName": "DonghualifeProvider",
@@ -768,7 +768,9 @@
   ],
   "description": "https://donghualife.com/",
   "tvTypes": [
-   "Anime"
+   "Anime",
+   "OVA",
+   "AnimeMovie"
   ],
   "iconUrl": "https://donghualife.com/logo.webp?v=1",
   "language": "mx",
