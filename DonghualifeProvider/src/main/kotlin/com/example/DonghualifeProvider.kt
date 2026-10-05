@@ -21,9 +21,17 @@ import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "DonghuaLife"
-private const val MOVIE_PREFIX = "pelis:"
-private const val WATCH_PREFIX = "watch:"
-private val EPISODE_SHAPE = Regex("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\\d+")
+
+/**
+ * REGLA CRITICA: CS3 aplica `fixUrl()` (ver MainAPIKt.fixUrl) a la url que le pasas a
+ * `newEpisode()` y a los `newSearchResponse*`. fixUrl = "si no empieza por 'http', prepende mainUrl".
+ * Por eso TODO lo que emitimos debe ser una URL ABSOLUTA https://donghualife.com/...
+ * (nunca "watch:xxx" ni "pelis:xxx": fixUrl los convierte en https://donghualife.com/watch:xxx -> 404).
+ * `newMovieLoadResponse` / `newTvSeriesLoadResponse` NO pasan por fixUrl, pero se mantiene absoluto.
+ */
+private fun watchUrl(id: String): String = "https://donghualife.com/watch/$id"
+private fun seriesUrl(slug: String): String = "https://donghualife.com/series/$slug"
+private fun movieUrl(slug: String): String = "https://donghualife.com/peliculas/$slug"
 
 private val GENRE_SECTIONS = listOf(
     "Acción",
@@ -225,29 +233,12 @@ class DonghualifeProvider : MainAPI() {
             val slug = href.substringAfterLast("/").substringBefore("?")
             if (slug.isBlank()) continue
             if (href.contains("/peliculas/")) {
-                out.add(newMovieSearchResponse(title, "$mainUrl/peliculas/$slug", TvType.AnimeMovie) {
+                out.add(newMovieSearchResponse(title, movieUrl(slug), TvType.AnimeMovie) {
                     this.posterUrl = poster
                 })
             } else {
-                out.add(newAnimeSearchResponse(title, "$mainUrl/series/$slug", TvType.Anime) { this.posterUrl = poster })
+                out.add(newAnimeSearchResponse(title, seriesUrl(slug), TvType.Anime) { this.posterUrl = poster })
             }
-        }
-        return out
-    }
-
-    private fun parseLatestEpisodes(doc: Document?): List<SearchResponse> {
-        if (doc == null) return emptyList()
-        val out = mutableListOf<SearchResponse>()
-        val seen = mutableSetOf<String>()
-        for (a in doc.select("a[href^=/watch/]")) {
-            val watchId = a.attr("href").removePrefix("/watch/").substringBefore("?")
-            if (watchId.isBlank() || !seen.add(watchId)) continue
-            val img = a.selectFirst("img")
-            val seriesName = img?.attr("alt")?.takeIf { it.isNotBlank() } ?: continue
-            val epTitle = a.select("p").lastOrNull()?.text()?.trim()?.takeIf { it.isNotEmpty() }
-            val poster = absoluteImage(img?.attr("src"))
-            val title = if (epTitle.isNullOrBlank() || epTitle.equals(seriesName, true)) seriesName else "$seriesName - $epTitle"
-            out.add(newAnimeSearchResponse(title, "$mainUrl/watch/$watchId", TvType.Anime) { this.posterUrl = poster })
         }
         return out
     }
@@ -255,11 +246,10 @@ class DonghualifeProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? = coroutineScope {
         val t0 = System.currentTimeMillis()
         Log.d(TAG, "getMainPage page=$page")
-        val series = async { fetchDoc("$mainUrl/series?page=$page") }
+val series = async { fetchDoc("$mainUrl/series?page=$page") }
         val recent = async { fetchDoc("$mainUrl/series?page=$page&sort=latest") }
         val movies = async { fetchDoc("$mainUrl/peliculas?page=$page") }
-        val home = async { if (page == 1) fetchDoc("$mainUrl/") else null }
-
+        
         val genreDocs = GENRE_SECTIONS.map { g -> g to async { fetchDoc("$mainUrl/genres/${encGenre(g)}?page=$page") } }
 
         val lists = mutableListOf<HomePageList>()
@@ -268,7 +258,6 @@ class DonghualifeProvider : MainAPI() {
         val seriesList = parseCards(series.await())
         val recentList = parseCards(recent.await())
         val movieList = parseCards(movies.await())
-        val latestList = parseLatestEpisodes(home.await())
         val genreLists = genreDocs.map { (genre, deferred) -> genre to parseCards(deferred.await()) }
 
         seriesList.takeIf { it.isNotEmpty() }
@@ -281,14 +270,11 @@ class DonghualifeProvider : MainAPI() {
             items.takeIf { it.isNotEmpty() }
                 ?.let { lists.add(HomePageList("$genre$suffix", it)) }
         }
-        latestList.takeIf { it.isNotEmpty() }
-            ?.let { lists.add(HomePageList("Últimos episodios", it)) }
 
         Log.d(
             TAG,
             "getMainPage page=$page ${System.currentTimeMillis() - t0}ms | " +
-                "popular=${seriesList.size} recientes=${recentList.size} pelis=${movieList.size} " +
-                "ultimos=${latestList.size} listas=${lists.size} | " +
+                "popular=${seriesList.size} recientes=${recentList.size} pelis=${movieList.size} listas=${lists.size} | " +
                 "generos=${genreLists.joinToString { "${it.first}=${it.second.size}" }}"
         )
         if (lists.isEmpty()) {
@@ -377,17 +363,24 @@ class DonghualifeProvider : MainAPI() {
         }
         if (raw.isEmpty()) return emptyList()
 
-        val numeric = raw.mapNotNull { it.slug.substringAfterLast('-').toIntOrNull() }.filter { it > 0 }
+        fun seasonNumber(slug: String): Int? {
+            val parts = slug.split('-')
+            for (i in parts.indices.reversed()) {
+                val n = parts[i].toIntOrNull() ?: continue
+                if (n > 0) return n
+            }
+            return null
+        }
+
+        val numeric = raw.mapNotNull { seasonNumber(it.slug) }
         val base = (numeric.maxOrNull() ?: raw.size).let { if (it > 0) it else raw.size }
         val numbers = mutableListOf<Int>()
         var specials = 0
         raw.forEachIndexed { idx, item ->
-            val parsed = item.slug.substringAfterLast('-').toIntOrNull()
             numbers.add(
                 when {
-                    parsed != null && parsed > 0 -> parsed
                     item.special -> base + 1 + specials++
-                    else -> base + 1 + idx
+                    else -> seasonNumber(item.slug) ?: (base + 1 + idx)
                 }
             )
         }
@@ -407,7 +400,7 @@ class DonghualifeProvider : MainAPI() {
         val ld = parseLdJson(doc)
         val h1 = doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotEmpty() }
         val epTitle = h1 ?: ld?.title ?: "Episodio"
-        return newMovieLoadResponse(epTitle, watchId, TvType.AnimeMovie, WATCH_PREFIX + watchId) {
+        return newMovieLoadResponse(epTitle, watchId, TvType.AnimeMovie, watchUrl(watchId)) {
             this.posterUrl = absoluteImage(ld?.poster)
                 ?: absoluteImage(doc.selectFirst("meta[property=og:image]")?.attr("content"))
             this.plot = ld?.plot ?: doc.selectFirst("meta[name=description]")?.attr("content")?.trim()
@@ -418,25 +411,23 @@ class DonghualifeProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val t0 = System.currentTimeMillis()
         val rawUrl = url.substringBefore("?")
-        val slug = rawUrl.substringAfterLast("/").substringBefore("?")
-        val movieSlug = if (rawUrl.startsWith(MOVIE_PREFIX)) rawUrl.removePrefix(MOVIE_PREFIX) else null
-        
-        val bareWatchId = when {
-            rawUrl.startsWith(WATCH_PREFIX) -> rawUrl.removePrefix(WATCH_PREFIX)
+        val slug = rawUrl.substringAfterLast("/")
+
+        val watchId = when {
             rawUrl.contains("/watch/") -> rawUrl.substringAfter("/watch/")
-            !rawUrl.contains('/') && !rawUrl.contains("://") && EPISODE_SHAPE.matches(rawUrl) -> rawUrl
+            !rawUrl.contains('/') && !rawUrl.contains("://") && Regex("-").containsMatchIn(rawUrl) -> rawUrl
             else -> null
         }
-        if (bareWatchId != null) {
-            Log.d(TAG, "load($url) -> Episodio $bareWatchId")
-            val res = episodeResponse(fetchDoc("$mainUrl/watch/$bareWatchId"), bareWatchId)
+        if (watchId != null) {
+            Log.d(TAG, "load($url) -> Episodio $watchId")
+            val res = episodeResponse(fetchDoc(watchUrl(watchId)), watchId)
             Log.d(TAG, "load($url) -> Episodio ${if (res != null) "ok" else "FALLÓ"} ${System.currentTimeMillis() - t0}ms")
             return res
         }
 
         val pageUrl = when {
-            movieSlug != null -> "$mainUrl/peliculas/$movieSlug"
             rawUrl.contains("://") -> rawUrl
+            slug.contains('-') -> "$mainUrl/watch/$slug"
             else -> "$mainUrl/${rawUrl.trimStart('/')}"
         }
         Log.d(TAG, "load($url) -> pagina $pageUrl")
@@ -445,7 +436,7 @@ class DonghualifeProvider : MainAPI() {
             return null
         }
         val ld = parseLdJson(doc)
-        val isMovie = movieSlug != null || pageUrl.contains("/peliculas/")
+        val isMovie = pageUrl.contains("/peliculas/")
         Log.d(TAG, "load pagina=$pageUrl | jsonld=${ld != null} titulo=${ld?.title ?: "(sin json-ld)"}")
 
         val title = ld?.title?.takeIf { it.isNotEmpty() }
@@ -458,8 +449,7 @@ class DonghualifeProvider : MainAPI() {
         val tags = ld?.tags?.takeIf { it.isNotEmpty() }
 
         if (isMovie) {
-            val movieData = MOVIE_PREFIX + (movieSlug ?: slug)
-            return newMovieLoadResponse(title, movieData, TvType.AnimeMovie, movieData) {
+            return newMovieLoadResponse(title, slug, TvType.AnimeMovie, pageUrl) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = ld?.year
@@ -471,7 +461,7 @@ class DonghualifeProvider : MainAPI() {
         val seasonsJson = extractBalanced(payload, "seasons", '[', ']')
         if (seasonsJson.isNullOrBlank()) {
             Log.w(TAG, "sin temporadas en $slug")
-            return newMovieLoadResponse(title, slug, TvType.AnimeMovie, MOVIE_PREFIX + slug) {
+            return newMovieLoadResponse(title, slug, TvType.AnimeMovie, pageUrl) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = ld?.year
@@ -484,9 +474,10 @@ class DonghualifeProvider : MainAPI() {
         val used = mutableSetOf<String>()
         for (season in seasons) {
             for ((idx, ep) in season.episodes.sortedBy { it.number }.withIndex()) {
-                val watchId = "${season.slug}-${ep.number}"
-                if (!used.add(watchId)) continue
-                episodes.add(newEpisode(WATCH_PREFIX + watchId) {
+                val id = "${season.slug}-${ep.number}"
+                if (!used.add(id)) continue
+
+                episodes.add(newEpisode(watchUrl(id)) {
                     this.name = ep.title
                     this.episode = ep.number
                     this.season = season.number
@@ -496,7 +487,7 @@ class DonghualifeProvider : MainAPI() {
         }
 
         if (episodes.isEmpty()) {
-            return newMovieLoadResponse(title, slug, TvType.AnimeMovie, MOVIE_PREFIX + slug) {
+            return newMovieLoadResponse(title, slug, TvType.AnimeMovie, pageUrl) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = ld?.year
@@ -510,7 +501,7 @@ class DonghualifeProvider : MainAPI() {
             "load serie=$slug ${System.currentTimeMillis() - t0}ms | temporadas=${seasons.size} " +
                 "(${seasons.joinToString { "T${it.number}:${it.slug}=${it.episodes.size}" }}) episodios=${episodes.size}"
         )
-        return newTvSeriesLoadResponse(title, slug, TvType.Anime, episodes) {
+        return newTvSeriesLoadResponse(title, seriesUrl(slug), TvType.Anime, episodes) {
             this.posterUrl = poster
             this.plot = plot
             this.year = ld?.year
@@ -690,12 +681,13 @@ class DonghualifeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val t0 = System.currentTimeMillis()
-        val isMovie = data.startsWith(MOVIE_PREFIX)
-        val watchId = data.removePrefix(WATCH_PREFIX).substringBefore("?")
+        val raw = data.substringBefore("?")
+        // CS3 nos pasa la url ABSOLUTA que emitimos (fixUrl solo rompe las relativas)
         val pageUrl = when {
-            isMovie -> "$mainUrl/peliculas/${data.removePrefix(MOVIE_PREFIX)}"
-            watchId.contains("://") -> watchId
-            else -> "$mainUrl/watch/$watchId"
+            raw.contains("://") -> raw
+            raw.contains("/watch/") -> watchUrl(raw.substringAfter("/watch/"))
+            raw.contains("/peliculas/") -> movieUrl(raw.substringAfter("/peliculas/"))
+            else -> watchUrl(raw)
         }
         Log.d(TAG, "loadLinks data='$data' -> pagina $pageUrl")
 

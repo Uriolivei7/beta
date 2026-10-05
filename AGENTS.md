@@ -1125,3 +1125,45 @@ El sitio fue reescrito de Drupal a **Next.js 15 (App Router)**. Todo el provider
 - **Ojo 2**: el sitio duplica enlaces en minusculas (`/genres/acci%C3%B3n`, `/genres/acci%C3%B3n.`) y esos **NO** traen series. Usar siempre la variante con mayusculas de la tabla.
 - **Coste**: cada seccion de genero son ~180-260 KB. Con 8 generos son 12 fetches en paralelo por pagina del home (4 base+ 8 generos) → ~2 MB por paginacion. Si molesta en datos moviles, recortar `GENRE_SECTIONS`.
 - El log de `getMainPage` ahora incluye el desglose: `generos=Acción=50, Aventura=44, Cultivo=50, ...`
+
+### 🐛🐛 CRITICO fixUrl(): "enlaces no encontrados" en TODOS los episodios (05 Oct 2026 v6)
+**Sintoma (logcat del usuario, v5)**: todos los episodes dan "enlaces no encontrados":
+```
+loadLinks data='https://donghualife.com/watch:blades-guardians-1-1' -> pagina https://donghualife.com/watch:blades-guardians-1-1
+GET ok 226ms len=37019 https://donghualife.com/watch:blades-guardians-1-1
+loadLinks fuentes=0 []
+sin fuentes en ..., delegando a loadExtractor
+```
+Ademas `load(https://donghualife.com/supreme-god-emperor-2-580)` -> pagina vacia (37019 B) -> `sin temporadas`.
+
+**CAUSA RAIZ (confirmada por bytecode de `MainAPIKt.fixUrl`)**: mi prefijo `WATCH_PREFIX = "watch:"` **NO es una URL**, asi que CS3 lo trato como relativa y le prependio `mainUrl`:
+```kotlin
+// MainAPIKt.fixUrl(api, url) — decompilado
+if (url.startsWith("http") || url.startsWith("{\"") || url.startsWith("[")) return url  // intacta
+if (url.isEmpty()) return ""
+if (url.startsWith("//")) return "https:$url"
+if (url.startsWith("/")) return api.mainUrl + url
+return api.mainUrl + "/" + url        // <-- "watch:x" cae aqui
+```
+Y **`newEpisode()` SIEMPRE la aplica**: `newEpisode(api, url, init, fixUrl=true)` (el default de `newEpisode$default` pone `iconst_1` en el flag, offset 20-21) -> `fixUrl(api, url)` en el offset 29. Log: `watch:blades-guardians-1-1` -> `https://donghualife.com/watch:blades-guardians-1-1` -> el sitio responde **200 con la pagina de 404 (37019 B)**, sin `sources` → 0 enlaces.
+Tambien lo aplican `newMovieSearchResponse` y `newAnimeSearchResponse` (offset 45 en ambos). `newMovieLoadResponse` y `newTvSeriesLoadResponse` **NO** pasan por fixUrl.
+
+**REGLA (definitiva)**: **emitir siempre URLs ABSOLUTAS `https://donghualife.com/...`** en `newEpisode`, `newMovieSearchResponse`, `newAnimeSearchResponse`, `newMovieLoadResponse` y `newTvSeriesLoadResponse`. Nunca `watch:x`, nunca `pelis:x`, nunca rutas relativas.
+Helpers anadidos: `watchUrl(id)`, `seriesUrl(slug)`, `movieUrl(slug)`.
+
+**Fixes**:
+- `newEpisode(watchUrl("$seasonSlug-$ep"))` (antes `WATCH_PREFIX + ...`).
+- `episodeResponse`: `movieData = watchUrl(watchId)`.
+- `load()` de peliculas: `movieData = pageUrl` (la URL absoluta ya resuelta).
+- `newTvSeriesLoadResponse(title, seriesUrl(slug), ...)`.
+- `loadLinks(data)`: si `data` es absoluta se usa tal cual; si trae `/watch/` o `/peliculas/` se reconstruye; si es un id suelto -> `watchUrl(id)`.
+- `load()`: detecta episodio por `/watch/` en la url (o id suelto legado), sin depender de prefijos.
+- **Eliminados** `MOVIE_PREFIX`, `WATCH_PREFIX`, `EPISODE_SHAPE` y `parseLatestEpisodes`.
+
+### 🗑️ Quitada la fila "Ultimos episodios" + fix numeracion de temporadas (05 Oct 2026 v6)
+- **Peticion del usuario**: la fila "Ultimos episodios" del home estorba (generaba cards de episodio con MovieLoadResponse y ruido en el log). Eliminada de `getMainPage` junto con el fetch de `$mainUrl/` y la funcion `parseLatestEpisodes`. El home queda: Popular, Recientes, Peliculas y las 8 secciones de genero.
+- **Bug numeracion de temporadas**: `westward-5-0` salia como **T9** (era la T5, 64 eps). Causa: el numero se sacaba de `slug.substringAfterLast('-')` -> "0" -> no >0 -> caia en `base+1+idx` = 4+1+4 = 9. Ahora `seasonNumber(slug)` recorre los segmentos **de derecha a izquierda** y devuelve el primer entero > 0: `x-1`->1, `x-season-2`->2, **`x-5-0`->5**. Los `isSpecial` se numeran al final (base+1...).
+
+### Estado v6
+- `build.gradle.kts`: `version = 6`; `plugins.json`: version 6, `fileSize` **pendiente** tras compilar.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y comprobar que `loadLinks data='https://donghualife.com/watch/...'` (con `/watch/` y **sin** `watch:`) trae `fuentes=N` y emite enlaces.
