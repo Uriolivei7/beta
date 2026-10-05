@@ -1202,6 +1202,45 @@ Url(url).encodedPath                      // geo: "/player/xhojl.html"
 
 **Nota de calidad**: el HLS que expone DM para `k5DBqQlgteD31hzaRfI` (blades-guardians EP1) solo tiene 2 variantes, 848x360 y 512x216 -> **360p es lo maximo que ofrece el uploader**, no un fallo del provider (el progressivo 1080p da 403).
 
+### 🐛 Fix rumble: CS3 no trae extractor de Rumble (05 Oct 2026 v8)
+**Sintoma (usuario)**: dailymotion ya reproduce, pero los episodios con fuente rumble siguen sin reproducir.
+
+**Investigacion**:
+- La lista de clases en `com/lagradost/cloudstream3/extractors/` del jar (832 clases) **NO contiene ninguna clase Rumble** (tampoco Odysee). `loadExtractor(url-rumble)` no encuentra extractor -> **0 links siempre**.
+- El sitio resuelve el token rumble a `https://rumble.com/embed/vXXXX/` (verificado: `record-mortals-journey-immortality-season-6-5` -> `https://rumble.com/embed/v7a23rm/`).
+- `GET https://rumble.com/embed/v7a23rm/` desde PC: `requests` -> **403 challenge Cloudflare** ("Just a moment..."); **curl -> 200 (166 KB)**. Es fingerprint de TLS, no bloqueo de IP: OkHttp (`app.get`) debe pasar igual que curl.
+- El HTML del embed trae el HLS directo: `https://rumble.com/hls-vod/{id}/playlist.m3u8` (verificado 200, master con variantes **hasta 2560x1440**). Solo hay 1 mp4 progresivo directo (baja calidad), asi que el HLS es la via.
+- Los segmentos/variantes van a `hugh.cdn.rumble.cloud` (URLs con `?r_file=chunklist.m3u8&...`).
+
+**Fix implementado**: `emitRumble()` propio + dispatch `url.contains("rumble.com")` **antes** del `loadExtractor` generico:
+1. `app.get(embed)` con `browserHeaders` + `Referer: https://rumble.com/`; si falla, **reintento sin headers**. Unescape `\/` -> `/`.
+2. Regex `https://rumble\.com/hls-vod/...playlist.m3u8` -> `newExtractorLink(name, "Rumble HLS", url, M3U8)` con referer + headers (ExoPlayer adapta calidades solo).
+3. Si la url no era embed, busca `https://rumble.com/embed/...` dentro del HTML y reintenta una vez.
+4. Respaldo: mp4 directos de `*.rumble.cloud` como `VIDEO`.
+5. Si `emitRumble` falla, fallback a `loadExtractor` (que usa el `RumbleExtractor` del plugin, tambien mejorado).
+- Logs: `rumble embed falló (...)`, `rumble: reintentando con embed ...`, `rumble -> HLS OK` / `MP4 OK` / `0 URLs`.
+- El `getVideoInterceptor` no necesita cambios (el link ya lleva headers+referer; el interceptor es pass-through salvo `__sub` y ok.ru).
+
+### 🔍 Comparativa RumbleExtractor (archivo del plugin) vs emitRumble (05 Oct 2026 v8)
+El usuario apunto que existe `DonghualifeProvider/src/main/kotlin/com/example/RumbleExtractor.kt` (registrado en `DonghualifePlugin.kt` con `registerExtractorAPI`). Comparativa:
+| Aspecto | RumbleExtractor (original) | emitRumble (provider) |
+|---|---|---|
+| Fetch | `app.get` sin timeout, 1 intento | `timeout = 30L`, reintento sin headers |
+| Unescape `\/` | Si | Si |
+| Regex HLS | `[^"']+` greedy | `[^"'\s\\]+?` lazy + `distinct()` |
+| Link emitido | `source="Rumble"`, referer=embed, **sin headers** | `source=name`, referer+headers rumble |
+| Fallbacks | Ninguno (silencio si no hay match) | embed-search + mp4s + `loadExtractor` |
+| Logs | Ninguno | 4 mensajes de diagnostico |
+- **Mejoras aplicadas al archivo** `RumbleExtractor.kt`: reintento sin headers, `timeout = 30L`, headers UA+Referer en los links emitidos, fallback a mp4 directos, logs con `TAG = RumbleExt`. Se mantiene registrado como red de seguridad (el dispatch del provider lo usa de fallback).
+- **Verificado (PC)**: variante HLS mas baja y sus segmentos dan **200 sin headers**, TS valido (`sync 0x47`) -> si se emiten links, **reproducen**. El problema es solo emision (app.get 403 por Cloudflare o regex sin match), no playback.
+- **Matching de `loadExtractor` (bytecode)**: itera `extractorApis` de atras hacia adelante y matchea por `strippedUrl.startsWith(strippedMainUrl)` (`schemaStripRegex = ^(https:|)//(www\.|)`). Los extractores del plugin van al final -> se prueban primero. `RumbleExtractor.mainUrl = https://rumble.com` si matchea `rumble.com/embed/...`.
+- **Plan B si `app.get` da 403 tambien en el movil**: `com.lagradost.cloudstream3.network.WebViewResolver` existe en el jar (`resolveUsingWebView` devuelve `Pair<Request, List<Request>>` interceptados por regex). Solo implementarlo si el logcat muestra `rumble embed falló (HTTP 403 ...)` en el dispositivo.
+
+### Estado v8
+- `build.gradle.kts`: `version = 8`; `plugins.json`: version 8, `fileSize` **pendiente**.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar un episodio con rumble (ej. `record-mortals-journey-immortality-season-6 EP5`). Buscar en logcat `rumble -> HLS OK`.
+- ⏸️ Si rumble da 403 en el dispositivo (Cloudflare tambien bloquea a OkHttp movil), la alternativa es WebView (`WebViewResolver`) — avisar.
+
 ### Estado v7
 - `build.gradle.kts`: `version = 7`; `plugins.json`: version 7, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar. Para diagnosticar: `adb logcat -s DonghuaLife:V` y buscar `dailymotion` — los 4 mensajes de log distinguishes exactamente el fallo (red / no-JSON / sin qualities / 0 URLs).

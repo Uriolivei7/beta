@@ -673,6 +673,69 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
         })
     }
 
+    /**
+     * CS3 no trae extractor de Rumble -> `loadExtractor` da 0 links siempre.
+     * El embed (`https://rumble.com/embed/{id}/`) trae el HLS directo:
+     *   `https://rumble.com/hls-vod/xxx/playlist.m3u8` (master adaptativo, verificado 200 con variantes hasta 1440p).
+     * Nota: rumble.com usa Cloudflare con fingerprint de TLS; `requests` de PC da 403 pero curl/OkHttp
+     * pasan (200), asi que `app.get` (OkHttp) debe pasar en el dispositivo.
+     */
+    private suspend fun emitRumble(
+        videoUrl: String,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val html = try {
+            app.get(
+                videoUrl,
+                headers = browserHeaders + ("Referer" to "https://rumble.com/"),
+                timeout = 30L,
+            ).text
+        } catch (e: Exception) {
+            Log.w(TAG, "rumble embed falló (${e.message}), reintento sin headers: ${videoUrl.take(90)}")
+            try {
+                app.get(videoUrl, timeout = 30L).text
+            } catch (e2: Exception) {
+                Log.w(TAG, "rumble embed falló de nuevo: ${e2.message}")
+                null
+            }
+        } ?: return false
+        val clean = html.replace("\\/", "/")
+
+        // 1) HLS master directo (adaptativo: cubre todas las calidades)
+        Regex("""https://rumble\.com/hls-vod/[^"'\s\\]+?playlist\.m3u8""").findAll(clean)
+            .map { it.value }.distinct().forEach { u ->
+                callback(newExtractorLink(name, "Rumble HLS", u, ExtractorLinkType.M3U8) {
+                    this.referer = "https://rumble.com/"
+                    this.headers = browserHeaders + ("Referer" to "https://rumble.com/")
+                    this.quality = Qualities.Unknown.value
+                })
+                Log.d(TAG, "rumble -> HLS OK")
+                return true
+            }
+
+        // 2) si la url no era el embed, buscar el embed dentro y reintentar una vez
+        if (!videoUrl.contains("/embed/")) {
+            Regex("""https://rumble\.com/embed/[^"'\s\\]+""").find(clean)?.value?.let { embed ->
+                Log.d(TAG, "rumble: reintentando con embed $embed")
+                return emitRumble(embed, callback)
+            }
+        }
+
+        // 3) mp4 progresivos directos como respaldo
+        var emitted = false
+        Regex("""https://[^"'\s\\]+\.rumble\.cloud[^"'\s\\]*?\.mp4[^"'\s\\]*""").findAll(clean)
+            .map { it.value }.distinct().forEach { u ->
+                callback(newExtractorLink(name, "Rumble MP4", u, ExtractorLinkType.VIDEO) {
+                    this.referer = "https://rumble.com/"
+                    this.headers = browserHeaders + ("Referer" to "https://rumble.com/")
+                    this.quality = Qualities.Unknown.value
+                })
+                emitted = true
+            }
+        Log.d(TAG, "rumble -> ${if (emitted) "MP4 OK" else "0 URLs"}")
+        return emitted
+    }
+
     private suspend fun emitOkru(videoUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
         val videoId = Regex("""ok\.ru/(?:videoembed|video)/(\d+)""").find(videoUrl)?.groupValues?.getOrNull(1)
             ?: return false
@@ -838,6 +901,29 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
                     val collected = mutableListOf<ExtractorLink>()
                     val collector: (ExtractorLink) -> Unit = { link -> collected.add(link) }
                     loadExtractor(canonical, pageUrl, subtitleCallback, collector)
+                    if (collected.isEmpty()) {
+                        Log.w(TAG, "sin links para ${src.label} ($url)")
+                    } else {
+                        for (link in collected) {
+                            callback(newExtractorLink(name, "${src.label} ${link.name}".trim(), link.url) {
+                                this.referer = link.referer ?: pageUrl
+                                this.quality = link.quality
+                                this.type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                this.headers = link.headers
+                            })
+                        }
+                        found = true
+                    }
+                }
+            } else if (url.contains("rumble.com")) {
+                // CS3 no trae extractor de Rumble -> loadExtractor solo encuentra el
+                // RumbleExtractor del plugin. Extraemos el HLS aqui y lo dejamos de fallback.
+                if (emitRumble(url, callback)) found = true
+                else {
+                    Log.w(TAG, "rumble: emitRumble sin resultado, probando loadExtractor")
+                    val collected = mutableListOf<ExtractorLink>()
+                    val collector: (ExtractorLink) -> Unit = { link -> collected.add(link) }
+                    loadExtractor(url, pageUrl, subtitleCallback, collector)
                     if (collected.isEmpty()) {
                         Log.w(TAG, "sin links para ${src.label} ($url)")
                     } else {
