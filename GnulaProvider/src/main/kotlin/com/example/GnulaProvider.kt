@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import okhttp3.Interceptor
+import java.util.concurrent.TimeUnit
 
 class GnulaProvider : MainAPI() {
     override var mainUrl = "https://gnula.life"
@@ -18,6 +20,40 @@ class GnulaProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Cartoon)
 
     private val TAG = "GNULA"
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val cdnMarks = listOf(
+            "premilkyway", "cloudatacdn", "cloudwindow", "dramiyos", "acek-cdn",
+            "vidhide", "filemoon", "cyou", "streamtape", "dood", "uqload",
+            "waaw", "hqq", "netu", ".m3u8", ".ts", ".mp4", "/hls2/", "/hls3/",
+            ".urlset/", "get_video", "/e/", "/download"
+        )
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            if (cdnMarks.none { url.contains(it, ignoreCase = true) }) {
+                return@Interceptor chain.proceed(request)
+            }
+            Log.d(TAG, "[intercept] CDN request: ${url.take(120)}")
+            val newRequest = request.newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .build()
+            // Se conserva el Referer propio de cada link (core o custom)
+            val withRef = if (extractorLink.referer.isNotBlank()) {
+                newRequest.newBuilder().header("Referer", extractorLink.referer).build()
+            } else {
+                newRequest
+            }
+            val response = chain
+                .withConnectTimeout(30, TimeUnit.SECONDS)
+                .withReadTimeout(30, TimeUnit.SECONDS)
+                .proceed(withRef)
+            Log.d(TAG, "[intercept] CDN response: ${response.code} ${response.header("content-type", "?")} url=${url.take(100)}")
+            response
+        }
+    }
 
     private fun getNextData(res: String): PageProps? {
         return try {
@@ -391,11 +427,15 @@ class GnulaProvider : MainAPI() {
                         ioSafe {
                             Log.d(TAG, "processLinks [$lang][$idx]: Extractor devolvió link source=${link.source} url=${link.url.take(80)}")
                             val finalLink = newExtractorLink(
-                                source = link.source,
+                                source = "GNULA",
                                 name = "${link.name} [$lang]",
                                 url = link.url,
                                 type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            )
+                            ) {
+                                this.referer = link.referer
+                                this.headers = link.headers
+                                this.extractorData = link.extractorData
+                            }
                             callback.invoke(finalLink)
                         }
                     }
