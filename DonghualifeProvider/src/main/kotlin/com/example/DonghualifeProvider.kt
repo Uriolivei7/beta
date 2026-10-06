@@ -1,12 +1,19 @@
 package com.example
 
 import android.util.Log
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Protocol
@@ -101,6 +108,10 @@ private fun JSONObject.optArray(key: String): JSONArray? {
 }
 
 class DonghualifeProvider : MainAPI() {
+    companion object {
+        var pluginContext: android.content.Context? = null
+    }
+
     override var mainUrl = "https://donghualife.com"
     override var name = "DonghuaLife"
     override val hasMainPage = true
@@ -673,35 +684,60 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
         })
     }
 
-    /**
-     * CS3 no trae extractor de Rumble -> `loadExtractor` da 0 links siempre.
-     * El embed (`https://rumble.com/embed/{id}/`) trae el HLS directo:
-     *   `https://rumble.com/hls-vod/xxx/playlist.m3u8` (master adaptativo, verificado 200 con variantes hasta 1440p).
-     * Nota: rumble.com usa Cloudflare con fingerprint de TLS; `requests` de PC da 403 pero curl/OkHttp
-     * pasan (200), asi que `app.get` (OkHttp) debe pasar en el dispositivo.
-     */
     private suspend fun emitRumble(
         videoUrl: String,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val html = try {
+
+        val resp = try {
             app.get(
                 videoUrl,
                 headers = browserHeaders + ("Referer" to "https://rumble.com/"),
                 timeout = 30L,
-            ).text
+            )
         } catch (e: Exception) {
             Log.w(TAG, "rumble embed falló (${e.message}), reintento sin headers: ${videoUrl.take(90)}")
             try {
-                app.get(videoUrl, timeout = 30L).text
+                app.get(videoUrl, timeout = 30L)
             } catch (e2: Exception) {
                 Log.w(TAG, "rumble embed falló de nuevo: ${e2.message}")
                 null
             }
-        } ?: return false
-        val clean = html.replace("\\/", "/")
+        }
+        if (resp != null) {
+            val body = try {
+                resp.text
+            } catch (e: Exception) {
+                Log.w(TAG, "rumble body falló: ${e.message}")
+                ""
+            }
 
-        // 1) HLS master directo (adaptativo: cubre todas las calidades)
+            Log.d(TAG, "rumble embed -> code=${resp.code} len=${body.length} ${videoUrl.take(80)}")
+            val clean = body.replace("\\/", "/")
+            if (extractRumbleLinks(clean, callback)) return true
+
+            if (!videoUrl.contains("/embed/")) {
+                Regex("""https://rumble\.com/embed/[^"'\s\\]+""").find(clean)?.value?.let { embed ->
+                    Log.d(TAG, "rumble: reintentando con embed $embed")
+                    return emitRumble(embed, callback)
+                }
+            }
+        }
+
+        Log.d(TAG, "rumble: probando WebView para ${videoUrl.take(80)}")
+        val wvHtml = renderViaWebView(videoUrl)?.replace("\\/", "/")
+        if (wvHtml != null) {
+            Log.d(TAG, "rumble WebView -> len=${wvHtml.length}")
+            if (extractRumbleLinks(wvHtml, callback)) return true
+        }
+        Log.d(TAG, "rumble -> 0 URLs")
+        return false
+    }
+
+    private suspend fun extractRumbleLinks(
+        clean: String,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
         Regex("""https://rumble\.com/hls-vod/[^"'\s\\]+?playlist\.m3u8""").findAll(clean)
             .map { it.value }.distinct().forEach { u ->
                 callback(newExtractorLink(name, "Rumble HLS", u, ExtractorLinkType.M3U8) {
@@ -713,15 +749,6 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
                 return true
             }
 
-        // 2) si la url no era el embed, buscar el embed dentro y reintentar una vez
-        if (!videoUrl.contains("/embed/")) {
-            Regex("""https://rumble\.com/embed/[^"'\s\\]+""").find(clean)?.value?.let { embed ->
-                Log.d(TAG, "rumble: reintentando con embed $embed")
-                return emitRumble(embed, callback)
-            }
-        }
-
-        // 3) mp4 progresivos directos como respaldo
         var emitted = false
         Regex("""https://[^"'\s\\]+\.rumble\.cloud[^"'\s\\]*?\.mp4[^"'\s\\]*""").findAll(clean)
             .map { it.value }.distinct().forEach { u ->
@@ -732,8 +759,89 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
                 })
                 emitted = true
             }
-        Log.d(TAG, "rumble -> ${if (emitted) "MP4 OK" else "0 URLs"}")
+        if (emitted) Log.d(TAG, "rumble -> MP4 OK")
         return emitted
+    }
+
+    private suspend fun renderViaWebView(pageUrl: String): String? = withContext(Dispatchers.Main) {
+        val appCtx = pluginContext?.applicationContext ?: run {
+            Log.w(TAG, "WebView sin contexto")
+            return@withContext null
+        }
+        var webView: WebView? = null
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        try {
+            val htmlDeferred = CompletableDeferred<String?>()
+            var latestHtml: String? = null
+            webView = WebView(appCtx)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                userAgentString = browserHeaders["User-Agent"]
+            }
+            webView.addJavascriptInterface(object {
+                @android.webkit.JavascriptInterface
+                fun onHtml(html: String) {
+                    latestHtml = html
+                    if (!htmlDeferred.isCompleted && html.contains("hls-vod")) {
+                        htmlDeferred.complete(html)
+                    }
+                }
+            }, "NativeBridge")
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    
+                    fun poll(left: Int) {
+                        if (htmlDeferred.isCompleted) return
+                        view?.evaluateJavascript(
+                            "(function(){NativeBridge.onHtml(document.documentElement.outerHTML);})();",
+                            null,
+                        )
+                        if (left > 0) mainHandler.postDelayed({ poll(left - 1) }, 2000)
+                    }
+                    mainHandler.postDelayed({ poll(10) }, 3000)
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    errorCode: Int,
+                    description: String?,
+                    failingUrl: String?,
+                ) {
+                    Log.w(TAG, "WebView error $errorCode $description url=${failingUrl?.take(80)}")
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?,
+                ) {
+                    val url = request?.url?.toString() ?: "?"
+                    if (!url.contains("favicon.ico")) {
+                        Log.w(TAG, "WebView HTTP ${errorResponse?.statusCode} -> ${url.take(100)}")
+                    }
+                }
+            }
+            webView.loadUrl(pageUrl)
+            try {
+                withTimeout(26000L) { htmlDeferred.await() }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(TAG, "WebView timeout, devolviendo último HTML (len=${latestHtml?.length ?: 0})")
+                latestHtml
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "WebView falló: ${e::class.simpleName}: ${e.message}")
+            null
+        } finally {
+            try {
+                webView?.destroy()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private suspend fun emitOkru(videoUrl: String, callback: (ExtractorLink) -> Unit): Boolean {

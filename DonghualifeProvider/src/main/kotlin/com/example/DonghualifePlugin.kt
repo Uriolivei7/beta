@@ -7,6 +7,7 @@ import android.content.Context
 @CloudstreamPlugin
 class DonghualifePlugin: Plugin() {
     override fun load(context: Context) {
+        DonghualifeProvider.pluginContext = context
         registerMainAPI(DonghualifeProvider())
         registerExtractorAPI(RumbleExtractor())
     }

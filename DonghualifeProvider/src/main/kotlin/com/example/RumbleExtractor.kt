@@ -25,9 +25,7 @@ class RumbleExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Intento 1: headers de navegador. Intento 2: sin headers extra.
-        // rumble.com usa Cloudflare con fingerprint de TLS: `requests` de PC da 403
-        // pero curl/OkHttp pasan (200), asi que app.get (OkHttp) debe pasar en el dispositivo.
+
         val html = try {
             app.get(
                 url,
@@ -48,8 +46,6 @@ class RumbleExtractor : ExtractorApi() {
             }
         }?.replace("\\/", "/") ?: return
 
-        // 1) HLS master directo del embed: https://rumble.com/hls-vod/{id}/playlist.m3u8
-        // (master adaptativo verificado 200, variantes hasta 1440p; segmentos sin headers, TS válido)
         val hls = Regex("""https://rumble\.com/hls-vod/[^"'\s\\]+?playlist\.m3u8""")
             .findAll(html).map { it.value }.distinct().toList()
         for (u in hls) {
@@ -66,7 +62,6 @@ class RumbleExtractor : ExtractorApi() {
             return
         }
 
-        // 2) mp4 progresivos directos de *.rumble.cloud como respaldo
         var n = 0
         Regex("""https://[^"'\s\\]+\.rumble\.cloud[^"'\s\\]*?\.mp4[^"'\s\\]*""")
             .findAll(html).map { it.value }.distinct().forEach { u ->

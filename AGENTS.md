@@ -1236,6 +1236,28 @@ El usuario apunto que existe `DonghualifeProvider/src/main/kotlin/com/example/Ru
 - **Matching de `loadExtractor` (bytecode)**: itera `extractorApis` de atras hacia adelante y matchea por `strippedUrl.startsWith(strippedMainUrl)` (`schemaStripRegex = ^(https:|)//(www\.|)`). Los extractores del plugin van al final -> se prueban primero. `RumbleExtractor.mainUrl = https://rumble.com` si matchea `rumble.com/embed/...`.
 - **Plan B si `app.get` da 403 tambien en el movil**: `com.lagradost.cloudstream3.network.WebViewResolver` existe en el jar (`resolveUsingWebView` devuelve `Pair<Request, List<Request>>` interceptados por regex). Solo implementarlo si el logcat muestra `rumble embed falló (HTTP 403 ...)` en el dispositivo.
 
+### 🔧 FIX rumble WebView + log de código HTTP (05 Oct 2026 v9)
+**Log del dispositivo (v8) que lo aclara todo**:
+```
+source ok 161ms -> https://rumble.com/embed/v78yvtc/
+rumble -> 0 URLs              <- SIN mensaje "embed falló": app.get NO lanzó excepción
+```
+- **NiceHttp NO lanza excepción con 403** (verificado por bytecode: `Requests` no chequea `isSuccessful`, solo envuelve la respuesta; `NiceResponse` expone `code`/`isSuccessful` sin validar). Un challenge de Cloudflare llega como HTML silencioso -> regex sin match -> `0 URLs`.
+- El HTML de `https://rumble.com/embed/v78yvtc/` desde PC (curl) **SÍ trae** `https://rumble.com/hls-vod/3x3_LqIIOso/playlist.m3u8`. Conclusión: el dispositivo recibió el challenge (403) en vez de la página real.
+- **Odysee aparcado**: el embed `$/embed/` es un shell JS (15 KB, sin stream); el API `resolve` da 404; `player.odysee.com` está muerto; el JSON-LD trae `contentUrl` (`player.odycdn.com/api/v3/streams/free/...mp4`) pero responde **401 "edge credentials missing"** (CDN77 con token por sesión: ni Referer, ni firma del embed como query/body, ni cookies lo abren). Requiere el player JS vivo o WebView con autoplay+intercept.
+
+**Fix v9 (`emitRumble` + `renderViaWebView`, patrón TvenvivoProvider)**:
+1. `emitRumble` ahora loguea `rumble embed -> code=${resp.code} len=...` (diagnóstico definitivo: 403 = challenge, 200 + len~165K = página real).
+2. Extracción movida a `extractRumbleLinks(clean, callback)` reutilizable (HLS + mp4s).
+3. Si OkHttp no trae playlist -> **fallback WebView**: `WebView(appCtx)` en `Dispatchers.Main` con JS activado, `addJavascriptInterface` + sondeo de `outerHTML` cada 2s (hasta 10) buscando `hls-vod`; `withTimeout(26s)` con devolución del último HTML capturado.
+4. `DonghualifePlugin.load` ahora guarda `DonghualifeProvider.pluginContext = context` (igual que Tvenvivo).
+5. Imports nuevos: `android.webkit.WebView/WebViewClient`, `Dispatchers/withContext/withTimeout/CompletableDeferred/TimeoutCancellationException`.
+
+### Estado v9
+- `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.
+- ⏸️ Odysee sigue sin extractor (será `emitOdysee` con WebView+autoplay en v10 si hace falta).
+
 ### Estado v8
 - `build.gradle.kts`: `version = 8`; `plugins.json`: version 8, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar un episodio con rumble (ej. `record-mortals-journey-immortality-season-6 EP5`). Buscar en logcat `rumble -> HLS OK`.
