@@ -711,8 +711,15 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
                 Log.w(TAG, "rumble body falló: ${e.message}")
                 ""
             }
-
+            // NiceHttp NO lanza excepción con 403: el challenge llega como HTML silencioso.
+            // El code revela si Cloudflare bloqueó (403) o pasó (200).
             Log.d(TAG, "rumble embed -> code=${resp.code} len=${body.length} ${videoUrl.take(80)}")
+            if (resp.code == 403 || resp.code == 401) {
+                // Challenge de Cloudflare: ni WebView (Challenge-Platform 401) ni loadExtractor
+                // lo pasan en esta red. Fallar rápido en vez de quemar ~35s.
+                Log.w(TAG, "rumble bloqueado por Cloudflare (${resp.code}): sin WebView ni loadExtractor")
+                return false
+            }
             val clean = body.replace("\\/", "/")
             if (extractRumbleLinks(clean, callback)) return true
 
@@ -792,7 +799,7 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
             }, "NativeBridge")
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    
+
                     fun poll(left: Int) {
                         if (htmlDeferred.isCompleted) return
                         view?.evaluateJavascript(
@@ -826,7 +833,7 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
             }
             webView.loadUrl(pageUrl)
             try {
-                withTimeout(26000L) { htmlDeferred.await() }
+                withTimeout(15000L) { htmlDeferred.await() }
             } catch (e: TimeoutCancellationException) {
                 Log.w(TAG, "WebView timeout, devolviendo último HTML (len=${latestHtml?.length ?: 0})")
                 latestHtml
@@ -842,6 +849,141 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
             } catch (_: Exception) {
             }
         }
+    }
+
+    private suspend fun interceptMediaViaWebView(
+        pageUrl: String,
+        pattern: Regex,
+        timeoutMs: Long = 25000L,
+    ): String? = withContext(Dispatchers.Main) {
+        val appCtx = pluginContext?.applicationContext ?: run {
+            Log.w(TAG, "WebView sin contexto")
+            return@withContext null
+        }
+        var webView: WebView? = null
+        try {
+            val urlDeferred = CompletableDeferred<String?>()
+            webView = WebView(appCtx)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                userAgentString = browserHeaders["User-Agent"]
+            }
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                ): android.webkit.WebResourceResponse? {
+                    val u = request?.url?.toString() ?: return null
+                    if (!urlDeferred.isCompleted && pattern.containsMatchIn(u)) {
+                        Log.d(TAG, "WebView media capturado: ${u.take(130)}")
+                        urlDeferred.complete(u)
+                    }
+                    return null
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    errorCode: Int,
+                    description: String?,
+                    failingUrl: String?,
+                ) {
+                    Log.w(TAG, "WebView error $errorCode $description url=${failingUrl?.take(80)}")
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?,
+                ) {
+                    val url = request?.url?.toString() ?: "?"
+                    if (!url.contains("favicon.ico")) {
+                        Log.w(TAG, "WebView HTTP ${errorResponse?.statusCode} -> ${url.take(100)}")
+                    }
+                }
+            }
+            webView.loadUrl(pageUrl)
+            try {
+                withTimeout(timeoutMs) { urlDeferred.await() }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(TAG, "WebView media timeout para ${pageUrl.take(80)}")
+                null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "WebView media falló: ${e::class.simpleName}: ${e.message}")
+            null
+        } finally {
+            try {
+                webView?.destroy()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private suspend fun emitOdysee(
+        videoUrl: String,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+
+        try {
+            val claimPath = videoUrl.substringAfter("/\$/embed/").substringBefore("?").let {
+                java.net.URLDecoder.decode(it, "UTF-8")
+            }
+            if (claimPath.startsWith("@")) {
+                val canonical = "https://odysee.com/$claimPath"
+                val doc = app.get(canonical, headers = browserHeaders, timeout = 20L).text
+                val contentUrl = doc.substringAfter("\"contentUrl\"", "")
+                    .substringAfter("\"", "").substringBefore("\"")
+                    .takeIf { it.startsWith("http") }
+                if (!contentUrl.isNullOrBlank()) {
+                    val probe = try {
+                        app.get(
+                            contentUrl,
+                            headers = browserHeaders + ("Referer" to "https://odysee.com/") + ("Range" to "bytes=0-0"),
+                            timeout = 15L,
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "odysee contentUrl probe falló: ${e.message}")
+                        null
+                    }
+                    Log.d(TAG, "odysee contentUrl -> code=${probe?.code} ${contentUrl.take(100)}")
+                    if (probe != null && (probe.code == 200 || probe.code == 206)) {
+                        val isHls = contentUrl.contains(".m3u8")
+                        callback(newExtractorLink(name, "Odysee", contentUrl, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                            this.referer = "https://odysee.com/"
+                            this.headers = browserHeaders + ("Referer" to "https://odysee.com/")
+                            this.quality = Qualities.Unknown.value
+                        })
+                        Log.d(TAG, "odysee -> directo OK")
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "odysee vía rápida falló: ${e.message}")
+        }
+        
+        val playUrl = if (videoUrl.contains("autoplay=")) videoUrl else "$videoUrl&autoplay=true"
+        Log.d(TAG, "odysee: probando WebView para ${playUrl.take(100)}")
+        val media = interceptMediaViaWebView(
+            playUrl,
+            Regex("""(player\.odycdn\.com|\.mp4(\?|$)|\.m3u8)"""),
+        ) ?: run {
+            Log.d(TAG, "odysee -> 0 URLs")
+            return false
+        }
+        val isHls = media.contains(".m3u8")
+        callback(newExtractorLink(name, "Odysee", media, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+            this.referer = "https://odysee.com/"
+            this.headers = browserHeaders + ("Referer" to "https://odysee.com/")
+            this.quality = Qualities.Unknown.value
+        })
+        Log.d(TAG, "odysee -> WebView OK")
+        return true
     }
 
     private suspend fun emitOkru(videoUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
@@ -1023,8 +1165,11 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
                         found = true
                     }
                 }
-            } else if (url.contains("rumble.com")) {
-                // CS3 no trae extractor de Rumble -> loadExtractor solo encuentra el
+            } else if (url.contains("odysee.com")) {
+                // Sin extractor en CS3 y con edge-credentials: WebView con autoplay + intercept.
+                if (emitOdysee(url, callback)) found = true
+                else Log.w(TAG, "odysee sin URLs: ${url.take(90)}")
+            } else if (url.contains("rumble.com")) {                // CS3 no trae extractor de Rumble -> loadExtractor solo encuentra el
                 // RumbleExtractor del plugin. Extraemos el HLS aqui y lo dejamos de fallback.
                 if (emitRumble(url, callback)) found = true
                 else {

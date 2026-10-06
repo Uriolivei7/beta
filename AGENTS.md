@@ -1253,6 +1253,54 @@ rumble -> 0 URLs              <- SIN mensaje "embed falló": app.get NO lanzó e
 4. `DonghualifePlugin.load` ahora guarda `DonghualifeProvider.pluginContext = context` (igual que Tvenvivo).
 5. Imports nuevos: `android.webkit.WebView/WebViewClient`, `Dispatchers/withContext/withTimeout/CompletableDeferred/TimeoutCancellationException`.
 
+### 🐛 Rumble irresoluble por red + Odysee vía WebView (05 Oct 2026 v10)
+**Log del dispositivo (v9)**:
+```
+rumble embed -> code=403 len=5720 https://rumble.com/embed/v78yvtc/
+WebView HTTP 403 -> https://rumble.com/embed/v78yvtc/   (x2)
+WebView HTTP 401 -> https://challenges.cloudflare.com/.../pat/.../
+WebView timeout, devolviendo último HTML (len=28660)
+```
+
+**Veredicto Rumble (PC)**:
+- El master `rumble.com/hls-vod/.../playlist.m3u8` con `requests` -> **403** (5799 B). Cloudflare desafía TODO `rumble.com` para fingerprints bloqueados: aunque se descubriera la URL por otro lado, **ExoPlayer también recibiría 403**. Evidencia PC (misma IP): curl -> 200 en todo, `requests` -> 403 en todo = 100% fingerprint, no IP.
+- Proxy `r.jina.ai` -> devuelve el challenge (403). Muerto.
+- `Odysseusa` del jar es un mirror de Vidara, NO Odysee. **CS3 no trae extractor Odysee.**
+- **Rumble queda como está**: el código es correcto y funciona donde CF no desafía. En esta red es imposible por código.
+
+**Cambios Rumble (v10)**:
+- Si `resp.code == 403 || == 401` -> **fail rápido**: se omite WebView y `loadExtractor` (probado fútil: Challenge-Platform 401 + ~8s quemados). Log: `rumble bloqueado por Cloudflare (403): sin WebView ni loadExtractor`. El episodio pasa de 28-39s a ~2s en este caso.
+- Timeout del WebView 26s -> 15s (el auto-solve de CF ocurre pronto o nunca).
+
+**`emitOdysee` nuevo** (el dominio `odysee.com` NO tiene challenge: todo dio 200 desde PC):
+1. **Vía rápida**: canónica `https://odysee.com/@canal:cid/stream:sid` (decodificada del path `/$/embed/`), JSON-LD `contentUrl` (`player.odycdn.com/api/v3/streams/free/...mp4`), probe con `Range: bytes=0-0`. Si 200/206 -> se emite directo.
+2. **WebView con autoplay**: `interceptMediaViaWebView(url, Regex("(player\.odycdn\.com|\.mp4(\?|$)|\.m3u8)"))` — `shouldInterceptRequest` captura el stream que pide el player (el player consigue sus edge-credentials solo). `&autoplay=true` si falta. Timeout 25s.
+- Dispatch `url.contains("odysee.com")` **antes** del `loadExtractor` genérico.
+- Logs: `odysee contentUrl -> code=...`, `odysee -> directo OK`, `WebView media capturado: ...`, `odysee -> WebView OK` / `0 URLs`.
+
+**Nota de verificación**: el checker `ghd_check.py` da falsos positivos con `""""` (raw string que empieza/termina en comilla, ej. línea `contentUrl` original). `ghd_bal.py` maneja mejor los strings pero TAMPOCO soporta `""""`. Se reescribió esa línea con `substringAfter/substringBefore` (sin regex) -> balance 0/0/0 real.
+
+### ⛔ Veredicto Rumble: irresoluble por red en dispositivos desafiados (05 Oct 2026, sin cambio de versión)
+**El usuario confirmó que falla igual en celular físico y emulador** (misma WiFi). Barrido completo de vías (todas desde PC salvo indicación):
+| Vía | Resultado |
+|---|---|
+| `app.get` / WebView / ExoPlayer (huella móvil) | **403** en `/embed/`, master `hls-vod`, `oembed`, `embedJS` |
+| Master `hls-vod/.../playlist.m3u8` con fingerprint bloqueado | **403** (5799 B) -> aunque se descubra la URL, ExoPlayer también fallaría |
+| Variantes `.tar?r_file=chunklist.m3u8` y segmentos en `hugh.cdn.rumble.cloud` | **200 sin headers**, TS válido -> el CDN está abierto, solo `rumble.com` desafía |
+| Proxy `r.jina.ai` | 403 (devuelve el challenge) |
+| Google Translate (`rumble-com.translate.goog/embed/...`) | **200 HTML con playlist** (Google sí pasa CF en páginas) PERO el master por el proxy -> **403** (Google también recibe challenge en `.m3u8`) |
+| CORS proxies (allorigins raw/get, corsproxy.io, codetabs) | 522 / 408 / 403 "domain blocked" / 522 (sus servidores tampoco pasan CF) |
+| Cobalt API nueva (`POST api.cobalt.tools/`) | `error.api.auth.jwt.missing` (requiere API key); v7 apagada desde nov-2024 |
+| `Odysseusa` del jar | Mirror de Vidara, NO Odysee |
+- **Conclusión**: con la red del usuario (CF desafía todo `rumble.com` a huellas móviles), Rumble no se puede resolver ni reproducir por código. El fail-rápido de v10 (`bloqueado por Cloudflare (403)`, episodio en ~2s en vez de ~35s) es el comportamiento correcto.
+- **Workaround real**: otra red (datos vs WiFi) o VPN con IP limpia — si CF no desafía, el código v8+ funciona directo (`rumble -> HLS OK`).
+- **Último recurso (no implementado)**: dependencia `cronet-embedded` (TLS real de Chromium en la app). Pesado (~MBs nativos, empaquetado cs3 incierto) y resultado incierto. Solo con visto bueno del usuario.
+
+### Estado v10
+- `build.gradle.kts`: `version = 10`; `plugins.json`: version 10, `fileSize` **pendiente**.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1`. Esperado: rumble falla rápido con `bloqueado por Cloudflare (403)` y **odysee emite link vía WebView** (`WebView media capturado` -> `odysee -> WebView OK`).
+- ⏸️ Si el autoplay no dispara el stream en el WebView, el siguiente paso es click JS al botón play tras `onPageFinished`.
+
 ### Estado v9
 - `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.
