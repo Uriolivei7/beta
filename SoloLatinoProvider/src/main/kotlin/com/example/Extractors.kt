@@ -160,7 +160,7 @@ open class VoeExtractor : ExtractorApi() {
             }
             fun cookieHeader(): String = jar.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-            
+
             var chalResp = app.get(
                 challengeUrl,
                 headers = voeHeaders + ("Referer" to pageUrl) + ("Cookie" to cookieHeader()),

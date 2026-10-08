@@ -844,6 +844,14 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Fix**: logging por paso (`sin input _token` / `sin token` / `sin challenge URL` / `challenge -> code/len` / `params incompletos` con keys+err) + reintento del challenge SIN header `Cookie` si la respuesta no empieza con `{`.
 - Versiones a **23**. ⏸️ **Pendiente**: compilar y buscar en logcat qué paso falla ahora.
 
+### 🔧 FIX voe: invocación directa (loadExtractor ignora customs) (08 Oct 2026 v24)
+- **Log v23**: `[Voe] no m3u8/mp4 found` → mirrors muertos → WebViews → a los ~22s el timeout global cancela TODO (`StandaloneCoroutine was cancelled`). Clave: **jamás aparece `[Voe] URL:`** — primera línea de `VoeExtractor.getUrl` — o sea, el fallback `loadExtractor` **nunca lo invoca** (solo consulta extractores nativos; los 13 customs del plugin, aunque registrados, no participan).
+- **Fix (2 puntos)**:
+  1. `tryVoeExtraction`: la detección de challenge (`captcha`/`CAPTCHA`/`cf-challenge`) NO matcheaba la gate actual (`Confirm you're human` + `altcha-widget`, sin la palabra "captcha"). Añadido `altcha-widget` y, en esa rama, llamada DIRECTA a `VoeExtractor().parseHtml(finalHtml, ...)` (con solver v22) **antes** de quemar presupuesto en mirrors/WebView.
+  2. Fallback de `loadSourceNameExtractor`: si el dominio es `voe.sx`, invoca `VoeExtractor().getUrl(...)` directamente (con re-wrap de labels como el resto); el resto sigue por `loadExtractor`.
+- Versiones a **24**. ⏸️ **Pendiente**: compilar y buscar `[Voe] ALTCHA detectado` → `ALTCHA resuelto` → `[Voe] Found M3U8` (o el paso exacto que falle ahora).
+- **Nota**: el mismo patrón aplica a `RumbleExtractor` (Seriesdonghua/Donghualife): sus "0 links" vía fallback probablemente también sean no-invocación. Migrarlos a llamada directa cuando toque.
+
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
 - Diferencia real: resuelve token vía `POST /api/player-url` (form `t=`, `X-CSRF-TOKEN` del meta, sin cookies) en vez del handshake Sanctum+XSRF del nuestro. Probado en vivo: **419 CSRF mismatch** (el sitio, tras Cloudflare, no da cookies en GET plano y exige sesión). Su flujo está obsoleto contra el sitio actual.
