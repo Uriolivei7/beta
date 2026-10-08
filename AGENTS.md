@@ -1334,6 +1334,15 @@ El sitio se rediseñó por completo (Tailwind/daisyUI). Nada del markup viejo ex
 - Compilación OK: pendiente de compilar por el usuario (`.\gradlew.bat :CinehdplusProvider:make --console=plain -q`) — **no compilado por regla del repo**.
 - ⏸️ **Pendiente**: compilar, instalar y probar home/search/detalle serie+película/episodios/servidores (voe, streamtape, etc.).
 
+### 🐛 Fix search (tarjetas overlay) + logging (06 Oct 2026 v3)
+**Síntoma**: el search no devolvía nada (ej. `one punch` → `/search/one+punch/` con 2 resultados reales en el HTML).
+**Causa raíz**: la página de búsqueda usa tarjetas DISTINTAS a los listados: `<a href="..." class="absolute inset-0" aria-label="One Punch Man"></a>` **vacío** (overlay), con el `<img>` fuera en el contenedor `div.group`. `toCard()` exigía `img` o `p` **dentro** del `<a>` → retornaba null para todo → 0 resultados.
+**Fixes**:
+- `toCard()`: fallbacks `closest("div.group")?.selectFirst("img")`, `a[aria-label]`, `h2/h3` del contenedor. Sirve para ambos markups (listados + búsqueda + recomendaciones).
+- `search()`: `URLEncoder.encode(query, "UTF-8")` (espacio → `+`, igual que el `/search/one+punch/` del sitio).
+- **Logs** con `TAG = Cinehdplus` (`adb logcat -s Cinehdplus:V`): `getMainPage` (sección, items, hasNext, ms), `search` (query, resultados, ms), `load` (episodio/película/serie con temporadas+episodios, ms), `loadLinks` (nº botones + `domain:lang`, OK/FALLO por servidor, final), `resolveIrChain` (paso exacto que falla: goto/rd/redir/action/vid/link).
+- Sin cambio de versión (v3 aún no compilada/publicada).
+
 ### Estado v9
 - `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.

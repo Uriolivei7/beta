@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
@@ -14,6 +15,9 @@ import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.parser.Parser
+import java.net.URLEncoder
+
+private const val TAG = "Cinehdplus"
 
 class CinehdplusProvider : MainAPI() {
     override var mainUrl = "https://cinehdplus.org"
@@ -40,12 +44,14 @@ class CinehdplusProvider : MainAPI() {
     // ------------------------------------------------------------------
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val t0 = System.currentTimeMillis()
         val path = if (page <= 1) request.data else "${request.data}page/$page/"
         val document = app.get("$mainUrl/$path").document
         val home = document.select("a[href*=/series-tv-], a[href*=/pelicula-]")
             .mapNotNull { it.toCard() }
             .distinctBy { it.url }
         val hasNext = document.selectFirst("a[href*=/page/${page + 1}/]") != null
+        Log.d(TAG, "getMainPage ${request.name} page=$page -> ${home.size} items hasNext=$hasNext ${System.currentTimeMillis() - t0}ms")
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name,
@@ -59,9 +65,13 @@ class CinehdplusProvider : MainAPI() {
     private fun Element.toCard(): SearchResponse? {
         val href = fixUrlNull(this.attr("href")) ?: return null
         if (!href.contains("/series-tv-") && !href.contains("/pelicula-")) return null
-        val img = this.selectFirst("img")
+        
+        val container = this.closest("div.group")
+        val img = this.selectFirst("img") ?: container?.selectFirst("img")
         val title = img?.attr("alt")?.takeIf { it.isNotBlank() }
+            ?: this.attr("aria-label").takeIf { it.isNotBlank() }
             ?: this.selectFirst("div.mt-2 > p")?.text()?.trim()?.takeIf { it.isNotBlank() }
+            ?: container?.selectFirst("h2, h3")?.text()?.trim()?.takeIf { it.isNotBlank() }
             ?: return null
         val posterUrl = fixUrlNull(img?.attr("src"))
         return if (href.contains("/pelicula-")) {
@@ -76,11 +86,16 @@ class CinehdplusProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        val t0 = System.currentTimeMillis()
+        Log.d(TAG, "search() llamado: '$query'")
 
-        val document = app.get("$mainUrl/?s=$query").document
-        return document.select("a[href*=/series-tv-], a[href*=/pelicula-]")
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val document = app.get("$mainUrl/?s=$encoded").document
+        val results = document.select("a[href*=/series-tv-], a[href*=/pelicula-]")
             .mapNotNull { it.toCard() }
             .distinctBy { it.url }
+        Log.d(TAG, "search '$query' -> ${results.size} resultados ${System.currentTimeMillis() - t0}ms")
+        return results
     }
 
     // ------------------------------------------------------------------
@@ -109,6 +124,8 @@ class CinehdplusProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        val t0 = System.currentTimeMillis()
+        Log.d(TAG, "load($url)")
         val doc = app.get(url).document
         val ld = ldJson(doc)
         val type = ld?.optString("@type").orEmpty()
@@ -149,6 +166,7 @@ class CinehdplusProvider : MainAPI() {
             } else {
                 epName ?: title
             }
+            Log.d(TAG, "load episodio -> $epTitle ${System.currentTimeMillis() - t0}ms")
             return newMovieLoadResponse(epTitle, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -160,6 +178,7 @@ class CinehdplusProvider : MainAPI() {
         }
 
         if (url.contains("/pelicula-") || type == "Movie") {
+            Log.d(TAG, "load película -> $title ($year) ${System.currentTimeMillis() - t0}ms")
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster
@@ -193,6 +212,7 @@ class CinehdplusProvider : MainAPI() {
             }
         }
         episodes.sortWith(compareBy({ it.season ?: 0 }, { it.episode ?: 0 }))
+        Log.d(TAG, "load serie -> $title ($year) temporadas=${episodes.mapNotNull { it.season }.distinct().size} episodios=${episodes.size} ${System.currentTimeMillis() - t0}ms")
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             this.posterUrl = poster
@@ -216,9 +236,13 @@ class CinehdplusProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val t0 = System.currentTimeMillis()
+        Log.d(TAG, "loadLinks($data)")
         val doc = app.get(data).document
+        val buttons = doc.select("button[data-url]")
+        Log.d(TAG, "loadLinks botones=${buttons.size} [${buttons.map { "${it.attr("data-domain")}:${it.attr("data-lang")}" }.distinct().joinToString()}]")
         var found = false
-        doc.select("button[data-url]").amap { btn ->
+        buttons.amap { btn ->
             var raw = btn.attr("data-url").trim()
             if (raw.isBlank() || raw.contains("youtube.com")) return@amap
             if (raw.startsWith("//")) raw = "https:$raw"
@@ -226,14 +250,25 @@ class CinehdplusProvider : MainAPI() {
                 callback(newExtractorLink(name, btn.attr("data-lang").ifBlank { btn.attr("data-domain") }, raw, ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
                 })
+                Log.d(TAG, "loadLinks m3u8 directo OK")
                 found = true
                 return@amap
             }
             val frame = raw.substringAfter("player.php?h=").substringBefore("&")
-            if (frame.isBlank() || frame == raw) return@amap
+            if (frame.isBlank() || frame == raw) {
+                Log.w(TAG, "loadLinks botón sin hash: ${raw.take(80)}")
+                return@amap
+            }
             val lang = btn.attr("data-lang").ifBlank { btn.attr("data-domain").ifBlank { "Latino" } }
-            if (resolveIrChain(frame, lang, subtitleCallback, callback)) found = true
+            Log.d(TAG, "loadLinks servidor $lang (${btn.attr("data-domain")}) ...")
+            if (resolveIrChain(frame, lang, subtitleCallback, callback)) {
+                Log.d(TAG, "loadLinks servidor $lang -> OK")
+                found = true
+            } else {
+                Log.w(TAG, "loadLinks servidor $lang -> FALLO")
+            }
         }
+        Log.d(TAG, "loadLinks $data -> ${if (found) "OK" else "SIN LINKS"} ${System.currentTimeMillis() - t0}ms")
         return found
     }
 
@@ -246,21 +281,47 @@ class CinehdplusProvider : MainAPI() {
         val api = mainUrl.replaceFirst("https://", "https://api.")
         return try {
             val d1 = app.get("$api/ir/goto.php?h=$frame").document
-            val u1 = d1.selectFirst("form input#url")?.attr("value") ?: return false
+            val u1 = d1.selectFirst("form input#url")?.attr("value")
+            if (u1.isNullOrBlank()) {
+                Log.w(TAG, "ir/ goto sin form: $frame")
+                return false
+            }
             val d2 = app.post("$api/ir/rd.php", data = mapOf("url" to u1)).document
-            val u2 = d2.selectFirst("form input#url")?.attr("value") ?: return false
+            val u2 = d2.selectFirst("form input#url")?.attr("value")
+            if (u2.isNullOrBlank()) {
+                Log.w(TAG, "ir/ rd sin form")
+                return false
+            }
             val d3 = app.post("$api/ir/redir_ddh.php", data = mapOf("url" to u2, "dl" to "0")).document
-            val form = d3.selectFirst("form") ?: return false
-            val action = form.attr("action").ifBlank { return false }
-            val vid = form.selectFirst("input#vid")?.attr("value") ?: return false
-            val hash = form.selectFirst("input#hash")?.attr("value") ?: return false
+            val form = d3.selectFirst("form")
+            if (form == null) {
+                Log.w(TAG, "ir/ redir sin form")
+                return false
+            }
+            val action = form.attr("action")
+            if (action.isBlank()) {
+                Log.w(TAG, "ir/ redir sin action")
+                return false
+            }
+            val vid = form.selectFirst("input#vid")?.attr("value")
+            val hash = form.selectFirst("input#hash")?.attr("value")
+            if (vid.isNullOrBlank() || hash.isNullOrBlank()) {
+                Log.w(TAG, "ir/ redir sin vid/hash")
+                return false
+            }
             val d4 = app.post(action, data = mapOf("vid" to vid, "hash" to hash)).document
             val encoded = d4.selectFirst("script:containsData(link =)")?.html()
-                ?.substringAfter("link = '")?.substringBefore("';") ?: return false
+                ?.substringAfter("link = '")?.substringBefore("';")
+            if (encoded.isNullOrBlank()) {
+                Log.w(TAG, "ir/ final sin link b64")
+                return false
+            }
             val link = base64Decode(encoded)
+            Log.d(TAG, "ir/ link -> ${link.take(80)}")
             loadSourceNameExtractor(lang, fixHostsLinks(link), "$mainUrl/", subtitleCallback, callback)
             true
         } catch (e: Exception) {
+            Log.w(TAG, "ir/ excepción: ${e.message}")
             false
         }
     }
