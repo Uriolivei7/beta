@@ -110,7 +110,7 @@ class SeriesdonghuaProvider : MainAPI() {
         Log.d(TAG, "search() llamado: '$query'")
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
-            // El input del form es name="s": con ?q= el sitio ignora el filtro y devuelve 24 sin filtrar
+
             val doc = app.get("$mainUrl/buscar.php?s=$encoded", headers = browserHeaders, timeout = 30L).document
             val all = doc.select("article.donghua-card").mapNotNull { it.toCard() }.distinctBy { it.url }
 
@@ -348,7 +348,7 @@ class SeriesdonghuaProvider : MainAPI() {
     ): Boolean {
         val collected = mutableListOf<ExtractorLink>()
         val collector: (ExtractorLink) -> Unit = { link -> collected.add(link) }
-        // Cap: un mirror muerto (Embedwish tardó 17s) no debe atascar el episodio
+
         try {
             withTimeout(25_000L) { loadExtractor(url, referer, subtitleCallback, collector) }
         } catch (e: TimeoutCancellationException) {
@@ -445,7 +445,6 @@ class SeriesdonghuaProvider : MainAPI() {
         dailymotionId(url)?.let { "https://www.dailymotion.com/video/$it" }
 
 
-    /** GET al metadata de DM con reintento sin headers; null si red o parse fallan. */
     private suspend fun fetchDmMeta(id: String, referer: String, noHeaders: Boolean): JSONObject? {
         val meta = try {
             val reqHeaders = if (noHeaders) emptyMap() else browserHeaders + ("Referer" to referer)
@@ -475,7 +474,6 @@ class SeriesdonghuaProvider : MainAPI() {
         val id = dailymotionId(videoUrl) ?: return false
         val referer = "https://www.dailymotion.com/embed/video/$id"
 
-        // Hasta 2 intentos: DM a veces responde sin qualities por throttle/geo (transitorio)
         var root: JSONObject? = null
         for (attempt in 0..1) {
             root = fetchDmMeta(id, referer, attempt > 0)

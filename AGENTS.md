@@ -1374,6 +1374,38 @@ Sitio: `seriesdonghua.com` (PHP custom, server-rendered, **sin Cloudflare**: tod
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `SeriesdonghuaPlugin.kt` (+`pluginContext`), `SeriesdonghuaProvider.kt`, `RumbleExtractor.kt`; `plugins.json` → entrada `SeriesDonghua` v1 (68 entradas, `fileSize: 0` pendiente).
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SeriesdonghuaProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar home/search/load/links. Logs: `adb logcat -s SeriesDonghua:V` y `RumbleExt:V`.
 
+---
+
+## VeranimeProvider — Plugin nuevo (08 Oct 2026 v1)
+
+Sitio: `veranime.ninja` (WordPress + tema DooPlay, **sin Cloudflare** pero servidor MUY lento: detalle 19-40s por página).
+
+### Cadena verificada (end-to-end en PC)
+Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`, `data-nume`, `data-type`) → `POST wp-admin/admin-ajax.php` (`action=doo_player_ajax`, form-data, **sin nonce**) → `{"embed_url":"https://saidochesto.top/embed.php?id=..."}` → hub con `go_to_player('URL')` por idioma (`OD_SUB`/`OD_LAT`/`OD_ES`: FileLions, StreamWish, StreamTape, LuluStream, HexLoad, FileMoon, Mp4Upload, Uqload).
+
+### Playback verificado (mirror por mirror)
+| Mirror | Estado |
+|---|---|
+| StreamWish / Uqload | 200 con m3u8+packer → extractor CS3 OK |
+| StreamTape | 200 player real → extractor CS3 OK |
+| LuluStream / Mp4Upload | Muertos ("deleted/expired") → se saltan solos |
+
+### Implementación (v1, sin compilar por regla del repo)
+- `getMainPage`: `article.item` (título `div.data h3 a`, poster `img[data-src]` — lazy, `src` es placeholder SVG); secciones Catálogo + 6 géneros (`/genero/accion/page/2/` verificado); `hasNext` por `a[href$="page=N+1"]`.
+- `search()`: `/?s=` + `URLEncoder` + filtro `matchesQuery()` (WP es laxo).
+- `load()`: serie → temporadas reales `#seasons .se-c` (`.se-t` + `ul.episodios li`, `div.numerando` "T - E", stills TMDB) con `TvSeriesLoadResponse(TvType.Anime)`; episodio `/ver/...-episodio-N/` → `MovieLoadResponse` mínimo con `movieData=url`; poster/info vía `div.poster`, `#info .wp-content`, `nav.genres`, `div.custom_fields`.
+- `loadLinks()`: AJAX → hub → mirrors por idioma (**LAT primero**, repo latino) → `fixMirrorHost()` (filemooon→filemoon.sx, uqload.io→.com) → `loadExtractor` con `withTimeout(25s)` por mirror.
+- **Timeouts largos**: detalle/episodio `120L`, listados `60L` (en NiceHttp el timeout va en SEGUNDOS; con 30L las páginas de 40s morirían).
+- Sin WebView/subs/interceptor (embeds con subs quemados; extractores CS3 manejan sus headers).
+- Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `VeranimePlugin.kt`, `VeranimeProvider.kt`; `plugins.json` → entrada `VerAnime` v1 (69 entradas, `fileSize: 0` pendiente).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :VeranimeProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home/search/load/links. Logs: `adb logcat -s VerAnime:V`.
+
+### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
+**Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
+**Causa**: en cadenas como `selectFirst(...)?.text()?.trim().takeIf { it.isNotEmpty() }`, el `it` dentro de `takeIf` es `String?` (el `?.` propaga nulabilidad) e `isNotEmpty()/isNotBlank()` exigen receptor no-nulo.
+**Fix global** (`replaceAll`): `takeIf { it.isNotEmpty() }` → `takeIf { !it.isNullOrEmpty() }`, `takeIf { it.isNotBlank() }` → `takeIf { !it.isNullOrBlank() }` (semántica idéntica, `isNullOr*` acepta `CharSequence?`).
+**Regla para futuros providers**: después de cualquier `?.`, dentro de `takeIf`/`let` usar siempre `isNullOrEmpty()/isNullOrBlank()`, nunca `isNotEmpty()/isNotBlank()` directo.
+
 ### 🐛 Fix get-server sin embed + filtro de search (08 Oct 2026 v2)
 **Log del dispositivo (v1)**: home/search/load OK (7 secciones × 24, `search 'blades' -> 24`, series con episodios), pero `player/get-server v=14922 s=0..3 -> sin embed_url` en los 4 servidores (DM/OK.ru/Rumble/VOE) → `SIN LINKS`. Además el search devolvía 24 resultados irrelevantes.
 

@@ -1282,5 +1282,23 @@
   "iconUrl": "https://seriesdonghua.com/favicon.ico?v2",
   "language": "mx",
   "fileSize": 0
+ },
+ {
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/VeranimeProvider.cs3",
+  "status": 1,
+  "version": 1,
+  "apiVersion": 1,
+  "name": "VerAnime",
+  "internalName": "VeranimeProvider",
+  "authors": [
+   "Ranita"
+  ],
+  "description": "https://veranime.ninja/",
+  "tvTypes": [
+   "Anime"
+  ],
+  "iconUrl": "https://www.google.com/s2/favicons?domain=veranime.ninja&sz=128",
+  "language": "mx",
+  "fileSize": 0
  }
 ]
