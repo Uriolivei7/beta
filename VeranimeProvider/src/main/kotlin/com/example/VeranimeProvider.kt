@@ -11,6 +11,8 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
@@ -42,6 +44,31 @@ class VeranimeProvider : MainAPI() {
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
     )
+    
+    private val zillaHeaders = mapOf(
+        "Accept" to "*/*",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "Origin" to "https://player.zilla-networks.com",
+        "Referer" to "https://player.zilla-networks.com/",
+        "Sec-Fetch-Dest" to "video",
+        "Sec-Fetch-Mode" to "no-cors",
+        "Sec-Fetch-Site" to "same-origin",
+        "Priority" to "u=1, i",
+    )
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                if (request.url.host.contains("zilla-networks.com")) {
+                    val builder = request.newBuilder()
+                    zillaHeaders.forEach { (k, v) -> builder.header(k, v) }
+                    return chain.proceed(builder.build())
+                }
+                return chain.proceed(request)
+            }
+        }
+    }
 
     // ------------------------------------------------------------------
     // Listados: article.item > div.poster img[data-src] + div.data h3 a
@@ -249,11 +276,14 @@ class VeranimeProvider : MainAPI() {
         return url
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
             .replaceFirst("https://filemooon.link", "https://filemoon.sx")
-            .replaceFirst("https://uqload.io", "https://uqload.com")
-            .replaceFirst("https://uqload.cx", "https://uqload.com")
-            .replaceFirst("https://uqload.is", "https://uqload.com")
+            .replaceFirst("https://filemoon0.top", "https://filemoon.sx")
+            .replaceFirst("https://uqload.io", "https://uqload.cx")
+            .replaceFirst("https://uqload.is", "https://uqload.cx")
+            .replaceFirst("https://uqload.vc", "https://uqload.cx")
+            .replaceFirst("https://uqload.com", "https://uqload.cx")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
             .replaceFirst("https://do7go.com", "https://dood.la")
+            .replaceFirst("https://dood.sh", "https://playmogo.com")
     }
 
     private suspend fun loadExtractorCollect(
@@ -412,7 +442,7 @@ class VeranimeProvider : MainAPI() {
         if (items.isEmpty()) return false
         Log.d(TAG, "hub cyberlocker: ${items.size} mirrors")
         var found = false
-        
+
         val sorted = items.sortedBy {
             val lang = it.groupValues[3].lowercase()
             when {
@@ -430,12 +460,20 @@ class VeranimeProvider : MainAPI() {
             }
             val fixed = fixMirrorHost(m.groupValues[2])
             val label = "$optTitle $langLabel [${m.groupValues[1]}]"
-            if (fixed.contains(".m3u8")) {
+            val isPlaylist = fixed.contains(".m3u8") || fixed.contains("/m3u8/")
+            if (isPlaylist) {
                 callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
                     this.referer = embedUrl
+                    this.headers = if (fixed.contains("zilla-networks.com")) zillaHeaders else browserHeaders + ("Referer" to embedUrl)
                     this.quality = Qualities.Unknown.value
                 })
+                Log.d(TAG, "hub playlist directa -> $label")
                 found = true
+            } else if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
+
+                if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) found = true
+                else if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) found = true
+                else Log.w(TAG, "sin links para $label (${fixed.take(80)})")
             } else if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) {
                 found = true
             } else {
@@ -443,5 +481,52 @@ class VeranimeProvider : MainAPI() {
             }
         }
         return found
+    }
+
+
+    private suspend fun emitByse(
+        url: String,
+        hubUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        label: String,
+    ): Boolean {
+        val html = try {
+            app.get(
+                url,
+                headers = browserHeaders + ("Referer" to hubUrl),
+                timeout = 20L,
+            ).text
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "byse embed falló (${e.message}): ${url.take(80)}")
+            null
+        }
+        if (html == null || !html.contains("Byse Frontend")) {
+            Log.d(TAG, "byse: no es Byse Frontend, extractor por defecto")
+            return false
+        }
+        return try {
+            val hubHost = runCatching { "https://${java.net.URI(hubUrl).host}" }.getOrDefault(mainUrl)
+            val sources = ByseHttpExtractor().extract(url, hubUrl, hubHost)
+            Log.d(TAG, "byse sources=${sources.size}")
+            var found = false
+            for (s in sources) {
+                for (sub in s.subtitles) subtitleCallback(sub)
+                val isHls = s.url.contains(".m3u8")
+                callback(newExtractorLink(name, "$label Byse", s.url, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                    this.referer = hubHost
+                    this.headers = browserHeaders + ("Referer" to hubHost)
+                    this.quality = Qualities.Unknown.value
+                })
+                found = true
+            }
+            if (!found) Log.w(TAG, "byse: 0 sources")
+            found
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "byse error: ${e.message}")
+            false
+        }
     }
 }

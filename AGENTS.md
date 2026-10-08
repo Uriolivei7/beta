@@ -1417,6 +1417,29 @@ Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`
 - `build.gradle.kts`: `version = 2`; `plugins.json`: version 2, `fileSize` **pendiente** (sigue 0).
 - ⏸️ **Pendiente**: compilar, instalar y probar search `one punch` (→ One Punch Man) y EP5 de Kage (→ links ES/LAT via cyberlocker JSON).
 
+### 🔧 Fix zilla-direct + Byse + mapeos (08 Oct 2026 v3)
+**Log del dispositivo (v2)**: OPM emite OK (varios mirrors CS3 funcionan en silencio), pero Link Click EP1 solo trae 5 mirrors SUB y fallan 3: `zilla-networks` (`player.zilla-networks.com/m3u8/{hash}`), `uns` (animeav1), `mega`. Además `filemooon`/`uqload` dan 0 links en varios episodios. El usuario apunta que el Latino con "byse" (igual que Monoschinos) debería funcionar.
+
+**Investigación (PC + bytecode)**:
+- `player.zilla-networks.com/m3u8/{hash}` → **200 `application/x-mpegURL`** (media playlist VOD con segmentos `.html`). Mi check `contains(".m3u8")` lo pasaba por alto (es `/m3u8/`, sin punto). Mismo patrón que Animeav1 (sus segmentos exigen headers completos o dan 403).
+- `filemooon.link/e/...` → `<title>Byse Frontend</title>`: **FileMoon migró al stack Byse** (challenge ECDSA + PoW + AES-GCM) que los extractores CS3 no resuelven. De ahí los `sin links [filemooon]`.
+- `uqload.vc` es XUpload clásico (**NO** Byse); CS3 cubre uqload.com/.co/.bz/.cx/.xyz pero no `.vc`/`.io`/`.is`.
+- `dood.sh` → 301 a `playmogo.com` (con extractor `Playmogo`); sin mapeo, `loadExtractor` no matchea host y da 0 sin intentarlo.
+- `MEGA` (`mega.nz/embed/...`) requiere el flujo proxy+AES de Retrotve: pesado, aparcado (otros mirrors cubren).
+- `uns` (`animeav1.uns.bio/#codigo`): host propio de AnimeAv1, aparcado.
+
+**Fixes (v3)**:
+- `emitCyberlockerJson`: `isPlaylist = contains(".m3u8") || contains("/m3u8/")`; links zilla con `zillaHeaders` (port de `Animeav1Provider.kt:63`, log `hub playlist directa`).
+- `getVideoInterceptor` nuevo: inyecta `zillaHeaders` a todo `zilla-networks.com` (master + segmentos).
+- `ByseExtractor.kt` portado de Monoschinos (retagueado a `VerAnime`, autocontenido: Jackson + OkHttp propio + JCA).
+- `emitByse()` nuevo: fetch del embed, si trae "Byse Frontend" → `ByseHttpExtractor().extract(url, hubUrl, hubHost)` → emite sources + subtítulos; si no, `false` (cae a `loadExtractor`).
+- Ruta filemoon/byse en `emitCyberlockerJson`: Byse primero, `loadExtractor` después.
+- `fixMirrorHost()` += `filemoon0.top→filemoon.sx`, `dood.sh→playmogo.com`, `uqload.(io|is|vc|com)→uqload.cx`.
+
+### Estado v3
+- `build.gradle.kts`: `version = 3`; `plugins.json`: version 3, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar, instalar y probar (1) Link Click EP1 → `hub playlist directa [zilla-networks]` + zilla reproduce; (2) episodio con filemoon → `byse sources=N`; (3) `adb logcat -s VerAnime:V`.
+
 ### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
 **Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
 **Causa**: en cadenas como `selectFirst(...)?.text()?.trim().takeIf { it.isNotEmpty() }`, el `it` dentro de `takeIf` es `String?` (el `?.` propaga nulabilidad) e `isNotEmpty()/isNotBlank()` exigen receptor no-nulo.
