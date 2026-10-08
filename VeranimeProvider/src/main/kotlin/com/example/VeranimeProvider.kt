@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
@@ -78,13 +79,35 @@ class VeranimeProvider : MainAPI() {
         }
     }
 
+    private fun Element.toSearchCard(): SearchResponse? {
+        val link = this.selectFirst("div.title a") ?: this.selectFirst("a[href*=/anime/]") ?: return null
+        val href = fixUrlNull(link.attr("href")) ?: return null
+        if (!href.contains("/anime/")) return null
+        val title = link.text().trim().takeIf { !it.isNullOrEmpty() }
+            ?: this.selectFirst("img")?.attr("alt")?.trim()?.takeIf { !it.isNullOrEmpty() }
+            ?: return null
+        val img = this.selectFirst(".image img") ?: this.selectFirst("img")
+        val poster = fixUrlNull(img?.attr("data-src")?.takeIf { !it.isNullOrBlank() } ?: img?.attr("src"))
+        return newAnimeSearchResponse(title, href, TvType.Anime) {
+            this.posterUrl = poster
+        }
+    }
+
     override suspend fun search(query: String): List<SearchResponse>? {
         val t0 = System.currentTimeMillis()
         Log.d(TAG, "search() llamado: '$query'")
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
             val doc = app.get("$mainUrl/?s=$encoded", headers = browserHeaders, timeout = 60L).document
-            val all = doc.select("article.item").mapNotNull { it.toCard() }.distinctBy { it.url }
+
+            val containers = doc.select("div.result-item")
+            val all = if (containers.isNotEmpty()) {
+                val parsed = containers.mapNotNull { it.toSearchCard() }
+                if (parsed.isEmpty()) Log.w(TAG, "search: ${containers.size} result-item sin parsear (markup cambió?)")
+                parsed
+            } else {
+                doc.select("article.item").mapNotNull { it.toCard() }.distinctBy { it.url }
+            }
 
             val results = all.filter { matchesQuery(it.name, query) }
             Log.d(TAG, "search '$query' -> ${all.size} total, ${results.size} filtrados ${System.currentTimeMillis() - t0}ms")
@@ -227,6 +250,8 @@ class VeranimeProvider : MainAPI() {
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
             .replaceFirst("https://filemooon.link", "https://filemoon.sx")
             .replaceFirst("https://uqload.io", "https://uqload.com")
+            .replaceFirst("https://uqload.cx", "https://uqload.com")
+            .replaceFirst("https://uqload.is", "https://uqload.com")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
             .replaceFirst("https://do7go.com", "https://dood.la")
     }
@@ -302,11 +327,54 @@ class VeranimeProvider : MainAPI() {
                 continue
             }
 
-            val langs = listOf(
-                "OD_LAT" to "Latino",
-                "OD_ES" to "Castellano",
-                "OD_SUB" to "Subtitulado",
-            )
+            if ("OD_SUB" in hub || "OD_LAT" in hub || "OD_ES" in hub) {
+                if (emitSaidochesto(hub, embedUrl, optTitle, subtitleCallback, callback)) found = true
+            } else if (!emitCyberlockerJson(hub, embedUrl, optTitle, subtitleCallback, callback)) {
+
+                var hubFound = false
+                Regex("""https?://[^"'\s\\]+\.m3u8[^"'\s\\]*""").findAll(hub)
+                    .map { it.value }.distinct().forEach { u ->
+                        callback(newExtractorLink(name, "$optTitle HLS", u, ExtractorLinkType.M3U8) {
+                            this.referer = embedUrl
+                            this.quality = Qualities.Unknown.value
+                        })
+                        hubFound = true
+                    }
+                if (!hubFound) {
+                    val iframes = Jsoup.parse(hub, embedUrl).select("iframe[src]")
+                    Log.d(TAG, "hub genérico: ${iframes.size} iframes")
+                    for (frame in iframes) {
+                        val src = frame.attr("abs:src").trim()
+                        if (src.isBlank()) continue
+                        if (loadExtractorCollect(fixMirrorHost(src), embedUrl, subtitleCallback, callback, "$optTitle Mirror")) {
+                            hubFound = true
+                        }
+                    }
+                }
+                if (hubFound) found = true
+                else Log.w(TAG, "hub sin mirrors conocidos: ${embedUrl.take(80)}")
+            } else {
+                found = true
+            }
+        }
+        Log.d(TAG, "loadLinks $pageUrl -> ${if (found) "OK" else "SIN LINKS"} ${System.currentTimeMillis() - t0}ms")
+        return found
+    }
+
+    private suspend fun emitSaidochesto(
+        hub: String,
+        embedUrl: String,
+        optTitle: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        var found = false
+
+        val langs = listOf(
+            "OD_LAT" to "Latino",
+            "OD_ES" to "Castellano",
+            "OD_SUB" to "Subtitulado",
+        )
             for ((block, langLabel) in langs) {
                 val blockHtml = Regex("<div class=\"OD $block[^\"]*\">(.*?)</div>\\s*</div>", RegexOption.DOT_MATCHES_ALL)
                     .find(hub)?.groupValues?.getOrNull(1) ?: continue
@@ -329,8 +397,51 @@ class VeranimeProvider : MainAPI() {
                     }
                 }
             }
+        return found
+    }
+
+    private suspend fun emitCyberlockerJson(
+        hub: String,
+        embedUrl: String,
+        optTitle: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val items = Regex("\\{\"cyberlocker\":\"([^\"]+)\",\"link\":\"([^\"]+)\",\"language\":\"([^\"]+)\",\"quality\":\"([^\"]+)\"\\}")
+            .findAll(hub).toList()
+        if (items.isEmpty()) return false
+        Log.d(TAG, "hub cyberlocker: ${items.size} mirrors")
+        var found = false
+        
+        val sorted = items.sortedBy {
+            val lang = it.groupValues[3].lowercase()
+            when {
+                lang.contains("lat") || lang == "español" || lang == "espanol" -> 0
+                lang.contains("cast") -> 1
+                else -> 2
+            }
         }
-        Log.d(TAG, "loadLinks $pageUrl -> ${if (found) "OK" else "SIN LINKS"} ${System.currentTimeMillis() - t0}ms")
+        for (m in sorted) {
+            val langRaw = m.groupValues[3]
+            val langLabel = when {
+                langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
+                langRaw.contains("cast", ignoreCase = true) -> "Castellano"
+                else -> "Latino"
+            }
+            val fixed = fixMirrorHost(m.groupValues[2])
+            val label = "$optTitle $langLabel [${m.groupValues[1]}]"
+            if (fixed.contains(".m3u8")) {
+                callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
+                    this.referer = embedUrl
+                    this.quality = Qualities.Unknown.value
+                })
+                found = true
+            } else if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) {
+                found = true
+            } else {
+                Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+            }
+        }
         return found
     }
 }

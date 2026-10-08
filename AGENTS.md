@@ -1400,6 +1400,23 @@ Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `VeranimePlugin.kt`, `VeranimeProvider.kt`; `plugins.json` → entrada `VerAnime` v1 (69 entradas, `fileSize: 0` pendiente).
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :VeranimeProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home/search/load/links. Logs: `adb logcat -s VerAnime:V`.
 
+### 🐛 Fix search result-item + hubs alternos (08 Oct 2026 v2)
+**Log del dispositivo (v1)**: search `one punch` → `0 total`; `loadLinks` EP5 → `opciones=1` y `SIN LINKS` sin ningún log intermedio (ni embed ni hub).
+
+**Causa search**: la página de resultados usa `div.result-item > article` (`div.title a` + `.image img`), NO `article.item` (ese es solo el widget lateral "ANIMES RECIENTES"). Mi conteo con regex `class="[^"]*item` me engañó (matcheaba `w_item_a`).
+**Fix**: nuevo `toSearchCard()` (`div.title a`, poster `.image img`); `search()` usa `div.result-item` y solo cae a `article.item` si no hay ninguno (para no devolver widgets). Log si hay result-item sin parsear.
+
+**Causa loadLinks**: el EP5 resuelve a OTRO hub (`darkanimes.com/...`, no saidochesto). Su página no tiene bloques OD ni `go_to_player` → los 3 `?: continue` saltaban en silencio → 0 links.
+**Hallazgo**: darkanimes trae JSON limpio `{"cyberlocker","link","language","quality"}` (14 mirrors: streamtape/netu/filemooon/uqload/filelions/streamwish/savefiles/mxdrop/hexload/mp4upload; `Japones`=SUB, `Español`=LAT).
+**Fixes**:
+- Branch por tipo de hub: OD_* → `emitSaidochesto()` (extraído tal cual); si no → `emitCyberlockerJson()` (orden Español-latino primero); si no hay items → fallbacks genéricos (`.m3u8` directos, `iframe[src]` → loadExtractor).
+- `fixMirrorHost()` += `uqload.cx/is → uqload.com`.
+- Cobertura CS3 verificada por bytecode: filelions→VidHidePro1-3, mxdrop→MxDropTo, hexload→Hexload, mp4upload→Mp4Upload, luluvdo→LuluStream. Sin cobertura: savefiles, netuplayer (se saltan solos).
+
+### Estado v2
+- `build.gradle.kts`: `version = 2`; `plugins.json`: version 2, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar, instalar y probar search `one punch` (→ One Punch Man) y EP5 de Kage (→ links ES/LAT via cyberlocker JSON).
+
 ### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
 **Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
 **Causa**: en cadenas como `selectFirst(...)?.text()?.trim().takeIf { it.isNotEmpty() }`, el `it` dentro de `takeIf` es `String?` (el `?.` propaga nulabilidad) e `isNotEmpty()/isNotBlank()` exigen receptor no-nulo.
