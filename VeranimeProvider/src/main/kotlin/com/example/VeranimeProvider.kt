@@ -455,7 +455,7 @@ class VeranimeProvider : MainAPI() {
             .findAll(hub).toList()
         if (items.isEmpty()) return false
         Log.d(TAG, "hub cyberlocker: ${items.size} mirrors")
-        
+
         val sorted = items.sortedBy {
             val lang = it.groupValues[3].lowercase()
             when {

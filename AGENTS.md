@@ -826,6 +826,22 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación OK: `:SoloLatinoProvider:compileReleaseKotlin`
 - ⏸️ **Pendiente**: probar mirrors voe — buscar `[Voe] Found M3U8` tras `probando mirror`.
 
+### 🔧 FIX voe nunca emite: solver ALTCHA PoW (08 Oct 2026 v22)
+- **Síntoma (usuario)**: en ningún episodio/película sale VOE, solo vidhide y streamwish.
+- **Causa raíz**: `parseHtml()` ABANDONABA explícitamente ante `altcha-widget` (`return false`). VOE ahora lo exige casi siempre.
+- **Fix**: rama `solveAltcha()` en `VoeExtractor` (lógica portada de redblacker8/storm-ext, **verificada en vivo**: de `voe.sx/e/fhbq8gdmw3ta` sacó master m3u8 con token + mp4 directo):
+  - `_token` + challenge URL del HTML → GET challenge (con cookies: las de `getUrl` o GET fresco) → PoW PBKDF2 (`solveAltchaPow`, hex rápido con tabla, NO `"%02x".format`) → POST `_token/access/altcha` → HTML post-solución → flujo decrypt normal.
+  - `parseHtml()` ganó param opcional `cookies: Map<String,String>? = null` (llamadores existentes intactos); `voeHeaders` subido a val de clase.
+  - Imports nuevos: `android.util.Base64`, `java.net.URLEncoder`, `javax.crypto.Mac/SecretKeySpec` (todo del SDK, sin deps).
+- **Nota versiones**: `build.gradle` iba en 21 pero `plugins.json` seguía en 2 (desync; resto de providers sincronizados). Ambos a **22** — confirmar que es lo deseado.
+- Compilación: pendiente por el usuario (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`) — **no compilado por regla del repo**.
+- ⏸️ **Pendiente**: probar episodio con mirror voe — buscar `[Voe] ALTCHA detectado` → `ALTCHA resuelto en N intentos` → `[Voe] Found M3U8`.
+
+### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
+- El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
+- Diferencia real: resuelve token vía `POST /api/player-url` (form `t=`, `X-CSRF-TOKEN` del meta, sin cookies) en vez del handshake Sanctum+XSRF del nuestro. Probado en vivo: **419 CSRF mismatch** (el sitio, tras Cloudflare, no da cookies en GET plano y exige sesión). Su flujo está obsoleto contra el sitio actual.
+- Lo único rescatable: su `loadVoe` con solver ALTCHA (PoW PBKDF2) por si VOE lo exige algún día; hoy no hace falta.
+
 ---
 
 ## TorrentioProvider — Plugin Stremio Torrentio (04 Sep 2026)
