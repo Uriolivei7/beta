@@ -111,12 +111,23 @@ class SeriesdonghuaProvider : MainAPI() {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
             val doc = app.get("$mainUrl/buscar.php?q=$encoded", headers = browserHeaders, timeout = 30L).document
-            val results = doc.select("article.donghua-card").mapNotNull { it.toCard() }.distinctBy { it.url }
-            Log.d(TAG, "search '$query' -> ${results.size} resultados ${System.currentTimeMillis() - t0}ms")
+            val all = doc.select("article.donghua-card").mapNotNull { it.toCard() }.distinctBy { it.url }
+
+            val results = all.filter { matchesQuery(it.name, query) }
+            Log.d(TAG, "search '$query' -> ${all.size} total, ${results.size} filtrados ${System.currentTimeMillis() - t0}ms")
             results
         } catch (e: Exception) {
             Log.w(TAG, "search falló: ${e.message}")
             null
+        }
+    }
+    
+    private fun matchesQuery(title: String, query: String): Boolean {
+        val norm = title.lowercase()
+        val tokens = query.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
+        if (tokens.isEmpty()) return true
+        return tokens.all { tok ->
+            norm.contains(tok) || (tok.length > 3 && tok.endsWith("s") && norm.contains(tok.dropLast(1)))
         }
     }
 
@@ -197,11 +208,12 @@ class SeriesdonghuaProvider : MainAPI() {
 
     private suspend fun postPlayerServer(pageUrl: String, csrf: String, videoId: Int, serverIndex: Int): String? {
         val t0 = System.currentTimeMillis()
-        return try {
-            val body = app.post(
+        val resp = try {
+            app.post(
                 "$mainUrl/api/player/get-server",
                 headers = mapOf(
                     "Content-Type" to "application/json",
+                    "Accept" to "application/json, text/plain, */*",
                     "X-CSRF-TOKEN" to csrf,
                     "X-Requested-With" to "XMLHttpRequest",
                     "Referer" to pageUrl,
@@ -210,15 +222,30 @@ class SeriesdonghuaProvider : MainAPI() {
                 requestBody = """{"video_id":$videoId,"server_index":$serverIndex}"""
                     .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
                 timeout = 30L,
-            ).text
-            val url = JSONObject(body).optString("embed_url").takeIf { it.isNotBlank() }
-            Log.d(TAG, "player/get-server v=$videoId s=$serverIndex -> ${if (url != null) "ok ${System.currentTimeMillis() - t0}ms" else "sin embed_url"}")
-            url
+            )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Log.w(TAG, "player/get-server falló: ${e.message}")
+            Log.w(TAG, "player/get-server v=$videoId s=$serverIndex excepción: ${e.message}")
+            null
+        } ?: return null
+        val body = try {
+            resp.text
+        } catch (e: Exception) {
+            Log.w(TAG, "player/get-server v=$videoId s=$serverIndex body falló: ${e.message}")
+            ""
+        }
+        val url = try {
+            JSONObject(body).optString("embed_url").takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            Log.w(TAG, "player/get-server v=$videoId s=$serverIndex no es JSON (code=${resp.code}): ${body.take(200)}")
             null
         }
+        if (url != null) {
+            Log.d(TAG, "player/get-server v=$videoId s=$serverIndex -> ok ${System.currentTimeMillis() - t0}ms")
+        } else {
+            Log.w(TAG, "player/get-server v=$videoId s=$serverIndex -> code=${resp.code} sin embed_url: ${body.take(200)}")
+        }
+        return url
     }
 
     override suspend fun loadLinks(

@@ -1374,6 +1374,22 @@ Sitio: `seriesdonghua.com` (PHP custom, server-rendered, **sin Cloudflare**: tod
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `SeriesdonghuaPlugin.kt` (+`pluginContext`), `SeriesdonghuaProvider.kt`, `RumbleExtractor.kt`; `plugins.json` → entrada `SeriesDonghua` v1 (68 entradas, `fileSize: 0` pendiente).
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SeriesdonghuaProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar home/search/load/links. Logs: `adb logcat -s SeriesDonghua:V` y `RumbleExt:V`.
 
+### 🐛 Fix get-server sin embed + filtro de search (08 Oct 2026 v2)
+**Log del dispositivo (v1)**: home/search/load OK (7 secciones × 24, `search 'blades' -> 24`, series con episodios), pero `player/get-server v=14922 s=0..3 -> sin embed_url` en los 4 servidores (DM/OK.ru/Rumble/VOE) → `SIN LINKS`. Además el search devolvía 24 resultados irrelevantes.
+
+**Investigación (PC)**:
+- El MISMO video (14922) por API responde `200 {"success":true,"embed_url":...}` en los 4 servidores (incluido VOE `voe.sx/e/...`). La API está bien; el dispositivo recibe otra cosa.
+- El log v1 no mostraba QUÉ recibía (solo "sin embed_url") → imposible distinguir 419/500 HTML de `success:false` JSON.
+- Search `/buscar.php?q=blades` devuelve 24 cards, casi todas irrelevantes (`Xi Xing Ji`, `Gu An`...), pero `Blade of The Guardians 2` SÍ está (#19). El buscador del sitio es laxo por diseño.
+
+**Fixes**:
+- `postPlayerServer()`: captura `resp.code` + body; si no hay `embed_url` loguea `code=... sin embed_url: <200 chars del body>` (distingue HTML de error de JSON). Añadido header `Accept: application/json`.
+- `search()`: filtro de relevancia `matchesQuery()` — TODOS los tokens del query (y su singular si termina en `s`) deben aparecer en el título. `blades` → `blade` matchea "Blade of The Guardians 2", descarta las 23 restantes. Log: `N total, M filtrados`.
+
+### Estado v2
+- `build.gradle.kts`: `version = 2`; `plugins.json`: version 2, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar, instalar y (1) ver el log `player/get-server ... code=... sin embed_url: ...` para diagnosticar la respuesta real del dispositivo; (2) probar search `blades` → debe devolver 1 resultado.
+
 ### Estado v9
 - `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.
