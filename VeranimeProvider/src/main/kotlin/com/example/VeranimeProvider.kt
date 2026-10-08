@@ -23,7 +23,7 @@ private const val TAG = "VerAnime"
 
 class VeranimeProvider : MainAPI() {
     override var mainUrl = "https://veranime.ninja"
-    override var name = "VerAnime"
+    override var name = "AnimeNINJA"
     override var lang = "mx"
     override val hasMainPage = true
     override val hasDownloadSupport = true
@@ -44,7 +44,7 @@ class VeranimeProvider : MainAPI() {
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
     )
-    
+
     private val zillaHeaders = mapOf(
         "Accept" to "*/*",
         "Accept-Language" to "en-US,en;q=0.9",
@@ -405,29 +405,42 @@ class VeranimeProvider : MainAPI() {
             "OD_ES" to "Castellano",
             "OD_SUB" to "Subtitulado",
         )
-            for ((block, langLabel) in langs) {
-                val blockHtml = Regex("<div class=\"OD $block[^\"]*\">(.*?)</div>\\s*</div>", RegexOption.DOT_MATCHES_ALL)
-                    .find(hub)?.groupValues?.getOrNull(1) ?: continue
-                val mirrors = Regex("go_to_player\\('([^']+)'\\)").findAll(blockHtml)
-                    .map { it.groupValues[1] }.distinct().toList()
-                Log.d(TAG, "hub $langLabel: ${mirrors.size} mirrors")
-                for (mirror in mirrors) {
-                    val fixed = fixMirrorHost(mirror)
-                    val label = "$optTitle $langLabel"
-                    if (fixed.contains(".m3u8")) {
-                        callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
-                            this.referer = embedUrl
-                            this.quality = Qualities.Unknown.value
-                        })
-                        found = true
-                    } else if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) {
-                        found = true
-                    } else {
-                        Log.w(TAG, "sin links para $label (${fixed.take(80)})")
-                    }
-                }
-            }
+        for ((block, langLabel) in langs) {
+            val blockHtml = Regex("<div class=\"OD $block[^\"]*\">(.*?)</div>\\s*</div>", RegexOption.DOT_MATCHES_ALL)
+                .find(hub)?.groupValues?.getOrNull(1) ?: continue
+            val mirrors = Regex("go_to_player\\('([^']+)'\\)").findAll(blockHtml)
+                .map { it.groupValues[1] }.distinct().toList()
+            Log.d(TAG, "hub $langLabel: ${mirrors.size} mirrors")
+
+            val results = mirrors.amap { mirror -> resolveSaidoMirror(mirror, optTitle, langLabel, embedUrl, subtitleCallback, callback) }
+            if (results.any { it }) found = true
+        }
         return found
+    }
+
+    private suspend fun resolveSaidoMirror(
+        mirror: String,
+        optTitle: String,
+        langLabel: String,
+        embedUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val fixed = fixMirrorHost(mirror)
+        val label = "$optTitle $langLabel"
+        val isPlaylist = fixed.contains(".m3u8") || fixed.contains("/m3u8/")
+        if (isPlaylist) {
+            callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
+                this.referer = embedUrl
+                this.headers = if (fixed.contains("zilla-networks.com")) zillaHeaders else browserHeaders + ("Referer" to embedUrl)
+                this.quality = Qualities.Unknown.value
+            })
+            Log.d(TAG, "hub playlist directa -> $label")
+            return true
+        }
+        if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
+        Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+        return false
     }
 
     private suspend fun emitCyberlockerJson(
@@ -437,12 +450,12 @@ class VeranimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val items = Regex("\\{\"cyberlocker\":\"([^\"]+)\",\"link\":\"([^\"]+)\",\"language\":\"([^\"]+)\",\"quality\":\"([^\"]+)\"\\}")
+        
+        val items = Regex("\\{\\s*\"cyberlocker\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"link\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"language\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"quality\"\\s*:\\s*\"([^\"]+)\"\\s*\\}")
             .findAll(hub).toList()
         if (items.isEmpty()) return false
         Log.d(TAG, "hub cyberlocker: ${items.size} mirrors")
-        var found = false
-
+        // Español (latino) primero, luego el resto
         val sorted = items.sortedBy {
             val lang = it.groupValues[3].lowercase()
             when {
@@ -451,8 +464,19 @@ class VeranimeProvider : MainAPI() {
                 else -> 2
             }
         }
-        for (m in sorted) {
-            val langRaw = m.groupValues[3]
+
+        val results = sorted.amap { m -> resolveCyberMirror(m, embedUrl, optTitle, subtitleCallback, callback) }
+        return results.any { it }
+    }
+
+    private suspend fun resolveCyberMirror(
+        m: MatchResult,
+        embedUrl: String,
+        optTitle: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val langRaw = m.groupValues[3]
             val langLabel = when {
                 langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
                 langRaw.contains("cast", ignoreCase = true) -> "Castellano"
@@ -468,19 +492,18 @@ class VeranimeProvider : MainAPI() {
                     this.quality = Qualities.Unknown.value
                 })
                 Log.d(TAG, "hub playlist directa -> $label")
-                found = true
-            } else if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
-
-                if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) found = true
-                else if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) found = true
-                else Log.w(TAG, "sin links para $label (${fixed.take(80)})")
-            } else if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) {
-                found = true
-            } else {
-                Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+                return true
             }
-        }
-        return found
+            if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
+                
+                if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) return true
+                if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
+                Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+                return false
+            }
+            if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
+            Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+            return false
     }
 
 

@@ -1440,6 +1440,35 @@ Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`
 - `build.gradle.kts`: `version = 3`; `plugins.json`: version 3, `fileSize` **pendiente** (sigue 0).
 - ⏸️ **Pendiente**: compilar, instalar y probar (1) Link Click EP1 → `hub playlist directa [zilla-networks]` + zilla reproduce; (2) episodio con filemoon → `byse sources=N`; (3) `adb logcat -s VerAnime:V`.
 
+### ⚡ Fix hubs sin latino + speedup paralelo (08 Oct 2026 v4)
+**Log del dispositivo (v3)**:
+- Link Click EP1-3: hubs con **solo 5/5/4 mirrors Japones, CERO Latino** en todos. **No es bug**: el sitio no subió latino para Link Click. La ruta Byse queda lista por si aparece.
+- JJK S2E19: 54 mirrors (18 LAT + 9 ES + 27 SUB), **todos** dan 0 links incluso streamwish/uqload (vivos desde PC) en 109s. Causa probable: degradación transitoria de red en el dispositivo (OPM 30 min antes sí emitía con el mismo código). Riesgo real: 54 mirrors en serie rozan el kill de 120s de CS3.
+- **Audio**: StreamWish etiquetado "Subtitulado" reproduce en latino → **mislabel del sitio** (el JSON del hub trae `language` erróneo). El provider emite la etiqueta tal cual; nada que arreglar en código. Si el archivo trae pista dual, ExoPlayer permite cambiarla en el player.
+
+**Fixes (v4)**:
+- Paralelizado con `amap` (precedente SoloLatino): mirrors en paralelo **dentro** de cada grupo de idioma (se mantiene prioridad LAT>ES>SUB). 109s → ~15-25s.
+- Refactor: `resolveSaidoMirror()` + `resolveCyberMirror()` extraídos (retornan Boolean; `results.any { it }`).
+- `amap` verificado en el jar: `ParCollectionsKt.amap(List<A>, suspend (A)->B): List<B>` (paquete raíz, cubierto por wildcard).
+
+### Estado v4
+- `build.gradle.kts`: `version = 4`; `plugins.json`: version 4 (+ nombre visible `AnimeNINJA`), `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar, instalar y probar JJK S2E19 (debería resolver en ~20s) + Link Click EP1 (zilla directo).
+
+### 🔧 Fix regex con espacios: Latino/Castellano invisibles (08 Oct 2026 v5)
+**Reporte del usuario (v4)**: en la web, el Latino de Link Click EP1 muestra 2 links (`byseraguci`, `luluvdoo`), pero el plugin solo emitía Subtitulado.
+**Causa raíz**: el hub mezcla DOS formatos JSON. Mi regex exigía sin espacios y solo capturaba el formato Japones:
+```json
+{"cyberlocker":"netu","link":"...","language":"Japones","quality":"720p"}          // matcheaba
+{"cyberlocker": "byseraguci","link":"https://byseraguci.com/e/...","language": "Español-Latino", "quality": "720p"}   // NO matcheaba
+```
+**Fix**: regex tolerante `\{\s*"cyberlocker"\s*:\s*"([^"]+)"\s*,...` (verificado en PC: 5 → 9 items en EP1). `Español-Latino`/`Español` → Latino por reglas existentes (`contains("lat")`, else → Latino). `byseraguci.com` cae en la ruta `emitByse` (contiene "byse"); `luluvdoo.com`/`luluvdo.com` tienen extractor dedicado en CS3 (`Luluvdoo`→luluvdoo.com, `LuluStream`→luluvdo.com, verificado por bytecode) → sin mapeo.
+**Nota**: `Español` a secas se mapea a Latino (coherente con OPM, donde esos links reproducían latino real).
+
+### Estado v5
+- `build.gradle.kts`: `version = 5`; `plugins.json`: version 5, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar, instalar y probar Link Click EP1 — esperado `hub cyberlocker: 9 mirrors` + links `Latino [byseraguci]` (vía `byse sources=N`) y `Latino [luluvdoo]`.
+
 ### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
 **Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
 **Causa**: en cadenas como `selectFirst(...)?.text()?.trim().takeIf { it.isNotEmpty() }`, el `it` dentro de `takeIf` es `String?` (el `?.` propaga nulabilidad) e `isNotEmpty()/isNotBlank()` exigen receptor no-nulo.
