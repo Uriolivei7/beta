@@ -136,11 +136,22 @@ open class VoeExtractor : ExtractorApi() {
     ): String? {
         return try {
             val inputTag = Regex("""<input[^>]*name=["']?_token["']?[^>]*>""").find(html)?.value
-                ?: return null
+            if (inputTag == null) {
+                Log.w("SoloLatino", "[Voe] ALTCHA sin input _token")
+                return null
+            }
             val token = Regex("""value=["']?([^"'\s>]+)""").find(inputTag)?.groupValues?.get(1)
-                ?.takeIf { it.isNotBlank() } ?: return null
+                ?.takeIf { it.isNotBlank() }
+            if (token == null) {
+                Log.w("SoloLatino", "[Voe] ALTCHA sin token")
+                return null
+            }
             val challengeUrl = Regex("""<altcha-widget[^>]*challenge=["']?([^"'\s>]+)""").find(html)
-                ?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: return null
+                ?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+            if (challengeUrl == null) {
+                Log.w("SoloLatino", "[Voe] ALTCHA sin challenge URL")
+                return null
+            }
 
             var jar = cookies ?: emptyMap()
             if (jar.isEmpty()) {
@@ -149,11 +160,28 @@ open class VoeExtractor : ExtractorApi() {
             }
             fun cookieHeader(): String = jar.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-            val chalText = app.get(
+            
+            var chalResp = app.get(
                 challengeUrl,
                 headers = voeHeaders + ("Referer" to pageUrl) + ("Cookie" to cookieHeader()),
                 timeout = 30L,
-            ).text
+            )
+            var chalText = try { chalResp.text } catch (_: Exception) { "" }
+            Log.d("SoloLatino", "[Voe] challenge -> code=${chalResp.code} len=${chalText.length} cookies=${jar.keys}")
+            if (!chalText.trimStart().startsWith("{")) {
+                Log.d("SoloLatino", "[Voe] challenge sin JSON, reintento sin cookies: ${chalText.take(120)}")
+                chalResp = app.get(
+                    challengeUrl,
+                    headers = voeHeaders + ("Referer" to pageUrl),
+                    timeout = 30L,
+                )
+                chalText = try { chalResp.text } catch (_: Exception) { "" }
+                Log.d("SoloLatino", "[Voe] challenge retry -> code=${chalResp.code} len=${chalText.length}")
+                if (!chalText.trimStart().startsWith("{")) {
+                    Log.w("SoloLatino", "[Voe] challenge no-JSON: ${chalText.take(160)}")
+                    return null
+                }
+            }
             val solution = solveAltchaPow(chalText) ?: return null
             val params = Regex(""""parameters"\s*:\s*(\{[^{}]*\})""").find(chalText)
                 ?.groupValues?.get(1) ?: return null
@@ -197,18 +225,23 @@ open class VoeExtractor : ExtractorApi() {
             }
             return String(out)
         }
-        val nonce = hexToBytes(
-            Regex(""""nonce"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1) ?: return null
-        ) ?: return null
-        val salt = hexToBytes(
-            Regex(""""salt"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1) ?: return null
-        ) ?: return null
-        val prefix = Regex(""""keyPrefix"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)
-            ?.groupValues?.get(1)?.lowercase() ?: return null
-        val cost = Regex(""""cost"\s*:\s*(\d+)"""").find(challengeText)
-            ?.groupValues?.get(1)?.toIntOrNull() ?: return null
-        val keyLength = Regex(""""keyLength"\s*:\s*(\d+)"""").find(challengeText)
-            ?.groupValues?.get(1)?.toIntOrNull() ?: 32
+        val nonceHex = Regex(""""nonce"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1)
+        val saltHex = Regex(""""salt"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1)
+        val prefix = Regex(""""keyPrefix"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1)?.lowercase()
+        val cost = Regex(""""cost"\s*:\s*(\d+)"""").find(challengeText)?.groupValues?.get(1)?.toIntOrNull()
+        val keyLength = Regex(""""keyLength"\s*:\s*(\d+)"""").find(challengeText)?.groupValues?.get(1)?.toIntOrNull() ?: 32
+        if (nonceHex == null || saltHex == null || prefix == null || cost == null) {
+            Log.w("SoloLatino", "[Voe] ALTCHA params incompletos (nonce=${nonceHex != null} salt=${saltHex != null} prefix=$prefix cost=$cost): ${challengeText.take(160)}")
+            return null
+        }
+        val nonce = hexToBytes(nonceHex) ?: run {
+            Log.w("SoloLatino", "[Voe] ALTCHA nonce inválido")
+            return null
+        }
+        val salt = hexToBytes(saltHex) ?: run {
+            Log.w("SoloLatino", "[Voe] ALTCHA salt inválida")
+            return null
+        }
         if (prefix.isEmpty() || cost <= 0) return null
         var counter = 0
         val t0 = System.currentTimeMillis()

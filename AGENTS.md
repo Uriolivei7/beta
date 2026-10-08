@@ -837,6 +837,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Compilación: pendiente por el usuario (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`) — **no compilado por regla del repo**.
 - ⏸️ **Pendiente**: probar episodio con mirror voe — buscar `[Voe] ALTCHA detectado` → `ALTCHA resuelto en N intentos` → `[Voe] Found M3U8`.
 
+### 🔍 Diagnóstico ALTCHA falla en ~330ms + logging granular (08 Oct 2026 v23)
+- **Log v22**: `[Voe] ALTCHA detectado` → `[Voe] ALTCHA no resuelto` en ~330ms, sin línea de error. Demasiado rápido para PoW (prefijo "00" ≈ 256 intentos × ~20ms ≈ 5s esperados) → el fallo es ANTES del cómputo.
+- **Verificado en PC**: todos los regexes matchean el HTML/JSON real (`_token`, challenge URL, nonce/salt/keyPrefix/cost). El challenge GET da 200 + JSON válido sin cookies.
+- **Hipótesis**: el challenge GET en el dispositivo devuelve no-JSON (challenge con cookies de sesión rancia → 4xx HTML). NiceHttp no lanza con 4xx, así que llegaba silencioso y los params daban null.
+- **Fix**: logging por paso (`sin input _token` / `sin token` / `sin challenge URL` / `challenge -> code/len` / `params incompletos` con keys+err) + reintento del challenge SIN header `Cookie` si la respuesta no empieza con `{`.
+- Versiones a **23**. ⏸️ **Pendiente**: compilar y buscar en logcat qué paso falla ahora.
+
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
 - Diferencia real: resuelve token vía `POST /api/player-url` (form `t=`, `X-CSRF-TOKEN` del meta, sin cookies) en vez del handshake Sanctum+XSRF del nuestro. Probado en vivo: **419 CSRF mismatch** (el sitio, tras Cloudflare, no da cookies en GET plano y exige sesión). Su flujo está obsoleto contra el sitio actual.
