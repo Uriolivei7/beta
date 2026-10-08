@@ -110,7 +110,8 @@ class SeriesdonghuaProvider : MainAPI() {
         Log.d(TAG, "search() llamado: '$query'")
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
-            val doc = app.get("$mainUrl/buscar.php?q=$encoded", headers = browserHeaders, timeout = 30L).document
+            // El input del form es name="s": con ?q= el sitio ignora el filtro y devuelve 24 sin filtrar
+            val doc = app.get("$mainUrl/buscar.php?s=$encoded", headers = browserHeaders, timeout = 30L).document
             val all = doc.select("article.donghua-card").mapNotNull { it.toCard() }.distinctBy { it.url }
 
             val results = all.filter { matchesQuery(it.name, query) }
@@ -121,7 +122,7 @@ class SeriesdonghuaProvider : MainAPI() {
             null
         }
     }
-    
+
     private fun matchesQuery(title: String, query: String): Boolean {
         val norm = title.lowercase()
         val tokens = query.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
@@ -206,7 +207,13 @@ class SeriesdonghuaProvider : MainAPI() {
     // Fuentes: POST /api/player/get-server -> embed_url -> dispatch
     // ------------------------------------------------------------------
 
-    private suspend fun postPlayerServer(pageUrl: String, csrf: String, videoId: Int, serverIndex: Int): String? {
+    private suspend fun postPlayerServer(
+        pageUrl: String,
+        csrf: String,
+        cookies: String,
+        videoId: Int,
+        serverIndex: Int
+    ): String? {
         val t0 = System.currentTimeMillis()
         val resp = try {
             app.post(
@@ -218,7 +225,7 @@ class SeriesdonghuaProvider : MainAPI() {
                     "X-Requested-With" to "XMLHttpRequest",
                     "Referer" to pageUrl,
                     "Origin" to mainUrl,
-                ),
+                ) + (if (cookies.isNotBlank()) mapOf("Cookie" to cookies) else emptyMap()),
                 requestBody = """{"video_id":$videoId,"server_index":$serverIndex}"""
                     .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
                 timeout = 30L,
@@ -257,10 +264,19 @@ class SeriesdonghuaProvider : MainAPI() {
         val t0 = System.currentTimeMillis()
         val pageUrl = data.substringBefore("?")
         Log.d(TAG, "loadLinks data='$data' -> pagina $pageUrl")
-        val doc = try {
-            app.get(pageUrl, headers = browserHeaders + ("Referer" to mainUrl), timeout = 30L).document
+        val pageResp = try {
+            app.get(pageUrl, headers = browserHeaders + ("Referer" to mainUrl), timeout = 30L)
         } catch (e: Exception) {
             Log.w(TAG, "loadLinks pagina no disponible: ${e.message}")
+            return false
+        }
+        
+        val cookieHeader = pageResp.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        Log.d(TAG, "loadLinks cookies=${pageResp.cookies.keys} code=${pageResp.code}")
+        val doc = try {
+            pageResp.document
+        } catch (e: Exception) {
+            Log.w(TAG, "loadLinks documento no disponible: ${e.message}")
             return false
         }
         val csrf = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
@@ -281,7 +297,7 @@ class SeriesdonghuaProvider : MainAPI() {
                 Log.w(TAG, "botón sin ids: $label")
                 continue
             }
-            val url = postPlayerServer(pageUrl, csrf, videoId, serverIndex)
+            val url = postPlayerServer(pageUrl, csrf, cookieHeader, videoId, serverIndex)
             if (url.isNullOrBlank()) {
                 Log.w(TAG, "sin embed para $label")
                 continue

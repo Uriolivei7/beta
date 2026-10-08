@@ -1390,6 +1390,25 @@ Sitio: `seriesdonghua.com` (PHP custom, server-rendered, **sin Cloudflare**: tod
 - `build.gradle.kts`: `version = 2`; `plugins.json`: version 2, `fileSize` **pendiente** (sigue 0).
 - ⏸️ **Pendiente**: compilar, instalar y (1) ver el log `player/get-server ... code=... sin embed_url: ...` para diagnosticar la respuesta real del dispositivo; (2) probar search `blades` → debe devolver 1 resultado.
 
+### 🐛 Fix 419 CSRF token mismatch (08 Oct 2026 v3)
+**Log del dispositivo (v2)** — el diagnóstico funcionó a la primera:
+```
+player/get-server v=14922 s=0 -> code=419 sin embed_url: {"message": "CSRF token mismatch.",
+"exception": "Symfony\Component\HttpKernel\Exception\HttpException", ...}
+```
+- El token `X-CSRF-TOKEN` SÍ se envía (viene del meta fresco), pero Laravel lo ata a la **sesión**: sin la cookie de sesión del GET, crea sesión nueva en el POST → token inválido → 419. Desde PC funciona porque `requests.Session` persiste cookies; el jar de CS3 (`NiceResponse` expone `code` pero no valida nada, y su jar no siempre persiste el `CustomCookieJar` entre `app.get`/`app.post`).
+- **Fix**: round-trip manual de cookies (precedente: `bypass()` de Netmirror parsea `Set-Cookie` a mano). `loadLinks` guarda `pageResp.cookies` (`Map<String,String>` de NiceHttp) como header `Cookie: k=v; ...` y lo pasa a `postPlayerServer()`. Si el jar ya enviaba sus cookies, los valores son idénticos (mismo GET) → duplicado inofensivo. Log nuevo: `loadLinks cookies=[nombres] code=...` (solo nombres, sin valores).
+- **Nota search**: el log prueba que SeriesDonghua devuelve exactamente 1 resultado para `blade` y `blades`. Si la UI muestra 3, los otros 2 vienen de OTROS providers instalados (CS3 busca en todos a la vez: DonghuaLife, etc.). Verificar por etiqueta de provider en cada card.
+
+### Estado v3
+- `build.gradle.kts`: `version = 3`; `plugins.json`: version 3, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SeriesdonghuaProvider:make --console=plain -q`), instalar y probar el episodio de Blade — esperado: `player/get-server v=14922 s=0 -> ok` + links DM/OK.ru/Rumble/VOE.
+
+### 🐛 Fix search: el parámetro correcto es `?s=`, no `?q=` (08 Oct 2026 v3, reportado por el usuario)
+**El usuario indicó**: en `https://seriesdonghua.com/buscar.php?s=blade` salen 3 resultados (`Blade of The Guardians 2`, `Blades of the Guardians`, `Blade of Vengers`).
+**Verificado**: el `<input>` del form es `name="s"`. Con `?s=blade` → 3 relevantes; con `?q=blade` el sitio **ignora** el parámetro y devuelve 24 sin filtrar (de ahí venía el ruido que el filtro `matchesQuery()` tenía que limpiar).
+**Fix**: `buscar.php?q=` → `buscar.php?s=` en `search()`. Se mantiene `matchesQuery()` como red de seguridad. Sin cambio de versión (v3 aún no compilada).
+
 ### Estado v9
 - `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.
