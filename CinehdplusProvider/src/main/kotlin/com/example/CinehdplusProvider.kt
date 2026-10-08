@@ -65,7 +65,7 @@ class CinehdplusProvider : MainAPI() {
     private fun Element.toCard(): SearchResponse? {
         val href = fixUrlNull(this.attr("href")) ?: return null
         if (!href.contains("/series-tv-") && !href.contains("/pelicula-")) return null
-        
+
         val container = this.closest("div.group")
         val img = this.selectFirst("img") ?: container?.selectFirst("img")
         val title = img?.attr("alt")?.takeIf { it.isNotBlank() }

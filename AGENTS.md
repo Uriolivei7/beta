@@ -1343,6 +1343,37 @@ El sitio se rediseñó por completo (Tailwind/daisyUI). Nada del markup viejo ex
 - **Logs** con `TAG = Cinehdplus` (`adb logcat -s Cinehdplus:V`): `getMainPage` (sección, items, hasNext, ms), `search` (query, resultados, ms), `load` (episodio/película/serie con temporadas+episodios, ms), `loadLinks` (nº botones + `domain:lang`, OK/FALLO por servidor, final), `resolveIrChain` (paso exacto que falla: goto/rd/redir/action/vid/link).
 - Sin cambio de versión (v3 aún no compilada/publicada).
 
+---
+
+## SeriesdonghuaProvider — Plugin nuevo (06 Oct 2026 v1)
+
+Sitio: `seriesdonghua.com` (PHP custom, server-rendered, **sin Cloudflare**: todo 200 con UA plano).
+
+### Estructura verificada
+| Parte | Ruta / markup |
+|---|---|
+| Home | `/` (En emisión, Nuevos Episodios) |
+| Listados | `/donghuas-en-emision`, `/donghuas-finalizados`, `/episodios`, `/genero/` + `?page=N` |
+| Search | `/buscar.php?q=` (mismo markup de cards) |
+| Serie | `/{slug}/` (h1 título, og:description/image, `div.genre-pill-list a.genre-pill`, 263/263 eps server-rendered) |
+| Episodio | `/{slug}-episodio-{n}/` (`article.episode-card-item[data-ep]`, href, img alt/poster) |
+| Secuelas = entradas separadas | (`doupo-cangqiong-7`, `i-will-eternal-4`) — sin multi-temporada por página |
+| Servidores | `button.server-tab-btn` (nombre en `span` sin clase, `data-video-id`, `data-server-index`, badges Sub ES/1080p) |
+| Subs | No hay softsubs (embeds con Sub ES quemado) |
+
+### Player API (sin auth, verificada)
+`POST /api/player/get-server` con `Content-Type: application/json` + `X-CSRF-TOKEN` (de `meta[name=csrf-token]`) + `X-Requested-With: XMLHttpRequest` + Referer/Origin, body `{"video_id":15512,"server_index":0}` → `{"success":true,"embed_url":"https://..."}`. En NiceHttp el JSON va en `requestBody` (nunca `data = String`). Fuentes vistas: dailymotion `geo...player...?video=`, ok.ru `videoembed`, rumble `embed/...?pub=`.
+
+### Implementación (v1, sin compilar por regla del repo)
+- `getMainPage`: home (2 secciones pedidas) + 5 géneros en paralelo (`En emisión`, `Finalizados`, `Acción`, `Aventura`, `Cultivo`, `Fantasía`, `Romance` — todos verificados 200 con 24 cards); `hasNext` por `a[href$="page=N+1"]`.
+- `search()`: `/buscar.php?q=` + `URLEncoder`.
+- `load()`: serie → `newTvSeriesLoadResponse(TvType.Anime, season=1)` (rama TvSeries determinista, lección Uniquestream); episodio → `MovieLoadResponse` mínimo con `movieData=url`; URLs **relativas** → siempre `fixUrl()` (lección inversa a DonghuaLife, que eran absolutas).
+- `loadLinks()`: botones → `postPlayerServer()` → dispatch ok.ru/dailymotion/rumble/`.m3u8`/`loadExtractor` (mismo código probado de Donghualife, con `CancellationException` re-lanzada).
+- `RumbleExtractor.kt` incluido y registrado (copia mejorada de Donghualife) como red de seguridad.
+- `getVideoInterceptor`: solo rama ok.ru (`__sub` no aplica: sin subtítulos en el sitio).
+- Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `SeriesdonghuaPlugin.kt` (+`pluginContext`), `SeriesdonghuaProvider.kt`, `RumbleExtractor.kt`; `plugins.json` → entrada `SeriesDonghua` v1 (68 entradas, `fileSize: 0` pendiente).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SeriesdonghuaProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar home/search/load/links. Logs: `adb logcat -s SeriesDonghua:V` y `RumbleExt:V`.
+
 ### Estado v9
 - `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.
