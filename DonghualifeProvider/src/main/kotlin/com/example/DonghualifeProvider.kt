@@ -966,7 +966,7 @@ val series = async { fetchDoc("$mainUrl/series?page=$page") }
         } catch (e: Exception) {
             Log.w(TAG, "odysee vía rápida falló: ${e.message}")
         }
-        
+
         val playUrl = if (videoUrl.contains("autoplay=")) videoUrl else "$videoUrl&autoplay=true"
         Log.d(TAG, "odysee: probando WebView para ${playUrl.take(100)}")
         val media = interceptMediaViaWebView(

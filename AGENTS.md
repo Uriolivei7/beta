@@ -1301,6 +1301,39 @@ WebView timeout, devolviendo último HTML (len=28660)
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1`. Esperado: rumble falla rápido con `bloqueado por Cloudflare (403)` y **odysee emite link vía WebView** (`WebView media capturado` -> `odysee -> WebView OK`).
 - ⏸️ Si el autoplay no dispara el stream en el WebView, el siguiente paso es click JS al botón play tras `onPageFinished`.
 
+---
+
+## CinehdplusProvider — Migración a la nueva estructura (Tailwind) (06 Oct 2026 v3)
+
+### Estructura nueva (verificada)
+El sitio se rediseñó por completo (Tailwind/daisyUI). Nada del markup viejo existe (`card__cover`, `details__title`, `episodios-todos`, `li.clili`, `data-tplayernv`, `#OptYt` → 0 matches).
+| Antes | Ahora |
+|---|---|
+| Cards `div.card__cover` | `<a class="group ..." href="/series-tv-{id}/{slug}/">` y `/pelicula-{id}/{slug}/` (img + `<p>` título) |
+| Detalle serie/peli | JSON-LD `TVSeries`/`Movie` (`name`, `datePublished`, `description`, `image`, `genre[]`) + `og:title/description/image` |
+| Episodios DOM (`div.episodios-todos`) | 1 link por episodio: `/episodio-{id}/{slug}-{S}x{E}/` dentro de `div#season-content-{N}` (857/857 server-rendered, sin AJAX) |
+| Servidores `li.clili` + `div#id iframe` | `<button data-url="//api.cinehdplus.org/ir/player.php?h=..." data-domain="voe" data-lang="Español Latino">` (youtube con `data-lang="Oficial"` se salta) |
+| Trailer `#OptYt iframe` | `button[data-url*=youtube.com]` → `watch?v=` |
+
+### Lo que NO cambió
+- **Cadena `ir/` intacta** (verificada end-to-end con hash real): `goto.php?h=` → form `input#url` → POST `rd.php` → `input#url` → POST `redir_ddh.php` (`url`, `dl=0`) → form `action` + `#vid`/`#hash` → POST → `link = 'b64'` → `voe.sx/...`.
+- Paginación `/series/page/N`, `/peliculas/page/N` (page/1 redirige a canónica pero trae contenido).
+- `/?s=` redirige a `/search/{q}/` con el mismo markup de tarjetas.
+- Episodios: langs `Español Latino`/`Oficial`, domains voe/cdnwish/streamtape/hqq/upstream.
+
+### Rewrite (`CinehdplusProvider.kt`)
+- `getMainPage`: tarjetas `a[href*=/series-tv-], a[href*=/pelicula-]` (título = `img[alt]` o primer `p`, poster `img[src]`); `hasNext` por link `/page/{N+1}/`.
+- `search()`: mismo parser sobre `/search/{q}/`.
+- `load()`: JSON-LD primero (`name`, `datePublished`, `description`, `image`, `genre`), fallback a `og:*`; `/episodio-` → `MovieLoadResponse` con `movieData = url` (usa `TVEpisode`: serie, `episodeNumber`, regex `-{S}x{E}`); `/pelicula-` → película; resto → serie con episodios de `div[id^=season-content-]` (temporada del id, `{S}x{E}` del slug, nombre de `h3`/`img[alt]`, URLs absolutas por `fixUrl`).
+- Recomendaciones: links de detalle excluyendo self (capped 12). Trailer → `addTrailer`.
+- `loadLinks()`: `button[data-url]` (salta youtube, `//` → `https:`, `.m3u8` directo se emite, resto `player.php?h=` → `resolveIrChain()` con la cadena `ir/` original). Retorna `found` (antes `true` siempre).
+- `loadSourceNameExtractor` y `fixHostsLinks` sin cambios. `waaw` (StreamSB) sin cambios.
+
+### Estado v3
+- `build.gradle.kts`: `version = 3`; `plugins.json`: version 3, `fileSize` **pendiente** (sigue 20000).
+- Compilación OK: pendiente de compilar por el usuario (`.\gradlew.bat :CinehdplusProvider:make --console=plain -q`) — **no compilado por regla del repo**.
+- ⏸️ **Pendiente**: compilar, instalar y probar home/search/detalle serie+película/episodios/servidores (voe, streamtape, etc.).
+
 ### Estado v9
 - `build.gradle.kts`: `version = 9`; `plugins.json`: version 9, `fileSize` **pendiente**.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y probar `blades-guardians-season-2-1` (fuentes Rumble+odysee). Buscar `rumble embed -> code=` (confirma 403) y `rumble -> HLS OK` vía WebView.
