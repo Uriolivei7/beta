@@ -1469,6 +1469,15 @@ Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`
 - `build.gradle.kts`: `version = 5`; `plugins.json`: version 5, `fileSize` **pendiente** (sigue 0).
 - ⏸️ **Pendiente**: compilar, instalar y probar Link Click EP1 — esperado `hub cyberlocker: 9 mirrors` + links `Latino [byseraguci]` (vía `byse sources=N`) y `Latino [luluvdoo]`.
 
+### 🔧 Fix "Español" = Castellano, no Latino (08 Oct 2026 v6)
+**Reporte del usuario (v5)**: los dos links byse salían como "Latino", pero uno es Castellano.
+**Evidencia (hub, líneas 168-170)**: la lista de idiomas del propio sitio dice `{"name": "Español-Latino","icon": "latin_spanish.png"...}` vs `{"name": "Español","icon": "spanish.png"...}`. "Español" a secas es **España** (castellano). Se corrige la nota de v5 (donde se había asumido latino por el caso OPM — ahí el uploader etiquetó mal o el caso era OD_LAT explícito; la etiqueta canónica del sitio manda).
+**Fix**: `Español-Latino`/`*lat*` → Latino; `*cast*` o `Español` exacto → Castellano; `*jap*` → Subtitulado; resto → etiqueta cruda del sitio. Orden: Latino(0), Castellano(1), resto(2).
+
+### Estado v6
+- `build.gradle.kts`: `version = 6`; `plugins.json`: version 6, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar, instalar y probar Link Click EP1 — esperado `Latino [byseraguci]` (1 link) + `Castellano [byseraguci]` (1 link) + `Latino/Castellano [luluvdoo]`.
+
 ### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
 **Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
 **Causa**: en cadenas como `selectFirst(...)?.text()?.trim().takeIf { it.isNotEmpty() }`, el `it` dentro de `takeIf` es `String?` (el `?.` propaga nulabilidad) e `isNotEmpty()/isNotBlank()` exigen receptor no-nulo.

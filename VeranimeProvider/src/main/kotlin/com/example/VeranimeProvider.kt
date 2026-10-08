@@ -450,17 +450,17 @@ class VeranimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        
+
         val items = Regex("\\{\\s*\"cyberlocker\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"link\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"language\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"quality\"\\s*:\\s*\"([^\"]+)\"\\s*\\}")
             .findAll(hub).toList()
         if (items.isEmpty()) return false
         Log.d(TAG, "hub cyberlocker: ${items.size} mirrors")
-        // Español (latino) primero, luego el resto
+        
         val sorted = items.sortedBy {
             val lang = it.groupValues[3].lowercase()
             when {
-                lang.contains("lat") || lang == "español" || lang == "espanol" -> 0
-                lang.contains("cast") -> 1
+                lang.contains("lat") -> 0
+                lang.contains("cast") || lang == "español" || lang == "espanol" -> 1
                 else -> 2
             }
         }
@@ -476,11 +476,13 @@ class VeranimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val langRaw = m.groupValues[3]
+            val langRaw = m.groupValues[3]
             val langLabel = when {
-                langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
+                langRaw.contains("lat", ignoreCase = true) -> "Latino"
                 langRaw.contains("cast", ignoreCase = true) -> "Castellano"
-                else -> "Latino"
+                langRaw.equals("español", ignoreCase = true) -> "Castellano"
+                langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
+                else -> langRaw
             }
             val fixed = fixMirrorHost(m.groupValues[2])
             val label = "$optTitle $langLabel [${m.groupValues[1]}]"
