@@ -1404,6 +1404,24 @@ player/get-server v=14922 s=0 -> code=419 sin embed_url: {"message": "CSRF token
 - `build.gradle.kts`: `version = 3`; `plugins.json`: version 3, `fileSize` **pendiente** (sigue 0).
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SeriesdonghuaProvider:make --console=plain -q`), instalar y probar el episodio de Blade — esperado: `player/get-server v=14922 s=0 -> ok` + links DM/OK.ru/Rumble/VOE.
 
+### 🐛 Fix DM sin qualities + mirrors muertos + cap loadExtractor (08 Oct 2026 v4)
+**Log del dispositivo (v3)**: EP1 perfecto (DM OK + subs, ok.ru HLS, cookies OK, search 3/3). EP8 (`blades-of-the-guardians-8`): DM `sin qualities` para `k2dpzipls098HizodoS` (pero ok.ru HLS salva el episodio → OK global).
+
+**Investigación (PC)**:
+- El metadata de `k2dpzipls098HizodoS` responde **200 CON `qualities.auto`** ("BOTG 008"). El dispositivo recibió JSON sin qualities → varianza por IP/throttle de DM, no video muerto.
+- **VOE muerto**: `voe.sx/e/atrym6yf0gvl` → **404 real** del sitio. Correcto ignorarlo (en la web se reproduce por DM/ok.ru).
+- **Embedwish muerto**: `embedwish.com/e/...` → 200 de 426 B con "File is no longer available as it expired or has been deleted". También correcto ignorarlo. Pero su `loadExtractor` **colgó ~17s** antes de fallar.
+- El usuario confirma que en la web SÍ reproduce Dailymotion (coherente: el video está vivo).
+
+**Fixes**:
+- `emitDailymotion`: extraído `fetchDmMeta(id, referer, noHeaders)` (fetch + parse + log); **hasta 2 intentos** cuando falta `qualities` (el 2º sin headers). Log con `keys=` + `err=` del JSON para diagnosticar la varianza.
+- `loadExtractorCollect`: `withTimeout(25_000L)` — un mirror muerto ya no atasca el episodio (solo el fallback genérico; los extractores propios no se tocan).
+- Sin cambio en Rumble/VOE/Embedwish (comportamiento correcto actual: fail rápido / 0 links).
+
+### Estado v4
+- `build.gradle.kts`: `version = 4`; `plugins.json`: version 4, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SeriesdonghuaProvider:make --console=plain -q`), instalar y probar EP8 de Blades — esperado: `dailymotion ... -> OK` (al 1º o 2º intento) + `ok.ru HLS`; Embedwish/VOE siguen en 0 links (muertos) pero sin colgar.
+
 ### 🐛 Fix search: el parámetro correcto es `?s=`, no `?q=` (08 Oct 2026 v3, reportado por el usuario)
 **El usuario indicó**: en `https://seriesdonghua.com/buscar.php?s=blade` salen 3 resultados (`Blade of The Guardians 2`, `Blades of the Guardians`, `Blade of Vengers`).
 **Verificado**: el `<input>` del form es `name="s"`. Con `?s=blade` → 3 relevantes; con `?q=blade` el sitio **ignora** el parámetro y devuelve 24 sin filtrar (de ahí venía el ruido que el filtro `matchesQuery()` tenía que limpiar).

@@ -270,7 +270,7 @@ class SeriesdonghuaProvider : MainAPI() {
             Log.w(TAG, "loadLinks pagina no disponible: ${e.message}")
             return false
         }
-        
+
         val cookieHeader = pageResp.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         Log.d(TAG, "loadLinks cookies=${pageResp.cookies.keys} code=${pageResp.code}")
         val doc = try {
@@ -348,7 +348,13 @@ class SeriesdonghuaProvider : MainAPI() {
     ): Boolean {
         val collected = mutableListOf<ExtractorLink>()
         val collector: (ExtractorLink) -> Unit = { link -> collected.add(link) }
-        loadExtractor(url, referer, subtitleCallback, collector)
+        // Cap: un mirror muerto (Embedwish tardó 17s) no debe atascar el episodio
+        try {
+            withTimeout(25_000L) { loadExtractor(url, referer, subtitleCallback, collector) }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "loadExtractor timeout 25s para $label (${url.take(80)})")
+            return false
+        }
         if (collected.isEmpty()) return false
         for (link in collected) {
             callback(newExtractorLink(name, "$label ${link.name}".trim(), link.url) {
@@ -439,6 +445,28 @@ class SeriesdonghuaProvider : MainAPI() {
         dailymotionId(url)?.let { "https://www.dailymotion.com/video/$it" }
 
 
+    /** GET al metadata de DM con reintento sin headers; null si red o parse fallan. */
+    private suspend fun fetchDmMeta(id: String, referer: String, noHeaders: Boolean): JSONObject? {
+        val meta = try {
+            val reqHeaders = if (noHeaders) emptyMap() else browserHeaders + ("Referer" to referer)
+            app.get(
+                "https://www.dailymotion.com/player/metadata/video/$id",
+                headers = reqHeaders,
+                timeout = 30L,
+            ).text
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "dailymotion $id metadata falló (${e.message})")
+            null
+        } ?: return null
+        return try {
+            JSONObject(meta)
+        } catch (e: Exception) {
+            Log.w(TAG, "dailymotion $id metadata no es JSON (${e.message}): ${meta.take(160)}")
+            null
+        }
+    }
+
     private suspend fun emitDailymotion(
         videoUrl: String,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -447,30 +475,16 @@ class SeriesdonghuaProvider : MainAPI() {
         val id = dailymotionId(videoUrl) ?: return false
         val referer = "https://www.dailymotion.com/embed/video/$id"
 
-        val meta = try {
-            app.get(
-                "https://www.dailymotion.com/player/metadata/video/$id",
-                headers = browserHeaders + ("Referer" to referer),
-                timeout = 30L,
-            ).text
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.w(TAG, "dailymotion $id metadata falló (${e.message}), reintento sin headers")
-            try {
-                app.get("https://www.dailymotion.com/player/metadata/video/$id", timeout = 30L).text
-            } catch (e2: Exception) {
-                if (e2 is CancellationException) throw e2
-                Log.w(TAG, "dailymotion $id metadata falló de nuevo: ${e2.message}")
-                null
+        // Hasta 2 intentos: DM a veces responde sin qualities por throttle/geo (transitorio)
+        var root: JSONObject? = null
+        for (attempt in 0..1) {
+            root = fetchDmMeta(id, referer, attempt > 0)
+            if (root?.optJSONObject("qualities") != null) break
+            if (root != null) {
+                Log.w(TAG, "dailymotion $id sin qualities (intento $attempt, keys=${root.keys().asSequence().toList()}, err=${root.opt("error")})")
             }
-        } ?: return false
-
-        val root = try {
-            JSONObject(meta)
-        } catch (e: Exception) {
-            Log.w(TAG, "dailymotion $id metadata no es JSON (${e.message}): ${meta.take(160)}")
-            null
-        } ?: return false
+        }
+        root ?: return false
 
         try {
             val data = root.optJSONObject("subtitles")?.optJSONObject("data")
