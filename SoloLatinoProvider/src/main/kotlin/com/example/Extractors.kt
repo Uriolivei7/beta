@@ -228,8 +228,8 @@ open class VoeExtractor : ExtractorApi() {
         val nonceHex = Regex(""""nonce"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1)
         val saltHex = Regex(""""salt"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1)
         val prefix = Regex(""""keyPrefix"\s*:\s*"([0-9a-fA-F]+)"""").find(challengeText)?.groupValues?.get(1)?.lowercase()
-        val cost = Regex(""""cost"\s*:\s*(\d+)"""").find(challengeText)?.groupValues?.get(1)?.toIntOrNull()
-        val keyLength = Regex(""""keyLength"\s*:\s*(\d+)"""").find(challengeText)?.groupValues?.get(1)?.toIntOrNull() ?: 32
+        val cost = Regex(""""cost"\s*:\s*(\d+)""").find(challengeText)?.groupValues?.get(1)?.toIntOrNull()
+        val keyLength = Regex(""""keyLength"\s*:\s*(\d+)""").find(challengeText)?.groupValues?.get(1)?.toIntOrNull() ?: 32
         if (nonceHex == null || saltHex == null || prefix == null || cost == null) {
             Log.w("SoloLatino", "[Voe] ALTCHA params incompletos (nonce=${nonceHex != null} salt=${saltHex != null} prefix=$prefix cost=$cost): ${challengeText.take(160)}")
             return null

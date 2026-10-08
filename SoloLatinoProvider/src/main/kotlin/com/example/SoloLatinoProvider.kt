@@ -858,7 +858,7 @@ suspend fun loadSourceNameExtractor(
 
     if (!customHandled || count == 0) {
         if (domain.contains("voe.sx")) {
-            
+
             Log.d("SoloLatino", "loadSourceNameExtractor [$source] directo a VoeExtractor: $url")
             VoeExtractor().getUrl(url, referer, subtitleCallback) { link ->
                 count++

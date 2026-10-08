@@ -852,6 +852,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones a **24**. ⏸️ **Pendiente**: compilar y buscar `[Voe] ALTCHA detectado` → `ALTCHA resuelto` → `[Voe] Found M3U8` (o el paso exacto que falle ahora).
 - **Nota**: el mismo patrón aplica a `RumbleExtractor` (Seriesdonghua/Donghualife): sus "0 links" vía fallback probablemente también sean no-invocación. Migrarlos a llamada directa cuando toque.
 
+### 🐛 Fix comilla fantasma en cost/keyLength (08 Oct 2026 v25) — LA CAUSA REAL
+- **Log v24**: `params incompletos (nonce=true salt=true prefix=00 cost=null)` con `"cost":10000` visible en el mismo texto. Imposible... salvo que el patrón exija algo que el JSON no tiene.
+- **Causa raíz**: mis regexes `(\d+)""""` incluían una comilla de cierre (`(\d+)"`) copiada del formato string (`"nonce":"..."`). Pero `cost`/`keyLength` son NUMÉRICOS sin comillas (`"cost":10000,`) → el patrón jamás matcheaba → `cost=null` → solver sin correr (de ahí los ~330ms). `keyLength` sobrevivía solo por su default `?: 32` (que encima era el valor correcto).
+- **Lección**: el test en PC usó (sin querer) el patrón SIN comilla y pasó — verificaba otro patrón distinto al compilado. **Regla**: al verificar regexes Kotlin con `"""`, extraer el contenido efectivo contando comillas (`""""x"` = open+`"x`, `x""""` = `x`+close) o mejor: evitar `""""` usando `"""..."""` con el contenido sin comillas adyacentes.
+- **Nota**: el `loadVoe` de storm-ext tiene el MISMO bug en su `ALTCHA_COST`/`ALTCHA_KEY_LENGTH` (misma comilla fantasma) → su solver tampoco corre nunca. No tocar (repo ajeno).
+- Versiones a **25**. ⏸️ **Pendiente**: compilar y buscar `[Voe] ALTCHA resuelto en N intentos` → `[Voe] Found M3U8`.
+
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
 - Diferencia real: resuelve token vía `POST /api/player-url` (form `t=`, `X-CSRF-TOKEN` del meta, sin cookies) en vez del handshake Sanctum+XSRF del nuestro. Probado en vivo: **419 CSRF mismatch** (el sitio, tras Cloudflare, no da cookies en GET plano y exige sesión). Su flujo está obsoleto contra el sitio actual.
