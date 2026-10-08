@@ -1286,9 +1286,9 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/VeranimeProvider.cs3",
   "status": 1,
-  "version": 3,
+  "version": 5,
   "apiVersion": 1,
-  "name": "VerAnime",
+  "name": "AnimeNINJA",
   "internalName": "VeranimeProvider",
   "authors": [
    "Ranita"
