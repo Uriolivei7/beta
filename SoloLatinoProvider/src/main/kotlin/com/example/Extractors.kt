@@ -9,6 +9,13 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import java.net.URLEncoder
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 open class VoeExtractor : ExtractorApi() {
     override val name = "Voe"
@@ -208,7 +215,7 @@ open class VoeExtractor : ExtractorApi() {
         }
     }
 
-    private fun solveAltchaPow(challengeText: String, maxAttempts: Int = 1024): Pair<Long, String>? {
+    private suspend fun solveAltchaPow(challengeText: String, maxAttempts: Int = 1024): Pair<Long, String>? {
         fun hexToBytes(hex: String): ByteArray? {
             if (hex.isEmpty() || hex.length % 2 != 0) return null
             return try {
@@ -243,28 +250,48 @@ open class VoeExtractor : ExtractorApi() {
             return null
         }
         if (prefix.isEmpty() || cost <= 0) return null
-        var counter = 0
+
         val t0 = System.currentTimeMillis()
-        while (counter < maxAttempts) {
-            val password = ByteArray(nonce.size + 4)
-            System.arraycopy(nonce, 0, password, 0, nonce.size)
-            password[nonce.size] = (counter ushr 24).toByte()
-            password[nonce.size + 1] = (counter ushr 16).toByte()
-            password[nonce.size + 2] = (counter ushr 8).toByte()
-            password[nonce.size + 3] = counter.toByte()
-            val derivedHex = pbkdf2Sha256(password, salt, cost, keyLength).toHex()
-            if (derivedHex.startsWith(prefix)) {
-                Log.d("SoloLatino", "[Voe] ALTCHA resuelto en $counter intentos (${System.currentTimeMillis() - t0}ms)")
-                return counter.toLong() to derivedHex
-            }
-            counter++
+        val nThreads = 4
+        val winner = AtomicLong(-1)
+        val winnerHex = AtomicReference<String?>(null)
+        coroutineScope {
+            (0 until nThreads).map { t ->
+                async(Dispatchers.Default) {
+
+                    val mac = Mac.getInstance("HmacSHA256")
+                    var counter = t
+                    while (counter < maxAttempts && winner.get() < 0) {
+                        ensureActive()
+                        val password = ByteArray(nonce.size + 4)
+                        System.arraycopy(nonce, 0, password, 0, nonce.size)
+                        password[nonce.size] = (counter ushr 24).toByte()
+                        password[nonce.size + 1] = (counter ushr 16).toByte()
+                        password[nonce.size + 2] = (counter ushr 8).toByte()
+                        password[nonce.size + 3] = counter.toByte()
+                        val derivedHex = pbkdf2Sha256(password, salt, cost, keyLength, mac).toHex()
+                        if (derivedHex.startsWith(prefix)) {
+                            if (winner.compareAndSet(-1, counter.toLong())) {
+                                winnerHex.set(derivedHex)
+                            }
+                            return@async
+                        }
+                        counter += nThreads
+                    }
+                }
+            }.awaitAll()
+        }
+        val w = winner.get()
+        val wh = winnerHex.get()
+        if (w >= 0 && wh != null) {
+            Log.d("SoloLatino", "[Voe] ALTCHA resuelto en $w intentos (${System.currentTimeMillis() - t0}ms, ${nThreads}h)")
+            return w to wh
         }
         Log.w("SoloLatino", "[Voe] ALTCHA PoW agotado ($maxAttempts)")
         return null
     }
 
-    private fun pbkdf2Sha256(password: ByteArray, salt: ByteArray, iterations: Int, keyLength: Int): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
+    private fun pbkdf2Sha256(password: ByteArray, salt: ByteArray, iterations: Int, keyLength: Int, mac: Mac): ByteArray {
         mac.init(SecretKeySpec(password, "HmacSHA256"))
         val hashLength = 32
         val output = ByteArray(keyLength)

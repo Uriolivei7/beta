@@ -1173,6 +1173,8 @@ private suspend fun tryVoeExtraction(
         val videoUrl = m3u8 ?: mp4
         if (videoUrl == null) {
             Log.w("SoloLatino", "[Voe] no m3u8/mp4 found in $finalUrl")
+            
+            if (VoeExtractor().parseHtml(finalHtml, finalUrl, "SoloLatino", subtitleCallback, callback)) return true
             if (tryMirrors()) return true
             Log.d("SoloLatino", "[Voe] probando WebView: $finalUrl")
             val rendered = renderViaWebView(finalUrl, url, readyJs = VOE_READY_JS)

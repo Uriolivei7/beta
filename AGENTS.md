@@ -859,6 +859,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Nota**: el `loadVoe` de storm-ext tiene el MISMO bug en su `ALTCHA_COST`/`ALTCHA_KEY_LENGTH` (misma comilla fantasma) → su solver tampoco corre nunca. No tocar (repo ajeno).
 - Versiones a **25**. ⏸️ **Pendiente**: compilar y buscar `[Voe] ALTCHA resuelto en N intentos` → `[Voe] Found M3U8`.
 
+### ⚡ Speedup VOE: ALTCHA-direct primero + PoW paralelo (08 Oct 2026 v26)
+- **Log v25**: VOE **SÍ funciona** (`ALTCHA resuelto` → `Found M3U8/MP4` → segmentos 200) pero LENTO: PoW 20-50s por video (81 intentos/23s, 202/48s) y el SUB (802 intentos) murió por el kill de 120s de CS3 **después** de resolver (`Timed out waiting for 120000 ms` tras `resuelto en 802`). Además el flujo quemaba ~15-30s en mirrors muertos + WebViews **antes** del solver.
+- **Fix 1 (orden)**: en `tryVoeExtraction`, tras el regex directo, llamada a `VoeExtractor().parseHtml()` (solver) **antes** de mirrors/WebView.
+- **Fix 2 (paralelo)**: `solveAltchaPow` reparte contadores por stride en 4 hilos (`Dispatchers.Default`, `AtomicLong` ganador, `ensureActive()` para cancelar). `Mac` propio por hilo (JCA no es thread-safe); `Mac.init` hoisteado fuera del loop (antes se recreaba por intento). Esperado: 20-50s → 5-15s.
+- Versiones a **26**. ⏸️ **Pendiente**: compilar y medir `ALTCHA resuelto en N intentos (Xms, 4h)`.
+
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
 - Diferencia real: resuelve token vía `POST /api/player-url` (form `t=`, `X-CSRF-TOKEN` del meta, sin cookies) en vez del handshake Sanctum+XSRF del nuestro. Probado en vivo: **419 CSRF mismatch** (el sitio, tras Cloudflare, no da cookies en GET plano y exige sesión). Su flujo está obsoleto contra el sitio actual.
