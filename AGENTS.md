@@ -865,6 +865,16 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Fix 2 (paralelo)**: `solveAltchaPow` reparte contadores por stride en 4 hilos (`Dispatchers.Default`, `AtomicLong` ganador, `ensureActive()` para cancelar). `Mac` propio por hilo (JCA no es thread-safe); `Mac.init` hoisteado fuera del loop (antes se recreaba por intento). Esperado: 20-50s → 5-15s.
 - Versiones a **26**. ⏸️ **Pendiente**: compilar y medir `ALTCHA resuelto en N intentos (Xms, 4h)`.
 
+### 🐛 Fix _token atado a sesión (08 Oct 2026 v27)
+- **Log Serieskao v22**: PoW **resuelto** (19 intentos/2.3s, 146/10s) pero luego `encoded string not found` — el POST no sirvió.
+- **Causa raíz**: el `_token` del gate va atado a la sesión Laravel. Serieskao pasaba el HTML pero NUNCA las cookies (`parseHtml` de 5 args, `cookies=null` → el solver hacía GET fresco = sesión B distinta del token de la sesión A → POST rechazado → gate re-renderizado sin config).
+- **Fix (ambos providers)**:
+  - `tryVoeExtraction`: capturar `res.cookies`/`mResp.cookies` del MISMO fetch que trajo el HTML y pasarlas a `parseHtml(..., cookies)`.
+  - WebView path: `webViewCookies(url)` nuevo (lee `CookieManager` del WebView, que tiene su propio jar).
+  - `solveAltcha`: log del POST (`code/len/gate=` para distinguir rechazo de markup distinto).
+  - SoloLatino: mismo threading en sus 4 llamadas (2 directas + 2 WebView).
+- Versiones: SoloLatino **27**, Serieskao **23**. ⏸️ **Pendiente**: compilar ambos y buscar `[Voe] POST solucion -> code=200` + `[Voe] Found M3U8`.
+
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
 - Diferencia real: resuelve token vía `POST /api/player-url` (form `t=`, `X-CSRF-TOKEN` del meta, sin cookies) en vez del handshake Sanctum+XSRF del nuestro. Probado en vivo: **419 CSRF mismatch** (el sitio, tras Cloudflare, no da cookies en GET plano y exige sesión). Su flujo está obsoleto contra el sitio actual.
