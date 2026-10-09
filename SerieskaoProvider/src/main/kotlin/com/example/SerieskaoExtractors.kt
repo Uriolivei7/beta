@@ -15,6 +15,8 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.net.URLEncoder
 import javax.crypto.Cipher
 import javax.crypto.Mac
@@ -648,8 +650,11 @@ private const val SW_READY_JS = "h.includes('.m3u8')||h.includes('jwplayer')"
 private const val VOE_READY_JS = "(!h.includes('altcha-widget'))&&(h.includes('.m3u8')||h.includes('application/json'))"
 private const val DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
 
+private val webViewMutex = Mutex()
+
 private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, readyJs: String? = null): String? {
-    return withContext(Dispatchers.Main) {
+    webViewMutex.withLock {
+        return withContext(Dispatchers.Main) {
         val appCtx = SerieskaoProvider.pluginContext?.applicationContext ?: run {
             Log.w(KAO_TAG, "[WebView] sin context")
             return@withContext null
@@ -729,12 +734,16 @@ private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: 
             else webView.loadUrl(pageUrl)
             Log.d(KAO_TAG, "[WebView] renderizando ${pageUrl.take(100)}")
             withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
-        } catch (e: Exception) {
-            Log.w(KAO_TAG, "[WebView] error: ${e.message}")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+
+            Log.w(KAO_TAG, "[WebView] error grave: ${t::class.simpleName}: ${t.message}")
             null
         } finally {
             try { mainHandler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
             try { webView?.destroy() } catch (_: Exception) {}
+        }
         }
     }
 }
@@ -920,7 +929,7 @@ private suspend fun tryVoeExtraction(    url: String,
 
         if (finalHtml.contains("captcha") || finalHtml.contains("CAPTCHA") || finalHtml.contains("cf-challenge") || finalHtml.contains("altcha-widget")) {
             Log.w(KAO_TAG, "[Voe] challenge detectado en $finalUrl")
-            
+
             if (KaoVoeExtractor().parseHtml(finalHtml, finalUrl, "SeriesKao", subtitleCallback, callback, finalCookies)) return true
             if (tryMirrors()) return true
             Log.d(KAO_TAG, "[Voe] probando WebView (Altcha se auto-resuelve): $finalUrl")

@@ -865,6 +865,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Fix 2 (paralelo)**: `solveAltchaPow` reparte contadores por stride en 4 hilos (`Dispatchers.Default`, `AtomicLong` ganador, `ensureActive()` para cancelar). `Mac` propio por hilo (JCA no es thread-safe); `Mac.init` hoisteado fuera del loop (antes se recreaba por intento). Esperado: 20-50s → 5-15s.
 - Versiones a **26**. ⏸️ **Pendiente**: compilar y medir `ALTCHA resuelto en N intentos (Xms, 4h)`.
 
+### 🔍 Veredicto: edge de VOE alterna 404/200 por ventanas (08 Oct 2026, sin cambio de código)
+- **Reporte**: `voe.sx/e/zlfn6grnrtgx` (somos-osos S4E5) da 404 en el plugin pero el usuario dice que en la web reproduce.
+- **Medido**: el MISMO hash dio 404 (curl/OkHttp, 118945 B = página "not found" completa) y 200-stub (requests, 759 B) con ~10 min de diferencia; luego 4/4 404s seguidos. **No es caché** (el provider no cachea nada: resuelve hashes frescos en cada play) **ni fingerprint estable** — es el edge de VOE que esconde el video por ratos (rotación de backend).
+- **Implicación**: si en la web reproduce VOE en ESTE momento, el plugin también lo haría (mismo hash, misma página). Lo más probable es que en la web reprodujera el servidor por defecto (vidhide/streamwish) — el plugin emitió esos 4 links bien.
+- **Sin fix de código**: el flujo ya cubre main → mirrors (con solver) → WebView → fallback. Si un video está en ventana mala en todos sus mirrors, no hay nada que extraer. Reintentar más tarde.
+
 ### 🐛 Fix _token atado a sesión (08 Oct 2026 v27)
 - **Log Serieskao v22**: PoW **resuelto** (19 intentos/2.3s, 146/10s) pero luego `encoded string not found` — el POST no sirvió.
 - **Causa raíz**: el `_token` del gate va atado a la sesión Laravel. Serieskao pasaba el HTML pero NUNCA las cookies (`parseHtml` de 5 args, `cookies=null` → el solver hacía GET fresco = sesión B distinta del token de la sesión A → POST rechazado → gate re-renderizado sin config).
@@ -874,6 +880,18 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
   - `solveAltcha`: log del POST (`code/len/gate=` para distinguir rechazo de markup distinto).
   - SoloLatino: mismo threading en sus 4 llamadas (2 directas + 2 WebView).
 - Versiones: SoloLatino **27**, Serieskao **23**. ⏸️ **Pendiente**: compilar ambos y buscar `[Voe] POST solucion -> code=200` + `[Voe] Found M3U8`.
+
+### 🛡️ Blindaje anti-cierre en Serieskao (08 Oct 2026 v24)
+- Mismo riesgo que SoloLatino v28 (varios WebViews en paralelo OOMean celulares de poca RAM; `WebView()` roto lanza `Error`): `webViewMutex` global + `catch (t: Throwable)` con rethrow de `CancellationException` en `renderViaWebView`.
+- Versiones a **24**. ⏸️ **Pendiente**: probar en el celular físico.
+
+### 🛡️ Blindaje anti-cierre en celular (08 Oct 2026 v28)
+- **Síntoma (usuario)**: en el celular físico, al reproducir, la app se cierra en vez de cargar enlaces; en el emulador no pasa.
+- **Causa probable**: varios WebViews en paralelo ( Rama `amap` × mirrors con challenge) + páginas con ads = pico de memoria que el LMK mata en celulares de poca RAM (en el emulador hay RAM de sobra). Contribuye: `WebView(appCtx)` sin red ante `Error` del sistema (solo se capturaba `Exception`).
+- **Fix (sin cambiar resultados)**:
+  - `webViewMutex` global: **un solo WebView vivo a la vez** (serializa los fallbacks).
+  - `catch (t: Throwable)` con rethrow de `CancellationException`: un WebView roto degrada a null en vez de matar la app.
+- Versiones a **28**. ⏸️ **Pendiente**: compilar, probar en el celular físico y, si aún se cierra, pasar logcat del momento (`FATAL EXCEPTION` / `lowmemorykiller` / `Force finishing activity`) + modelo/RAM del equipo y si pasa en todos los episodios o solo algunos.
 
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
