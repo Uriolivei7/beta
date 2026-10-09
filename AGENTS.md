@@ -891,7 +891,7 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Fix (sin cambiar resultados)**:
   - `webViewMutex` global: **un solo WebView vivo a la vez** (serializa los fallbacks).
   - `catch (t: Throwable)` con rethrow de `CancellationException`: un WebView roto degrada a null en vez de matar la app.
-- Versiones a **28**. ⏸️ **Pendiente**: compilar, probar en el celular físico y, si aún se cierra, pasar logcat del momento (`FATAL EXCEPTION` / `lowmemorykiller` / `Force finishing activity`) + modelo/RAM del equipo y si pasa en todos los episodios o solo algunos.
+- Versiones a **28**. ✅ **VERIFICADO en celular físico (09 Oct 2026)**: logcat v28 (somos-osos-2015 T4E9 → T4E15) sin `FATAL EXCEPTION` ni `lowmemorykiller`; los `WebView.<init>` de `renderViaWebView` (SoloLatinoProvider.kt:716) aparecen **serializados** (el `webViewMutex` funciona, nunca en paralelo); `loadLinks FIN total emitidos=7 servidores=2`; VOE resuelve ALTCHA (`resuelto en 72/99/47/317 intentos`, `Found M3U8/MP4`) y los segmentos responden `[intercept] CDN response: 200 video/MP2T` (seg-1..5 de `cloudwindow-route.com`). Transición ep9→ep15 sin cierre. **La app ya no se cierra.**
 
 ### 🔍 Repo externo redblacker8/storm-ext DESCARTADO (08 Oct 2026)
 - El usuario propuso su `loadLinks` como alternativa compatible pre/stable. Verificado: usa las MISMAS APIs (todo existe en stable v4.8.0) → no hay ventaja de compatibilidad.
@@ -1643,3 +1643,47 @@ player/get-server v=14922 s=0 -> code=419 sin embed_url: {"message": "CSRF token
 ### Estado v6
 - `build.gradle.kts`: `version = 6`; `plugins.json`: version 6, `fileSize` **pendiente** tras compilar.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DonghualifeProvider:make --console=plain -q`), instalar y comprobar que `loadLinks data='https://donghualife.com/watch/...'` (con `/watch/` y **sin** `watch:`) trae `fuentes=N` y emite enlaces.
+
+---
+
+## SeriesKao + SoloLatino — Fix VOE: stub JS → mirror + POST 419 (09 Oct 2026; SeriesKao v25, SoloLatino v29)
+
+### 🐛 Síntoma
+- SeriesKao: episodio T1C3 de "El Chapulín Colorado" (y cualquier VOE) → log `[Voe] POST solucion -> code=419`, sin links. En la web SÍ reproduce.
+- El usuario confirmó que el 419 era el único fallo; el resto del flujo (byse/vidhide/sw) OK.
+
+### ✅ Causa raíz (verificada desde PC, `voe_mirror_test2.py`/`voe_verify.py`)
+- **VOE cambió de flujo**: `https://voe.sx/e/{hash}` ahora devuelve **200 con un stub JS de 759 B**:
+  ```html
+  <title>Redirecting...</title>
+  if (localStorage.permanentToken) { const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.set('permanentToken', temporaryToken); window.location.href = currentUrl.toString(); }
+  else { window.location.href = 'https://teresapoliticallearn.com/e/{hash}'; }
+  ```
+  (ambas ramas y también el else). El **gate ALTCHA real vive en el mirror** (`teresapoliticallearn.com`, rotativo), no en `voe.sx`.
+- El provider **no seguía el redirect JS** (OkHttp no ejecuta JS): `finalUrl` seguía siendo `voe.sx` → el HTML no tenía `altcha-widget` → caía en `no m3u8/mp4 found` → `parseHtml` (stub, sin encoded string) → `tryMirrors` (lista `["yip.su","tubelessceliolymph.com"]`, **sin** el mirror nuevo) → **WebView** (renderiza y ejecuta el JS → llegar al gate del mirror y auto-resolver) → `parseHtml(rendered, finalUrl=voe.sx, webViewCookies(voe.sx))`.
+- `solveAltcha` extrae `_token` y `challenge` correctos (del HTML del mirror), pero hace `app.post(pageUrl=voe.sx, ...)` con cookies de `voe.sx` → **host/sesión equivocados** → **419**.
+- **No era doble-encoding**: verificado por bytecode de NiceHttp 0.4.13 → `UtilsKt.getData` usa **`okhttp3.FormBody.Builder.addEncoded(key, value)`** (no `add()`), así que NiceHttp **NO re-encodea**. El `URLEncoder.encode(base64)` de Kotlin es el **único** encoding, correcto. (Confirmado en PC: `altcha` con base64 **crudo** + form-encode de `requests` = single-encode → POST 200 → player real; con `quote()` extra = double-encode → gate re-renderizado 3156 B.)
+
+### 🔧 Fix aplicado (idéntico en ambos)
+En `tryVoeExtraction` (Serieskao `SerieskaoExtractors.kt:912`; SoloLatino `SoloLatinoProvider.kt:1162`):
+1. Tras el GET inicial, **seguir el redirect JS** hasta 3 saltos:
+   ```kotlin
+   val jsRedirectRegex = Regex("""window\.location\.href\s*=\s*['\"](https?://[^'\"]+)['\"]""")
+   // captura SOLO literales http(s) (ignora la rama currentUrl.toString())
+   ```
+   reasigna `finalUrl`/`finalHtml`/`finalCookies` (mergando cookies: `finalCookies + rr.cookies`) en cada salto. Guardas: `target.isNullOrBlank() || target == finalUrl` → break.
+2. `tryMirrors()` += `"teresapoliticallearn.com"` al inicio de la lista (belt-and-suspenders; en Serieskao `mResp.cookies` ya se pasaba; en SoloLatino se **añadió** `mResp.cookies` que antes se descartaba).
+3. Como `finalUrl` ahora es el mirror, el path WebView y `webViewCookies(finalUrl)` usan el host del mirror → sin 419.
+
+### ✅ Verificado desde PC (flujo completo real)
+- Stub → mirror; gate ALTCHA en `teresapoliticallearn.com/e/{hash}` (200, 3156 B); `_token` + `altcha-widget challenge` OK; PoW resuelto (counter=16); POST **raw-b64** → **200, 135730 B**, `gate=False`, `<script type="application/json">` con `["DROH...` (lo que extrae `parseHtml`) y `<title>Watch {hash}.mp4 - VOE...` = player real. Con double-encode → 3156 B + gate.
+
+### Estado
+- **SeriesKao v25** (`build.gradle.kts` 24→25; `plugins.json` version 24→25) — pendiente `fileSize`.
+- **SoloLatino v29** (`build.gradle.kts` 28→29; `plugins.json` version 28→29) — pendiente `fileSize`. (Nota: SoloLatino v28 ya estaba verificado en dispositivo para el cierre por OOM; este cambio es aditivo, no lo revierte.)
+- ⏸️ **Pendiente (usuario)**: compilar `.\gradlew.bat :SerieskaoProvider:make --console=plain -q` y `.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`, actualizar `fileSize` en `plugins.json`, instalar y probar un episodio con VOE. Buscar en logcat `[Voe] JS redirect (1) -> https://teresapoliticallearn.com/...` → `[Voe] POST solucion -> code=200` → `[Voe] Found M3U8/MP4`.
+- ⏸️ **Nota**: el dominio mirror es rotativo; si cambia, el fix lo sigue solo (regex genérica). Solo `tryMirrors` quedaría desactualizado (red de seguridad secundaria).
+
+### 🧩 Regla derivada
+- Antes de mirar el solver ALTCHA, **resolver el redirect JS** del embed: `window.location.href='...'` es client-side y OkHttp **no** lo sigue. El host del `POST`/`_token`/cookies DEBE ser el del mirror, no `voe.sx`.

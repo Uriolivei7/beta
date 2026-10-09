@@ -890,7 +890,7 @@ private suspend fun tryVoeExtraction(    url: String,
             val hashPath = try { java.net.URL(url).path } catch (_: Exception) { "" }
             if (!hashPath.startsWith("/e/")) return false
 
-            val mirrors = listOf("yip.su", "tubelessceliolymph.com")
+            val mirrors = listOf("teresapoliticallearn.com", "yip.su", "tubelessceliolymph.com")
             val mirrorOk = java.util.concurrent.atomic.AtomicBoolean(false)
             withTimeoutOrNull(20000L) {
                 mirrors.amap { mirror ->
@@ -913,19 +913,31 @@ private suspend fun tryVoeExtraction(    url: String,
         val redirectUrl = res.headers["Location"] ?: res.url
         Log.d(KAO_TAG, "[Voe] status=${res.code} redirect=$redirectUrl")
 
-        val finalUrl = if (res.code in 301..303) {
+        var finalUrl = if (res.code in 301..303) {
             val h2 = headers + ("Referer" to url)
             val res2 = app.get(redirectUrl, headers = h2, timeout = 15L)
             res2.url
         } else {
             redirectUrl
         }
-        Log.d(KAO_TAG, "[Voe] finalUrl=$finalUrl")
 
         val finalResp = app.get(finalUrl, headers = headers, timeout = 15L)
-        val finalHtml = finalResp.text
+        var finalHtml = finalResp.text
+        var finalCookies = finalResp.cookies
 
-        val finalCookies = finalResp.cookies
+        val jsRedirectRegex = Regex("""window\.location\.href\s*=\s*['\"](https?://[^'\"]+)['\"]""")
+        var voeHops = 0
+        while (voeHops++ < 3) {
+            val target = jsRedirectRegex.find(finalHtml)?.groupValues?.get(1)?.trim()
+                ?.replace("\\/", "/")?.replace("\\u002F", "/")?.replace("\\u002f", "/")
+            if (target.isNullOrBlank() || target == finalUrl) break
+            Log.d(KAO_TAG, "[Voe] JS redirect ($voeHops) -> $target")
+            val rr = app.get(target, headers = headers + ("Referer" to finalUrl), timeout = 15L)
+            finalCookies = finalCookies + rr.cookies
+            finalUrl = rr.url
+            finalHtml = rr.text
+        }
+        Log.d(KAO_TAG, "[Voe] finalUrl=$finalUrl")
 
         if (finalHtml.contains("captcha") || finalHtml.contains("CAPTCHA") || finalHtml.contains("cf-challenge") || finalHtml.contains("altcha-widget")) {
             Log.w(KAO_TAG, "[Voe] challenge detectado en $finalUrl")
