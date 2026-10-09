@@ -1347,6 +1347,22 @@ WebView timeout, devolviendo último HTML (len=28660)
 
 ---
 
+## SerieskaoProvider — VOE con solver ALTCHA (08 Oct 2026 v22)
+
+### Port desde SoloLatino (verificado ahí en dispositivo: `ALTCHA resuelto` → `Found M3U8/MP4` → segmentos 200)
+- `KaoVoeExtractor` tenía el MISMO abandono explícito ante `altcha-widget` (`return false`, línea 133) → VOE nunca emitía.
+- Portado: `solveAltcha()` + `solveAltchaPow()` **paralelo (4 hilos, stride, `AtomicLong` ganador, `ensureActive`)** + `pbkdf2Sha256()` + `cookies` opcional en `parseHtml()` + `voeHeaders` a nivel de clase.
+- `tryVoeExtraction`: detección ampliada con `altcha-widget` + llamada DIRECTA a `KaoVoeExtractor().parseHtml()` (solver) **antes** de mirrors/WebView (orden v26: ahorra ~15-30s).
+- Imports ya existentes (`kotlinx.coroutines.*`, `Base64`, `Mac`/`Atomic*` añadidos).
+- **PoseidonHD**: NO aplica — es 100% Byse, sin código VOE.
+- `build.gradle.kts`: 21 → **22**; `plugins.json`: 1 → **22** (mismo desync que SoloLatino tenía; confirmar convención).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SerieskaoProvider:make --console=plain -q`), instalar y buscar `[Voe] ALTCHA resuelto en N intentos` → `[Voe] Found M3U8`.
+
+### Nota de verificación (08 Oct 2026)
+- El checker ingenuo de balance (`ghd_bal.py`) da falsos +/- en archivos con regexes que contienen `"`/`{}` y templates con comillas internas. Se escribió `ghd_bal4.py` (máquina de estados con pila: code/str/raw/char/comments/templates) — tras arreglar su manejo de `""""` (comilla-de-contenido + delimitador), reporta 0/0/0. El `+1` residual verificado como artefacto (mismo resultado en HEAD compilable).
+
+---
+
 ## CinehdplusProvider — Migración a la nueva estructura (Tailwind) (06 Oct 2026 v3)
 
 ### Estructura nueva (verificada)

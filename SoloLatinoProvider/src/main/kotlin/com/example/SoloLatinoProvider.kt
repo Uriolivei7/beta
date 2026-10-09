@@ -1154,8 +1154,7 @@ private suspend fun tryVoeExtraction(
 
         if (finalHtml.contains("captcha") || finalHtml.contains("CAPTCHA") || finalHtml.contains("cf-challenge") || finalHtml.contains("altcha-widget")) {
             Log.w("SoloLatino", "[Voe] challenge detectado en $finalUrl")
-            // Resolver ALTCHA directamente (PoW) ANTES de quemar presupuesto en mirrors/WebView.
-            // VoeExtractor.parseHtml lo resuelve solo; loadExtractor NO lo invoca (solo nativos).
+
             if (VoeExtractor().parseHtml(finalHtml, finalUrl, "SoloLatino", subtitleCallback, callback)) return true
             if (tryMirrors()) return true
             Log.d("SoloLatino", "[Voe] probando WebView (Altcha se auto-resuelve): $finalUrl")
@@ -1173,7 +1172,7 @@ private suspend fun tryVoeExtraction(
         val videoUrl = m3u8 ?: mp4
         if (videoUrl == null) {
             Log.w("SoloLatino", "[Voe] no m3u8/mp4 found in $finalUrl")
-            
+
             if (VoeExtractor().parseHtml(finalHtml, finalUrl, "SoloLatino", subtitleCallback, callback)) return true
             if (tryMirrors()) return true
             Log.d("SoloLatino", "[Voe] probando WebView: $finalUrl")
