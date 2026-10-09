@@ -1687,3 +1687,34 @@ En `tryVoeExtraction` (Serieskao `SerieskaoExtractors.kt:912`; SoloLatino `SoloL
 
 ### 🧩 Regla derivada
 - Antes de mirar el solver ALTCHA, **resolver el redirect JS** del embed: `window.location.href='...'` es client-side y OkHttp **no** lo sigue. El host del `POST`/`_token`/cookies DEBE ser el del mirror, no `voe.sx`.
+
+---
+
+## SeriesKao + SoloLatino — VOE verificado en físico + etiqueta "Voe" (09 Oct 2026; SoloLatino v30, Serieskao v26)
+
+### ✅ SOLOLATINO v29 VERIFICADO EN DISPOSITIVO (09 Oct 2026, 16:20)
+- Episodio "somos-osos-2015" T4E11 (Escandalosos). Log completo del fix v29:
+  - `[Voe] JS redirect (1) -> https://teresapoliticallearn.com/e/6owdslxfwypt` (el mirror se resuelve solo).
+  - `[Voe] contest detectado` → `challenge -> code=200 len=278 cookies=[__ddg8_, __ddg10_, __ddg9_, __ddg1_, XSRF-TOKEN, voe_session]`.
+  - `[Voe] ALTCHA resuelto en 408 intentos (32480ms, 4h)` (PoW paralelo tardó ~32 s en el móvil — normal con prefijo difícil).
+  - `[Voe] Found M3U8` (`ugc-cdn-caching-n3ad05wdiiynz8qnwf.cloudwindow-route.com/engine/hls2-c/01/17661/6owdslxfwypt_,n,.urlset/index-v1-a1.m3u8?t=...&e=14400...`) + `[Voe] Found MP4` (`.../engine/download/01/17661/...`).
+  - `loadLinks FIN total emitidos=7 servidores=2`; `[intercept] CDN response: 200 video/MP2T` seg-1..6 → **reproduce, la app NO se cierra**.
+- **El cierre de la app del intento 16:13 NO se reproduce** (sin FATAL EXCEPTION / lowmemorykiller capturado): el reintento 16:20 completó igual. Protecciones v28 intactas (`webViewMutex` + `catch (t: Throwable)`, un solo WebView serializado en los logs).
+- **Intercepción del CDN VOE**: `cloudwindow-route.com` NO está en `cdnDomains`, pero matchea por `cdnPaths` **`.urlset/`** → el m3u8 VOE sí recibe UA/Referer/Origin. El MP4 (path `/engine/download/`) no matchea — funciona directo.
+
+### 🐛 Fix etiqueta: los enlaces VOE salían como "SoloLatino" (09 Oct 2026)
+- **Síntoma (usuario)**: "no me sale voe, solo un enlaces de nombre SólaLatino". En la lista de enlaces los sources VOE aparecían con nombre "SoloLatino" / "SoloLatino MP4".
+- **Causa raíz**: `VoeExtractor.parseHtml` / `KaoVoeExtractor.parseHtml` usan el parámetro `sourceName` (= nombre del provider, necesario como `source` para que `getApiFromNameNull` encuentre el interceptor) TAMBIÉN como **nombre visible**: `M3u8Helper.generateM3u8(sourceName, ...)` y `newExtractorLink("$sourceName MP4", "$sourceName MP4", ...)`.
+  - `ExtractorLink.name` es **inmutable** (solo `getName`, sin `setName`) → el label hay que fijarlo en la creación.
+  - `M3u8Helper2.generateM3u8(source, masterUrl, referer, quality, headers, name = source)` acepta un 6º parámetro `name` (verificado por bytecode: en el método, slot 1=source y slot 6=name se cargan como 1º y 2º argumento de `newExtractorLink` → `name: String = source`).
+- **Fix** (en `Extractors.kt` `VoeExtractor.parseHtml` y `SerieskaoExtractors.kt` `KaoVoeExtractor.parseHtml`):
+  - `generateM3u8(...)` += `name = "Voe"` → las variantes HLS se listan como **"Voe"** (source sigue siendo `"SoloLatino"`/`"SeriesKao"` → interceptor intacto).
+  - MP4: `newExtractorLink("$sourceName MP4", "$sourceName MP4", ...)` → `newExtractorLink(sourceName, "Voe (MP4)", ...)` (corrige etiqueta Y el source del interceptor).
+- **Ruta `getUrl` no se tocó**: el fallback `loadSourceNameExtractor` ya re-etiqueta con `"$source[${link.source}]"` y source `"SoloLatino"` (SoloLatinoProvider.kt:873-886).
+
+### Estado
+- **SoloLatino v30** (`build.gradle.kts` 29→30; `plugins.json` version 29→30) — `fileSize` **pendiente** tras compilar.
+- **SeriesKao v26** (`build.gradle.kts` 25→26; `plugins.json` version 25→26) — `fileSize` **pendiente** tras compilar.
+- Archivos tocados: `SoloLatinoProvider/src/.../Extractors.kt`, `SerieskaoProvider/src/.../SerieskaoExtractors.kt`, `SoloLatinoProvider/build.gradle.kts`, `SerieskaoProvider/build.gradle.kts`, `plugins.json`, `AGENTS.md`.
+- ⏸️ **Pendiente (usuario)**: compilar `.\gradlew.bat :SoloLatinoProvider:make --console=plain -q` y `.\gradlew.bat :SerieskaoProvider:make --console=plain -q`, actualizar `fileSize` en `plugins.json`, instalarlo y comprobar que el enlace VOE aparece como **"Voe"** en la lista (y "Voe (MP4)").
+- ⏸️ **Pendiente (usuario)**: probar SeriesKao v26 en físico con el ep. Chapulín T1C3 (`voe.sx/e/6i0pzhzdn3i7`): esperar `[Voe] JS redirect (1)` → `[Voe] POST solucion -> code=200` → `[Voe] Found M3U8/MP4`.

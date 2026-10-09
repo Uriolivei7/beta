@@ -196,13 +196,14 @@ class KaoVoeExtractor {
                 m3u8,
                 "$pageOrigin/",
                 headers = mapOf("Origin" to "$pageOrigin/"),
+                name = "Voe",
             ).forEach(callback)
             emitted = true
         }
         if (mp4 != null) {
             Log.d(KAO_TAG, "[Voe] Found MP4: ${mp4.take(100)}")
             callback.invoke(
-                newExtractorLink("$sourceName MP4", "$sourceName MP4", mp4, INFER_TYPE) {
+                newExtractorLink(sourceName, "Voe (MP4)", mp4, INFER_TYPE) {
                     this.referer = pageUrl
                     this.quality = Qualities.Unknown.value
                 }
