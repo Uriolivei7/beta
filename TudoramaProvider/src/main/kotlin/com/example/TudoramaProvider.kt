@@ -7,8 +7,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.CancellationException
 import org.jsoup.nodes.Element
 
 class TudoramaProvider : MainAPI() {
@@ -111,11 +114,9 @@ class TudoramaProvider : MainAPI() {
         val doc = app.get(url).document
         val isMovie = url.contains("/pelicula/")
 
-        val title = if (isMovie) {
-            doc.selectFirst("h1.hero__title")?.text()
-        } else {
-            doc.selectFirst("section#hero .hero--serie .hero__header h2")?.text()
-        }
+        val title = doc.selectFirst("section#hero .hero__header h1")?.text()?.trim()?.takeIf { !it.isNullOrEmpty() }
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.substringBefore("»")?.trim()?.takeIf { !it.isNullOrEmpty() }
+            ?: doc.selectFirst("title")?.text()?.substringBefore("»")?.trim()?.takeIf { !it.isNullOrEmpty() }
         Log.d(TAG, "load: title=$title isMovie=$isMovie")
         if (title == null) { Log.w(TAG, "load: title not found"); return null }
 
@@ -232,20 +233,33 @@ class TudoramaProvider : MainAPI() {
         val doc = app.get(data).document
         val foundLinks = mutableListOf<Pair<String, ExtractorLink>>()
 
-        // Parse nonce and ajaxUrl for AJAX fallback
+
         val epDropdown = doc.selectFirst(".ep__dropdown, .servers")
         val nonce = epDropdown?.attr("data-nonce") ?: ""
         val postId = epDropdown?.attr("data-id") ?: ""
         val epsContainer = doc.selectFirst("div.eps")
         val ajaxUrl = epsContainer?.attr("data-ajaxurl") ?: "$mainUrl/"
 
-        // Try download table first
+
         val rows = doc.select("div.downloads table tbody tr")
         Log.d(TAG, "loadLinks: ${rows.size} servidores (download)")
         for (row in rows) {
             val serverName = row.selectFirst("td:first-child")?.text()?.trim() ?: continue
             val downloadUrl = row.selectFirst("a[href]")?.attr("href") ?: continue
             Log.d(TAG, "loadLinks: server=$serverName url=$downloadUrl")
+
+            if (downloadUrl.contains("pixeldrain.com/u/")) {
+                val pdId = downloadUrl.substringAfter("/u/").substringBefore("?").substringBefore("/").substringBefore("#")
+                if (pdId.isNotEmpty()) {
+                    Log.d(TAG, "loadLinks: PixelDrain directo: $pdId")
+                    foundLinks.add(serverName to newExtractorLink("PixelDrain", "$serverName - PixelDrain", "https://pixeldrain.com/api/file/$pdId") {
+                        this.referer = downloadUrl
+                    })
+                } else {
+                    Log.w(TAG, "loadLinks: PixelDrain sin id: $downloadUrl")
+                }
+                continue
+            }
             val embedUrl = resolveServerUrl(downloadUrl)
             if (embedUrl == null) {
                 Log.w(TAG, "loadLinks: no se pudo resolver embed URL para $serverName")
@@ -257,7 +271,7 @@ class TudoramaProvider : MainAPI() {
             }
         }
 
-        // Fallback: AJAX stream servers
+
         if (foundLinks.isEmpty() && nonce.isNotBlank() && postId.isNotBlank()) {
             Log.d(TAG, "loadLinks: trying AJAX stream servers (nonce=$nonce postId=$postId)")
             fetchStreamServers(ajaxUrl, nonce, postId, subtitleCallback) { name, link ->
@@ -280,6 +294,57 @@ class TudoramaProvider : MainAPI() {
         return foundLinks.isNotEmpty()
     }
 
+    private suspend fun emitByse(
+        url: String,
+        serverName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val html = try {
+            app.get(
+                url,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer" to mainUrl,
+                ),
+                timeout = 20L,
+            ).text
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "byse embed falló (${e.message}): ${url.take(80)}")
+            return false
+        }
+        if (!html.contains("Byse Frontend")) {
+            Log.d(TAG, "byse: no es Byse Frontend, extractor por defecto")
+            return false
+        }
+        return try {
+            val hubHost = runCatching { "https://${java.net.URI(url).host}" }.getOrDefault(mainUrl)
+            val sources = ByseHttpExtractor().extract(url, url, hubHost)
+            Log.d(TAG, "byse sources=${sources.size}")
+            var found = false
+            for (s in sources) {
+                for (sub in s.subtitles) subtitleCallback(sub)
+                val isHls = s.url.contains(".m3u8")
+                callback(newExtractorLink("TuDorama", "$serverName - Byse ${(s.label ?: "").trim()}".trim(), s.url, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                    this.referer = hubHost
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer" to hubHost,
+                    )
+                    this.quality = Qualities.Unknown.value
+                })
+                found = true
+            }
+            if (!found) Log.w(TAG, "byse: 0 sources")
+            found
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "byse error: ${e.message}")
+            false
+        }
+    }
+
     private suspend fun extractFromEmbed(
         embedUrl: String,
         serverName: String,
@@ -289,13 +354,18 @@ class TudoramaProvider : MainAPI() {
         Log.d(TAG, "extractFromEmbed: server=$serverName url=$embedUrl")
         var found = false
 
+        val eHost = try { Uri.parse(embedUrl).host ?: "" } catch (_: Exception) { "" }
+        if (eHost.contains("byse")) {
+            if (emitByse(embedUrl, serverName, subtitleCallback, callback)) return
+        }
+
         val candidates = buildList {
-            // Primary: /e/ path (embed player), but preserve /f/ for hgcloud.to
+
             val ePath = embedUrl
                 .replace("/d/", "/e/")
                 .replace("/download/", "/e/")
             add(ePath)
-            // Fallback: original URL
+
             if (last() != embedUrl) add(embedUrl)
         }.distinct()
 
@@ -314,14 +384,14 @@ class TudoramaProvider : MainAPI() {
             )
         }
 
-        // Fallback: manual HTTP extraction (VidStack not available)
+
         if (!found) {
             Log.d(TAG, "extractFromEmbed: trying manual HTTP extraction for $serverName")
             for (candidate in candidates) {
                 if (found) break
                 try {
                     val page = app.get(candidate, referer = mainUrl).text
-                    // Pattern 1: direct m3u8 URL
+
                     val m3u8Regex = Regex("""https?://[^"'<>]+\.m3u8[^"'<>]*""")
                     val m3u8Match = m3u8Regex.find(page)
                     if (m3u8Match != null) {
@@ -333,7 +403,7 @@ class TudoramaProvider : MainAPI() {
                         found = true
                         break
                     }
-                    // Pattern 2: direct mp4 URL
+
                     val mp4Regex = Regex("""https?://[^"'<>]+\.mp4[^"'<>]*""")
                     val mp4Match = mp4Regex.find(page)
                     if (mp4Match != null) {
@@ -345,7 +415,7 @@ class TudoramaProvider : MainAPI() {
                         found = true
                         break
                     }
-                    // Pattern 3: file: "url" or src: "url" in JS
+
                     val jsUrlRegex = Regex("""(?:file|src)\s*[:=]\s*"([^"]+\.(?:m3u8|mp4)[^"]*)""")
                     val jsMatch = jsUrlRegex.find(page)
                     if (jsMatch != null) {
@@ -363,7 +433,7 @@ class TudoramaProvider : MainAPI() {
             }
         }
 
-        // Fallback: try direct API calls for known hosts
+
         if (!found) {
             for (candidate in candidates) {
                 if (found) break
@@ -410,7 +480,7 @@ class TudoramaProvider : MainAPI() {
                     "post_id" to postId
                 )
             )
-            // Response is doubly-wrapped: ["{\"success\":true,\"data\":[...]}"]
+
             val raw = resp.text
             Log.d(TAG, "fetchStreamServers: raw=${raw.take(200)}")
             val outer = try {
@@ -483,7 +553,7 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         try {
             val base = embedUrl.substringBefore("/f/").substringBefore("/e/").substringBefore("/d/")
-            // Pattern 1: POST /api/source/{code}
+
             val resp1 = app.post(
                 url = "$base/api/source/$code",
                 referer = base,
@@ -507,7 +577,7 @@ class TudoramaProvider : MainAPI() {
                     }
                 }
             }
-            // Pattern 2: POST /ajax.php
+
             val resp2 = app.post(
                 url = "$base/ajax.php",
                 referer = base,
@@ -542,7 +612,7 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         try {
             val base = embedUrl.substringBefore("/e/").substringBefore("/d/")
-            // Pattern 1: POST /api/source/{code} (common earnvids pattern)
+
             val resp1 = app.post(
                 url = "$base/api/source/$code",
                 referer = embedUrl,
@@ -566,7 +636,7 @@ class TudoramaProvider : MainAPI() {
                     }
                 }
             }
-            // Pattern 2: POST /api/source with code in body
+
             val resp2 = app.post(
                 url = "$base/api/source",
                 referer = embedUrl,
@@ -602,7 +672,7 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         try {
             val base = embedUrl.substringBefore("/e/").substringBefore("/d/")
-            // Pattern 1: POST /api/source/{code} (earnvids/filemoon clone)
+
             val resp1 = app.post(
                 url = "$base/api/source/$code",
                 referer = embedUrl,
@@ -626,11 +696,11 @@ class TudoramaProvider : MainAPI() {
                     }
                 }
             }
-            // Pattern 2: GET embed page and regex-extract video URL
+
             val resp2 = app.get(embedUrl, referer = base)
             val html = resp2.text
             Log.d(TAG, "tryMinochinosApi: html=${html.take(500)}")
-            // Look for m3u8/mp4 in script content
+
             val scriptVars = Regex("""(?:file|src|url)\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""",
                 RegexOption.IGNORE_CASE).findAll(html)
             for (match in scriptVars) {
@@ -639,7 +709,7 @@ class TudoramaProvider : MainAPI() {
                 })
                 return true
             }
-            // Look for any m3u8/mp4 URL in the page
+
             val videoUrl = Regex("""https?://[^"'<>]+\.(?:m3u8|mp4)[^"'<>]*""").find(html)?.value
             if (videoUrl != null) {
                 callback(newExtractorLink(serverName, serverName, videoUrl) {
@@ -666,7 +736,7 @@ class TudoramaProvider : MainAPI() {
             )
             val text = resp.text
             Log.d(TAG, "try4meplayerApi: resp=${text.take(200)}")
-            // Try to find m3u8/mp4 in response
+
             val videoUrl = Regex("""https?://[^"'<>]+\.(?:m3u8|mp4)[^"'<>]*""").find(text)?.value
             if (videoUrl != null) {
                 callback(newExtractorLink(serverName, serverName, videoUrl) {
@@ -674,7 +744,7 @@ class TudoramaProvider : MainAPI() {
                 })
                 return true
             }
-            // Try JSON parse
+
             val parsed = try { mapper.readValue<Map<String, Any>>(text) } catch (e: Exception) { null }
             if (parsed != null) {
                 val file = parsed["file"]?.toString() ?: parsed["url"]?.toString() ?: parsed["src"]?.toString()

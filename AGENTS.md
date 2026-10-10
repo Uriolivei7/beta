@@ -304,6 +304,16 @@ loadLinks -> OK                   <- ¡OK!
 3. ⏸️ Si API extraction falla: implementar extractor VidStack manual (WebView JS injection)
 4. ⏸️ Si funciona: probar con múltiples episodios y servers
 
+### 🐛 Fix título + Byse compartido + PixelDrain directo (10 Oct 2026 v2)
+**Síntoma (usuario, log v1)**: `load: title=null` → `title not found` (×3) en `/serie/goblin-el-solitario-ser-inmortal/` — el detalle no abría.
+**Causa raíz (HTML real)**: el theme Wstream-4 usa `<header class="hero__header"><h1>TÍTULO</h1>` (h1 SIN clase). El provider buscaba `h1.hero__title` (pelis) y `section#hero .hero--serie .hero__header h2` (series) — ambos inexistentes → null siempre.
+**Fix `load()`**: `section#hero .hero__header h1` + fallbacks `og:title` / `<title>` (cortando `» TuDorama`). Regla `takeIf { !it.isNullOrEmpty() }` (nunca `isNotEmpty()` tras `?.`). Resto del parse verificado vigente (poster `.hero__poster img`, backdrop, `.hero__overview`, tags `.hero__genres a`, episodios `li.lep` con `data-episode`/`data-season`/`a[href]`/`.lep__title`).
+**Extractores de otros plugins (hipótesis del usuario CONFIRMADA)** — episodio real `/ver/...-s1x1/` trae: EarnVids `dingtezuni.com/file/...`, Filemoon `bysesukior.com/d/...`, StreamHG `hglink.to/...`, PixelDrain `pixeldrain.com/u/...`:
+- `bysesukior.com` sirve **`Byse Frontend`** → el `TudoramaBysesukior : VidStack()` era el stack equivocado (0 links garantizados). **Portado `ByseExtractor.kt` íntegro desde VerAnime** (autocontenido: Jackson + OkHttp propio + JCA; solo retag de logs a `Tudorama`); `extractFromEmbed` lo usa primero cuando el host contiene `byse` (probe `Byse Frontend` → `ByseHttpExtractor().extract()` → sources + subs). Los 4 `VidStack` registrados quedan como fallback.
+- `pixeldrain.com/u/{id}` → **directo sin extractor**: `https://pixeldrain.com/api/file/{id}` streamea el archivo (verificado: la API devolvió el binario, >5MB). Rama en el loop de download-table que emite VIDEO directo con referer a la página (antes `resolveServerUrl` la descartaba por falta de `a.download-button`).
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 20000).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :TudoramaProvider:make --console=plain -q`), instalar y probar Goblin (`adb logcat -s Tudorama:V`): detalle con título + `byse sources=N` en Filemoon + link PixelDrain directo.
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)

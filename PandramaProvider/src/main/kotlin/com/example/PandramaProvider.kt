@@ -357,7 +357,7 @@ class PandramaProvider : MainAPI() {
             false
         }
     }
-    
+
     private suspend fun loadExtractorNamed(
         url: String,
         referer: String,
