@@ -1566,6 +1566,33 @@ Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`
 - `build.gradle.kts`: `version = 6`; `plugins.json`: version 6, `fileSize` **pendiente** (sigue 0).
 - ⏸️ **Pendiente**: compilar, instalar y probar Link Click EP1 — esperado `Latino [byseraguci]` (1 link) + `Castellano [byseraguci]` (1 link) + `Latino/Castellano [luluvdoo]`.
 
+### 🔧 Fix StreamWish vía WebView (09 Oct 2026 v7)
+**Reporte del usuario (v6)**: Maou Gakuin EP5 — en la web sale StreamWish Latino, pero el plugin daba `sin links para MULTISERVER Latino [streamwish] (https://streamwish.to/e/...)` y solo quedaba Streamtape. (FileMoon/Byse dio 404 `video record missing` = video borrado, nada que hacer.)
+**Causa raíz**: `streamwish.to/e/` devuelve **challenge a HTTP plano** (misma firma que en SoloLatino: 200 len~819 sin jwplayer/sources) y el extractor CS3 `loadExtractor` da 0 links. En la web el challenge se auto-resuelve (navegador real).
+**Fix (port de SoloLatino, verificado ahí en físico)**:
+- `VeranimePlugin.load` guarda `VeranimeProvider.pluginContext`.
+- `renderViaWebView()` + `webViewMutex` + `catch (t: Throwable)` (un solo WebView vivo, sin matar la app), `SW_READY_JS`/`SW_DUMP_JS`.
+- `parseStreamwishHtml()` (m3u8 directo → `file:`/`src:` → mp4 → unpack Dean Edwards → iframes) + `unpackDeanEdwards()` copiados; regex con `\}` escapado (el `}` suelto es error en ICU-Android, regla Plushd v3).
+- Hook en `resolveSaidoMirror` y `resolveCyberMirror`: si `loadExtractorCollect` falla y el host es streamwish → `emitStreamwishWebView()` (emite `"$label [SW-Web]"`, referer = página SW).
+- `getVideoInterceptor` += rama `premilkyway` (UA + Referer + Origin derivado del referer del link, timeouts 30s) para master/segmentos SW.
+- Balance de llaves verificado con checker que respeta `"""` y `${...}` (`%TEMP%\opencode\bal_check.py`).
+
+### Estado v7
+- `build.gradle.kts`: `version = 7`; `plugins.json`: version 7, `fileSize` **pendiente** (sigue 0).
+- v7 NUNCA se publicó: antes de compilarla, el usuario reportó que el fallo es por **estado**, no por challenge permanente (ver v8). Si se compiló v7 local, descartarla.
+- ~~Nota diagnóstico (09 Oct 2026, usuario)~~ **CORREGIDA por v8**: el challenge NO es por fingerprint del dispositivo — en el MISMO celular con datos borrados (app vacía) StreamWish sale por `loadExtractor` directo; con datos (favoritos, etc.) no sale. Es estado (cookies rancias), no hardware.
+
+### 🔧 Fix StreamWish con cliente sin cookies (09 Oct 2026 v8)
+**Reporte del usuario (v7 sin compilar)**: "no es que en mi físico sí [y emulador no], sino que al borrar todos los datos del celular, en una app completamente vacía recién me sale el streamwish. Con todos mis datos (favoritos y demás) no me sale, solo en aplicaciones vacías".
+**Causa raíz (hipótesis fuerte)**: Cloudflare deja cookies (`cf_clearance`, `__cf_bm`, sesión) en el **jar compartido de OkHttp**. Con el tiempo quedan rancias → el servidor responde challenge en loop → `loadExtractor` da 0 links. Al borrar datos el jar queda limpio y la red pasa sin challenge → funciona. Afecta a `streamwish.to` (Streamtape no usa ese challenge y por eso sí sale con datos).
+**Fix**: replicar la "app vacía" solo para StreamWish — `freshHttpClient` (OkHttp propio con `CookieJar.NO_COOKIES`, timeouts 15s, nombres totalmente calificados `okhttp3.*` para evitar ambigüedad con el wildcard `com.lagradost.cloudstream3.*`):
+- Orden en ambas ramas (saido/cyber): `loadExtractorCollect` → `emitStreamwishFresh()` (fetch sin cookies + `parseStreamwishHtml`, emite `"$label [SW]"`, log `[SW] fresh fetch len=` / `[SW] fresh OK`) → `emitStreamwishWebView()` (red de seguridad v7).
+- `fetchStreamwishFresh` con `withTimeoutOrNull(25s)` + `withContext(Dispatchers.IO)`; re-lanza `CancellationException`.
+
+### Estado v8
+- `build.gradle.kts`: `version = 8`; `plugins.json`: version 8, `fileSize` **pendiente** (sigue 0).
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :VeranimeProvider:make --console=plain -q`), instalar y probar Maou Gakuin EP5 **con la app con datos** (sin borrar nada) — esperado `[SW] fresh fetch len=` → `[SW] fresh OK` → link `MULTISERVER Latino [streamwish] [SW]` (si sale `[SW-Web]` en vez de `[SW]`, el fetch limpio no bastó y resolvió el WebView — avisar). Logs: `adb logcat -s VerAnime:V`.
+
 ### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
 **Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
 **Causa**: en cadenas como `selectFirst(...)?.text()?.trim().takeIf { it.isNotEmpty() }`, el `it` dentro de `takeIf` es `String?` (el `?.` propaga nulabilidad) e `isNotEmpty()/isNotBlank()` exigen receptor no-nulo.
