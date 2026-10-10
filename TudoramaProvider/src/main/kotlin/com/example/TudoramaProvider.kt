@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
@@ -375,6 +376,117 @@ class TudoramaProvider : MainAPI() {
         }
     }
 
+    
+    private fun unpackPackedJS(html: String): String? {
+        val evalHeaderRegex = Regex("""eval\(function\(p,a,c,k,e,d\)\{.+?\}\('""", RegexOption.DOT_MATCHES_ALL)
+        val evalHeader = evalHeaderRegex.find(html) ?: return null
+        val argStart = evalHeader.range.last + 1
+        val argsRegex = Regex("""',(\d+),(\d+),'([^']+)'\.split\('\|'\)""")
+        val argsMatch = argsRegex.find(html, argStart) ?: return null
+        val packedP = html.substring(argStart, argsMatch.range.first)
+        val base = argsMatch.groupValues[1].toIntOrNull() ?: return null
+        val count = argsMatch.groupValues[2].toIntOrNull() ?: return null
+        val k = argsMatch.groupValues[3].split("|").toTypedArray()
+        val result = StringBuilder(packedP)
+        for (idx in count - 1 downTo 0) {
+            val key = idx.toString(base)
+            val value = k.getOrElse(idx) { "" }
+            if (key.isNotEmpty() && value.isNotEmpty()) {
+                val pattern = Regex("\\b${Regex.escape(key)}\\b")
+                val replaced = pattern.replace(result, Regex.escapeReplacement(value))
+                result.clear()
+                result.append(replaced)
+            }
+        }
+        return result.toString().replace("\\'", "'")
+    }
+
+    private suspend fun tryVidHideProExtraction(
+        url: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            Log.d(TAG, "[VH-Pro] trying $url")
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "Accept" to "*/*",
+                "Referer" to url,
+            )
+            val res = app.get(url, headers = headers, timeout = 20L)
+            if (!res.isSuccessful) {
+                Log.w(TAG, "[VH-Pro] HTTP ${res.code}")
+                return false
+            }
+            val html = res.text
+            Log.d(TAG, "[VH-Pro] HTTP 200 len=${html.length}")
+            val unpacked = unpackPackedJS(html)
+            if (unpacked.isNullOrBlank()) {
+                Log.w(TAG, "[VH-Pro] packer unpack failed")
+                return false
+            }
+            val linksMap = mutableMapOf<String, String>()
+            Regex("""links\s*[=:]\s*\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL).find(unpacked)?.let { block ->
+                Regex(""""(hls\d)"\s*:\s*"([^"]+)"""").findAll(block.groupValues[1]).forEach { m ->
+                    linksMap[m.groupValues[1]] = m.groupValues[2]
+                }
+            }
+            if (linksMap.isEmpty()) {
+                Regex(""""(hls\d)"\s*:\s*"([^"]+)"""").findAll(unpacked).forEach { m ->
+                    linksMap[m.groupValues[1]] = m.groupValues[2]
+                }
+            }
+            if (linksMap.isEmpty()) {
+                Log.w(TAG, "[VH-Pro] no hls links in unpacked JS")
+                return false
+            }
+            val pageOrigin = runCatching { "https://${java.net.URI(url).host}" }.getOrDefault(mainUrl)
+            val preferOrder = listOf("hls2", "hls3", "hls4")
+            val orderedKeys = preferOrder.filter { linksMap.containsKey(it) } + linksMap.keys.filter { it !in preferOrder }
+            data class Variant(val key: String, val url: String)
+            val resolved = orderedKeys.mapNotNull { key ->
+                var u = linksMap[key] ?: return@mapNotNull null
+                if (u.startsWith("/")) {
+                    u = "$pageOrigin$u"
+                    Log.d(TAG, "[VH-Pro] relative URL, prepended base: ${u.take(120)}")
+                }
+                Variant(key, u)
+            }
+            val reachable = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
+            resolved.amap { v ->
+                try {
+                    val code = withTimeoutOrNull(20000L) {
+                        app.get(v.url, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36", "Referer" to url), timeout = 20L).code
+                    } ?: -1
+                    Log.d(TAG, "[VH-Pro] probe ${v.key} -> $code")
+                    if (code in 200..299) reachable.add(v)
+                } catch (_: Exception) {}
+            }
+            val toEmit = if (reachable.isNotEmpty()) {
+                orderedKeys.mapNotNull { k -> reachable.firstOrNull { it.key == k } }
+            } else {
+                Log.w(TAG, "[VH-Pro] ningún master responde, emitiendo todos igual")
+                resolved
+            }
+            for (v in toEmit) {
+                Log.d(TAG, "[VH-Pro] emit ${v.key} url=${v.url.take(120)}")
+                callback(newExtractorLink("TuDorama", "VidHidePro - ${v.key}", v.url, ExtractorLinkType.M3U8) {
+                    this.referer = url
+                    this.headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                        "Referer" to url,
+                        "Origin" to pageOrigin,
+                    )
+                })
+            }
+            Log.d(TAG, "[VH-Pro] emitted ${toEmit.size} variants")
+            true
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "[VH-Pro] error: ${e.message}")
+            false
+        }
+    }
+
     private suspend fun extractFromEmbed(
         embedUrl: String,
         serverName: String,
@@ -387,6 +499,14 @@ class TudoramaProvider : MainAPI() {
         val eHost = try { Uri.parse(embedUrl).host ?: "" } catch (_: Exception) { "" }
         if (eHost.contains("byse")) {
             if (emitByse(embedUrl, serverName, subtitleCallback, callback)) return
+        }
+
+        if (eHost.contains("morencius") || eHost.contains("vidhidepro")) {
+            val code = embedUrl.trimEnd('/').substringAfterLast("/").substringBefore("?").substringBefore("#")
+            if (code.isNotEmpty()) {
+                val scheme = embedUrl.substringBefore("://")
+                if (tryVidHideProExtraction("$scheme://$eHost/embed/$code") { callback(it) }) return
+            }
         }
 
         val candidates = buildList {
@@ -546,7 +666,7 @@ class TudoramaProvider : MainAPI() {
                 }
                 return
             }
-            
+
             val outer = try {
                 mapper.readValue<List<String>>(raw)
             } catch (e: Exception) {
@@ -578,8 +698,17 @@ class TudoramaProvider : MainAPI() {
     private suspend fun resolveStreamUrl(streamUrl: String): String? {
         return try {
             val doc = app.get(streamUrl, referer = mainUrl).document
-            val iframeSrc = doc.selectFirst("#myIframe")?.attr("src")
-            if (iframeSrc.isNullOrBlank()) null else iframeSrc
+            doc.selectFirst("#myIframe")?.attr("src")?.takeIf { !it.isNullOrEmpty() }?.let { return it }
+
+            val html = doc.html()
+            val jsSrc = Regex("""iframe\.src\s*=\s*"([^"]+)"""").find(html)?.groupValues?.getOrNull(1)?.takeIf { !it.isNullOrEmpty() }
+                ?: Regex("""iframe\.src\s*=\s*'([^']+)'""").find(html)?.groupValues?.getOrNull(1)?.takeIf { !it.isNullOrEmpty() }
+            if (jsSrc != null) {
+                Log.d(TAG, "resolveStreamUrl: iframe por JS: ${jsSrc.take(80)}")
+                return jsSrc
+            }
+            Log.w(TAG, "resolveStreamUrl: sin iframe para $streamUrl")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "resolveStreamUrl error: ${e.message}")
             null

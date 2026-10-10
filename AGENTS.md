@@ -337,6 +337,16 @@ loadLinks -> OK                   <- ¡OK!
 - ⏸️ **Pendiente**: compilar, instalar y probar (1) Hear Me (debe resolver iframes y emitir); (2) My Royal Nemesis T1E1 (los 6 `download-*.php` deben decodificar y fluir a VidStack/Byse/manual).
 - ⚠️ **Nota edición**: el `edit` reportó un falso "not found" en el re-wrap pero el contenido SÍ quedó aplicado (verificado por `git diff`); el call-site de `fetchStreamServers` (param `langTag`) sí requirió re-aplicación — sin él no compilaba (6 params vs 5 args). Verificar siempre con `git diff`, no con el mensaje de la herramienta.
 
+### 🔧 EarnVids=vidhide + iframe por JS (10 Oct 2026 v6)
+**Log v5 (usuario)** — Hear Me parsea bien (`[Subtitulado] sub:*` ×4) pero `resolveStreamUrl` da null en los 4 (el `<iframe id="myIframe">` viene con `src` VACÍO; el src real lo pone el JS al pulsar: `iframe.src = "https://abyssplayer.com/..."`). My Royal Nemesis decodifica bien pero EarnVids/StreamHG dan 0 (Filemoon-Byse ×2 OK → `FIN: true`).
+**Hallazgo EarnVids (hipótesis del usuario CONFIRMADA otra vez)**: SoloLatino (`SoloLatinoProvider.kt:1250`) y SeriesKao (`SerieskaoExtractors.kt:96`) mapean `morencius.com` → `vidhidepro.com`. Verificado: `/download/` dice "Downloads disabled" y `/e/` da 404, pero **`/embed/{code}` existe** (página "Embed" del player). Es el mismo backend vidhide.
+**Fixes**:
+1. `resolveStreamUrl`: fallback a regex `iframe.src = "..."` (doble y simple comilla) sobre el HTML cuando `#myIframe[src]` viene vacío → la peli Hear Me debe resolver sus 4 iframes.
+2. Portados `unpackPackedJS()` + `tryVidHideProExtraction()` de Serieskao (probe paralelo de masters con `amap`, `preferOrder hls2>hls3>hls4`, base relativa = origin propio, etiqueta interna `VidHidePro - key` sin idioma porque el re-wrap externo ya pone `[Latino]`+server). Hook en `extractFromEmbed` para hosts morencius/vidhidepro construyendo `/embed/{code}` ANTES del path VidStack.
+- Versiones a **6** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar (1) Hear Me (los 4 `stream/*.php` deben dar `iframe por JS` + emitir); (2) My Royal Nemesis — EarnVids debe dar `[VH-Pro] emit hlsX` (hgcloud sigue en 522, nada que hacer ahí).
+- ⚠️ **Nota edición (otra)**: el `edit` falló un anclaje por una línea en blanco intermedia no vista — releer la región antes de reintentar.
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)
