@@ -354,6 +354,14 @@ loadLinks -> OK                   <- ¡OK!
 - Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y probar Hear Me buscando `[VH-Pro] emit hlsX` en `sub:earnvids` (abyssplayer.com queda fuera: host desconocido sin extractor).
 
+### 🔧 EarnVids directo (packer) + hglink challenge (10 Oct 2026 v8)
+**Log v7 (usuario)** — peli Hear Me: `sub:earnvids` → minochinos VH **emite 3 variantes** (`probe hls2/hls3/hls4 → 200`), filemoon-Byse OK → `FIN: true`. Goblin EP1/13/10/16: Byse + PixelDrain OK en todos.
+**Hallazgo dingtezuni (EarnVids directo)**: `dingtezuni.com/file/{code}` trae el player jwplayer con **eval Dean Edwards empaquetado** — las URLs m3u8 solo existen tras desempaquetar (dict con `m3u8`, cuenta acek-cdn `m5QqjwpATPzb`). Por eso los regexes planos fallaban. En cambio `morencius.com/download/` dice "Downloads disabled" y `/e/` da 404 (la form viva es `/embed/`, ya cubierta en v6).
+**Hallazgo hglink.to**: sirve página challenge "Loading... please wait..." (JS). Como apunta al backend hgcloud (522 caído), no vale la pena WebView para él.
+**Fix**: Pattern 4 en la rama manual de `extractFromEmbed` — `unpackPackedJS(page)` + regex m3u8/mp4 sobre el desempaquetado (emite todos los distintos, precedente SoloLatino `[SW] M3U8 (eval)` sin probe por frescura del token). Solo corre si los patterns 1-3 fallan.
+- Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 buscando `extractFromEmbed: unpacked url found` en EarnVids (dingtezuni).
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)

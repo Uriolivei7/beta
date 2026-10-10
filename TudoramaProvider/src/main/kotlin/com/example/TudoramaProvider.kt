@@ -577,6 +577,21 @@ class TudoramaProvider : MainAPI() {
                         found = true
                         break
                     }
+                    
+                    if (!found) {
+                        val unpacked = unpackPackedJS(page)
+                        if (unpacked != null) {
+                            val unpackedUrls = Regex("""https?://[^"'\s<>]+\.(?:m3u8|mp4)[^"'\s<>]*""").findAll(unpacked).map { it.value }.distinct().toList()
+                            for (u in unpackedUrls) {
+                                Log.d(TAG, "extractFromEmbed: unpacked url found: ${u.take(80)}")
+                                callback(newExtractorLink(serverName, "$serverName - $u", u) {
+                                    this.referer = candidate
+                                })
+                                found = true
+                            }
+                            if (found) break
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "extractFromEmbed: manual extraction error: ${e.message}")
                 }
