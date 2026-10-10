@@ -173,6 +173,20 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - Compilación: pendiente por el usuario (`.\gradlew.bat :PandramaProvider:make --console=plain -q`) — **no compilado por regla del repo**. `plugins.json`: version 6, `fileSize` **pendiente** (sigue 65000).
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — si el video VK está vivo sale link vía `VkExtractor`; si también está borrado, el "enlaces no encontrados" es correcto (3 de 4 mirrors muertos en origen).
 
+### 🔧 Fallback VK directo (10 Oct 2026 v7)
+**Log v6 en dispositivo**: el mapeo a `vkvideo.ru` funciona (el log ya muestra el host nuevo) pero `VkExtractor` sigue dando 0 links en EP1 (`...102`) y EP2 (`...103`).
+**Bytecode de `VkExtractor.getUrl`**: doble GET (segundo con cookies) + regex `"url([0-9]+)":"([^"]*)"` (IGNORE_CASE) para progresivos y claves `dash_sep`/`hls` para DASH/HLS. Si la página no trae esos patrones (video borrado/privado o muro de login), 0 links es lo correcto — pero el extractor no loguea nada y no se puede distinguir.
+**Fix**: `tryVkDirect()` — si `loadExtractor` falla en un embed `vkvideo.ru`, reintenta con los MISMOS patrones del extractor y emite directo (`"$linkName ${q}p"`, quality vía `getQualityFromName`, type M3U8/VIDEO por extensión, referer = página VK). Si tampoco hay patrones → log `VK sin patrones url (len=...)` = diagnóstico definitivo de video muerto/muro. Solo corre en la rama de fallo (el éxito no hace requests extra); `timeout = 15L` (segundos, regla NiceHttp).
+- Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 buscando `VK directo q=` (video vivo → links) o `VK sin patrones url` (video muerto → "enlaces no encontrados" correcto).
+
+### 🔧 Fallback VK estilo Retrotve (10 Oct 2026 v8)
+**Propuesta del usuario**: portar el extractor VK de Retrotve (`extractVKVideo`), que sí reproduce esos enlaces.
+**Diferencia clave encontrada**: Retrotve hace lo CONTRARIO al v6 — reescribe `vkvideo.ru` → **`vk.com`** y parsea OTRA familia de claves (`"mp4_360"`, `"hls"`, `"dash"`, `"video_url"`, m3u8/mp4 directos, `data-video-url`), mientras `VkExtractor` usa `vkvideo.ru` + `"url720"`. Son dos formatos de página distintos del mismo backend.
+**Fix**: `tryVkDirect()` ahora prueba **ambas formas** (`vkvideo.ru` y `vk.com`) y une ambas familias de patrones (`"urlN"` + `"mp4_N"` + `"hls(_x)"` + `"video_url"` + m3u8/mp4 directos como último recurso). Emite al primer formato que dé URLs (`break`); log por forma (`VK sin patrones (<url> len=...)`).
+- Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — buscar `VK directo q=` y luego reproducir (los mp4 de VK suelen pedir Referer = página VK, ya puesto).
+
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
 - `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.

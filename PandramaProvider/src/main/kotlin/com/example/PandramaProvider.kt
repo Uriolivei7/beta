@@ -6,6 +6,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -338,6 +339,95 @@ class PandramaProvider : MainAPI() {
             .replaceFirst("https://vk.com", "https://vkvideo.ru")
             .replaceFirst("http://vk.com", "https://vkvideo.ru")
     }
+    
+    private suspend fun tryVkDirect(
+        pageUrl: String,
+        linkName: String,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val candidates = listOf(pageUrl, pageUrl.replace("vkvideo.ru", "vk.com")).distinct()
+        var emitted = false
+        for (u in candidates) {
+            try {
+                val body = app.get(
+                    u,
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0",
+                        "Referer" to u,
+                    ),
+                    timeout = 15L,
+                ).text
+                if (parseVkPage(body, u, linkName, callback)) {
+                    emitted = true
+                    break
+                }
+                Log.w(TAG, "VK sin patrones ($u len=${body.length})")
+            } catch (e: Exception) {
+                Log.w(TAG, "VK directo falló ($u): ${e.message}")
+            }
+        }
+        if (!emitted) Log.w(TAG, "VK sin patrones url: ${pageUrl.take(80)}")
+        return emitted
+    }
+
+    private suspend fun parseVkPage(
+        body: String,
+        pageUrl: String,
+        linkName: String,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        fun clean(u: String): String? {
+            var f = u.replace("\\/", "/")
+            if (f.startsWith("//")) f = "https:$f"
+            return f.takeIf { it.startsWith("http") }
+        }
+        suspend fun emit(file: String, q: Int) {
+            val type = if (file.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            Log.d(TAG, "VK directo q=${q}p: ${file.take(100)}")
+            callback.invoke(
+                newExtractorLink(linkName, "$linkName ${q}p", file, type) {
+                    this.referer = pageUrl
+                    this.quality = getQualityFromName("${q}p")
+                }
+            )
+        }
+        var n = 0
+        for (m in Regex(""""url([0-9]+)":"([^"]*)"""", RegexOption.IGNORE_CASE).findAll(body)) {
+            val f = clean(m.groupValues[2]) ?: continue
+            emit(f, m.groupValues[1].toIntOrNull() ?: 0)
+            n++
+        }
+        for (m in Regex(""""mp4_(\d+)":"([^"]+)"""").findAll(body)) {
+            val f = clean(m.groupValues[2]) ?: continue
+            emit(f, m.groupValues[1].toIntOrNull() ?: 0)
+            n++
+        }
+        for (m in Regex(""""hls(_\w+)?"\s*:\s*"([^"]+)"""").findAll(body)) {
+            val f = clean(m.groupValues[2]) ?: continue
+            emit(f, 1080)
+            n++
+        }
+        for (m in Regex(""""video_url"\s*:\s*"([^"]+)"""").findAll(body)) {
+            val f = clean(m.groupValues[1]) ?: continue
+            emit(f, 720)
+            n++
+        }
+        if (n == 0) {
+            for (m in Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(body)) {
+                val f = clean(m.value) ?: continue
+                emit(f, 1080)
+                n++
+            }
+        }
+        if (n == 0) {
+            for (m in Regex("""https?://[^"'\s<>]+\.mp4[^"'\s<>]*""").findAll(body)) {
+                val f = clean(m.value) ?: continue
+                emit(f, 720)
+                n++
+            }
+        }
+        return n > 0
+    }
 
     override suspend fun loadLinks(
         data: String,
@@ -362,7 +452,7 @@ class PandramaProvider : MainAPI() {
             var found = false
             for (video in allVideos) {
                 val src = video.src ?: continue
-                
+
                 val cleanSrc = fixEmbedHost(src.replace("\\/", "/"))
                 Log.d(TAG, "Video type=${video.type}, src=$cleanSrc")
 
@@ -400,7 +490,11 @@ class PandramaProvider : MainAPI() {
                         video.type == "embed" || video.type == "url" -> {
                             val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("vkvideo.ru") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
                             if (hasExtractor) {
-                                found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                var ok = loadExtractor(cleanSrc, data, subtitleCallback, callback)
+                                if (!ok && cleanSrc.contains("vkvideo.ru")) {
+                                    ok = tryVkDirect(cleanSrc, linkName, callback)
+                                }
+                                found = ok || found
                             } else {
                                 try {
                                     val embedHtml = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")).text
