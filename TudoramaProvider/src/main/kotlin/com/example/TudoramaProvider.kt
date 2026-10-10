@@ -231,6 +231,9 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "=== loadLinks: data=${data.take(80)} ===")
         val doc = app.get(data).document
+        
+        val langTag = detectContentLanguage(doc)
+        if (langTag.isNotEmpty()) Log.d(TAG, "loadLinks: idioma detectado=$langTag")
         val foundLinks = mutableListOf<Pair<String, ExtractorLink>>()
 
 
@@ -238,7 +241,7 @@ class TudoramaProvider : MainAPI() {
         val nonce = epDropdown?.attr("data-nonce") ?: ""
         val postId = epDropdown?.attr("data-id") ?: ""
         val epsContainer = doc.selectFirst("div.eps")
-        val ajaxUrl = epsContainer?.attr("data-ajaxurl") ?: "$mainUrl/"
+        val ajaxUrl = epsContainer?.attr("data-ajaxurl") ?: "$mainUrl/wp-admin/"
 
 
         val rows = doc.select("div.downloads table tbody tr")
@@ -280,8 +283,9 @@ class TudoramaProvider : MainAPI() {
         }
 
         Log.d(TAG, "loadLinks: ${foundLinks.size} total links extra\u00eddos")
+        val langPrefix = if (langTag.isNotEmpty()) "[$langTag] " else ""
         foundLinks.forEach { (serverName, link) ->
-            callback(newExtractorLink(link.source, "$serverName - ${link.name}", link.url) {
+            callback(newExtractorLink(link.source, "$langPrefix$serverName - ${link.name}", link.url) {
                 this.referer = link.referer
                 this.quality = link.quality
                 this.headers = link.headers + mapOf(
@@ -292,6 +296,19 @@ class TudoramaProvider : MainAPI() {
         }
         Log.d(TAG, "=== loadLinks FIN: ${foundLinks.isNotEmpty()} ===")
         return foundLinks.isNotEmpty()
+    }
+
+    private fun detectContentLanguage(doc: org.jsoup.nodes.Document): String {
+        val haystack = listOf(
+            doc.selectFirst("meta[property=og:title]")?.attr("content"),
+            doc.selectFirst("title")?.text(),
+        ).filter { !it.isNullOrEmpty() }.joinToString(" ")
+        return when {
+            haystack.contains("latino", ignoreCase = true) -> "Latino"
+            haystack.contains("subtitul", ignoreCase = true) -> "Subtitulado"
+            haystack.contains("castellano", ignoreCase = true) -> "Castellano"
+            else -> ""
+        }
     }
 
     private suspend fun emitByse(
@@ -453,7 +470,7 @@ class TudoramaProvider : MainAPI() {
             val doc = app.get(downloadUrl, referer = mainUrl).document
             val href = doc.selectFirst("a.download-button")?.attr("href")
             if (href == null) {
-                
+
                 if (downloadUrl.contains("byse")) {
                     Log.d(TAG, "resolveServerUrl: sin botón pero es Byse, uso directo")
                     return downloadUrl

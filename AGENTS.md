@@ -321,6 +321,14 @@ loadLinks -> OK                   <- ¡OK!
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 buscando `byse sources=N` + links `Filemoon - Byse ...`.
 
+### 🔧 Fix películas (AJAX 404) + etiqueta de idioma (10 Oct 2026 v4)
+**Log v3 (usuario)** — Filemoon **reproduce** vía Byse (`sources=1` → `FIN: true`), PixelDrain directo OK. Dos pendientes nuevos:
+1. **Película** (`/pelicula/hear-me-our-summer/`): `0 servidores (download)` → fallback AJAX → POST a `https://tudorama.com/admin-ajax.php` → **404** (`<title>Página no encontrada`) → `FIN: false`.
+   **Causa**: en `loadLinks` el `ajaxUrl` cae a `"$mainUrl/"` porque las pelis no tienen `div.eps`; el endpoint WP real es `/wp-admin/admin-ajax.php` (confirmado por `corvutils.ajaxurl` del propio HTML + convención WP). **Fix**: default `"$mainUrl/wp-admin/"`.
+2. **Idioma en los links** (pedido): en Goblin salen "servidores en español latino", en la peli "servidor subtitulado". La tabla download no trae idioma por fila, pero la página sí (`og:title`: "Episodio 1 Español Latino"). **Fix**: `detectContentLanguage(doc)` (og:title + `<title>`: latino → `Latino`, subtitul → `Subtitulado`, castellano → `Castellano`) y el re-wrap final antepone `[$langTag]` → `[Latino] Filemoon - Byse 1080p`.
+- Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 20000).
+- ⏸️ **Pendiente**: compilar, instalar y (1) probar la peli Hear Me buscando en `fetchStreamServers` JSON válido en vez de 404; (2) comprobar `[Latino]`/`[Subtitulado]` en los nombres de link.
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)
