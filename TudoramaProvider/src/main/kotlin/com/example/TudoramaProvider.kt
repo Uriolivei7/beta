@@ -577,7 +577,7 @@ class TudoramaProvider : MainAPI() {
                         found = true
                         break
                     }
-                    
+
                     if (!found) {
                         val unpacked = unpackPackedJS(page)
                         if (unpacked != null) {

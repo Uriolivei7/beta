@@ -1913,3 +1913,31 @@ En `tryVoeExtraction` (Serieskao `SerieskaoExtractors.kt:912`; SoloLatino `SoloL
 - **Causa**: la rama VOE de `loadSourceNameExtractor` / `loadKaoSourceExtractor` pasaba los links **sin envolver** (`callback.invoke(link)`), mientras VidHide (`"VidHidePro - hls2 [LATINO]"`) y StreamWish (`"$source[StreamWish]"`) sí incluían el `source` (= langTag: LATINO/SUBTITULADO/CASTELLANO/VOSE/JAPONES, mapeado de `video_language` en SoloLatinoProvider.kt:520 / SerieskaoProvider.kt:425).
 - **Fix**: envolver como el resto — `newExtractorLink("<Provider>", "$source[${link.name}]", ...)` copiando quality/type/referer/headers/extractorData (SoloLatinoProvider.kt:837, SerieskaoExtractors.kt:1021). Resultado: **"LATINO[Voe]"** / **"LATINO[Voe (MP4)]"**. `source` sigue siendo el nombre del provider → interceptor intacto.
 - **Estado**: SoloLatino **31** / SeriesKao **27** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente). ⏸️ Pendiente: compilar, instalar y comprobar que el enlace VOE sale como `LATINO[Voe]`.
+
+---
+
+## OkruProvider — Extractor OK.ru de Kraptor123/Cs-Karma (10 Oct 2026 v1)
+
+Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/OK` como plugin del repo.
+
+### Qué trae (upstream `com.byayzen`: OKRU.kt + OKRUPlugin.kt + OkRuExtractor.kt)
+- **OKRU.kt**: provider completo del catálogo ok.ru (main page/search/load en ruso). **SÍ portado** (el usuario lo pidió: hay pelis en ok.ru que no están en otro lado y ya comprobó que reproduce). Adaptaciones mínimas:
+  - `class OKRU` → `OkruProvider` (convención del repo); `com.lagradost.api.Log` → `android.util.Log`; sin `hasQuickSearch` (open no confirmado en la base); `newSearchResponseList` posicional (nombre del 2º parámetro no verificado).
+  - search 2-arg + `quickSearch` + `SearchResponseList` + `Episode.description` + `ShowStatus` + `HomePageList(isHorizontalImages)` → **todo existe** en este CS3 (verificado por bytecode) → resto 1:1.
+- **OkRuExtractor.kt**: `ExtractorApi` (`ok.ru` + subclase `Odnoklassniki` para `odnoklassniki.ru`). `getUrl`: id de `(videoembed|video)/(\d+)` → GET `/videoembed/{id}` → `[data-module=OKVideo]`/`data-options` → redirect YouTube o `"videos":[{name,url}]` ordenado por calidad (full/hd/sd/low/lowest/mobile) → emite progresivos VIDEO con Referer/Origin/UA. **SÍ portado** (ok.ru es la fuente #1 de Donghualife/Seriesdonghua/Pandrama; los overloads `loadExtractor` de 3 y 4 args existen).
+
+### Compatibilidad verificada por bytecode (antes de portar)
+- `ExtractorApiKt.fixUrl(ExtractorApi, String)` existe → en el port se usa SOLO `com.lagradost.cloudstream3.utils.fixUrl` (el doble import upstream sobraba).
+- Overloads `loadExtractor(url, subCb, cb)` y `(url, referer, subCb, cb)` existen → el redirect YouTube compila tal cual.
+- `loadExtractor` **itera todos** los `extractorApis` coincidentes (aditivo): el nativo sigue corriendo además del custom → sin riesgo de regresión.
+- `registerExtractorAPI` ya se usa en el repo (SeriesdonghuaPlugin) → el plugin registra `OkRuExtractor()` + `Odnoklassniki()` SIN MainAPI (solo extractores, quedan globales para el `loadExtractor` de todos los providers).
+- **Corrección (el usuario pidió el provider completo)**: `search 2-arg`, `quickSearch`, `SearchResponseList`, `Episode.description`, `ShowStatus`, `HomePageList(isHorizontalImages)`, `MovieLoadResponse.duration` → **todo existe** en este CS3 (verificado por bytecode) → `OKRU.kt` SÍ portado casi 1:1 como `OkruProvider` (ver adaptaciones arriba). `OkruPlugin` registra MainAPI + ambos extractores.
+
+### Archivos
+- `OkruProvider/build.gradle.kts` (v1, es, Ranita+Kraptor123), `src/main/AndroidManifest.xml`, `src/main/kotlin/com/example/OkruPlugin.kt`, `.../OkRuExtractor.kt` (package `com.example`, resto 1:1).
+- `settings.gradle.kts` auto-incluye el módulo (escanea dirs con `build.gradle.kts`) — sin registro manual.
+- `plugins.json`: entrada `OkRu`/`OkruProvider` v1 (`fileSize: 0` pendiente).
+
+### Estado v1
+- Compilación: pendiente por el usuario (`.\gradlew.bat :OkruProvider:make --console=plain -q`) — **no compilado por regla del repo**.
+- ⏸️ **Pendiente**: compilar, actualizar `fileSize`, instalar y probar: (1) home/search/load del catálogo ok.ru; (2) reproducción de una peli (ej. la que el usuario ya verificó en el upstream); (3) un embed ok.ru en Donghualife — buscar `OkRU` en logcat y comprobar que emite junto al nativo.
