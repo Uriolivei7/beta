@@ -452,7 +452,14 @@ class TudoramaProvider : MainAPI() {
             Log.d(TAG, "resolveServerUrl: fetching $downloadUrl")
             val doc = app.get(downloadUrl, referer = mainUrl).document
             val href = doc.selectFirst("a.download-button")?.attr("href")
-            if (href == null) { Log.w(TAG, "resolveServerUrl: no download-button found"); return null }
+            if (href == null) {
+                
+                if (downloadUrl.contains("byse")) {
+                    Log.d(TAG, "resolveServerUrl: sin botón pero es Byse, uso directo")
+                    return downloadUrl
+                }
+                Log.w(TAG, "resolveServerUrl: no download-button found"); return null
+            }
             val sParam = href.substringAfter("?s=", "")
             val result = sParam.substringBefore("&").ifEmpty { null }
             Log.d(TAG, "resolveServerUrl: resolved=$result")

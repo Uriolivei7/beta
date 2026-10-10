@@ -314,6 +314,13 @@ loadLinks -> OK                   <- ¡OK!
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 20000).
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :TudoramaProvider:make --console=plain -q`), instalar y probar Goblin (`adb logcat -s Tudorama:V`): detalle con título + `byse sources=N` en Filemoon + link PixelDrain directo.
 
+### 🔧 Fix Filemoon: resolveServerUrl descartaba la página Byse (10 Oct 2026 v3)
+**Log v2 (usuario)**: título OK en todo (pelis + series + 16 eps Goblin), PixelDrain directo **reproduce** (`PixelDrain directo: ooP8Nmds` → `FIN: true`), pero Filemoon nunca llega al extractor: `resolveServerUrl: no download-button found` → skip.
+**Causa raíz**: `resolveServerUrl` exige `a.download-button` (?s=) en TODAS las URLs de la tabla. Pero `bysesukior.com/d/...` **ES** la página del reproductor (Byse Frontend, verificado), no una landing — no tiene botón y se descartaba antes de llegar a `emitByse`.
+**Fix**: si no hay botón y la URL contiene `byse`, se devuelve la URL tal cual (ya es el embed). EarnVids/StreamHG sin cambios (sus landings sí necesitan resolución; pendiente de diagnosticar si se reporta).
+- Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 buscando `byse sources=N` + links `Filemoon - Byse ...`.
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)
