@@ -357,6 +357,35 @@ class PandramaProvider : MainAPI() {
             false
         }
     }
+    
+    private suspend fun loadExtractorNamed(
+        url: String,
+        referer: String,
+        linkName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+    ): Boolean {
+        val collected = mutableListOf<ExtractorLink>()
+        loadExtractor(url, referer, subtitleCallback) { link ->
+            if (link.url.isBlank()) {
+                Log.w(TAG, "link vacío descartado: ${link.name} ($url)")
+            } else {
+                collected.add(link)
+            }
+        }
+        for (link in collected) {
+            callback.invoke(
+                newExtractorLink(linkName, "$linkName [${link.name.takeIf { it.isNotBlank() } ?: "Video"}]", link.url) {
+                    this.referer = link.referer ?: referer
+                    this.quality = link.quality
+                    this.type = link.type
+                    this.headers = link.headers
+                    this.extractorData = link.extractorData
+                }
+            )
+        }
+        return collected.isNotEmpty()
+    }
 
     private fun fixEmbedHost(url: String): String {
         return url
@@ -575,9 +604,10 @@ class PandramaProvider : MainAPI() {
 
                 try {
                     val langSuffix = when (video.language) {
-                        "es", "es-419", "es-ES", "es-MX" -> " (Latino)"
+                        "es", "es-419", "es-MX" -> " (Latino)"
+                        "es-ES" -> " (Castellano)"
                         "en", "en-US" -> " (ENG)"
-                        "ko" -> " (KO)"
+                        "ko" -> " (Coreano)"
                         "ja" -> " (JP)"
                         "zh" -> " (CN)"
                         else -> if (video.language != null) " (${video.language})" else ""
@@ -611,23 +641,14 @@ class PandramaProvider : MainAPI() {
                                 if (isVk) Log.d(TAG, "[VK] inicio extractor+fallback: ${cleanSrc.take(80)}")
                                 try {
                                     val r = if (isVk) {
-                                        var emitted = false
                                         val r2 = withTimeoutOrNull(30_000L) {
-                                            loadExtractor(cleanSrc, data, subtitleCallback) { link ->
-                                                if (link.url.isBlank()) {
-                                                    Log.w(TAG, "[VK] link vacío descartado: ${link.name}")
-                                                } else {
-                                                    emitted = true
-                                                    callback(link)
-                                                }
-                                            }
-                                            emitted
+                                            loadExtractorNamed(cleanSrc, data, linkName, subtitleCallback, callback)
                                         }
                                         if (r2 == null) Log.w(TAG, "VK loadExtractor colgado (30s), pasando a fallback")
                                         else Log.d(TAG, "[VK] extractor -> $r2 (${System.currentTimeMillis() - t0}ms)")
                                         r2
                                     } else {
-                                        loadExtractor(cleanSrc, data, subtitleCallback, callback)
+                                        loadExtractorNamed(cleanSrc, data, linkName, subtitleCallback, callback)
                                     }
                                     ok = r ?: false
                                 } catch (e: Exception) {
@@ -653,15 +674,15 @@ class PandramaProvider : MainAPI() {
                                         })
                                         found = true
                                     } else {
-                                        found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                        found = loadExtractorNamed(cleanSrc, data, linkName, subtitleCallback, callback) || found
                                     }
                                 } catch (e: Exception) {
-                                    found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                                    found = loadExtractorNamed(cleanSrc, data, linkName, subtitleCallback, callback) || found
                                 }
                             }
                         }
                         else -> {
-                            found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
+                            found = loadExtractorNamed(cleanSrc, data, linkName, subtitleCallback, callback) || found
                         }
                     }
                 } catch (e: Exception) {

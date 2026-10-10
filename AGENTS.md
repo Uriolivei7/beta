@@ -248,6 +248,14 @@ loadLinks -> OK                   <- ¡OK!
 - Versiones a **14** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — esperado `[VK] link vacío descartado` ×N → `VK urls vacías=N` → `loadLinks -> SIN LINKS` (veredicto correcto y visible: video borrado en origen).
 
+### 🏷️ Nombres con idioma estilo web (10 Oct 2026 v15)
+**Log v14 (La Vengadora EP1)**: VK **vivo y reproduciendo** (`extractor -> true`, links reales) + ok.ru ×2 → `loadLinks -> OK`. Pero los links salían con el nombre pelado del extractor (`Vk`, `Okru`) sin idioma.
+**Datos reales del episodio** (HTML): los videos traen `name` de uploader (`Vaca`, `Rosado`, `Okru-ext1`, `Iframe` = etiquetas de server de la web) + `language` (`es-419`, `ko`).
+**Fix**: `loadExtractorNamed()` — envuelve lo emitido por `loadExtractor` como `"$linkName [${link.name}]"` (ej. `Vaca (Latino) [Vk 720p]`), copiando quality/type/referer/headers/extractorData (patrón VerAnime `loadExtractorCollect`); descarta URLs vacías (absorbe el wrapper de v14). Aplicado en las 4 llamadas de `loadLinks` (hasExtractor, fallback genérico ×2, else). Etiquetas: `ko` → `(Coreano)`, `es-ES` → `(Castellano)` (nuevo), resto igual.
+**Hallazgo v14 Goblin (redirect loop)**: el fetch vkvideo.ru falla con `Too many follow-up requests: 21` (VK rebota en loop → login); el fetch vk.com da `200 len=21903` sin patrones; el WebView da `len=65993` sin patrones. Muro confirmado por 3 vías.
+- Versiones a **15** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar La Vengadora EP1 — los links deben salir como `Vaca (Latino) [Vk ...]`, `Okru-ext1 ... [Okru ...]`.
+
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
 - `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.
