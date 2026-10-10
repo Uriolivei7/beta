@@ -187,6 +187,26 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — buscar `VK directo q=` y luego reproducir (los mp4 de VK suelen pedir Referer = página VK, ya puesto).
 
+### 📊 Veredicto v8 en dispositivo + Viki DRM (10 Oct 2026 v9)
+**Log v8 (Goblin EP1/EP2)**: VK consume ~30s (extractor + ambas formas del fallback) y emite 0 — VK también pone muro/bloquea desde el dispositivo. Los `img-webp` y `tokyvideo` ya estaban muertos en origen.
+**Caso nuevo (usuario)**: Twinkling Watermelon EP1 trae `Video type=shaka, src=https://vikiplatform.akamaized.net/...mpd` (×2) + 1 img-webp.
+- MPD descargado y verificado: **`ContentProtection` Widevine (`edef8ba9-...` + pssh) + PlayReady en audio Y video** → cifrado real, imposible sin licencia de Viki. Correcto ignorarlo (sin licencia no hay playback posible).
+- Su img-webp (`...6e289439...`) también da **404**.
+- Conclusión Twinkling: 0 links es lo correcto (2×DRM + 1×muerto).
+**Fix v9 (diagnóstico + perf, no cambia resultados)**:
+1. `allVideos distinctBy { src }` — pandrama duplica sources idénticos (img-webp ×2, shaka ×2); ahorra fetches repetidos.
+2. El fallback de embeds genéricos ahora loguea `embed fetch code=... len=...` (antes fetch silencioso) → el próximo título se diagnostica de una mirada (404 vs página sin m3u8).
+- Versiones a **9** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar un título con fuentes VIVAS (ok.ru/dailymotion/youtube) para confirmar que el plugin emite — Goblin y Twinkling no tienen nada reproducible en origen.
+
+### 🔧 Fallback VK vía WebView (10 Oct 2026 v10, último cartucho)
+**Pregunta del usuario**: "¿entonces Goblin no se puede reproducir?" — con fuentes actuales no (muertos + DRM + muro VK a HTTP plano).
+**Hipótesis restante**: si el muro de VK es por **fingerprint TLS** (OkHttp vs Chromium real), el WebView sí pasaría — mismo mecanismo que resolvió StreamWish en SoloLatino/VerAnime (si el video está borrado, ni el WebView lo revive).
+**Fix**: `renderViaWebView()` + `webViewMutex` + `catch (t: Throwable)` portados (patrón SoloLatino; `PandramaPlugin.load` guarda `pluginContext`); `tryVkDirect()` ahora termina con WebView (15s, sin readyJs — dumpea tras `onPageFinished`, la página VK mete datos en JS impredecible) + `parseVkPage()` sobre el HTML renderizado. Incluye lo de v9 (nunca compilada: `distinctBy { src }` + `embed fetch code/len`).
+- Versiones a **10** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — buscar `[VK] WebView fallback` → `[VK] WebView OK` (video vivo tras el muro → links) o `VK sin patrones url` final (video muerto → respuesta definitiva, ver Goblin en Netflix/Viki oficial).
+- **Nota checker**: `bal_check.py` daba falso MISMATCH en regexes `""""` (raw string que empieza/termina en comilla, ej. `""""url...`). Fix: si tras el `"""` candidato hay otra `"`, es la comilla-de-contenido → saltar 4 (`j+4`), no 3. Validado contra `Extractors.kt` (compilado seguro) → 0/0/0.
+
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
 - `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.

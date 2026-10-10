@@ -7,6 +7,7 @@ import android.content.Context
 @CloudstreamPlugin
 class PandramaPlugin: Plugin() {
     override fun load(context: Context) {
+        PandramaProvider.pluginContext = context
         registerMainAPI(PandramaProvider())
     }
 }

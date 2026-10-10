@@ -1,6 +1,20 @@
 package com.example
 
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -15,6 +29,8 @@ class PandramaProvider : MainAPI() {
     companion object {
         private const val BASE_URL = "https://www.pandrama.tv"
         private const val TAG = "PandramaProvider"
+        var pluginContext: Context? = null
+        private const val VK_DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
     }
 
     override var mainUrl = BASE_URL
@@ -340,6 +356,68 @@ class PandramaProvider : MainAPI() {
             .replaceFirst("http://vk.com", "https://vkvideo.ru")
     }
     
+    private val webViewMutex = Mutex()
+
+    private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 15000L): String? {
+        webViewMutex.withLock {
+            return withContext(Dispatchers.Main) {
+            val appCtx = pluginContext?.applicationContext ?: run {
+                Log.w(TAG, "[WebView] sin context")
+                return@withContext null
+            }
+            var webView: WebView? = null
+            val mainHandler = Handler(Looper.getMainLooper())
+            try {
+                webView = WebView(appCtx)
+                webView.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    mediaPlaybackRequiresUserGesture = false
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    cacheMode = WebSettings.LOAD_NO_CACHE
+                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+                }
+                val deferred = CompletableDeferred<String?>()
+                webView.addJavascriptInterface(object {
+                    @JavascriptInterface
+                    fun onHtml(html: String) {
+                        if (!deferred.isCompleted) deferred.complete(html)
+                    }
+                }, "NativeBridge")
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        mainHandler.postDelayed({
+                            if (!deferred.isCompleted) {
+                                try {
+                                    view?.evaluateJavascript(VK_DUMP_JS, null)
+                                } catch (_: Exception) {
+                                    deferred.complete(null)
+                                }
+                            }
+                        }, waitMs)
+                    }
+
+                    override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                        if (!deferred.isCompleted) deferred.complete(null)
+                    }
+                }
+                if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+                else webView.loadUrl(pageUrl)
+                Log.d(TAG, "[WebView] renderizando ${pageUrl.take(100)}")
+                withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                Log.w(TAG, "[WebView] error grave: ${t::class.simpleName}: ${t.message}")
+                null
+            } finally {
+                try { mainHandler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
+                try { webView?.destroy() } catch (_: Exception) {}
+            }
+            }
+        }
+    }
+
     private suspend fun tryVkDirect(
         pageUrl: String,
         linkName: String,
@@ -364,6 +442,19 @@ class PandramaProvider : MainAPI() {
                 Log.w(TAG, "VK sin patrones ($u len=${body.length})")
             } catch (e: Exception) {
                 Log.w(TAG, "VK directo falló ($u): ${e.message}")
+            }
+        }
+        if (!emitted) {
+            Log.d(TAG, "[VK] WebView fallback: $pageUrl")
+            try {
+                val rendered = renderViaWebView(pageUrl, pageUrl)
+                if (rendered != null && parseVkPage(rendered, pageUrl, linkName, callback)) {
+                    emitted = true
+                    Log.d(TAG, "[VK] WebView OK")
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "[VK] WebView falló: ${e.message}")
             }
         }
         if (!emitted) Log.w(TAG, "VK sin patrones url: ${pageUrl.take(80)}")
@@ -445,7 +536,7 @@ class PandramaProvider : MainAPI() {
 
             val mainVideo = episodePage.currentVideo
             val altVideos = episodePage.alternativeVideos ?: emptyList()
-            val allVideos = if (mainVideo != null) listOf(mainVideo) + altVideos else altVideos
+            val allVideos = (if (mainVideo != null) listOf(mainVideo) + altVideos else altVideos).distinctBy { it.src }
 
             if (allVideos.isEmpty()) return false
 
@@ -497,7 +588,9 @@ class PandramaProvider : MainAPI() {
                                 found = ok || found
                             } else {
                                 try {
-                                    val embedHtml = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")).text
+                                    val embedResp = app.get(cleanSrc, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"), timeout = 20L)
+                                    Log.d(TAG, "embed fetch code=${embedResp.code} len=${embedResp.text.length} src=${cleanSrc.take(80)}")
+                                    val embedHtml = embedResp.text
                                     val videoUrlRegex = Regex("""https?://[^"'\s<>]+\.(?:m3u8|mp4|mpd)[^"'\s<>]*""")
                                     val match = videoUrlRegex.find(embedHtml)
                                     if (match != null) {
