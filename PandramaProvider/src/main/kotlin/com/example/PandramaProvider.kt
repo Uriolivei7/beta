@@ -436,17 +436,21 @@ class PandramaProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val candidates = listOf(pageUrl, pageUrl.replace("vkvideo.ru", "vk.com")).distinct()
+        Log.d(TAG, "[VK] directo inicio (${candidates.size} formas)")
         var emitted = false
-        for (u in candidates) {
+        for ((idx, u) in candidates.withIndex()) {
             try {
-                val body = app.get(
+                Log.d(TAG, "[VK] fetch directo (${idx + 1}/${candidates.size}): $u")
+                val resp = app.get(
                     u,
                     headers = mapOf(
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0",
                         "Referer" to u,
                     ),
                     timeout = 15L,
-                ).text
+                )
+                Log.d(TAG, "[VK] fetch code=${resp.code} len=${resp.text.length}")
+                val body = resp.text
                 if (parseVkPage(body, u, linkName, callback)) {
                     emitted = true
                     break
@@ -460,6 +464,7 @@ class PandramaProvider : MainAPI() {
             Log.d(TAG, "[VK] WebView fallback: $pageUrl")
             try {
                 val rendered = renderViaWebView(pageUrl, pageUrl)
+                Log.d(TAG, "[VK] WebView HTML len=${rendered?.length ?: -1}")
                 if (rendered != null && parseVkPage(rendered, pageUrl, linkName, callback)) {
                     emitted = true
                     Log.d(TAG, "[VK] WebView OK")
@@ -598,13 +603,16 @@ class PandramaProvider : MainAPI() {
                             val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("vkvideo.ru") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
                             if (hasExtractor) {
                                 var ok = false
-
+                                val isVk = cleanSrc.contains("vkvideo.ru")
+                                val t0 = System.currentTimeMillis()
+                                if (isVk) Log.d(TAG, "[VK] inicio extractor+fallback: ${cleanSrc.take(80)}")
                                 try {
-                                    val r = if (cleanSrc.contains("vkvideo.ru")) {
+                                    val r = if (isVk) {
                                         withTimeoutOrNull(30_000L) {
                                             loadExtractor(cleanSrc, data, subtitleCallback, callback)
                                         }.also {
                                             if (it == null) Log.w(TAG, "VK loadExtractor colgado (30s), pasando a fallback")
+                                            else Log.d(TAG, "[VK] extractor -> $it (${System.currentTimeMillis() - t0}ms)")
                                         }
                                     } else {
                                         loadExtractor(cleanSrc, data, subtitleCallback, callback)
@@ -614,9 +622,10 @@ class PandramaProvider : MainAPI() {
                                     if (e is CancellationException) throw e
                                     Log.w(TAG, "VK loadExtractor error: ${e.message}")
                                 }
-                                if (!ok && cleanSrc.contains("vkvideo.ru")) {
+                                if (!ok && isVk) {
                                     ok = tryVkDirect(cleanSrc, linkName, callback)
                                 }
+                                if (isVk) Log.d(TAG, "[VK] fin video: ok=$ok total=${System.currentTimeMillis() - t0}ms")
                                 found = ok || found
                             } else {
                                 try {
@@ -648,6 +657,7 @@ class PandramaProvider : MainAPI() {
                 }
             }
 
+            Log.d(TAG, "loadLinks $data -> ${if (found) "OK" else "SIN LINKS"}")
             found
         } catch (e: Exception) {
             Log.d(TAG, "loadLinks error: ${e.message}")

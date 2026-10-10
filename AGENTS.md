@@ -221,6 +221,18 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 **Fix**: `withTimeoutOrNull(30_000L)` SOLO alrededor del `loadExtractor` de VK (ok.ru/youtube intactos); al expirar loguea `VK loadExtractor colgado (30s), pasando a fallback` y corre `tryVkDirect` igual. `CancellationException` externa se re-lanza (no rompe el kill de 120s de CS3). Precedente: `loadExtractorCollect` con `withTimeout(25s)` en Veranime/Seriesdonghua.
 - Versiones a **12** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente; v11 incluye el skip MPD-DRM, compilar una vez trae todo).
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — esperado `VK loadExtractor colgado (30s)` → `VK sin patrones (https://vkvideo.ru... len=...)` → `[VK] WebView fallback` → veredicto final.
+- **Nota timing v12 (log 10:37)**: el paste del usuario termina en el `src=` de VK sin líneas posteriores — copiado antes de tiempo o recorte. La secuencia VK completa tarda hasta ~90s en el peor caso (30 cap + 15 + 15 directos + ~30 WebView). **Instrucción: entrar al episodio, NO tocar nada ~2 min, filtrar logcat por `VK` y pegar TODO.**
+- **Builds frescos VERIFICADO (10 Oct 2026)**: no hay workflow en este repo (sin `.github/workflows`), pero la rama `builds` se actualiza sola ("Build: Actualizacion automatica..."). Tras `git fetch`: `PandramaProvider.cs3` reconstruido **10:32 Lima** (5 min después del push `d4b8cc0a` con todo v6-v12), 56719 bytes. El `.cs3` instalado por el usuario (10:51, version=12 + líneas `embed fetch`) **SÍ trae todo el código v12** — teoría de build-stale DESCARTADA. Si faltan líneas VK en un paste con mensaje rápido, es filtro/recorte del usuario o cancelación, no el build. Protocolo de captura: papelera → SIN filtros de texto → tocar EP1 una vez → anotar hora inicio/fin del mensaje → pegar TODO el intervalo.
+
+### 🛡️ Blindaje de logs VK + resumen loadLinks (10 Oct 2026 v13)
+**Pedido del usuario**: logs más directos para ver qué pasa y por qué sigue el "enlaces no encontrados".
+**Cambios** (solo logging, cero cambio de comportamiento):
+- Rama VK: `[VK] inicio extractor+fallback` (inmediata, prueba que la rama se ejecuta) + `[VK] extractor -> true/false (Xms)` + `[VK] fin video: ok=... total=...ms`.
+- `tryVkDirect`: `[VK] directo inicio` + `[VK] fetch directo (1/2)` + `[VK] fetch code/len` por forma.
+- WebView: `[VK] WebView HTML len=...` (distingue muro vacío de página con contenido).
+- `loadLinks`: resumen final `loadLinks <data> -> OK/SIN LINKS` (antes no existía — ahora el veredicto queda en log).
+- Versiones a **13** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 **una vez, sin tocar nada ~2 min**, con logcat SIN filtros de texto — el log ahora cuenta la historia completa solo.
 
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
