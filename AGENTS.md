@@ -329,6 +329,14 @@ loadLinks -> OK                   <- ¡OK!
 - Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 20000).
 - ⏸️ **Pendiente**: compilar, instalar y (1) probar la peli Hear Me buscando en `fetchStreamServers` JSON válido en vez de 404; (2) comprobar `[Latino]`/`[Subtitulado]` en los nombres de link.
 
+### 🔧 Fix ?s= encoded + AJAX array directo (10 Oct 2026 v5)
+**Log v4 (usuario)** — dos causas raíz nuevas, ambas verificadas en el propio log:
+1. **`?s=` URL-encoded**: `resolveServerUrl: resolved=https%3A%2F%2Fmorencius.com%2F...` (sin decodificar) → todo lo de abajo muere (`host=null`, `Expected URL scheme ... no scheme was found`). Afectaba a TODOS los `cdn.tudorama.com/download-*.php` (earnvids/streamhg/filemoon EspLat+SubEsp). **Fix**: `URLDecoder.decode(..., "UTF-8")` con fallback al crudo (`runCatching`, regla fail-open).
+2. **AJAX devuelve array directo**: con la URL ya corregida, el POST trae `[{url,name,lang,type,server}]` (NO el `["{...}"]` doblemente envuelto que esperaba el código) → `outer parse failed ... START_OBJECT` → 0 links en pelis (y en series cuando la tabla falla). **Fix**: `StreamServerItem` + parse directo primero, legacy después. El `lang` por server (`en`→`Subtitulado`, `es`→`Latino`, resto→idioma de página) se hornea en el nombre (`[Subtitulado] sub:abyss`); el re-wrap final no duplica si ya empieza con `[`.
+- Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar (1) Hear Me (debe resolver iframes y emitir); (2) My Royal Nemesis T1E1 (los 6 `download-*.php` deben decodificar y fluir a VidStack/Byse/manual).
+- ⚠️ **Nota edición**: el `edit` reportó un falso "not found" en el re-wrap pero el contenido SÍ quedó aplicado (verificado por `git diff`); el call-site de `fetchStreamServers` (param `langTag`) sí requirió re-aplicación — sin él no compilaba (6 params vs 5 args). Verificar siempre con `git diff`, no con el mensaje de la herramienta.
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)

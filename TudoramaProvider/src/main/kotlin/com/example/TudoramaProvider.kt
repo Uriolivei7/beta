@@ -13,6 +13,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CancellationException
 import org.jsoup.nodes.Element
+import java.net.URLDecoder
 
 class TudoramaProvider : MainAPI() {
     override var mainUrl = "https://tudorama.com"
@@ -61,6 +62,16 @@ class TudoramaProvider : MainAPI() {
     data class ServersResponse(
         @JsonProperty("success") val success: Boolean = false,
         @JsonProperty("data") val data: List<ServerResult>? = null
+    )
+
+    // Forma actual del AJAX (pelis y series): array directo de objetos
+    // [{url,name,lang,type,server}], lang=en (Subtitulado) / es (Latino).
+    data class StreamServerItem(
+        @JsonProperty("url") val url: String = "",
+        @JsonProperty("name") val name: String = "",
+        @JsonProperty("lang") val lang: String? = null,
+        @JsonProperty("type") val type: String? = null,
+        @JsonProperty("server") val server: String? = null,
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -231,7 +242,7 @@ class TudoramaProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "=== loadLinks: data=${data.take(80)} ===")
         val doc = app.get(data).document
-        
+
         val langTag = detectContentLanguage(doc)
         if (langTag.isNotEmpty()) Log.d(TAG, "loadLinks: idioma detectado=$langTag")
         val foundLinks = mutableListOf<Pair<String, ExtractorLink>>()
@@ -277,7 +288,7 @@ class TudoramaProvider : MainAPI() {
 
         if (foundLinks.isEmpty() && nonce.isNotBlank() && postId.isNotBlank()) {
             Log.d(TAG, "loadLinks: trying AJAX stream servers (nonce=$nonce postId=$postId)")
-            fetchStreamServers(ajaxUrl, nonce, postId, subtitleCallback) { name, link ->
+            fetchStreamServers(ajaxUrl, nonce, postId, langTag, subtitleCallback) { name, link ->
                 foundLinks.add(name to link)
             }
         }
@@ -285,7 +296,9 @@ class TudoramaProvider : MainAPI() {
         Log.d(TAG, "loadLinks: ${foundLinks.size} total links extra\u00eddos")
         val langPrefix = if (langTag.isNotEmpty()) "[$langTag] " else ""
         foundLinks.forEach { (serverName, link) ->
-            callback(newExtractorLink(link.source, "$langPrefix$serverName - ${link.name}", link.url) {
+
+            val displayName = if (serverName.startsWith("[")) "$serverName - ${link.name}" else "$langPrefix$serverName - ${link.name}"
+            callback(newExtractorLink(link.source, displayName, link.url) {
                 this.referer = link.referer
                 this.quality = link.quality
                 this.headers = link.headers + mapOf(
@@ -477,10 +490,12 @@ class TudoramaProvider : MainAPI() {
                 }
                 Log.w(TAG, "resolveServerUrl: no download-button found"); return null
             }
-            val sParam = href.substringAfter("?s=", "")
-            val result = sParam.substringBefore("&").ifEmpty { null }
+
+            val rawParam = href.substringAfter("?s=", "").substringBefore("&")
+            if (rawParam.isEmpty()) { Log.w(TAG, "resolveServerUrl: sin parámetro ?s="); return null }
+            val result = runCatching { URLDecoder.decode(rawParam, "UTF-8") }.getOrNull()?.takeIf { !it.isNullOrEmpty() } ?: rawParam
             Log.d(TAG, "resolveServerUrl: resolved=$result")
-            result
+            return result
         } catch (e: Exception) {
             Log.e(TAG, "resolveServerUrl error: ${e.message}")
             null
@@ -491,6 +506,7 @@ class TudoramaProvider : MainAPI() {
         ajaxUrl: String,
         nonce: String,
         postId: String,
+        pageLang: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (name: String, link: ExtractorLink) -> Unit
     ) {
@@ -507,6 +523,30 @@ class TudoramaProvider : MainAPI() {
 
             val raw = resp.text
             Log.d(TAG, "fetchStreamServers: raw=${raw.take(200)}")
+
+            val direct = try {
+                mapper.readValue<List<StreamServerItem>>(raw)
+            } catch (_: Exception) { null }
+            if (direct != null) {
+                for (server in direct) {
+                    if (server.url.isBlank()) continue
+                    val sl = when (server.lang?.lowercase()) {
+                        "en" -> "Subtitulado"
+                        "es" -> "Latino"
+                        else -> pageLang
+                    }
+                    val baseName = server.name.ifEmpty { server.server ?: "Server" }
+                    val sName = if (sl.isNotEmpty()) "[$sl] $baseName" else baseName
+                    Log.d(TAG, "fetchStreamServers: server=$sName url=${server.url.take(80)}")
+                    val iframeUrl = resolveStreamUrl(server.url) ?: continue
+                    Log.d(TAG, "fetchStreamServers: iframe=$iframeUrl")
+                    extractFromEmbed(iframeUrl, sName, subtitleCallback) { link ->
+                        callback(sName, link)
+                    }
+                }
+                return
+            }
+            
             val outer = try {
                 mapper.readValue<List<String>>(raw)
             } catch (e: Exception) {
