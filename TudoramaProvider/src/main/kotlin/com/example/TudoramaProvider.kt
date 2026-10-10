@@ -376,7 +376,7 @@ class TudoramaProvider : MainAPI() {
         }
     }
 
-    
+
     private fun unpackPackedJS(html: String): String? {
         val evalHeaderRegex = Regex("""eval\(function\(p,a,c,k,e,d\)\{.+?\}\('""", RegexOption.DOT_MATCHES_ALL)
         val evalHeader = evalHeaderRegex.find(html) ?: return null
@@ -501,7 +501,7 @@ class TudoramaProvider : MainAPI() {
             if (emitByse(embedUrl, serverName, subtitleCallback, callback)) return
         }
 
-        if (eHost.contains("morencius") || eHost.contains("vidhidepro")) {
+        if (eHost.contains("morencius") || eHost.contains("vidhidepro") || eHost.contains("minochinos")) {
             val code = embedUrl.trimEnd('/').substringAfterLast("/").substringBefore("?").substringBefore("#")
             if (code.isNotEmpty()) {
                 val scheme = embedUrl.substringBefore("://")

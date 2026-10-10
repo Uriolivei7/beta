@@ -347,6 +347,13 @@ loadLinks -> OK                   <- ¡OK!
 - ⏸️ **Pendiente**: compilar, instalar y probar (1) Hear Me (los 4 `stream/*.php` deben dar `iframe por JS` + emitir); (2) My Royal Nemesis — EarnVids debe dar `[VH-Pro] emit hlsX` (hgcloud sigue en 522, nada que hacer ahí).
 - ⚠️ **Nota edición (otra)**: el `edit` falló un anclaje por una línea en blanco intermedia no vista — releer la región antes de reintentar.
 
+### 🔧 EarnVids emite + minochinos es vidhide (10 Oct 2026 v7)
+**Log v6 (usuario)** — EarnVids por VidHidePro **FUNCIONA** (`/embed/` → unpack → probe hls2/hls3/hls4 en 200 → 3 variantes ×2 servidores). Byse ×2 OK. hgcloud sigue en **522** (caído). Película: parsea `[Subtitulado] sub:*` ×4 + `iframe por JS` OK en los 4, filemoon-Byse emite (FIN: true), pero **earnvids NO** (su iframe va a `minochinos.com/embed/...`, no a morencius).
+**Hallazgo**: `minochinos.com/embed/{code}` trae player "Embed" con assets `/vidhide/` + meta `PELI ... SubEsp [TuDorama com]` → **otro clon vidhide** (el `tryMinochinosApi` da 404 porque esa API no existe; el `TudoramaMinochinos : VidStack()` tampoco sirve).
+**Fix**: hook VH += host `minochinos` (misma construcción `/embed/{code}`, que aquí ya viene así). Si no hay packer, falla graceful al path normal.
+- Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Hear Me buscando `[VH-Pro] emit hlsX` en `sub:earnvids` (abyssplayer.com queda fuera: host desconocido sin extractor).
+
 ---
 
 ## TokianimeProvider — Estado (24 Jul 2026)
