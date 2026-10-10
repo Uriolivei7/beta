@@ -234,6 +234,20 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - Versiones a **13** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 **una vez, sin tocar nada ~2 min**, con logcat SIN filtros de texto — el log ahora cuenta la historia completa solo.
 
+### 🎯 Causa raíz: links VK con URL vacía (10 Oct 2026 v14)
+**Log v13 (el blindaje funcionó a la primera)**:
+```
+[VK] inicio extractor+fallback
+[VK] extractor -> true (2465ms)   <- rápido y "true"
+[VK] fin video: ok=true
+loadLinks -> OK                   <- ¡OK!
+```
+…pero igual "enlaces no encontrados".
+**Causa raíz**: el regex de `VkExtractor` (`"url([0-9]+)":"([^"]*)"`) acepta `""` — VK sirve la página SIN urls (video borrado) y el extractor emite links con **URL vacía** igual. Nuestro `ok=true`, CS3 descarta los vacíos → 0 válidos → mensaje. Falso positivo de `loadExtractor`.
+**Fix**: wrapper del callback en la rama VK que descarta `link.url.isBlank()` (`[VK] link vacío descartado: <name>`) y `ok` se calcula de lo EMITIDO-válido (no del return del extractor). En `parseVkPage`: contador `empty` + log `VK urls vacías=N (video borrado en origen?)` cuando hay matches vacíos pero nada útil.
+- Versiones a **14** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — esperado `[VK] link vacío descartado` ×N → `VK urls vacías=N` → `loadLinks -> SIN LINKS` (veredicto correcto y visible: video borrado en origen).
+
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
 - `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.

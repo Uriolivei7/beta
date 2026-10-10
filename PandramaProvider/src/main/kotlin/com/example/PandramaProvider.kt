@@ -500,8 +500,10 @@ class PandramaProvider : MainAPI() {
             )
         }
         var n = 0
+        var empty = 0
         for (m in Regex(""""url([0-9]+)":"([^"]*)"""", RegexOption.IGNORE_CASE).findAll(body)) {
-            val f = clean(m.groupValues[2]) ?: continue
+            val f = clean(m.groupValues[2])
+            if (f == null) { empty++; continue }
             emit(f, m.groupValues[1].toIntOrNull() ?: 0)
             n++
         }
@@ -534,6 +536,7 @@ class PandramaProvider : MainAPI() {
                 n++
             }
         }
+        if (n == 0 && empty > 0) Log.w(TAG, "VK urls vacías=$empty (video borrado en origen?): $pageUrl")
         return n > 0
     }
 
@@ -608,12 +611,21 @@ class PandramaProvider : MainAPI() {
                                 if (isVk) Log.d(TAG, "[VK] inicio extractor+fallback: ${cleanSrc.take(80)}")
                                 try {
                                     val r = if (isVk) {
-                                        withTimeoutOrNull(30_000L) {
-                                            loadExtractor(cleanSrc, data, subtitleCallback, callback)
-                                        }.also {
-                                            if (it == null) Log.w(TAG, "VK loadExtractor colgado (30s), pasando a fallback")
-                                            else Log.d(TAG, "[VK] extractor -> $it (${System.currentTimeMillis() - t0}ms)")
+                                        var emitted = false
+                                        val r2 = withTimeoutOrNull(30_000L) {
+                                            loadExtractor(cleanSrc, data, subtitleCallback) { link ->
+                                                if (link.url.isBlank()) {
+                                                    Log.w(TAG, "[VK] link vacío descartado: ${link.name}")
+                                                } else {
+                                                    emitted = true
+                                                    callback(link)
+                                                }
+                                            }
+                                            emitted
                                         }
+                                        if (r2 == null) Log.w(TAG, "VK loadExtractor colgado (30s), pasando a fallback")
+                                        else Log.d(TAG, "[VK] extractor -> $r2 (${System.currentTimeMillis() - t0}ms)")
+                                        r2
                                     } else {
                                         loadExtractor(cleanSrc, data, subtitleCallback, callback)
                                     }
