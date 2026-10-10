@@ -346,6 +346,18 @@ class PandramaProvider : MainAPI() {
         return null
     }
 
+    private suspend fun isDrmProtected(mpdUrl: String): Boolean {
+        return try {
+            app.get(
+                mpdUrl,
+                headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"),
+                timeout = 15L,
+            ).text.contains("ContentProtection", ignoreCase = true)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun fixEmbedHost(url: String): String {
         return url
             .replaceFirst("https://www.vk.com", "https://vkvideo.ru")
@@ -355,7 +367,7 @@ class PandramaProvider : MainAPI() {
             .replaceFirst("https://vk.com", "https://vkvideo.ru")
             .replaceFirst("http://vk.com", "https://vkvideo.ru")
     }
-    
+
     private val webViewMutex = Mutex()
 
     private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 15000L): String? {
@@ -566,22 +578,42 @@ class PandramaProvider : MainAPI() {
                     val isDirectPlay = cleanSrc.endsWith(".m3u8") || cleanSrc.endsWith(".mpd")
                     when {
                         isDirectPlay -> {
-                            callback.invoke(
-                                newExtractorLink(
-                                    linkName,
-                                    linkName,
-                                    cleanSrc
-                                ) {
-                                    this.referer = "$mainUrl/"
-                                    this.quality = getQualityFromName(video.quality ?: "720p")
-                                }
-                            )
-                            found = true
+                            if (cleanSrc.endsWith(".mpd") && isDrmProtected(cleanSrc)) {
+                                Log.w(TAG, "MPD con DRM (sin licencia no reproduce), omitido: ${cleanSrc.take(80)}")
+                            } else {
+                                callback.invoke(
+                                    newExtractorLink(
+                                        linkName,
+                                        linkName,
+                                        cleanSrc
+                                    ) {
+                                        this.referer = "$mainUrl/"
+                                        this.quality = getQualityFromName(video.quality ?: "720p")
+                                    }
+                                )
+                                found = true
+                            }
                         }
                         video.type == "embed" || video.type == "url" -> {
                             val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("vkvideo.ru") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
                             if (hasExtractor) {
-                                var ok = loadExtractor(cleanSrc, data, subtitleCallback, callback)
+                                var ok = false
+                                
+                                try {
+                                    val r = if (cleanSrc.contains("vkvideo.ru")) {
+                                        withTimeoutOrNull(30_000L) {
+                                            loadExtractor(cleanSrc, data, subtitleCallback, callback)
+                                        }.also {
+                                            if (it == null) Log.w(TAG, "VK loadExtractor colgado (30s), pasando a fallback")
+                                        }
+                                    } else {
+                                        loadExtractor(cleanSrc, data, subtitleCallback, callback)
+                                    }
+                                    ok = r ?: false
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    Log.w(TAG, "VK loadExtractor error: ${e.message}")
+                                }
                                 if (!ok && cleanSrc.contains("vkvideo.ru")) {
                                     ok = tryVkDirect(cleanSrc, linkName, callback)
                                 }

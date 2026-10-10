@@ -207,6 +207,21 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — buscar `[VK] WebView fallback` → `[VK] WebView OK` (video vivo tras el muro → links) o `VK sin patrones url` final (video muerto → respuesta definitiva, ver Goblin en Netflix/Viki oficial).
 - **Nota checker**: `bal_check.py` daba falso MISMATCH en regexes `""""` (raw string que empieza/termina en comilla, ej. `""""url...`). Fix: si tras el `"""` candidato hay otra `"`, es la comilla-de-contenido → saltar 4 (`j+4`), no 3. Validado contra `Extractors.kt` (compilado seguro) → 0/0/0.
 
+### 🚫 Fix enlace fantasma MPD-DRM (10 Oct 2026 v11)
+**Síntoma (usuario, log v10)**: Twinkling EP1 muestra UN enlace que "parece imágenes, no se mueve y no hay audio".
+**Causa raíz**: la rama `isDirectPlay` emitía TODO `.mpd` sin verificar. El MPD de Viki lleva un AdaptationSet de **thumbnails (image/jpeg, SIN cifrar)** + audio/video cifrados. ExoPlayer reproduce el track libre (fotos fijas) y falla lo cifrado → imagen congelada sin audio. Era un falso positivo de link.
+**Fix**: `isDrmProtected(url)` — si el `.mpd` contiene `ContentProtection`, se omite (`MPD con DRM..., omitido`); si el probe falla por red, se emite igual (fail-open, comportamiento anterior). `.m3u8` sin cambios.
+- Versiones a **11** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y verificar que Twinkling EP1 ya NO muestra el enlace fantasma (debe dar "enlaces no encontrados", que es lo correcto: DRM + img-webp 404).
+- ⏸️ **Goblin VK aún sin diagnóstico completo**: el log v10 no trae las líneas `VK sin patrones` / `[VK] WebView fallback` (posible recorte del paste; además EP1 y EP2 corren en hilos paralelos y el VK de EP1 pudo loguear fuera de la ventana pegada). Pedido al usuario: pegar TODAS las líneas con "VK" sin recortar para ver si el WebView corrió y qué devolvió cada forma.
+
+### 🐛 Fix VK colgado: timeout al extractor (10 Oct 2026 v12)
+**Reporte del usuario (v10)**: en VK no sale NI UNA línea de diagnóstico (ni `sin patrones`, ni `WebView fallback`) — solo el `src=` y luego "enlaces no encontrados".
+**Causa raíz**: el build v10 SÍ trae el fallback (las líneas `embed fetch code=` de v9 lo prueban, mismo build). Si no sale ni una línea VK, el código posterior nunca corre → `loadExtractor` **se cuelga**: VK no rechaza la conexión, la agujerea (IP bloqueada), y los 2 GETs del `VkExtractor` esperan hasta el timeout por defecto. Todo lo de detrás (directos + WebView) jamás ejecuta.
+**Fix**: `withTimeoutOrNull(30_000L)` SOLO alrededor del `loadExtractor` de VK (ok.ru/youtube intactos); al expirar loguea `VK loadExtractor colgado (30s), pasando a fallback` y corre `tryVkDirect` igual. `CancellationException` externa se re-lanza (no rompe el kill de 120s de CS3). Precedente: `loadExtractorCollect` con `withTimeout(25s)` en Veranime/Seriesdonghua.
+- Versiones a **12** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente; v11 incluye el skip MPD-DRM, compilar una vez trae todo).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — esperado `VK loadExtractor colgado (30s)` → `VK sin patrones (https://vkvideo.ru... len=...)` → `[VK] WebView fallback` → veredicto final.
+
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
 - `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.
