@@ -701,7 +701,6 @@ class VeranimeProvider : MainAPI() {
         }
     }
 
-    
     private val freshHttpClient by lazy {
         okhttp3.OkHttpClient.Builder()
             .cookieJar(okhttp3.CookieJar.NO_COOKIES)

@@ -162,6 +162,17 @@ val mobileResp = app.get("$mainUrl/mobile/hls/$id.m3u8?q=720p&in=$inParam&hd=on&
 - **Subtítulos**: `current_video.captions[]` con url, name, language
 - **No usa API** (`/api/*` retorna 401) — todo se obtiene del JSON embedido en HTML
 
+### 🐛 Fix VK + desync de versiones (10 Oct 2026 v6)
+**Síntoma (usuario)**: "enlaces no encontrados" en Goblin T1E1 (`/titulo/1/goblin-el-solitario-ser-inmortal/temporada/1/episodio/1`). El log mostraba 4 sources y 0 links: `e.img-webp.com/video/...` (×2), `tokyvideo.com/es/embed/375753`, `vk.com/video_ext.php?oid=779636710&id=456239102&hd=2`.
+**Investigación (PC + bytecode)**:
+- `e.img-webp.com/video/...` → **404 real**. Mirror muerto, correcto ignorarlo.
+- `tokyvideo.com/es/embed/375753` → página de "El video solicitado no existe o ha sido borrado" (`global_tokyvideo_video_not_found = 1`). Mirror muerto, correcto ignorarlo (no existe extractor Tokyvideo en CS3 de todos modos).
+- `vk.com/video_ext.php?...` → **host mismatch**: `VkExtractor.mainUrl = "https://vkvideo.ru"` (verificado por bytecode) y `loadExtractor` matchea por `strippedUrl.startsWith(strippedMainUrl)` → `vk.com/...` NUNCA matchea → 0 links garantizados aunque el video esté vivo. (El fetch directo a `vkvideo.ru/video_ext.php` da timeout desde PC — VK bloquea datacenters; el extractor usa headers de Firefox y lo maneja en el dispositivo.)
+**Fix**: `fixEmbedHost()` (patrón VerAnime) mapea `vk.com`/`m.vk.com`/`www.vk.com` (http/https) → `vkvideo.ru`, aplicado al construir `cleanSrc`; check `hasExtractor` += `vkvideo.ru`.
+**Desync encontrado**: `build.gradle.kts` iba en 5 pero `plugins.json` seguía en **1** (igual que el desync SoloLatino/SeriesKao) → el usuario tenía v1 instalada y nunca recibió v2-v5. Ambos a **6**.
+- Compilación: pendiente por el usuario (`.\gradlew.bat :PandramaProvider:make --console=plain -q`) — **no compilado por regla del repo**. `plugins.json`: version 6, `fileSize` **pendiente** (sigue 65000).
+- ⏸️ **Pendiente**: compilar, instalar y probar Goblin T1E1 — si el video VK está vivo sale link vía `VkExtractor`; si también está borrado, el "enlaces no encontrados" es correcto (3 de 4 mirrors muertos en origen).
+
 ## GloboViewProvider — Estado (19 Jul 2026)
 ### ✅ Implementado
 - `getMainPage`: 16 países (España, México, Argentina, Colombia, EEUU, Venezuela, Perú, Chile, Ecuador, Rep. Dominicana, Puerto Rico, Brasil, Alemania, Reino Unido, Francia, Italia) en vez de 8 categorías que timeouteaban. Las páginas de país cargan más rápido (~8-15s) y tienen todos los canales disponibles.
@@ -1591,7 +1602,9 @@ Episodio `/ver/{slug}-episodio-{n}/` → `li.dooplay_player_option` (`data-post`
 
 ### Estado v8
 - `build.gradle.kts`: `version = 8`; `plugins.json`: version 8, `fileSize` **pendiente** (sigue 0).
-- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :VeranimeProvider:make --console=plain -q`), instalar y probar Maou Gakuin EP5 **con la app con datos** (sin borrar nada) — esperado `[SW] fresh fetch len=` → `[SW] fresh OK` → link `MULTISERVER Latino [streamwish] [SW]` (si sale `[SW-Web]` en vez de `[SW]`, el fetch limpio no bastó y resolvió el WebView — avisar). Logs: `adb logcat -s VerAnime:V`.
+- ✅ **VERIFICADO v8 en físico (09 Oct 2026, 23:48, Maou Gakuin EP5, app con datos)**: `[SW] fresh fetch len=819` (challenge TAMBIÉN sin cookies → en este dispositivo el challenge es por fingerprint, no solo por cookies rancias) → `[SW] WebView fallback` → `[WebView] listo antes de tiempo` → `[SW] M3U8 (eval): https://2goita23a7njj.premilkyway.com/hls2/...` → `[SW] WebView OK: 1 urls` → `loadLinks -> OK 13615ms`. **Link `[SW-Web]` confirmado por el usuario en la lista.**
+- ⏸️ **Pendiente**: reproducir el link `[SW-Web]` y confirmar segmentos `[intercept] SW CDN response: 200` (rama premilkyway del interceptor, nueva en v8, aún sin probar en playback).
+- ✅ **VERIFICADO playback (09 Oct 2026, 23:53-23:54, mismo EP5)**: master `200 application/vnd.apple.mpegurl`, variantes f1/f3 en 200, segmentos seg-15..seg-24 `200 video/MP2T` — todo por la rama `premilkyway` del interceptor. StreamWish Latino reproduce completo en app con datos.
 
 ### 🔧 Fix compilación: `takeIf { it.isNotEmpty() }` en receivers nulables (08 Oct 2026)
 **Error**: `Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'` (línea 286).
@@ -1746,6 +1759,13 @@ En `tryVoeExtraction` (Serieskao `SerieskaoExtractors.kt:912`; SoloLatino `SoloL
 - ✅ **VERIFICADO SoloLatino v30 en físico (09 Oct 2026, 16:58)**: "somos-osos-2015" T4E11 completo — `[Voe] JS redirect (1)`, `challenge code=200`, `ALTCHA resuelto en 116 intentos (15891ms, 4h)`, `Found M3U8/MP4`, `loadLinks FIN total emitidos=7 servidores=2`, player con segmentos `200 video/MP2T`. **Etiqueta "Voe" confirmada por el usuario en la lista.**
 - ✅ **VERIFICADO SeriesKao v26 en físico (09 Oct 2026, 17:00-17:01)**: Chapulín T1C3 (`voe.sx/e/6i0pzhzdn3i7`) completo — search/load OK (396 episodios, 7 temporadas), vidhide solo hls4 (hls2/hls3 → 502, probe los descarta bien), SW vía WebView OK, `[Voe] JS redirect (1) -> teresapoliticallearn`, `ALTCHA resuelto en 193 intentos (10960ms, 4h)`, `POST solucion -> code=200 len=135730 gate=false`, `Found M3U8/MP4`, `3 links`, player con master/variante/seg-1..3 en 200. **Etiqueta "Voe" confirmada por el usuario.**
 - ⚠️ **Patrón pendiente (no bloqueante)**: tras instalar/actualizar el plugin, el **primer** play cierra la app (16:13, 16:56); al reabrir y reproducir de nuevo, funciona (16:20, 16:58, 17:01). Causa sin confirmar — la próxima vez que pase en un primer intento, capturar las líneas de muerte del sistema (`FATAL EXCEPTION` / `lowmemorykiller` / `Process .* has died` / `WIN DEATH`) sin filtro de tag.
+- ✅ **VEREDICTO sin-filtro (10 Oct 2026, 07:46, log completo del sistema)**: el usuario capturó el buffer entero sin filtrar. **No hay crash**: cero `FATAL EXCEPTION`, cero `lowmemorykiller` para la app (ojo: el buffer de kernel NO se capturó, así que un LMK no se vería aquí).
+- ⚠️ **CORRECCIÓN del veredicto anterior (10 Oct 2026, reporte del usuario)**: "remove task" NO prueba que el usuario quitara la app de recientes — también se registra al vaciarse la tarea (salir con Back) o en limpieza tras muerte. El usuario confirma que NO la quita; la app se cierra sola. Dos modos de fallo distintos:
+  1. **Celular A**: reproduce bien, minutos después **se congela TODA la pantalla + reproductor** y luego se cierra en pleno playback. Pantalla completa congelada = stall del sistema, no excepción de app (sin FATAL). Nuestro código durante playback es solo el interceptor (inyectar headers, trivial).
+  2. **Celular B (este log)**: el proceso viejo (pid 23505) murió a las 07:46:10 (`has died: fg TOP`, sin FATAL) **en pleno loadLinks** del primer intento; el reintento (pid 25640) cargó y reprodujo perfecto. Patrón "primer intento muere, reintento OK" = pico de memoria del primer arranque (dexopt/JIT + WebView/Chromium + PoW 4 hilos + probes en paralelo) → sospecha LMK (invisible sin buffer de kernel).
+- **Siguiente paso diagnóstico**: tras una muerte, capturar `adb shell dmesg` y buscar `lowmemorykiller ... com.lagradost.cloudstream3` (+ `adb logcat -b crash -d` para descartar FATAL). Para el caso A además aislar: ¿pasa con todos los providers o solo SoloLatino? ¿con todos los links o uno? ¿equipo caliente/poca RAM?
+- ✅ **SIN REPRODUCCIÓN (10 Oct 2026, reporte del usuario)**: el cierre ya no aparece — el video reproduce con normalidad y en SeriesKao nunca pasó. Cuadro de transitorio (presión de memoria puntual) sin evidencia para cambiar código. **Regla: solo reabrir si vuelve con `dmesg` positivo o `FATAL` en mano.**
+- En el mismo log (reintento OK): etiquetas `LATINO[Voe]` / `LATINO[Voe (MP4)]` confirmadas en `RepoLink`, SW por WebView OK (`[SW] M3U8 (eval)` → `LATINO[StreamWish]`, 7 links), reproducción con `Rendered first frame` + pausa/reanudación + salida normal (`releasePlayer`, `saveData`).
 
 ### 🏷️ Fix etiqueta VOE con idioma (09 Oct 2026; SoloLatino v31, SeriesKao v27)
 - **Reporte (usuario)**: los enlaces VOE salían como "Voe" pero sin idioma (no se sabía si era latino/castellano/subtitulado).

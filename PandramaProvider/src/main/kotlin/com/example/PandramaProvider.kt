@@ -329,6 +329,16 @@ class PandramaProvider : MainAPI() {
         return null
     }
 
+    private fun fixEmbedHost(url: String): String {
+        return url
+            .replaceFirst("https://www.vk.com", "https://vkvideo.ru")
+            .replaceFirst("https://m.vk.com", "https://vkvideo.ru")
+            .replaceFirst("http://www.vk.com", "https://vkvideo.ru")
+            .replaceFirst("http://m.vk.com", "https://vkvideo.ru")
+            .replaceFirst("https://vk.com", "https://vkvideo.ru")
+            .replaceFirst("http://vk.com", "https://vkvideo.ru")
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -352,7 +362,8 @@ class PandramaProvider : MainAPI() {
             var found = false
             for (video in allVideos) {
                 val src = video.src ?: continue
-                val cleanSrc = src.replace("\\/", "/")
+                
+                val cleanSrc = fixEmbedHost(src.replace("\\/", "/"))
                 Log.d(TAG, "Video type=${video.type}, src=$cleanSrc")
 
                 video.captions?.forEach { caption ->
@@ -387,7 +398,7 @@ class PandramaProvider : MainAPI() {
                             found = true
                         }
                         video.type == "embed" || video.type == "url" -> {
-                            val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
+                            val hasExtractor = cleanSrc.contains("ok.ru") || cleanSrc.contains("vk.com") || cleanSrc.contains("vkvideo.ru") || cleanSrc.contains("youtube.com") || cleanSrc.contains("youtu.be")
                             if (hasExtractor) {
                                 found = loadExtractor(cleanSrc, data, subtitleCallback, callback) || found
                             } else {
