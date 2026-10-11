@@ -6,7 +6,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
 
     description = "Proveedor + extractor OK.ru"
-    authors = listOf("Ranita", "Kraptor123")
+    authors = listOf("Ranita")
 
     /**
      * Status int as the following:

@@ -1,10 +1,5 @@
 package com.example
 
-// Port de https://github.com/Kraptor123/Cs-Karma/tree/master/OK (byayzen).
-// Cambios vs original: package com.example + un solo import fixUrl
-// (com.lagradost.cloudstream3.utils.fixUrl, extensión de ExtractorApi
-// verificada por bytecode). Lógica intacta.
-
 import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app

@@ -1914,6 +1914,22 @@ En `tryVoeExtraction` (Serieskao `SerieskaoExtractors.kt:912`; SoloLatino `SoloL
 - **Fix**: envolver como el resto — `newExtractorLink("<Provider>", "$source[${link.name}]", ...)` copiando quality/type/referer/headers/extractorData (SoloLatinoProvider.kt:837, SerieskaoExtractors.kt:1021). Resultado: **"LATINO[Voe]"** / **"LATINO[Voe (MP4)]"**. `source` sigue siendo el nombre del provider → interceptor intacto.
 - **Estado**: SoloLatino **31** / SeriesKao **27** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente). ⏸️ Pendiente: compilar, instalar y comprobar que el enlace VOE sale como `LATINO[Voe]`.
 
+### 🛡️ Mitigación anti-cierre: PoW serializado + 2 hilos + callbacks directos (11 Oct 2026; SoloLatino v32, SeriesKao v28)
+- **Reporte (usuario)**: al reproducir serie o película, cargando los enlaces la app se cierra sola (como si la quitara de recientes). Pasa en sus celulares, NO en el emulador, y NO en otros plugins. Hipótesis del usuario: empezó al agregar el enlace de VOE. Los enlaces (incluido VOE) SÍ reproducen, pero hay que reiniciar la app varias veces; si reproduce, el celular se congela y luego se cierra.
+- **Causa raíz (confirmada en código, sin necesidad de log)**: el camino VOE/embed69 es el único con trabajo pesado de CPU en paralelo:
+  1. `solveEmbed69PoW` (hasta 500k SHA-256) corría una vez POR idioma/servidor dentro de `amap` anidados, SIN `yield()`/`ensureActive()` → si CS3 cancelaba el `loadLinks` (usuario sale, timeout 120s), los hilos seguían quemando CPU en fondo → celular caliente → congelamiento posterior + muerte del proceso (sin `FATAL`, como quitada de recientes).
+  2. `solveAltchaPow` con **4 hilos** PBKDF2 (cost=10000) por cada video VOE, también dentro de `amap` (servidores × mirrors) → pico de 12-16 hilos CPU a la vez en celulares de poca RAM → LMK.
+  3. SeriesKao emitía links con `CoroutineScope(Dispatchers.IO).launch { callback(link) }` **desacoplado** del `coroutineScope` del `loadLinks` (2 sitios) → trabajo que sobrevive a la cancelación y mantiene red/CPU vivos tras salir.
+  4. En el emulador no pasa por tener más núcleos/RAM, sin LMK y con SHA-256 x86 más rápido; por eso solo falla en físicos.
+- **Fix (sin cambiar resultados: mismos links, mismo orden)**:
+  - `powMutex` global por módulo (SoloLatino: `internal val powMutex` en `Extractors.kt`, usado también en `SoloLatinoProvider.kt`; SeriesKao: `private val powMutex` en `SerieskaoExtractors.kt`): PoW embed69 y PoW ALTCHA **nunca corren en paralelo** (uno a la vez).
+  - ALTCHA `nThreads` 4 → **2** (la mitad de pico CPU; el tiempo sube pero sin congelar).
+  - `solveEmbed69PoW`: `yield()` cada 4096 nonces → cancelable al salir/cancelar CS3.
+  - SeriesKao: los 2 `CoroutineScope(Dispatchers.IO).launch { callback(link) }` → `callback(link)` directo (hijo del scope del `loadLinks`, se cancela limpio).
+- **Estado**: SoloLatino **32** / SeriesKao **28** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente). **No compilado por regla del repo.**
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q` y `.\gradlew.bat :SerieskaoProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar en celular físico (NO emulador): cargar un episodio con VOE varias veces seguidas sin reiniciar — esperado: sin cierres ni congelamiento (a cambio, el PoW puede tardar unos segundos más por ir serializado).
+- ⏸️ **Si aún se cierra**: capturar `adb logcat -b crash -d` (descarta `FATAL EXCEPTION`) + `adb shell dmesg | grep -i lowmemorykiller` (confirma LMK) + intervalo completo del logcat sin filtros con hora inicio-fin.
+
 ---
 
 ## OkruProvider — Extractor OK.ru de Kraptor123/Cs-Karma (10 Oct 2026 v1)
