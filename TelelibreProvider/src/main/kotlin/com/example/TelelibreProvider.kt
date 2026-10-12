@@ -204,11 +204,14 @@ class TelelibreProvider : MainAPI() {
             return false
         }
         Log.d("Telelibre", "opciones: $startUrls")
+        // Probar TODAS las opciones (no solo la primera): la Opcion 1 puede emitir
+        // un link cuyo CDN bloquee (403 sensa / edge cvattv caído) y la Opcion 2 servir
+        var ok = false
         for (start in startUrls) {
-            if (resolveChain(start, targetUrl, callback)) return true
+            if (resolveChain(start, targetUrl, callback)) ok = true
         }
-        Log.w("Telelibre", "sin links en ${startUrls.size} opciones")
-        return false
+        if (!ok) Log.w("Telelibre", "sin links en ${startUrls.size} opciones")
+        return ok
     }
 
     // Seguir cadena embed.php -> tok.html/mpd2.php hasta encontrar m3u8/MPD

@@ -1241,6 +1241,15 @@ MEGA files are **AES-128-CTR encrypted** — ExoPlayer cannot play them directly
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :TelelibreProvider:make --console=plain -q`), instalar y probar home (secciones por categoría) + Telefe Opcion 1 (cvattv DASH) y Opcion 2 (sensa DASH). Logs: `adb logcat -s Telelibre:V` buscando `opciones:` y `step1:`.
 
+### Veredicto v3 en dispositivo + probar TODAS las opciones (12 Oct 2026 v4)
+**Log v3 (usuario)**: el código v3 funciona íntegro — `getMainPage: 10 secciones, 155 canales`, `load` OK, `opciones: [embed.php, embed2.php]`, `step 2 iframe tok.html`, `tok DASH mpd=...` y `sensa DASH mpd=... kid=...` resueltos. Los fallos son del CDN, no del parseo:
+- **sensa (`cdn.sensa.com.ar/.../Universal.mpd`) → 403 `text/html`** en el MPD (×4 reintentos de ExoPlayer) → error 2004. Reproducido desde PC con UA Chrome + Referer + Origin + `webtoken: 1.0` y sin ellos → **403 siempre** (270 B, `403 Forbidden` genérico, sin Set-Cookie en `mpd2.php`). Bloqueo por IP/fingerprint TLS del CDN, no por headers. La propia web avisa que estas señales piden AR/UY/PY o VPN.
+- **cvattv (`edge-live01-sl.cvattv.com.ar:443`) → TCP connect timeout** (000 desde PC + `failed to connect ... after 10000ms` en el dispositivo) → error 2001. Edge caído o bloqueado a nivel red para todo el mundo, no solo el usuario. Además el JWT lleva `sip: 84.252.114.2` atado a otra IP.
+**Fix v4 (código)**: `loadLinks` probaba solo hasta la primera emisión — ej. Universal Opcion 1 emitía sensa (403) y la Opcion 2 jamás se intentaba. Ahora prueba **TODAS** las opciones y emite todos los links hallados (`var ok` acumulado). No resucita CDNs bloqueados, pero convierte "1 link muerto" en "2 links para probar" (y donde una opción sí sirva, reproduce).
+- `plugins.json`: `iconUrl` → `.icu/favicon.ico` (la description ya decía `.icu`).
+- Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 23000).
+- ⏸️ **Pendiente**: compilar, instalar y (1) comprobar que cada canal lista 2 links; (2) **probar con VPN en Argentina** — si sensa/cvattv responden con IP AR, el bloqueo es geo y no hay más código que escribir.
+
 ---
 
 ## DonghualifeProvider - Migracion a Next.js 15 (05 Oct 2026)

@@ -95,18 +95,18 @@
  {
    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
    "status": 1,
-   "version": 3,
+   "version": 4,
   "apiVersion": 1,
   "name": "TeleLibre",
   "internalName": "TelelibreProvider",
   "authors": [
    "Ranita"
   ],
-  "description": "https://tele-libre.live/",
+  "description": "https://tele-libre.icu/",
   "tvTypes": [
    "Live"
   ],
-  "iconUrl": "https://tele-libre.live/favicon.ico",
+   "iconUrl": "https://tele-libre.icu/favicon.ico",
   "language": "mx",
   "fileSize": 23000
  },
