@@ -10,3 +10,5 @@
 .cxx
 local.properties
 .vscode
+/*.cs3
+/builds/
