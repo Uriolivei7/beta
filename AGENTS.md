@@ -1957,3 +1957,22 @@ Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/
 ### Estado v1
 - Compilaci√≥n: pendiente por el usuario (`.\gradlew.bat :OkruProvider:make --console=plain -q`) ‚Äî **no compilado por regla del repo**.
 - ‚è∏Ô∏è **Pendiente**: compilar, actualizar `fileSize`, instalar y probar: (1) home/search/load del cat√°logo ok.ru; (2) reproducci√≥n de una peli (ej. la que el usuario ya verific√≥ en el upstream); (3) un embed ok.ru en Donghualife ‚Äî buscar `OkRU` en logcat y comprobar que emite junto al nativo.
+
+---
+
+## TvenvivoProvider ó HTTPS roto del sitio, cambio a HTTP (11 Oct 2026 v7)
+
+### ?? SÌntoma (log del usuario)
+- `safeAppGet error (intento 1 y 2): SSLHandshakeException - CertPathValidatorException: Trust anchor for certification path not found` ? `getMainPage: failed to get HTML`. El home no carga nada.
+
+### ? Causa raÌz (verificada, lado servidor ó NO es el celular)
+- `https://www.tvenvivo.org/` falla el handshake TLS desde DOS redes distintas (celular del usuario + PC): certificado inv·lido/roto (el dominio adem·s tiene historial de cert inv·lido y de parking/expiraciÛn seg˙n websearch).
+- `http://www.tvenvivo.org/` responde 200 con el cat·logo completo (verificado: lista EN VIVO 01-80+ con todos los canales).
+- ConclusiÛn: no es fecha/hora del dispositivo ni MITM ó el HTTPS del sitio est· roto en origen. No hay nada que "reparar" en el celular.
+
+### ?? Fix
+- `TvenvivoProvider.kt:30`: `mainUrl = "https://www.tvenvivo.org/"` ? `"http://www.tvenvivo.org/"`. Todo lo dem·s deriva de `mainUrl` (`safeAppGet(mainUrl)`, `fixUrl`), asÌ que home/search/load pasan a HTTP sin m·s cambios. El filtro de la lÌnea 690 (`contains("tvenvivo.org")`) es agnÛstico al esquema.
+- `plugins.json`: `iconUrl` tambiÈn a `http://` (el icono tampoco cargarÌa por HTTPS).
+- **Desync detectado**: `build.gradle.kts` iba en 5 pero `plugins.json` en 6 (mismo patrÛn SoloLatino/SeriesKao/Pandrama). Ambos a **7**.
+- CompilaciÛn: pendiente por el usuario (`.\gradlew.bat :TvenvivoProvider:make --console=plain -q`) ó **no compilado por regla del repo**. `plugins.json`: version 7, `fileSize` **pendiente** (sigue 47315).
+- ?? **Pendiente**: compilar, instalar y probar home (debe listar los ~80+ canales EN VIVO) + reproducir un canal.
