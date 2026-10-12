@@ -1227,6 +1227,20 @@ MEGA files are **AES-128-CTR encrypted** ‚Äî ExoPlayer cannot play them directly
 - Ningun provider puede reproducir ClearKey hasta que upstream corrija la constante a `0x781A059057B03BAC`.
 - Verificado por bytecode: default `kty="oct"`, default `uuid=CLEARKEY_UUID`; licencia `{"keys":[{"kty","k","kid"}],"type":"temporary"}`.
 
+### Migraci√≥n a tele-libre.icu ‚Äî redise√±o total (12 Oct 2026 v3)
+**Reporte (usuario)**: la web se mud√≥ a `https://tele-libre.icu/` con dise√±o nuevo. El provider (v2, `a.channel-link` + `tele-libre.live`) devolv√≠a home/search vac√≠os.
+**Estructura nueva (verificada en HTML real)**:
+| Antes (.live) | Ahora (.icu) |
+|---|---|
+| Cards `a.channel-link` (img + texto) | `article.channel-card > a[href^=/en-vivo/]` (nombre en `.channel-name`, logo en `.logo-box img`, `data-category` + `data-name` en el article) |
+| Detalle: `h1` + `img.imgCanal` | `h1` ("Telefe en vivo") + `.channel-logo img` / `.big-logo img` / `og:image` + relacionados en `.related-grid a[href^=/en-vivo/]` (img + `b`) |
+| 1 iframe (`#playerFrame`/`#embed`) | `iframe#iframe` (`src=/en-vivo/{id}/embed.php`) + botones `.option-buttons a[target=iframe]` (Opcion 1 ‚Üí `embed.php`, Opcion 2 ‚Üí `embed2.php`) |
+| embed ‚Üí mpd2 ‚Üí sensa | **Igual**: `embed.php` ‚Üí iframe `bestleague.life//tok.html?get=...` (cvattv, `handleTokHtml` lo cubre); `embed2.php` ‚Üí iframe `/mpd2.php?id=...` (sensa, `handleSensaConfig` lo cubre). Cadena intacta, solo cambi√≥ la entrada. |
+- **Rewrite parcial** (`TelelibreProvider.kt`): `mainUrl` ‚Üí `https://tele-libre.icu`; `getMainPage` agrupa por `data-category` en secciones (General/Noticias/Deportes/Pel√≠culas y series/Infantil/Documentales/M√∫sica/+18, salta la card externa de Agenda); `search` mismo parse + filtro; `load` con nuevos selectores de poster + recomendaciones de `.related-grid`; `loadLinks` extrae la cadena a `resolveChain(startUrl, pageReferer)` y **prueba las opciones en orden** (Opcion 1 ‚Üí 2 ‚Üí iframe, m√°x 3, retorna al primer √©xito).
+- **Bug extra encontrado**: `safeGet` usaba `timeout = 15000L` y el check MPD `timeout = 10000L` ‚Äî en NiceHttp el timeout va en SEGUNDOS (regla SoloLatino 03 Oct 2026) ‚Üí eran 15000s/10000s = sin timeout efectivo, colgaba hasta el killer de 120s. Corregido a `15L`/`10L`. (Mismo bug visto en `TvenvivoProvider.safeAppGet`: `timeoutMs = 10000L` ‚Üí `timeout = timeoutMs * attempt` = 10000s+; pendiente el mismo fix ah√≠.)
+- Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ‚è∏Ô∏è **Pendiente**: compilar (`.\gradlew.bat :TelelibreProvider:make --console=plain -q`), instalar y probar home (secciones por categor√≠a) + Telefe Opcion 1 (cvattv DASH) y Opcion 2 (sensa DASH). Logs: `adb logcat -s Telelibre:V` buscando `opciones:` y `step1:`.
+
 ---
 
 ## DonghualifeProvider - Migracion a Next.js 15 (05 Oct 2026)
@@ -1960,19 +1974,19 @@ Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/
 
 ---
 
-## TvenvivoProvider ó HTTPS roto del sitio, cambio a HTTP (11 Oct 2026 v7)
+## TvenvivoProvider ÔøΩ HTTPS roto del sitio, cambio a HTTP (11 Oct 2026 v7)
 
-### ?? SÌntoma (log del usuario)
+### ?? SÔøΩntoma (log del usuario)
 - `safeAppGet error (intento 1 y 2): SSLHandshakeException - CertPathValidatorException: Trust anchor for certification path not found` ? `getMainPage: failed to get HTML`. El home no carga nada.
 
-### ? Causa raÌz (verificada, lado servidor ó NO es el celular)
-- `https://www.tvenvivo.org/` falla el handshake TLS desde DOS redes distintas (celular del usuario + PC): certificado inv·lido/roto (el dominio adem·s tiene historial de cert inv·lido y de parking/expiraciÛn seg˙n websearch).
-- `http://www.tvenvivo.org/` responde 200 con el cat·logo completo (verificado: lista EN VIVO 01-80+ con todos los canales).
-- ConclusiÛn: no es fecha/hora del dispositivo ni MITM ó el HTTPS del sitio est· roto en origen. No hay nada que "reparar" en el celular.
+### ? Causa raÔøΩz (verificada, lado servidor ÔøΩ NO es el celular)
+- `https://www.tvenvivo.org/` falla el handshake TLS desde DOS redes distintas (celular del usuario + PC): certificado invÔøΩlido/roto (el dominio ademÔøΩs tiene historial de cert invÔøΩlido y de parking/expiraciÔøΩn segÔøΩn websearch).
+- `http://www.tvenvivo.org/` responde 200 con el catÔøΩlogo completo (verificado: lista EN VIVO 01-80+ con todos los canales).
+- ConclusiÔøΩn: no es fecha/hora del dispositivo ni MITM ÔøΩ el HTTPS del sitio estÔøΩ roto en origen. No hay nada que "reparar" en el celular.
 
 ### ?? Fix
-- `TvenvivoProvider.kt:30`: `mainUrl = "https://www.tvenvivo.org/"` ? `"http://www.tvenvivo.org/"`. Todo lo dem·s deriva de `mainUrl` (`safeAppGet(mainUrl)`, `fixUrl`), asÌ que home/search/load pasan a HTTP sin m·s cambios. El filtro de la lÌnea 690 (`contains("tvenvivo.org")`) es agnÛstico al esquema.
-- `plugins.json`: `iconUrl` tambiÈn a `http://` (el icono tampoco cargarÌa por HTTPS).
-- **Desync detectado**: `build.gradle.kts` iba en 5 pero `plugins.json` en 6 (mismo patrÛn SoloLatino/SeriesKao/Pandrama). Ambos a **7**.
-- CompilaciÛn: pendiente por el usuario (`.\gradlew.bat :TvenvivoProvider:make --console=plain -q`) ó **no compilado por regla del repo**. `plugins.json`: version 7, `fileSize` **pendiente** (sigue 47315).
+- `TvenvivoProvider.kt:30`: `mainUrl = "https://www.tvenvivo.org/"` ? `"http://www.tvenvivo.org/"`. Todo lo demÔøΩs deriva de `mainUrl` (`safeAppGet(mainUrl)`, `fixUrl`), asÔøΩ que home/search/load pasan a HTTP sin mÔøΩs cambios. El filtro de la lÔøΩnea 690 (`contains("tvenvivo.org")`) es agnÔøΩstico al esquema.
+- `plugins.json`: `iconUrl` tambiÔøΩn a `http://` (el icono tampoco cargarÔøΩa por HTTPS).
+- **Desync detectado**: `build.gradle.kts` iba en 5 pero `plugins.json` en 6 (mismo patrÔøΩn SoloLatino/SeriesKao/Pandrama). Ambos a **7**.
+- CompilaciÔøΩn: pendiente por el usuario (`.\gradlew.bat :TvenvivoProvider:make --console=plain -q`) ÔøΩ **no compilado por regla del repo**. `plugins.json`: version 7, `fileSize` **pendiente** (sigue 47315).
 - ?? **Pendiente**: compilar, instalar y probar home (debe listar los ~80+ canales EN VIVO) + reproducir un canal.

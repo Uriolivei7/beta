@@ -13,7 +13,7 @@ class TelelibreProvider : MainAPI() {
     companion object {
         var pluginContext: android.content.Context? = null
     }
-    override var mainUrl = "https://tele-libre.live"
+    override var mainUrl = "https://tele-libre.icu"
     override var name = "TeleLibre"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "mx"
@@ -52,7 +52,7 @@ class TelelibreProvider : MainAPI() {
     private suspend fun safeGet(url: String, referer: String? = null): String? {
         return try {
             val h = if (referer != null) desktopHeaders + mapOf("Referer" to referer) else desktopHeaders
-            val res = app.get(url, headers = h, interceptor = cfKiller, timeout = 15000L)
+            val res = app.get(url, headers = h, interceptor = cfKiller, timeout = 15L)
             if (res.isSuccessful) res.text else null
         } catch (e: Exception) {
             Log.e("Telelibre", "safeGet $url: ${e.message}")
@@ -63,32 +63,49 @@ class TelelibreProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val html = safeGet(mainUrl) ?: return null
         val doc = Jsoup.parse(html)
-        val channels = doc.select("a.channel-link").mapNotNull { a ->
-            val href = a.attr("href") ?: return@mapNotNull null
-            val img = a.selectFirst("img")
-            val title = img?.attr("alt")?.ifBlank { null } ?: img?.attr("title") ?: a.text()
-            if (title.isBlank() || href.isBlank()) return@mapNotNull null
+        // Nuevo tele-libre.icu: article.channel-card > a[href^=/en-vivo/] (logo en .logo-box img, nombre en .channel-name)
+        val cards = doc.select("article.channel-card")
+        if (cards.isEmpty()) return null
+        val catLabel = mapOf(
+            "general" to "General", "noticias" to "Noticias", "deportes" to "Deportes",
+            "cine" to "Películas y series", "infantil" to "Infantil",
+            "documentales" to "Documentales", "musica" to "Música", "adultos" to "+18"
+        )
+        val byCat = linkedMapOf<String, MutableList<SearchResponse>>()
+        for (card in cards) {
+            val a = card.selectFirst("a[href^=/en-vivo/]") ?: continue
+            val href = a.attr("href")
+            if (href.isBlank()) continue
             val url = if (href.startsWith("http")) href else fixUrl(href)
-            val poster = img?.attr("src")?.let { fixUrl(it) }
-            Triple(title.trim(), url, poster)
-        }.distinctBy { it.second }
-        if (channels.isEmpty()) return null
-        val list = channels.map { (title, url, poster) ->
-            newLiveSearchResponse(title, url, TvType.Live) { this.posterUrl = poster }
+            val title = a.selectFirst(".channel-name")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                ?: a.selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
+                ?: card.attr("data-name")?.trim()?.takeIf { it.isNotBlank() }
+                ?: continue
+            val poster = a.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+            val cat = card.attr("data-category").trim().lowercase().ifBlank { "general" }
+            byCat.getOrPut(cat) { mutableListOf() }.add(
+                newLiveSearchResponse(title.trim(), url, TvType.Live) { this.posterUrl = poster }
+            )
         }
-        return newHomePageResponse(listOf(HomePageList("Canales", list)), false)
+        if (byCat.isEmpty()) return null
+        val lists = byCat.map { (cat, items) -> HomePageList(catLabel[cat] ?: cat, items.distinctBy { it.url }) }
+        Log.d("Telelibre", "getMainPage: ${lists.size} secciones, ${lists.sumOf { it.list.size }} canales")
+        return newHomePageResponse(lists, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val html = safeGet(mainUrl) ?: return emptyList()
         val doc = Jsoup.parse(html)
-        return doc.select("a.channel-link").mapNotNull { a ->
-            val href = a.attr("href") ?: return@mapNotNull null
-            val img = a.selectFirst("img")
-            val title = img?.attr("alt")?.ifBlank { null } ?: img?.attr("title") ?: a.text()
+        return doc.select("article.channel-card").mapNotNull { card ->
+            val a = card.selectFirst("a[href^=/en-vivo/]") ?: return@mapNotNull null
+            val href = a.attr("href")
+            val title = a.selectFirst(".channel-name")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                ?: a.selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
+                ?: card.attr("data-name")?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
             if (!title.contains(query, true)) return@mapNotNull null
             val url = if (href.startsWith("http")) href else fixUrl(href)
-            val poster = img?.attr("src")?.let { fixUrl(it) }
+            val poster = a.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
             newLiveSearchResponse(title.trim(), url, TvType.Live) { this.posterUrl = poster }
         }.distinctBy { it.url }
     }
@@ -115,14 +132,27 @@ class TelelibreProvider : MainAPI() {
                 ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()?.takeIf { it.length < 60 && !it.contains("Tele-libre", true) }
                 ?: "Canal"
         )
-        val poster = doc.selectFirst("img.imgCanal")?.attr("src")?.let { fixUrl(it) }
+        val poster = doc.selectFirst(".channel-logo img")?.attr("src")?.let { fixUrl(it) }
+            ?: doc.selectFirst(".big-logo img")?.attr("src")?.let { fixUrl(it) }
+            ?: doc.selectFirst("img.imgCanal")?.attr("src")?.let { fixUrl(it) }
             ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
         val plot = doc.selectFirst("p.card-text")?.text()?.take(500)
         Log.d("Telelibre", "load: $title -> $url")
+        val recommendations = doc.select(".related-grid a[href^=/en-vivo/]").mapNotNull { a ->
+            val href = a.attr("href")
+            val t = a.selectFirst("b")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                ?: a.selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val u = if (href.startsWith("http")) href else fixUrl(href)
+            if (u.isBlank() || u == url) return@mapNotNull null
+            val p = a.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+            newLiveSearchResponse(t, u, TvType.Live) { this.posterUrl = p }
+        }.distinctBy { it.url }.take(12).ifEmpty { null }
         val ep = newEpisode(url) { this.name = "En Vivo"; this.posterUrl = poster }
         return newTvSeriesLoadResponse(title, url, TvType.Live, listOf(ep)) {
             this.posterUrl = poster
             this.plot = plot
+            this.recommendations = recommendations
         }
     }
 
@@ -157,25 +187,40 @@ class TelelibreProvider : MainAPI() {
             }
         }
 
-        // Flujo normal /en-vivo/telefe/ -> embed2.php -> mpd2.php -> zonatv -> la18hd
+        // Flujo normal /en-vivo/telefe/ -> embed.php/embed2.php -> tok.html/mpd2.php -> m3u8/MPD
         val mainHtml = safeGet(targetUrl) ?: return false
         val doc = Jsoup.parse(mainHtml)
-        // Buscar iframes principales (Opcion 1 etc)
-        val iframeSrc = doc.selectFirst("iframe#playerFrame, iframe#embed, iframe[src*=/en-vivo/], iframe[src*=/mpd], iframe[src*=/embed]")?.attr("src")
-            ?: doc.selectFirst("iframe")?.attr("src")
-        if (iframeSrc.isNullOrBlank()) {
-            Log.w("Telelibre", "sin iframe en $targetUrl")
+        // Opciones de reproducción (Opcion 1, Opcion 2...) + iframe principal como fallback
+        val optionUrls = doc.select(".option-buttons a[target=iframe]").mapNotNull { a ->
+            val h = a.attr("href")
+            if (h.isBlank()) null else if (h.startsWith("http")) h else fixUrl(h)
+        }.distinct()
+        val firstIframe = doc.selectFirst("iframe#iframe, iframe#playerFrame, iframe#embed, iframe[src*=/en-vivo/], iframe[src*=/mpd], iframe[src*=/embed], iframe")?.attr("src")?.let {
+            if (it.startsWith("//")) "https:$it" else if (it.startsWith("http")) it else fixUrl(it)
+        }
+        val startUrls = (optionUrls + listOfNotNull(firstIframe)).distinct().take(3)
+        if (startUrls.isEmpty()) {
+            Log.w("Telelibre", "sin opciones ni iframe en $targetUrl")
             return false
         }
-        var nextUrl = if (iframeSrc.startsWith("http")) iframeSrc else fixUrl(iframeSrc)
-        Log.d("Telelibre", "step1 iframe: $nextUrl")
-        // Seguir cadena hasta encontrar m3u8
-        // Paso 2: /en-vivo/telefe/embed2.php -> /mpd2.php?id=telefe
-        var html = safeGet(nextUrl, referer = targetUrl)
+        Log.d("Telelibre", "opciones: $startUrls")
+        for (start in startUrls) {
+            if (resolveChain(start, targetUrl, callback)) return true
+        }
+        Log.w("Telelibre", "sin links en ${startUrls.size} opciones")
+        return false
+    }
+
+    // Seguir cadena embed.php -> tok.html/mpd2.php hasta encontrar m3u8/MPD
+    private suspend fun resolveChain(startUrl: String, pageReferer: String, callback: (ExtractorLink) -> Unit): Boolean {
+        var nextUrl = startUrl
+        Log.d("Telelibre", "step1: $nextUrl")
+        // Paso 2: /en-vivo/telefe/embed.php -> bestleague tok.html | embed2.php -> /mpd2.php?id=telefe
+        var html = safeGet(nextUrl, referer = pageReferer)
         var depth = 0
         while (html != null && depth < 8) {
             depth++
-            // Nuevo tele-libre.live: var config = {"url": MPD, "k1": kid, "k2": key} (sensa ClearKey)
+            // Nuevo tele-libre.icu: var config = {"url": MPD, "k1": kid, "k2": key} (sensa ClearKey)
             if (handleSensaConfig(html, nextUrl, callback)) return true
             // Buscar playbackURL directo (la18hd)
             val playback = Regex("""playbackURL\s*=\s*["']([^"']+\.m3u8[^"']*)["']""").find(html)?.groupValues?.get(1)
@@ -213,7 +258,7 @@ class TelelibreProvider : MainAPI() {
                     else -> nextIframe
                 }
                 Log.d("Telelibre", "step ${depth+1} iframe: $nextUrl")
-                html = safeGet(nextUrl, referer = targetUrl)
+                html = safeGet(nextUrl, referer = pageReferer)
                 continue
             }
             // Buscar document.write iframe (mpd2.php)
@@ -388,7 +433,7 @@ class TelelibreProvider : MainAPI() {
             // Verificar que el MPD es accesible antes de emitir (evitar 2001 silencioso)
             val mpdCheck = try {
                 val h = desktopHeaders + mapOf("Referer" to referer)
-                val res = app.get(mpdUrl, headers = h, timeout = 10000L)
+                val res = app.get(mpdUrl, headers = h, timeout = 10L)
                 Log.d("Telelibre", "MPD check ${res.code} len=${res.text.length} mpd=${res.text.contains("<MPD")}")
                 res.code
             } catch (e: Exception) {

@@ -93,9 +93,9 @@
   "fileSize": 47315
  },
  {
-  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
-  "status": 1,
-  "version": 2,
+   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
+   "status": 1,
+   "version": 3,
   "apiVersion": 1,
   "name": "TeleLibre",
   "internalName": "TelelibreProvider",
