@@ -16,6 +16,8 @@ class VertvcableProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = false
 
+    //Yeji
+
     private val desktopHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
