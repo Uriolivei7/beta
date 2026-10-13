@@ -181,6 +181,18 @@ class DanimadosProvider : MainAPI() {
             val episodes = extractEpisodes(doc)
             Log.d("Danimados", "load '$title': ${episodes.size} eps")
 
+            // Títulos similares (div.sbox.srelacionados)
+            val recommendations = doc.select("#single_relacionados article").mapNotNull { art ->
+                val a = art.selectFirst("a[href*='/series/']") ?: return@mapNotNull null
+                val href = a.attr("abs:href")
+                if (href.isBlank() || !href.contains("/series/")) return@mapNotNull null
+                val img = a.selectFirst("img")
+                val t = img?.attr("alt")?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                newMovieSearchResponse(t, href, TvType.Cartoon) {
+                    this.posterUrl = img.attr("src")?.let { fixUrl(it) }
+                }
+            }.distinctBy { it.url }.take(12).ifEmpty { null }
+
             if (episodes.isNotEmpty()) {
                 newTvSeriesLoadResponse(title, url, TvType.Cartoon, episodes) {
                     this.posterUrl = fixUrl(poster)
@@ -188,6 +200,7 @@ class DanimadosProvider : MainAPI() {
                     this.plot = description
                     this.year = year
                     this.score = rating?.let { Score.from10(it) }
+                    this.recommendations = recommendations
                 }
             } else {
                 newMovieLoadResponse(title, url, TvType.Cartoon, url) {
@@ -196,6 +209,7 @@ class DanimadosProvider : MainAPI() {
                     this.plot = description
                     this.year = year
                     this.score = rating?.let { Score.from10(it) }
+                    this.recommendations = recommendations
                 }
             }
         } catch (e: Exception) {

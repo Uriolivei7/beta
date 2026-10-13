@@ -2043,4 +2043,11 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: `background = og:image` → `this.backgroundPosterUrl` en serie y película (el poster vertical no se toca).
 - Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir House of Mouse — el detalle debe mostrar el backdrop grande arriba.
+
+### 🏷️ Recomendaciones (Títulos similares) (13 Oct 2026 v6)
+**Pedido del usuario**: la web muestra "Títulos similares" dentro de las series.
+**Verificado** (HTML real): `div.sbox.srelacionados > div#single_relacionados > article > a[href=/series/slug/] > img[src, alt=título]` (12 items).
+**Fix**: `load()` los parsea (título de `img[alt]`, poster `img[src]`) → `this.recommendations` en serie y película.
+- Versiones a **6** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y abrir House of Mouse — deben salir recomendaciones (Coraje, Ciudad de Perros, Ren y Stimpy...).
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
