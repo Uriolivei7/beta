@@ -526,6 +526,7 @@ class DanimadosProvider : MainAPI() {
                     val link = li.selectFirst(".episodiotitle a") ?: continue
                     val epHref = link.attr("abs:href")
                     val epTitle = link.text().trim()
+                    val epPoster = li.selectFirst(".imagen img")?.attr("src")?.let { fixUrl(it) }
                     val numText = li.selectFirst(".numerando")?.text()
                     val epNum = Regex("""\d+\s*-\s*(\d+)""").find(numText ?: "")?.groupValues?.get(1)?.toIntOrNull()
                         ?: (epIdx + 1)
@@ -535,6 +536,7 @@ class DanimadosProvider : MainAPI() {
                             this.name = epTitle.ifEmpty { "Episodio $epNum" }
                             this.season = seasonNum
                             this.episode = epNum
+                            this.posterUrl = epPoster
                         })
                     }
                 }
@@ -547,6 +549,7 @@ class DanimadosProvider : MainAPI() {
             val link = li.selectFirst(".episodiotitle a") ?: continue
             val epHref = link.attr("abs:href")
             val epTitle = link.text().trim()
+            val epPoster = li.selectFirst(".imagen img")?.attr("src")?.let { fixUrl(it) }
             val numText = li.selectFirst(".numerando")?.text()
             val sMatch = Regex("""(\d+)\s*-\s*(\d+)""").find(numText ?: "")
             val seasonNum = sMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
@@ -554,8 +557,9 @@ class DanimadosProvider : MainAPI() {
             if (epHref.isNotBlank()) {
                 episodes.add(newEpisode(epHref) {
                     this.name = epTitle.ifEmpty { "Episodio $epNum" }
-                    this.season = seasonNum
                     this.episode = epNum
+                    this.season = seasonNum
+                    this.posterUrl = epPoster
                 })
             }
         }

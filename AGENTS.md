@@ -2029,4 +2029,11 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: `mainPage` = `/` (Últimas) + 20 networks; `getMainPage` pide la canónica en pag 1 (`/page/1/` puede redirigir) y `hasNext` por `div.pagination a.arrow_pag/a[href*=/page/]` con fallback al conteo anterior.
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y comprobar el home (21 filas) + paginar una network (ej. Cartoon Network pag 2).
+
+### 🖼️ Posters en episodios (13 Oct 2026 v4)
+**Pedido del usuario**: los episodios muestran posters en la web.
+**Verificado** (HTML real de `/series/phineas-y-ferb/`): cada `ul.episodios li` trae `<div class='imagen'><img src='...-300x170.jpg'></div>` + `.numerando` + `.episodiotitle a` + `span.date`.
+**Fix**: `extractEpisodes()` (ambas ramas: por temporada y plana) lee `li.selectFirst(".imagen img")?.attr("src")` → `this.posterUrl` en `newEpisode` (vía `fixUrl` miembro, igual que el poster de la serie).
+- Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y abrir Phineas y Ferb — los episodios deben mostrar su thumbnail.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
