@@ -2036,4 +2036,11 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: `extractEpisodes()` (ambas ramas: por temporada y plana) lee `li.selectFirst(".imagen img")?.attr("src")` → `this.posterUrl` en `newEpisode` (vía `fixUrl` miembro, igual que el poster de la serie).
 - Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir Phineas y Ferb — los episodios deben mostrar su thumbnail.
+
+### 🖼️ Backdrop en el detalle (13 Oct 2026 v5)
+**Pedido del usuario**: en `/series/house-of-mouse/` la web muestra 2 posters (vertical + grande) pero el plugin solo el vertical.
+**Verificado** (HTML real): poster vertical en `.sheader .poster img` (TMDB w185) + backdrop landscape en `meta[property='og:image']` (TMDB w780, ej. `n0VOCRcEVsshvYwtmLvolGx3sFR.jpg`). El `load()` nunca seteaba `backgroundPosterUrl`.
+**Fix**: `background = og:image` → `this.backgroundPosterUrl` en serie y película (el poster vertical no se toca).
+- Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y abrir House of Mouse — el detalle debe mostrar el backdrop grande arriba.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).

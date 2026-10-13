@@ -168,6 +168,9 @@ class DanimadosProvider : MainAPI() {
                 ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
                 ?: ""
 
+            // Backdrop landscape (og:image w780 de TMDB) para el fondo del detalle
+            val background = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+
             val description = doc.selectFirst(".hero-overview, .wp-content p")?.text()
                 ?: doc.selectFirst("meta[name='description']")?.attr("content")
 
@@ -181,6 +184,7 @@ class DanimadosProvider : MainAPI() {
             if (episodes.isNotEmpty()) {
                 newTvSeriesLoadResponse(title, url, TvType.Cartoon, episodes) {
                     this.posterUrl = fixUrl(poster)
+                    this.backgroundPosterUrl = background
                     this.plot = description
                     this.year = year
                     this.score = rating?.let { Score.from10(it) }
@@ -188,6 +192,7 @@ class DanimadosProvider : MainAPI() {
             } else {
                 newMovieLoadResponse(title, url, TvType.Cartoon, url) {
                     this.posterUrl = fixUrl(poster)
+                    this.backgroundPosterUrl = background
                     this.plot = description
                     this.year = year
                     this.score = rating?.let { Score.from10(it) }
