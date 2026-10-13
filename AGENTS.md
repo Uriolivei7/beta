@@ -2022,4 +2022,11 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 - **Timeouts a segundos**: `20000L?20L` (�2), `8000L?8L`, VOE `15000L?15L`/`10000L?10L`. `withTimeoutOrNull(10000L/20000L)` intactos (kotlinx = ms, correcto).
 - Balance verificado con `bal_check.py` ? OK en ambos archivos.
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+
+### 📺 Home por networks en vez de décadas (13 Oct 2026 v3)
+**Pedido del usuario**: secciones por canal (ej. `https://danimados.cc/network/cartoon-network/`) en vez de por décadas/`genero/`.
+**Estructura verificada** (subagente explore sobre HTML real): no existe índice `/network/` (404); la lista canónica son 20 slugs del widget `Series por canal` (`a.canal-item`): cartoon-network, boomerang, nickelodeon, disney-xd, disney-channel, fox-kids, fox, fx, the-wb, adult-swim, mtv, comedy-central, locomotion-tv, hbo-max, netflix, prime-video, disney, paramount, apple-tv, hulu (se ignoran intrusos `/studio/*` y `/tag/*` del mismo widget). Las cards usan el **mismo** `article.item.tvshows` que géneros (título `.data h3 a`, poster `.poster img[src]`, ~40 por página). Paginación `/page/N/` triple-confirmada (canonical `rel=next`, `div.pagination`, `a.arrow_pag`).
+**Fix**: `mainPage` = `/` (Últimas) + 20 networks; `getMainPage` pide la canónica en pag 1 (`/page/1/` puede redirigir) y `hasNext` por `div.pagination a.arrow_pag/a[href*=/page/]` con fallback al conteo anterior.
+- Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y comprobar el home (21 filas) + paginar una network (ej. Cartoon Network pag 2).
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).

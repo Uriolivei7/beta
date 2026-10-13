@@ -74,31 +74,47 @@ class DanimadosProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "/" to "Últimas Series Agregadas",
-        "/genero/60s/" to "Años 60",
-        "/genero/70s/" to "Años 70",
-        "/genero/80s/" to "Años 80",
-        "/genero/90s/" to "Años 90",
-        "/genero/00s/" to "Años 2000",
-        "/genero/10s/" to "Años 2010",
-        "/genero/20s/" to "Años 2020",
-        "/genero/sitcom/" to "Sitcoms",
+        "/network/cartoon-network/" to "Cartoon Network",
+        "/network/boomerang/" to "Boomerang",
+        "/network/nickelodeon/" to "Nickelodeon",
+        "/network/disney-xd/" to "Disney XD",
+        "/network/disney-channel/" to "Disney Channel",
+        "/network/fox-kids/" to "FOX Kids",
+        "/network/fox/" to "FOX",
+        "/network/fx/" to "FX",
+        "/network/the-wb/" to "Warner",
+        "/network/adult-swim/" to "Adult Swim",
+        "/network/mtv/" to "MTV",
+        "/network/comedy-central/" to "Comedy Central",
+        "/network/locomotion-tv/" to "Locomotion",
+        "/network/hbo-max/" to "HBO Max",
+        "/network/netflix/" to "Netflix",
+        "/network/prime-video/" to "Prime Video",
+        "/network/disney/" to "Disney+",
+        "/network/paramount/" to "Paramount+",
+        "/network/apple-tv/" to "Apple TV",
+        "/network/hulu/" to "Hulu",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         return try {
-            val url = if (request.data == "/") {
+            val base = if (request.data == "/") {
                 mainUrl
             } else {
-                "${mainUrl}${request.data.removeSuffix("/")}/page/$page/"
+                "$mainUrl${request.data.removeSuffix("/")}/"
             }
+            // pag1 = canónica, pagN = /page/N/ (patrón WP verificado en /network/ y /genero/)
+            val url = if (page <= 1) base else "${base}page/$page/"
             val doc = app.get(url, headers = browserHeaders).document
             val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
             if (items.isEmpty()) {
                 Log.w("Danimados", "getMainPage '${request.name}' p$page: 0 items (html=${doc.html().length})")
             }
+            val hasNext = doc.select("div.pagination a.arrow_pag, div.pagination a[href*=/page/]").isNotEmpty()
+                || items.size >= 20
             newHomePageResponse(
                 list = HomePageList(request.name, items),
-                hasNext = items.size >= 20
+                hasNext = hasNext
             )
         } catch (e: Exception) {
             Log.e("Danimados", "getMainPage '${request.name}' p$page fallo: ${e.message}")
