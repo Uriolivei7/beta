@@ -2073,3 +2073,5 @@ Sitio: `vertvcable.com` (WordPress tema Appyn). Directorio de TV en vivo. OJO: l
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `VertvcablePlugin.kt`, `VertvcableProvider.kt`; `plugins.json` ? entrada `VerTvCable` v1 (`fileSize: 0` pendiente).
 - Balance verificado con `bal_check.py` ? OK.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :VertvcableProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar ESPN. **Aviso VPN**: el MPD (`cdn-live.mundogo.cl`) no resolvió DNS desde la red de PC (posible geo-DNS o CDN caído); si en el dispositivo tampoco resuelve, probar con VPN (hay "Opción 2 VPN MX" por canal). Logs: `adb logcat -s VerTvCable:V` buscando `ajax OK` y `DASH mpd=`.
+
+- Fix compilacion Vertvcable (13 Oct 2026): `Argument type mismatch: String? vs String` (linea 261) — en el bloque anidado de `resolveEmbed` se usaba `key` sin declararla (faltaba `val key = keys.optString(kid)`). Sin compilacion exitosa `:make` no genera el `.cs3` en `VertvcableProvider/build/`.

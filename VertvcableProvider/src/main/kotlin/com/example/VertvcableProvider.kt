@@ -252,6 +252,7 @@ class VertvcableProvider : MainAPI() {
                             val keys = cfg.optJSONObject("clearkey")
                             if (keys != null && keys.length() > 0) {
                                 val kid = keys.keys().next()
+                                val key = keys.optString(kid)
                                 callback(newDrmExtractorLink(name, "$name [$label]", mpd, ExtractorLinkType.DASH,
                                     java.util.UUID.fromString("e2719d58-a985-b3c9-781a-059057b03bac")) {
                                     this.referer = next
