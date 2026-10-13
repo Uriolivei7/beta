@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.net.URLEncoder
+import okhttp3.Interceptor
 
 class VertvcableProvider : MainAPI() {
     override var mainUrl = "https://www.vertvcable.com"
@@ -41,6 +42,23 @@ class VertvcableProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e("VerTvCable", "safeGet $url: ${e.message}")
             null
+        }
+    }
+
+    // Sin esto CS3 usa CronetDataSource sin headers y los CDN cortan (timeout 2002).
+    // source de los links == name ("VerTvCable") -> getApiFromNameNull lo encuentra.
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            Log.d("VerTvCable", "[intercept] ${url.take(120)}")
+            val newRequest = request.newBuilder()
+                .header("User-Agent", desktopHeaders["User-Agent"] ?: "")
+                .header("Referer", extractorLink.referer ?: mainUrl)
+                .header("Origin", mainUrl)
+                .header("Accept", "*/*")
+                .build()
+            chain.proceed(newRequest)
         }
     }
 

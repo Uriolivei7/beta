@@ -2075,3 +2075,10 @@ Sitio: `vertvcable.com` (WordPress tema Appyn). Directorio de TV en vivo. OJO: l
 - ?? **Pendiente**: compilar (`.\gradlew.bat :VertvcableProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar ESPN. **Aviso VPN**: el MPD (`cdn-live.mundogo.cl`) no resolvió DNS desde la red de PC (posible geo-DNS o CDN caído); si en el dispositivo tampoco resuelve, probar con VPN (hay "Opción 2 VPN MX" por canal). Logs: `adb logcat -s VerTvCable:V` buscando `ajax OK` y `DASH mpd=`.
 
 - Fix compilacion Vertvcable (13 Oct 2026): `Argument type mismatch: String? vs String` (linea 261) — en el bloque anidado de `resolveEmbed` se usaba `key` sin declararla (faltaba `val key = keys.optString(kid)`). Sin compilacion exitosa `:make` no genera el `.cs3` en `VertvcableProvider/build/`.
+
+### Interceptor faltante ? 2002 en HLS directo (13 Oct 2026 v2)
+**Log v1 (usuario)**: home (193 canales + categorías), search, load y AJAX OK — Studio Universal resuelve `type=HLS` directo (`cdn1tlinkgo.tlink.cl/.../mono.m3u8`, sin VPN). Pero el player usaba `CronetDataSource` con `headers={}` ? `SocketTimeoutException` ? error 2002.
+**Causa raíz**: el provider v1 **no tenía `getVideoInterceptor`** — CS3 caía a Cronet sin headers y el CDN (que exige Referer) dejaba morir la conexión.
+**Fix**: `getVideoInterceptor` que inyecta UA + Referer (del link) + Origin + Accept a todo request de nuestros links (`source == "VerTvCable"` ? `getApiFromNameNull` lo encuentra).
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y probar Studio Universal — buscar `[intercept]` en el log y confirmar que el HLS arranca (si el CDN chileno bloquea por geo, el siguiente paso es VPN).
