@@ -7,6 +7,7 @@ import android.content.Context
 @CloudstreamPlugin
 class DanimadosPlugin: Plugin() {
     override fun load(context: Context) {
+        DanimadosProvider.pluginContext = context
         registerMainAPI(DanimadosProvider())
     }
 }

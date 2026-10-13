@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Context
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -17,6 +18,7 @@ import javax.crypto.spec.SecretKeySpec
 class DanimadosProvider : MainAPI() {
     companion object {
         private const val BASE_URL = "https://danimados.cc"
+        var pluginContext: Context? = null
         private val browserHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -293,8 +295,16 @@ class DanimadosProvider : MainAPI() {
                     }
 
                     videoUrl.contains("voe.") -> {
-                        Log.d("Danimados", "loadLinks VOE -> F7 + mirrors")
+                        Log.d("Danimados", "loadLinks VOE -> solver + mirrors")
                         tryVoeExtractDanimados(videoUrl, data, subtitleCallback, callback)
+                    }
+
+                    videoUrl.contains("hglink.to") || videoUrl.contains("hgglink") ||
+                        videoUrl.contains("streamwish") || videoUrl.contains("swdyu.com") ||
+                        videoUrl.contains("cybervynx.com") || videoUrl.contains("dumbalag.com") ||
+                        videoUrl.contains("awish.pro") -> {
+                        Log.d("Danimados", "loadLinks StreamWish -> parse + WebView")
+                        tryStreamwishDanimados(videoUrl, data, subtitleCallback, callback)
                     }
 
                     else -> false
@@ -353,7 +363,7 @@ class DanimadosProvider : MainAPI() {
                             if (source.isNotEmpty()) {
                                 val sourceHttp = source.replaceFirst("https://", "http://")
                                 callback.invoke(ExtractorLink(
-                                    source = cubeLinkName, name = cubeLinkName,
+                                    source = "Danimados", name = cubeLinkName,
                                     url = sourceHttp,
                                     type = ExtractorLinkType.M3U8, quality = 720,
                                     referer = data,
@@ -364,7 +374,7 @@ class DanimadosProvider : MainAPI() {
                                 ?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
                             if (hlsTiktok.isNotEmpty()) {
                                 callback.invoke(ExtractorLink(
-                                    source = cubeLinkName, name = cubeLinkName,
+                                    source = "Danimados", name = cubeLinkName,
                                     url = "$baseUrl$hlsTiktok",
                                     type = ExtractorLinkType.M3U8, quality = 720,
                                     referer = data,
@@ -419,7 +429,14 @@ class DanimadosProvider : MainAPI() {
 
                 val linkLabel = "Danimados ($embedLabel)"
                 for (candidate in allVideoCandidates.distinct()) {
-                    val fullUrl = if (candidate.startsWith("http")) candidate else "https:$candidate"
+                    // archive.org da paths /download/... -> resolver contra el host del embed
+                    val embedHost = runCatching { java.net.URL(videoUrl).host }.getOrNull()
+                    val fullUrl = when {
+                        candidate.startsWith("http") -> candidate
+                        candidate.startsWith("//") -> "https:$candidate"
+                        candidate.startsWith("/") && embedHost != null -> "https://$embedHost$candidate"
+                        else -> "https://$candidate"
+                    }
 
                     var probeType: ExtractorLinkType? = null
                     try {
@@ -445,7 +462,7 @@ class DanimadosProvider : MainAPI() {
                     if (linkType == null) continue
 
                     callback.invoke(ExtractorLink(
-                        source = linkLabel,
+                        source = "Danimados",
                         name = linkLabel + if (validated) "" else " ⚠",
                         url = fullUrl,
                         type = linkType,
@@ -462,7 +479,7 @@ class DanimadosProvider : MainAPI() {
                     } catch (_: Exception) { null }
                     if (decoded?.contains("m3u8") == true || decoded?.contains("mp4") == true) {
                         callback.invoke(ExtractorLink(
-                            source = linkLabel,
+                            source = "Danimados",
                             name = linkLabel,
                             url = decoded,
                             type = ExtractorLinkType.M3U8,

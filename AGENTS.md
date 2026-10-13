@@ -914,7 +914,8 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - `newExtractorLink(source=..., ...)` — el parámetro `source` DEBE ser `this.name` (el nombre del provider) para que `getApiFromNameNull()` lo encuentre y llame a `getVideoInterceptor()`.
 - Providers que lo hacen bien: Uniquestream (`this.name`), Netflix (`name`), Primevideo (`name`), JioHotstar (`name`), Reanime (`name`), SoloLatino (`"SoloLatino"`)
 - Providers con el mismo bug: Plushd (usa `"VidHide"` en vez de `"PlusHD"`)
-- ⏱️ **`timeout` de `app.get` está en SEGUNDOS (03 Oct 2026)** — verificado por bytecode en NiceHttp 0.4.13 (`custom$suspendImpl` pasa el `long timeout` directo a `call/connect/write/readTimeout(J, SECONDS)`, sin conversión). `timeout = 20000L` = 20000 segundos (sin timeout efectivo) → el request se cuelga hasta el killer de 120s (`Timed out waiting for 120000 ms`). Causó el bug "2do episodio sin links vidhide, solo se arregla reiniciando la app" (conexión envenenada al CDN throttled + sin timeout real). **Regla**: usar valores en segundos (`timeout = 20L`, no `20000L`). `withTimeoutOrNull/delay/postDelayed/waitMs` SÍ son ms (kotlinx/Android, no tocar). Corregido en SoloLatino(+Extractors) y SerieskaoExtractors (03 Oct 2026). Pendiente el mismo barrido en Mhdflix/PoseidonHD/Gnula/Danimados/Plushd/Monoschinos.
+- ⏱️ **`timeout` de `app.get` está en SEGUNDOS (03 Oct 2026)** — verificado por bytecode en NiceHttp 0.4.13 (`custom$suspendImpl` pasa el `long timeout` directo a `call/connect/write/readTimeout(J, SECONDS)`, sin conversión). `timeout = 20000L` = 20000 segundos (sin timeout efectivo) → el request se cuelga hasta el killer de 120s (`Timed out waiting for 120000 ms`). Causó el bug "2do episodio sin links vidhide, solo se arregla reiniciando la app" (conexión envenenada al CDN throttled + sin timeout real). **Regla**: usar valores en segundos (`timeout = 20L`, no `20000L`). `withTimeoutOrNull/delay/postDelayed/waitMs` SÍ son ms (kotlinx/Android, no tocar). Corregido en SoloLatino(+Extractors) y SerieskaoExtractors (03 Oct 2026) + DanimadosExtractors (13 Oct 2026 v2). Pendiente el mismo barrido en
+Mhdflix/PoseidonHD/Gnula/Plushd/Monoschinos.
 
 ### 🔧 FIX streamwish + voe sin links → fallback WebView (03 Sep 2026)
 - **Síntoma**: solo se emitía el link vidhide hls2. Streamwish daba 0 links (página challenge "Loading... please wait", len=811, sin m3u8). Voe daba 0 links (redirect a mirror `johnbeyondnation.com` con CAPTCHA Altcha).
@@ -1999,3 +2000,26 @@ Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/
 - **Desync detectado**: `build.gradle.kts` iba en 5 pero `plugins.json` en 6 (mismo patr�n SoloLatino/SeriesKao/Pandrama). Ambos a **7**.
 - Compilaci�n: pendiente por el usuario (`.\gradlew.bat :TvenvivoProvider:make --console=plain -q`) � **no compilado por regla del repo**. `plugins.json`: version 7, `fileSize` **pendiente** (sigue 47315).
 - ?? **Pendiente**: compilar, instalar y probar home (debe listar los ~80+ canales EN VIVO) + reproducir un canal.
+
+---
+
+## DanimadosProvider � VOE con solver + StreamWish v�a WebView (13 Oct 2026 v2)
+
+Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embeds (VidHide/minochinos+callistanise, Byse, VOE, HgLink/hglink.to, fastream, archive.org, TurboVid, WaaW, CubeEmbed).
+
+### ?? Diagn�stico (log v1 en dispositivo, Scooby-Doo + Galaxia Wander + Lakebottom + Mr Young)
+1. **VOE 0 links**: `voe.sx/e/...` ? 200 + `encoded string not found` en voe.sx y en los 3 mirrors (yip.su, tubelessceliolymph, eugenemakedraw). Causa: sin solver ALTCHA (abandono expl�cito) + sin seguir el stub JS al mirror + sin `teresapoliticallearn.com` en la lista (lecci�n SoloLatino v29).
+2. **HgLink 0 links**: `hglink.to/e/...` es backend StreamWish; sin mapeo a `streamwish.to` y sin parse, `loadExtractor` da 0 (challenge).
+3. **`source` romp�a el interceptor**: CubeEmbed y la ruta gen�rica emit�an `source = "Danimados (Server1)"` ? `"Danimados"` ? `getApiFromNameNull` null ? sin interceptor ? el log muestra `Using CronetDataSource` y el CDN da **403** (caso fastream `s40.fastream.to`).
+4. **archive.org roto**: candidatos `/download/...` se armaban como `"https:" + "/download/..."` = `https:/download/...` (host `download` irresoluble) ? fallback ? basura.
+5. **Timeouts en SEGUNDOS sin corregir**: `timeout = 20000L/15000L/10000L/8000L` en `DanimadosExtractors.kt` = sin timeout efectivo (regla 03 Oct 2026; este era uno de los pendientes listados en SoloLatino). TurboVid `turbovidhls.com` adem�s con DNS muerto (falla graceful, se deja).
+
+### ?? Fix (v2, sin cambiar resultados de lo que ya funcionaba)
+- **VOE**: port del stack SeriesKao � `solveDaniAltcha()` + `solveDaniAltchaPow()` con **`daniPowMutex` + 2 hilos** (anti-freeze SoloLatino v32/SeriesKao v28: nunca en paralelo, mitad de pico CPU) + `parseVoeHtml(..., cookies)` + `tryVoeExtractDanimados` con **JS-redirect al mirror** (hasta 3 saltos, merge de cookies) + mirrors `teresapoliticallearn.com` (primero), `yip.su`, `tubelessceliolymph.com` en `amap` con timeout 20s + rama directa m3u8/mp4. Etiquetas `Voe` / `Voe (MP4)` con `source = "Danimados"` (patr�n v30/v26).
+- **StreamWish**: rama nueva en `loadLinks` (hglink/hgglink/streamwish/swdyu/cybervynx/dumbalag/awish) ? `tryStreamwishDanimados()`: mapeo a `streamwish.to` + parse est�tico (`parseDaniStreamwishHtml`: m3u8/`file:`/mp4 + unpack Dean Edwards + iframes) + re-emit de `loadExtractor` con `source = "Danimados"` + **fallback WebView** (`renderDaniWebView` + `daniWebViewMutex` + `catch Throwable`, patr�n VerAnime v8; `DanimadosProvider.pluginContext` guardado en `DanimadosPlugin.load`).
+- **`source = "Danimados"`** en CubeEmbed (�2), ruta gen�rica (�2) y MP4 de VOE ? el interceptor vuelve a aplicar (adi�s 403 fastream/Cronet).
+- **archive.org**: `candidate` `/...` se resuelve contra el host del embed (`https://archive.org/download/...` correcto); `//` ? `https:`; resto igual.
+- **Timeouts a segundos**: `20000L?20L` (�2), `8000L?8L`, VOE `15000L?15L`/`10000L?10L`. `withTimeoutOrNull(10000L/20000L)` intactos (kotlinx = ms, correcto).
+- Balance verificado con `bal_check.py` ? OK en ambos archivos.
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
