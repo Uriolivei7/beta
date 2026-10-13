@@ -2051,3 +2051,25 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 - Versiones a **6** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir House of Mouse â€” deben salir recomendaciones (Coraje, Ciudad de Perros, Ren y Stimpy...).
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
+
+---
+
+## VertvcableProvider — Plugin nuevo (13 Oct 2026 v1)
+
+Sitio: `vertvcable.com` (WordPress tema Appyn). Directorio de TV en vivo. OJO: la web incluye un falso popup "Java Update" (plugin `akismet-antl-spam`) que descarga un ejecutable de `staybonvivant.com/dw4.php` — solo afecta a visitantes Windows en navegador (el JS se auto-desactiva en Android); al provider (`app.get`, sin JS) no le afecta.
+
+### Cadena verificada end-to-end (ESPN, en vivo desde PC)
+1. Ficha `/{slug}-en-vivo/` ? botones `.vtc-pill[data-post][data-index][data-nonce]` (Opción 1, Opción 2 VPN MX...).
+2. `POST wp-admin/admin-ajax.php` (`action=vtc_get_stream_url`, `post_id`, `stream_index`, `nonce`) con Referer + UA navegador (sin cookies OK; POST pelado da 403 Cloudflare) ? `{"url":"https://play.vertvcable.com/play/?canal=espn","type":"EMBED"}`.
+3. Embed ? `<iframe src="/ver/?id=espn">` ? `const config = {"url":"//cdn-live.mundogo.cl/espn/espn.mpd","clearkey":{kidHex:keyHex ×3}}` (Clappr+Shaka DASH ClearKey, keys en hex plano).
+4. Mismo patrón que sensa/Telelibre ? `newDrmExtractorLink` + `hexToB64Url()` (con el caveat del UUID ClearKey de la app).
+
+### Implementación (v1, sin compilar por regla del repo)
+- `getMainPage`: `/` + 5 categorías (`/category/cine|peliculas|deportes|infantil|musica`); cards `div.bav a[href]` (título `span.title`, poster `img[data-src]` por lazyload con fallback a `src`); pag `page/N/`; `hasNext` por `link[rel=next]`.
+- `search()`: `/?s=` + `URLEncoder`, mismo parser.
+- `load()`: `h1` + `og:image` + meta description ? `TvSeriesLive` con 1 episodio.
+- `loadLinks()`: pills ? AJAX por opción ? dispatch por `type` (EMBED?`resolveEmbed`, HLS/MP4/DASH?directo). `resolveEmbed`: config ClearKey ? DRM; m3u8/mp4 directo; 1 nivel de iframe anidado (`/ver/`); YouTube/externos ? `loadExtractor`.
+- Timeouts en segundos (`15L`); JSON con `org.json` (nunca kotlinx-serialization).
+- Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `VertvcablePlugin.kt`, `VertvcableProvider.kt`; `plugins.json` ? entrada `VerTvCable` v1 (`fileSize: 0` pendiente).
+- Balance verificado con `bal_check.py` ? OK.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :VertvcableProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar ESPN. **Aviso VPN**: el MPD (`cdn-live.mundogo.cl`) no resolvió DNS desde la red de PC (posible geo-DNS o CDN caído); si en el dispositivo tampoco resuelve, probar con VPN (hay "Opción 2 VPN MX" por canal). Logs: `adb logcat -s VerTvCable:V` buscando `ajax OK` y `DASH mpd=`.

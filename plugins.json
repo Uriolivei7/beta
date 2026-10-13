@@ -1263,5 +1263,23 @@
    "iconUrl": "https://ok.ru/favicon.ico",
    "language": "ru",
    "fileSize": 32000
+  },
+  {
+   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/VertvcableProvider.cs3",
+   "status": 1,
+   "version": 1,
+   "apiVersion": 1,
+   "name": "VerTvCable",
+   "internalName": "VertvcableProvider",
+   "authors": [
+    "Ranita"
+   ],
+   "description": "https://www.vertvcable.com/",
+   "tvTypes": [
+    "Live"
+   ],
+   "iconUrl": "https://www.vertvcable.com/wp-content/uploads/2024/07/cropped-logovertvcable-1.jpg",
+   "language": "mx",
+   "fileSize": 0
   }
 ]

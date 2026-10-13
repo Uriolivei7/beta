@@ -103,7 +103,7 @@ class DanimadosProvider : MainAPI() {
             } else {
                 "$mainUrl${request.data.removeSuffix("/")}/"
             }
-            // pag1 = canónica, pagN = /page/N/ (patrón WP verificado en /network/ y /genero/)
+
             val url = if (page <= 1) base else "${base}page/$page/"
             val doc = app.get(url, headers = browserHeaders).document
             val items = doc.select("article.item.tvshows").mapNotNull { it.toSearchResponse() }
@@ -168,7 +168,7 @@ class DanimadosProvider : MainAPI() {
                 ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
                 ?: ""
 
-            // Backdrop landscape (og:image w780 de TMDB) para el fondo del detalle
+
             val background = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
 
             val description = doc.selectFirst(".hero-overview, .wp-content p")?.text()
@@ -181,7 +181,7 @@ class DanimadosProvider : MainAPI() {
             val episodes = extractEpisodes(doc)
             Log.d("Danimados", "load '$title': ${episodes.size} eps")
 
-            // Títulos similares (div.sbox.srelacionados)
+
             val recommendations = doc.select("#single_relacionados article").mapNotNull { art ->
                 val a = art.selectFirst("a[href*='/series/']") ?: return@mapNotNull null
                 val href = a.attr("abs:href")
@@ -218,7 +218,7 @@ class DanimadosProvider : MainAPI() {
         }
     }
 
-    // Hosts con página challenge JS que loadExtractor ya maneja; fetch directo es inútil
+
     private val challengeHosts = listOf("voe.", "hglink", "streamwish", "johnbeyondnation")
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
@@ -361,7 +361,7 @@ class DanimadosProvider : MainAPI() {
             }
             if (extracted) anySuccess = true
 
-            // Fetch directo solo si no es host challenge (VOE/HgLink tienen gate JS)
+
             if (challengeHosts.any { videoUrl.contains(it) }) continue
 
             try {
@@ -464,7 +464,7 @@ class DanimadosProvider : MainAPI() {
 
                 val linkLabel = "Danimados ($embedLabel)"
                 for (candidate in allVideoCandidates.distinct()) {
-                    // archive.org da paths /download/... -> resolver contra el host del embed
+
                     val embedHost = runCatching { java.net.URL(videoUrl).host }.getOrNull()
                     val fullUrl = when {
                         candidate.startsWith("http") -> candidate

@@ -387,7 +387,7 @@ internal suspend fun tryVoeExtractDanimados(
         var finalHtml = finalResp.text
         var finalCookies = finalResp.cookies
 
-        // voe.sx ahora devuelve stub JS que redirige al mirror (el gate ALTCHA vive ahí)
+
         val jsRedirectRegex = Regex("""window\.location\.href\s*=\s*['\"](https?://[^'\"]+)['\"]""")
         var voeHops = 0
         while (voeHops++ < 3) {
@@ -844,7 +844,7 @@ internal suspend fun tryStreamwishDanimados(
             )
         })
     }
-    // hglink.to es backend StreamWish
+
     val fixed = url
         .replaceFirst("https://hglink.to", "https://streamwish.to")
         .replaceFirst("http://hglink.to", "https://streamwish.to")
@@ -930,4 +930,3 @@ internal suspend fun tryByseHttpDanimados(
         false
     }
 }
-
