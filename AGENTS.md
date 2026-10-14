@@ -2112,3 +2112,16 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `InfinityPlugin.kt`, `InfinityProvider.kt`; `plugins.json` ? entrada `Infinity` v1 (`fileSize: 0` pendiente). `settings.gradle.kts` auto-incluye (verificado en Okru).
 - Balance `bal_check.py` ? OK.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :InfinityProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home (27 secciones) + un canal de México. Logs: `adb logcat -s Infinity:V`.
+
+### ?? Freeze: headers en segmentos + interceptor con diagnóstico (14 Oct 2026 v2)
+**Reporte (usuario)**: en la app original casi no se congela, en el plugin sí ? no es (solo) el CDN, falta algo que la app sí manda.
+**Hipótesis**: el link v1 solo llevaba `User-Agent` y referer al panel; los segmentos del CDN fluxa probablemente exigen el set completo (la app los pide con UA+Referer propios). Sin interceptor, CS3 puede pedir variantes/segmentos sin ellas ? el CDN estrangula ? freeze.
+**Fix**: link con `Referer: https://fluxa.strymix.com/` + `getVideoInterceptor` que re-aplica UA/Referer/Origin/Accept a todo `strymix.com` y loguea `[cdn] METODO url -> codigo` (diagnóstico del freeze en vivo).
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar y comparar frecuencia de congelamiento + mirar `[cdn]` en el momento del freeze (401/403/timeout vs 200 lento decide el siguiente paso).
+
+### ?? Veredicto Studio Universal HD: edge sin margen (14 Oct 2026, sin cambio de código)
+**Medido en vivo (PC)**: hay DOS entradas — `Studio Universal HD` (1628, cat HD) y `Studio Universal` (1627, cat Películas).
+- HD: playlist viva (seq 157xxx, segs 5s en `ts6.tvcluboficial.com`), pero los 3 segs anunciados dieron **200 con 0B** (expirados) y el más fresco **1.75MB en 4.5s** (~3.1 Mbps efectivos para ~5s de 1080p = sin margen; cualquier jitter ? freeze cíclico).
+- Conclusión: el freeze del usuario en este canal es caudal del edge al límite, no headers (prueba 1: mismos headers on/off = mismo resultado) ni código. La app original lo disimula con más buffer.
+- Recomendación al usuario: probar la entrada **no-HD** (1627, edge `ts1`, segs 6s) que debe tener más margen.

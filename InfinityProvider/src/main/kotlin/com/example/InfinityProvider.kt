@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.net.URLEncoder
+import okhttp3.Interceptor
 
 class InfinityProvider : MainAPI() {
     override var mainUrl = "https://strymix.com"
@@ -24,6 +25,33 @@ class InfinityProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
         "Accept" to "application/json, */*",
     )
+
+    // La app original pide master/variantes/segmentos con estas cabeceras.
+    // Sin interceptor, CS3 puede pedir los segmentos sin ellas y el CDN estrangula (freeze).
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            if (!request.url.host.contains("strymix.com")) {
+                return@Interceptor chain.proceed(request)
+            }
+            val h = extractorLink.headers
+            val newRequest = request.newBuilder()
+                .header("User-Agent", h["User-Agent"] ?: "")
+                .header("Referer", h["Referer"] ?: "https://fluxa.strymix.com/")
+                .header("Origin", "https://fluxa.strymix.com")
+                .header("Accept", "*/*")
+                .build()
+            try {
+                val response = chain.proceed(newRequest)
+                Log.d(TAG, "[cdn] ${request.method} ${url.take(100)} -> ${response.code}")
+                response
+            } catch (e: Exception) {
+                Log.w(TAG, "[cdn] fallo ${url.take(100)}: ${e.message}")
+                throw e
+            }
+        }
+    }
 
     // cid -> nombre (verificado en get_category_index, 27 categorías)
     private val categories = listOf(
@@ -172,8 +200,11 @@ class InfinityProvider : MainAPI() {
             else -> INFER_TYPE
         }
         callback(newExtractorLink(name, "$name [$label]", streamUrl, linkType) {
-            this.referer = mainUrl
-            this.headers = mapOf("User-Agent" to ua)
+            this.referer = "https://fluxa.strymix.com/"
+            this.headers = mapOf(
+                "User-Agent" to ua,
+                "Referer" to "https://fluxa.strymix.com/",
+            )
         })
         return true
     }
