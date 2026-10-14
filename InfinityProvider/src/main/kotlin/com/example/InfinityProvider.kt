@@ -26,8 +26,6 @@ class InfinityProvider : MainAPI() {
         "Accept" to "application/json, */*",
     )
 
-    // La app original pide master/variantes/segmentos con estas cabeceras.
-    // Sin interceptor, CS3 puede pedir los segmentos sin ellas y el CDN estrangula (freeze).
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
             val request = chain.request()
@@ -53,7 +51,6 @@ class InfinityProvider : MainAPI() {
         }
     }
 
-    // cid -> nombre (verificado en get_category_index, 27 categorías)
     private val categories = listOf(
         "133" to "Eventos Deportivos", "29" to "Costa Rica", "28" to "Panamá",
         "27" to "Infantiles", "26" to "Películas", "25" to "Noticias",
@@ -77,7 +74,7 @@ class InfinityProvider : MainAPI() {
 
     private suspend fun apiGet(params: Map<String, String>): JSONObject? {
         return try {
-            // La acción va como flag sin valor (?get_category_posts&id=..), igual que Retrofit
+
             val qs = params.entries.joinToString("&") { (k, v) ->
                 if (v.isEmpty()) k else "$k=${URLEncoder.encode(v, "UTF-8")}"
             }
@@ -156,7 +153,7 @@ class InfinityProvider : MainAPI() {
             "id" to id,
             "api_key" to apiKey,
         )) ?: return null
-        // El detalle puede venir como {post:{...}} o el objeto directo
+
         val obj = json.optJSONObject("post") ?: json
         val title = obj.optString("channel_name").trim().ifBlank { "Canal $id" }
         val poster = obj.optString("channel_image").trim().takeIf { it.isNotBlank() }
@@ -185,7 +182,7 @@ class InfinityProvider : MainAPI() {
         val label = obj.optString("channel_name").trim().ifBlank { "Canal $id" }
         val type = obj.optString("channel_type").trim().uppercase()
         val videoId = obj.optString("video_id").trim()
-        // La app usa este user_agent por canal para pedir el stream
+        
         val ua = obj.optString("user_agent").trim().takeIf { it.isNotBlank() }
             ?: (browserHeaders["User-Agent"] ?: "")
         Log.d(TAG, "loadLinks $label: type=$type url=${streamUrl.take(110)}")
