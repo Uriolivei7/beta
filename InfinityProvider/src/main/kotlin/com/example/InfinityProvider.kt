@@ -182,7 +182,7 @@ class InfinityProvider : MainAPI() {
         val label = obj.optString("channel_name").trim().ifBlank { "Canal $id" }
         val type = obj.optString("channel_type").trim().uppercase()
         val videoId = obj.optString("video_id").trim()
-        
+
         val ua = obj.optString("user_agent").trim().takeIf { it.isNotBlank() }
             ?: (browserHeaders["User-Agent"] ?: "")
         Log.d(TAG, "loadLinks $label: type=$type url=${streamUrl.take(110)}")

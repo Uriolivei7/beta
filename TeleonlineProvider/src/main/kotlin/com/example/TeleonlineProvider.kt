@@ -77,11 +77,11 @@ class TeleonlineProvider : MainAPI() {
         return channels
     }
 
-    private suspend fun safeGet(url: String, timeoutMs: Long = 15000L): String? {
+    private suspend fun safeGet(url: String, timeoutSec: Long = 15L): String? {
         for (attempt in 1..2) {
             try {
                 val interceptor = if (attempt > 1) cfKiller else null
-                val res = app.get(url, timeout = timeoutMs * attempt, interceptor = interceptor)
+                val res = app.get(url, timeout = timeoutSec * attempt, interceptor = interceptor)
                 if (res.isSuccessful) return res.text
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
@@ -119,7 +119,7 @@ class TeleonlineProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            val html = safeGet(url, 20000L) ?: return null
+            val html = safeGet(url, 20L) ?: return null
             val doc = Jsoup.parse(html)
 
             val title = doc.selectFirst(".titulo-canal-manual")?.text()

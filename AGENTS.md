@@ -2125,3 +2125,28 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 - HD: playlist viva (seq 157xxx, segs 5s en `ts6.tvcluboficial.com`), pero los 3 segs anunciados dieron **200 con 0B** (expirados) y el más fresco **1.75MB en 4.5s** (~3.1 Mbps efectivos para ~5s de 1080p = sin margen; cualquier jitter ? freeze cíclico).
 - Conclusión: el freeze del usuario en este canal es caudal del edge al límite, no headers (prueba 1: mismos headers on/off = mismo resultado) ni código. La app original lo disimula con más buffer.
 - Recomendación al usuario: probar la entrada **no-HD** (1627, edge `ts1`, segs 6s) que debe tener más margen.
+
+### ?? Error fetchProjectId en cs3d + motivo real (14 Oct 2026 v3)
+**Reporte (usuario, cs3d)**: `No se encontró el proyecto 10. Último error: fetchProjectId: no accesible`.
+**Análisis**: `fetchProjectId` = `query { viewer { projectV2(number) { id } } }` con id=null. El parseo SÍ funcionó (kotlinx-serialization sigue en `SyncNetwork.kt:239` — la migración a Jackson fue parcial; en cs3d no crasheó esta vez). Causas probables en orden: (1) el proyecto no es **V2** (los classic devuelven null); (2) número/cuenta no coincide (`viewer` = dueño del token; proyectos de ORG no salen por esa query); (3) token sin scope `project`/`read:project`.
+**Fix v3**: el error ahora incluye los `errors[]` de GraphQL (`no accesible (<msgs>)`) para distinguir scope vs número sin adivinar.
+- Versiones a **3** (`build.gradle.kts` iba en 2, `plugins.json` en 1 — otro desync; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar y reintentar — el nuevo mensaje dirá la causa exacta.
+
+### ??? Token OK en Android pero falla en cs3d: error real enmascarado (14 Oct 2026 v4)
+**Reporte (usuario)**: mismo token+proyecto funcionan en celular y emulador, pero en cs3d da `fetchProjectId: no accesible`.
+**Causa (código)**: `graphql()` SÍ guardaba la causa real (`graphql HTTP ...` / `graphql failed: ...`), pero `fetchProjectId` la **sobrescribía** con el mensaje genérico. El fallo está en el request desktop (red de la PC: proxy/VPN/TLS), no en el token.
+**Fix v4**: si `resp==null` (falló el request), NO sobrescribir `lastError` — la UI mostrará la causa real de `graphql()`.
+- Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar en cs3d y reintentar — el nuevo `Último error` dirá la causa (ej. `graphql failed: ...`).
+
+---
+
+## TeleonlineProvider — hang en links http + timeouts en segundos (14 Oct 2026 v3)
+
+**Reporte (usuario)**: Studio Universal opción 3 (`http://187.102.210.46/universo/index.m3u8`, sin S) se queda "cargando" eternamente en CloudStream Android, pero abre en VLC y en cs3d Windows. Mismo síntoma en el provider de Ranita (v1) y en el del beta (v2).
+**Verificado**: el servidor responde 200 con playlist válida (1080p, dual audio) en 0.2s; NO acepta https (000). Red y servidor OK ? es lado app Android.
+**Hipótesis principal**: bloqueo de cleartext (`http://`) en la cadena de la app Android (VLC/mpv no lo aplican) ? ExoPlayer reintenta = loading eterno. Pendiente confirmar con logcat del hang (`playerError`/Cleartext/timeout) + test de otro link `http` en CS3.
+**Fix v3 (código)**: `safeGet` usaba `timeout = timeoutMs * attempt` con `15000L/20000L` = miles de segundos sin timeout real (regla 03 Oct 2026). Ahora `timeoutSec` en segundos (15L×intento, load 20L). `withTimeoutOrNull(20000L/15000L)` intactos (ms, correcto).
+- Versiones a **3** (`build.gradle.kts` iba en 1, `plugins.json` en 2 — otro desync; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar y (1) pedir logcat del hang en Android buscando la excepción exacta; (2) probar otro `http` en CS3 para confirmar bloqueo app-wide (workaround: reproductor externo VLC).
