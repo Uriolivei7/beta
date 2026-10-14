@@ -2082,3 +2082,33 @@ Sitio: `vertvcable.com` (WordPress tema Appyn). Directorio de TV en vivo. OJO: l
 **Fix**: `getVideoInterceptor` que inyecta UA + Referer (del link) + Origin + Accept a todo request de nuestros links (`source == "VerTvCable"` ? `getApiFromNameNull` lo encuentra).
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y probar Studio Universal — buscar `[intercept]` en el log y confirmar que el HLS arranca (si el CDN chileno bloquea por geo, el siguiente paso es VPN).
+
+### Veredicto v2 en dispositivo: CDN geo-bloqueado, no es código (13 Oct 2026)
+**Log v2 (usuario, Studio Universal)**: el interceptor SÍ aplica (`Using OkHttpDataSource` + `[intercept]` ×4 por intento). Pero el TCP a `cdn1tlinkgo.tlink.cl/45.4.0.11:443` muere (`SocketTimeoutException ... after 10000ms`, ×2 intentos) ? 2001.
+**Verificado desde PC**: el host ni resuelve DNS (sin respuesta) y por HTTP tampoco conecta. En el dispositivo sí resuelve (45.4.0.11) pero los SYN se pierden ? típico geo-fence chileno (tlink.cl) por IP, no por headers. **No hay fix de código posible.**
+- Siguiente paso (usuario): probar con **VPN en Chile** (y si no, MX — hay "Opción 2 VPN MX" por canal). Si con IP CL el `[intercept]` devuelve 200, confirmado geo y el provider queda como está.
+- También probar un canal tipo EMBED (ej. ESPN ? `/ver/` ? MPD `cdn-live.mundogo.cl`, también chileno, mismo pronóstico).
+
+---
+
+## InfinityProvider — Plugin nuevo desde API Solodroid (14 Oct 2026 v1)
+
+Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4` (plantilla Solodroid) + página `fluxa.strymix.com/activar_25.php` (teatro: expiración en negativo, códigos demo). Decompilado con apktool local.
+
+### Cadena de descubrimiento
+1. `Config.smali`: `REST_API_KEY=cda11...` + `SERVER_KEY` (doble base64) ? `https://strymix.com/admin_panel_applicationid_com.infinity.free` (**MUERTO: 404 en todo**).
+2. `SharedPref.api_url` se provisiona vía `saveConfig` (getConfig) — la app guarda el api real tras activar.
+3. La app trae blocklist anti-interceptación (AdGuard/Blokada/HttpCanary/PCAP/DNS privado/LuckyPatcher) ? HTTP Toolkit/PCAP rebotan (el "VPN detectado" del usuario).
+4. `RestAdapter`: base = `apiUrl + "/api/"`, endpoints `api.php?get_category_index|get_category_posts(id,page,count)|get_post_detail(id)|get_config(package_name)` + `api_key` (flag sin valor, como Retrofit).
+5. Logcat del usuario reveló la base VIVA: `strymix.com/admin_panel/` (las imgs van a `/admin_panel/upload/category/`). `GET .../admin_panel/api/api.php?get_category_index&api_key=...` ? `{"status":"ok",...}` + **27 categorías** (cids verificados).
+6. Películas: `locotv.alwaysdata.net/budpeli/movies_data.json` (17MB, ~15k pelis, mp4 directo `nvmevod.btv.mx`) — público pero NO se portó (usuario: bastantes plugins de pelis).
+
+### Implementación (v1, sin compilar por regla del repo)
+- `getMainPage`: 27 secciones fijas (`cat:{cid}`) ? `get_category_posts` (count=50); `hasNext` por `pages`.
+- `search()`: `get_search_results&search=` (parámetro inferido del template; con fallback a vacío si falla).
+- `load()`/`loadLinks()`: data = `{mainUrl}/infinity/channel/{id}` (URL absoluta por regla Donghualife v6) ? `get_post_detail` ? `channel_url` (m3u8 directo `fluxa.strymix.com/...`) con header `User-Agent` = `user_agent` del canal (así lo pide la app); `channel_type=YOUTUBE` ? `loadExtractor`.
+- **Anti rate-limit**: el panel baneó mi IP tras ~6 requests ? 1 sola petición por llamada, sin `amap`/probes.
+- JSON con `org.json` (nunca kotlinx-serialization). Timeouts en segundos.
+- Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `InfinityPlugin.kt`, `InfinityProvider.kt`; `plugins.json` ? entrada `Infinity` v1 (`fileSize: 0` pendiente). `settings.gradle.kts` auto-incluye (verificado en Okru).
+- Balance `bal_check.py` ? OK.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :InfinityProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home (27 secciones) + un canal de México. Logs: `adb logcat -s Infinity:V`.
