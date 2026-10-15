@@ -88,7 +88,7 @@ class InfinityProvider : MainAPI() {
                 throw e
             }
             Log.d(TAG, "[cdn] ${request.method} ${url.take(100)} -> ${response.code}")
-            
+
             if (response.code == 403 && tryActivate("403 en ${request.url.host}")) {
                 Log.w(TAG, "[cdn] 403, reintentando tras activar")
                 response.close()

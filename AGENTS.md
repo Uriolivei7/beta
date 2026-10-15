@@ -2050,120 +2050,126 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: `load()` los parsea (tÃ­tulo de `img[alt]`, poster `img[src]`) â†’ `this.recommendations` en serie y pelÃ­cula.
 - Versiones a **6** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir House of Mouse â€” deben salir recomendaciones (Coraje, Ciudad de Perros, Ren y Stimpy...).
+
+### ðŸ”§ Extractor propio de ok.ru (15 Oct 2026 v7)
+**Log v6 (usuario, Silvestre y PiolÃ­n)**: un solo servidor `ok.ru/videoembed/2487200909897` â†’ `loadExtractor` retornÃ³ `true` con 0 links â†’ `success=true` pero "enlaces no encontrados". Danimados no tenÃ­a rama ok.ru (Donghualife sÃ­, con `emitOkru`).
+**Fix**: port de `emitOkru` â†’ `tryOkruDanimados()` (`data-options` â†’ `flashvars.metadata.hlsManifestUrl` â†’ HLS; fallback `videos[]` progresivos con calidades full/hd/sd/low/mobile) + rama en `loadLinks` + etiqueta `Okru` + `okcdn`/`ok.ru` al interceptor (Referer = embed, como Donghualife). `source = "Danimados"` en todo lo emitido.
+- Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- â¸ï¸ **Pendiente**: compilar, instalar y probar Silvestre y PiolÃ­n buscando `[Okru] ... -> HLS`. Si sale `sin URLs`, el video estÃ¡ borrado/privado en ok.ru.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---
 
-## VertvcableProvider — Plugin nuevo (13 Oct 2026 v1)
+## VertvcableProvider ï¿½ Plugin nuevo (13 Oct 2026 v1)
 
-Sitio: `vertvcable.com` (WordPress tema Appyn). Directorio de TV en vivo. OJO: la web incluye un falso popup "Java Update" (plugin `akismet-antl-spam`) que descarga un ejecutable de `staybonvivant.com/dw4.php` — solo afecta a visitantes Windows en navegador (el JS se auto-desactiva en Android); al provider (`app.get`, sin JS) no le afecta.
+Sitio: `vertvcable.com` (WordPress tema Appyn). Directorio de TV en vivo. OJO: la web incluye un falso popup "Java Update" (plugin `akismet-antl-spam`) que descarga un ejecutable de `staybonvivant.com/dw4.php` ï¿½ solo afecta a visitantes Windows en navegador (el JS se auto-desactiva en Android); al provider (`app.get`, sin JS) no le afecta.
 
 ### Cadena verificada end-to-end (ESPN, en vivo desde PC)
-1. Ficha `/{slug}-en-vivo/` ? botones `.vtc-pill[data-post][data-index][data-nonce]` (Opción 1, Opción 2 VPN MX...).
+1. Ficha `/{slug}-en-vivo/` ? botones `.vtc-pill[data-post][data-index][data-nonce]` (Opciï¿½n 1, Opciï¿½n 2 VPN MX...).
 2. `POST wp-admin/admin-ajax.php` (`action=vtc_get_stream_url`, `post_id`, `stream_index`, `nonce`) con Referer + UA navegador (sin cookies OK; POST pelado da 403 Cloudflare) ? `{"url":"https://play.vertvcable.com/play/?canal=espn","type":"EMBED"}`.
-3. Embed ? `<iframe src="/ver/?id=espn">` ? `const config = {"url":"//cdn-live.mundogo.cl/espn/espn.mpd","clearkey":{kidHex:keyHex ×3}}` (Clappr+Shaka DASH ClearKey, keys en hex plano).
-4. Mismo patrón que sensa/Telelibre ? `newDrmExtractorLink` + `hexToB64Url()` (con el caveat del UUID ClearKey de la app).
+3. Embed ? `<iframe src="/ver/?id=espn">` ? `const config = {"url":"//cdn-live.mundogo.cl/espn/espn.mpd","clearkey":{kidHex:keyHex ï¿½3}}` (Clappr+Shaka DASH ClearKey, keys en hex plano).
+4. Mismo patrï¿½n que sensa/Telelibre ? `newDrmExtractorLink` + `hexToB64Url()` (con el caveat del UUID ClearKey de la app).
 
-### Implementación (v1, sin compilar por regla del repo)
-- `getMainPage`: `/` + 5 categorías (`/category/cine|peliculas|deportes|infantil|musica`); cards `div.bav a[href]` (título `span.title`, poster `img[data-src]` por lazyload con fallback a `src`); pag `page/N/`; `hasNext` por `link[rel=next]`.
+### Implementaciï¿½n (v1, sin compilar por regla del repo)
+- `getMainPage`: `/` + 5 categorï¿½as (`/category/cine|peliculas|deportes|infantil|musica`); cards `div.bav a[href]` (tï¿½tulo `span.title`, poster `img[data-src]` por lazyload con fallback a `src`); pag `page/N/`; `hasNext` por `link[rel=next]`.
 - `search()`: `/?s=` + `URLEncoder`, mismo parser.
 - `load()`: `h1` + `og:image` + meta description ? `TvSeriesLive` con 1 episodio.
-- `loadLinks()`: pills ? AJAX por opción ? dispatch por `type` (EMBED?`resolveEmbed`, HLS/MP4/DASH?directo). `resolveEmbed`: config ClearKey ? DRM; m3u8/mp4 directo; 1 nivel de iframe anidado (`/ver/`); YouTube/externos ? `loadExtractor`.
+- `loadLinks()`: pills ? AJAX por opciï¿½n ? dispatch por `type` (EMBED?`resolveEmbed`, HLS/MP4/DASH?directo). `resolveEmbed`: config ClearKey ? DRM; m3u8/mp4 directo; 1 nivel de iframe anidado (`/ver/`); YouTube/externos ? `loadExtractor`.
 - Timeouts en segundos (`15L`); JSON con `org.json` (nunca kotlinx-serialization).
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `VertvcablePlugin.kt`, `VertvcableProvider.kt`; `plugins.json` ? entrada `VerTvCable` v1 (`fileSize: 0` pendiente).
 - Balance verificado con `bal_check.py` ? OK.
-- ?? **Pendiente**: compilar (`.\gradlew.bat :VertvcableProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar ESPN. **Aviso VPN**: el MPD (`cdn-live.mundogo.cl`) no resolvió DNS desde la red de PC (posible geo-DNS o CDN caído); si en el dispositivo tampoco resuelve, probar con VPN (hay "Opción 2 VPN MX" por canal). Logs: `adb logcat -s VerTvCable:V` buscando `ajax OK` y `DASH mpd=`.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :VertvcableProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar ESPN. **Aviso VPN**: el MPD (`cdn-live.mundogo.cl`) no resolviï¿½ DNS desde la red de PC (posible geo-DNS o CDN caï¿½do); si en el dispositivo tampoco resuelve, probar con VPN (hay "Opciï¿½n 2 VPN MX" por canal). Logs: `adb logcat -s VerTvCable:V` buscando `ajax OK` y `DASH mpd=`.
 
-- Fix compilacion Vertvcable (13 Oct 2026): `Argument type mismatch: String? vs String` (linea 261) — en el bloque anidado de `resolveEmbed` se usaba `key` sin declararla (faltaba `val key = keys.optString(kid)`). Sin compilacion exitosa `:make` no genera el `.cs3` en `VertvcableProvider/build/`.
+- Fix compilacion Vertvcable (13 Oct 2026): `Argument type mismatch: String? vs String` (linea 261) ï¿½ en el bloque anidado de `resolveEmbed` se usaba `key` sin declararla (faltaba `val key = keys.optString(kid)`). Sin compilacion exitosa `:make` no genera el `.cs3` en `VertvcableProvider/build/`.
 
 ### Interceptor faltante ? 2002 en HLS directo (13 Oct 2026 v2)
-**Log v1 (usuario)**: home (193 canales + categorías), search, load y AJAX OK — Studio Universal resuelve `type=HLS` directo (`cdn1tlinkgo.tlink.cl/.../mono.m3u8`, sin VPN). Pero el player usaba `CronetDataSource` con `headers={}` ? `SocketTimeoutException` ? error 2002.
-**Causa raíz**: el provider v1 **no tenía `getVideoInterceptor`** — CS3 caía a Cronet sin headers y el CDN (que exige Referer) dejaba morir la conexión.
+**Log v1 (usuario)**: home (193 canales + categorï¿½as), search, load y AJAX OK ï¿½ Studio Universal resuelve `type=HLS` directo (`cdn1tlinkgo.tlink.cl/.../mono.m3u8`, sin VPN). Pero el player usaba `CronetDataSource` con `headers={}` ? `SocketTimeoutException` ? error 2002.
+**Causa raï¿½z**: el provider v1 **no tenï¿½a `getVideoInterceptor`** ï¿½ CS3 caï¿½a a Cronet sin headers y el CDN (que exige Referer) dejaba morir la conexiï¿½n.
 **Fix**: `getVideoInterceptor` que inyecta UA + Referer (del link) + Origin + Accept a todo request de nuestros links (`source == "VerTvCable"` ? `getApiFromNameNull` lo encuentra).
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
-- Pendiente: compilar, instalar y probar Studio Universal — buscar `[intercept]` en el log y confirmar que el HLS arranca (si el CDN chileno bloquea por geo, el siguiente paso es VPN).
+- Pendiente: compilar, instalar y probar Studio Universal ï¿½ buscar `[intercept]` en el log y confirmar que el HLS arranca (si el CDN chileno bloquea por geo, el siguiente paso es VPN).
 
-### Veredicto v2 en dispositivo: CDN geo-bloqueado, no es código (13 Oct 2026)
-**Log v2 (usuario, Studio Universal)**: el interceptor SÍ aplica (`Using OkHttpDataSource` + `[intercept]` ×4 por intento). Pero el TCP a `cdn1tlinkgo.tlink.cl/45.4.0.11:443` muere (`SocketTimeoutException ... after 10000ms`, ×2 intentos) ? 2001.
-**Verificado desde PC**: el host ni resuelve DNS (sin respuesta) y por HTTP tampoco conecta. En el dispositivo sí resuelve (45.4.0.11) pero los SYN se pierden ? típico geo-fence chileno (tlink.cl) por IP, no por headers. **No hay fix de código posible.**
-- Siguiente paso (usuario): probar con **VPN en Chile** (y si no, MX — hay "Opción 2 VPN MX" por canal). Si con IP CL el `[intercept]` devuelve 200, confirmado geo y el provider queda como está.
-- También probar un canal tipo EMBED (ej. ESPN ? `/ver/` ? MPD `cdn-live.mundogo.cl`, también chileno, mismo pronóstico).
+### Veredicto v2 en dispositivo: CDN geo-bloqueado, no es cï¿½digo (13 Oct 2026)
+**Log v2 (usuario, Studio Universal)**: el interceptor Sï¿½ aplica (`Using OkHttpDataSource` + `[intercept]` ï¿½4 por intento). Pero el TCP a `cdn1tlinkgo.tlink.cl/45.4.0.11:443` muere (`SocketTimeoutException ... after 10000ms`, ï¿½2 intentos) ? 2001.
+**Verificado desde PC**: el host ni resuelve DNS (sin respuesta) y por HTTP tampoco conecta. En el dispositivo sï¿½ resuelve (45.4.0.11) pero los SYN se pierden ? tï¿½pico geo-fence chileno (tlink.cl) por IP, no por headers. **No hay fix de cï¿½digo posible.**
+- Siguiente paso (usuario): probar con **VPN en Chile** (y si no, MX ï¿½ hay "Opciï¿½n 2 VPN MX" por canal). Si con IP CL el `[intercept]` devuelve 200, confirmado geo y el provider queda como estï¿½.
+- Tambiï¿½n probar un canal tipo EMBED (ej. ESPN ? `/ver/` ? MPD `cdn-live.mundogo.cl`, tambiï¿½n chileno, mismo pronï¿½stico).
 
 ---
 
-## InfinityProvider — Plugin nuevo desde API Solodroid (14 Oct 2026 v1)
+## InfinityProvider ï¿½ Plugin nuevo desde API Solodroid (14 Oct 2026 v1)
 
-Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4` (plantilla Solodroid) + página `fluxa.strymix.com/activar_25.php` (teatro: expiración en negativo, códigos demo). Decompilado con apktool local.
+Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4` (plantilla Solodroid) + pï¿½gina `fluxa.strymix.com/activar_25.php` (teatro: expiraciï¿½n en negativo, cï¿½digos demo). Decompilado con apktool local.
 
 ### Cadena de descubrimiento
 1. `Config.smali`: `REST_API_KEY=cda11...` + `SERVER_KEY` (doble base64) ? `https://strymix.com/admin_panel_applicationid_com.infinity.free` (**MUERTO: 404 en todo**).
-2. `SharedPref.api_url` se provisiona vía `saveConfig` (getConfig) — la app guarda el api real tras activar.
-3. La app trae blocklist anti-interceptación (AdGuard/Blokada/HttpCanary/PCAP/DNS privado/LuckyPatcher) ? HTTP Toolkit/PCAP rebotan (el "VPN detectado" del usuario).
+2. `SharedPref.api_url` se provisiona vï¿½a `saveConfig` (getConfig) ï¿½ la app guarda el api real tras activar.
+3. La app trae blocklist anti-interceptaciï¿½n (AdGuard/Blokada/HttpCanary/PCAP/DNS privado/LuckyPatcher) ? HTTP Toolkit/PCAP rebotan (el "VPN detectado" del usuario).
 4. `RestAdapter`: base = `apiUrl + "/api/"`, endpoints `api.php?get_category_index|get_category_posts(id,page,count)|get_post_detail(id)|get_config(package_name)` + `api_key` (flag sin valor, como Retrofit).
-5. Logcat del usuario reveló la base VIVA: `strymix.com/admin_panel/` (las imgs van a `/admin_panel/upload/category/`). `GET .../admin_panel/api/api.php?get_category_index&api_key=...` ? `{"status":"ok",...}` + **27 categorías** (cids verificados).
-6. Películas: `locotv.alwaysdata.net/budpeli/movies_data.json` (17MB, ~15k pelis, mp4 directo `nvmevod.btv.mx`) — público pero NO se portó (usuario: bastantes plugins de pelis).
+5. Logcat del usuario revelï¿½ la base VIVA: `strymix.com/admin_panel/` (las imgs van a `/admin_panel/upload/category/`). `GET .../admin_panel/api/api.php?get_category_index&api_key=...` ? `{"status":"ok",...}` + **27 categorï¿½as** (cids verificados).
+6. Pelï¿½culas: `locotv.alwaysdata.net/budpeli/movies_data.json` (17MB, ~15k pelis, mp4 directo `nvmevod.btv.mx`) ï¿½ pï¿½blico pero NO se portï¿½ (usuario: bastantes plugins de pelis).
 
-### Implementación (v1, sin compilar por regla del repo)
+### Implementaciï¿½n (v1, sin compilar por regla del repo)
 - `getMainPage`: 27 secciones fijas (`cat:{cid}`) ? `get_category_posts` (count=50); `hasNext` por `pages`.
-- `search()`: `get_search_results&search=` (parámetro inferido del template; con fallback a vacío si falla).
-- `load()`/`loadLinks()`: data = `{mainUrl}/infinity/channel/{id}` (URL absoluta por regla Donghualife v6) ? `get_post_detail` ? `channel_url` (m3u8 directo `fluxa.strymix.com/...`) con header `User-Agent` = `user_agent` del canal (así lo pide la app); `channel_type=YOUTUBE` ? `loadExtractor`.
-- **Anti rate-limit**: el panel baneó mi IP tras ~6 requests ? 1 sola petición por llamada, sin `amap`/probes.
+- `search()`: `get_search_results&search=` (parï¿½metro inferido del template; con fallback a vacï¿½o si falla).
+- `load()`/`loadLinks()`: data = `{mainUrl}/infinity/channel/{id}` (URL absoluta por regla Donghualife v6) ? `get_post_detail` ? `channel_url` (m3u8 directo `fluxa.strymix.com/...`) con header `User-Agent` = `user_agent` del canal (asï¿½ lo pide la app); `channel_type=YOUTUBE` ? `loadExtractor`.
+- **Anti rate-limit**: el panel baneï¿½ mi IP tras ~6 requests ? 1 sola peticiï¿½n por llamada, sin `amap`/probes.
 - JSON con `org.json` (nunca kotlinx-serialization). Timeouts en segundos.
 - Archivos: `build.gradle.kts` (v1), `AndroidManifest.xml`, `InfinityPlugin.kt`, `InfinityProvider.kt`; `plugins.json` ? entrada `Infinity` v1 (`fileSize: 0` pendiente). `settings.gradle.kts` auto-incluye (verificado en Okru).
 - Balance `bal_check.py` ? OK.
-- ?? **Pendiente**: compilar (`.\gradlew.bat :InfinityProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home (27 secciones) + un canal de México. Logs: `adb logcat -s Infinity:V`.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :InfinityProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home (27 secciones) + un canal de Mï¿½xico. Logs: `adb logcat -s Infinity:V`.
 
-### ?? Freeze: headers en segmentos + interceptor con diagnóstico (14 Oct 2026 v2)
-**Reporte (usuario)**: en la app original casi no se congela, en el plugin sí ? no es (solo) el CDN, falta algo que la app sí manda.
-**Hipótesis**: el link v1 solo llevaba `User-Agent` y referer al panel; los segmentos del CDN fluxa probablemente exigen el set completo (la app los pide con UA+Referer propios). Sin interceptor, CS3 puede pedir variantes/segmentos sin ellas ? el CDN estrangula ? freeze.
-**Fix**: link con `Referer: https://fluxa.strymix.com/` + `getVideoInterceptor` que re-aplica UA/Referer/Origin/Accept a todo `strymix.com` y loguea `[cdn] METODO url -> codigo` (diagnóstico del freeze en vivo).
+### ?? Freeze: headers en segmentos + interceptor con diagnï¿½stico (14 Oct 2026 v2)
+**Reporte (usuario)**: en la app original casi no se congela, en el plugin sï¿½ ? no es (solo) el CDN, falta algo que la app sï¿½ manda.
+**Hipï¿½tesis**: el link v1 solo llevaba `User-Agent` y referer al panel; los segmentos del CDN fluxa probablemente exigen el set completo (la app los pide con UA+Referer propios). Sin interceptor, CS3 puede pedir variantes/segmentos sin ellas ? el CDN estrangula ? freeze.
+**Fix**: link con `Referer: https://fluxa.strymix.com/` + `getVideoInterceptor` que re-aplica UA/Referer/Origin/Accept a todo `strymix.com` y loguea `[cdn] METODO url -> codigo` (diagnï¿½stico del freeze en vivo).
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ?? **Pendiente**: compilar, instalar y comparar frecuencia de congelamiento + mirar `[cdn]` en el momento del freeze (401/403/timeout vs 200 lento decide el siguiente paso).
 
-### ?? Veredicto Studio Universal HD: edge sin margen (14 Oct 2026, sin cambio de código)
-**Medido en vivo (PC)**: hay DOS entradas — `Studio Universal HD` (1628, cat HD) y `Studio Universal` (1627, cat Películas).
-- HD: playlist viva (seq 157xxx, segs 5s en `ts6.tvcluboficial.com`), pero los 3 segs anunciados dieron **200 con 0B** (expirados) y el más fresco **1.75MB en 4.5s** (~3.1 Mbps efectivos para ~5s de 1080p = sin margen; cualquier jitter ? freeze cíclico).
-- Conclusión: el freeze del usuario en este canal es caudal del edge al límite, no headers (prueba 1: mismos headers on/off = mismo resultado) ni código. La app original lo disimula con más buffer.
-- Recomendación al usuario: probar la entrada **no-HD** (1627, edge `ts1`, segs 6s) que debe tener más margen.
+### ?? Veredicto Studio Universal HD: edge sin margen (14 Oct 2026, sin cambio de cï¿½digo)
+**Medido en vivo (PC)**: hay DOS entradas ï¿½ `Studio Universal HD` (1628, cat HD) y `Studio Universal` (1627, cat Pelï¿½culas).
+- HD: playlist viva (seq 157xxx, segs 5s en `ts6.tvcluboficial.com`), pero los 3 segs anunciados dieron **200 con 0B** (expirados) y el mï¿½s fresco **1.75MB en 4.5s** (~3.1 Mbps efectivos para ~5s de 1080p = sin margen; cualquier jitter ? freeze cï¿½clico).
+- Conclusiï¿½n: el freeze del usuario en este canal es caudal del edge al lï¿½mite, no headers (prueba 1: mismos headers on/off = mismo resultado) ni cï¿½digo. La app original lo disimula con mï¿½s buffer.
+- Recomendaciï¿½n al usuario: probar la entrada **no-HD** (1627, edge `ts1`, segs 6s) que debe tener mï¿½s margen.
 
 ### ?? Error fetchProjectId en cs3d + motivo real (14 Oct 2026 v3)
-**Reporte (usuario, cs3d)**: `No se encontró el proyecto 10. Último error: fetchProjectId: no accesible`.
-**Análisis**: `fetchProjectId` = `query { viewer { projectV2(number) { id } } }` con id=null. El parseo SÍ funcionó (kotlinx-serialization sigue en `SyncNetwork.kt:239` — la migración a Jackson fue parcial; en cs3d no crasheó esta vez). Causas probables en orden: (1) el proyecto no es **V2** (los classic devuelven null); (2) número/cuenta no coincide (`viewer` = dueño del token; proyectos de ORG no salen por esa query); (3) token sin scope `project`/`read:project`.
-**Fix v3**: el error ahora incluye los `errors[]` de GraphQL (`no accesible (<msgs>)`) para distinguir scope vs número sin adivinar.
-- Versiones a **3** (`build.gradle.kts` iba en 2, `plugins.json` en 1 — otro desync; `fileSize` pendiente).
-- ?? **Pendiente**: compilar, instalar y reintentar — el nuevo mensaje dirá la causa exacta.
+**Reporte (usuario, cs3d)**: `No se encontrï¿½ el proyecto 10. ï¿½ltimo error: fetchProjectId: no accesible`.
+**Anï¿½lisis**: `fetchProjectId` = `query { viewer { projectV2(number) { id } } }` con id=null. El parseo Sï¿½ funcionï¿½ (kotlinx-serialization sigue en `SyncNetwork.kt:239` ï¿½ la migraciï¿½n a Jackson fue parcial; en cs3d no crasheï¿½ esta vez). Causas probables en orden: (1) el proyecto no es **V2** (los classic devuelven null); (2) nï¿½mero/cuenta no coincide (`viewer` = dueï¿½o del token; proyectos de ORG no salen por esa query); (3) token sin scope `project`/`read:project`.
+**Fix v3**: el error ahora incluye los `errors[]` de GraphQL (`no accesible (<msgs>)`) para distinguir scope vs nï¿½mero sin adivinar.
+- Versiones a **3** (`build.gradle.kts` iba en 2, `plugins.json` en 1 ï¿½ otro desync; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar y reintentar ï¿½ el nuevo mensaje dirï¿½ la causa exacta.
 
 ### ??? Token OK en Android pero falla en cs3d: error real enmascarado (14 Oct 2026 v4)
 **Reporte (usuario)**: mismo token+proyecto funcionan en celular y emulador, pero en cs3d da `fetchProjectId: no accesible`.
-**Causa (código)**: `graphql()` SÍ guardaba la causa real (`graphql HTTP ...` / `graphql failed: ...`), pero `fetchProjectId` la **sobrescribía** con el mensaje genérico. El fallo está en el request desktop (red de la PC: proxy/VPN/TLS), no en el token.
-**Fix v4**: si `resp==null` (falló el request), NO sobrescribir `lastError` — la UI mostrará la causa real de `graphql()`.
+**Causa (cï¿½digo)**: `graphql()` Sï¿½ guardaba la causa real (`graphql HTTP ...` / `graphql failed: ...`), pero `fetchProjectId` la **sobrescribï¿½a** con el mensaje genï¿½rico. El fallo estï¿½ en el request desktop (red de la PC: proxy/VPN/TLS), no en el token.
+**Fix v4**: si `resp==null` (fallï¿½ el request), NO sobrescribir `lastError` ï¿½ la UI mostrarï¿½ la causa real de `graphql()`.
 - Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
-- ?? **Pendiente**: compilar, instalar en cs3d y reintentar — el nuevo `Último error` dirá la causa (ej. `graphql failed: ...`).
+- ?? **Pendiente**: compilar, instalar en cs3d y reintentar ï¿½ el nuevo `ï¿½ltimo error` dirï¿½ la causa (ej. `graphql failed: ...`).
 
 ---
 
-## TeleonlineProvider — hang en links http + timeouts en segundos (14 Oct 2026 v3)
+## TeleonlineProvider ï¿½ hang en links http + timeouts en segundos (14 Oct 2026 v3)
 
-**Reporte (usuario)**: Studio Universal opción 3 (`http://187.102.210.46/universo/index.m3u8`, sin S) se queda "cargando" eternamente en CloudStream Android, pero abre en VLC y en cs3d Windows. Mismo síntoma en el provider de Ranita (v1) y en el del beta (v2).
-**Verificado**: el servidor responde 200 con playlist válida (1080p, dual audio) en 0.2s; NO acepta https (000). Red y servidor OK ? es lado app Android.
-**Hipótesis principal**: bloqueo de cleartext (`http://`) en la cadena de la app Android (VLC/mpv no lo aplican) ? ExoPlayer reintenta = loading eterno. Pendiente confirmar con logcat del hang (`playerError`/Cleartext/timeout) + test de otro link `http` en CS3.
-**Fix v3 (código)**: `safeGet` usaba `timeout = timeoutMs * attempt` con `15000L/20000L` = miles de segundos sin timeout real (regla 03 Oct 2026). Ahora `timeoutSec` en segundos (15L×intento, load 20L). `withTimeoutOrNull(20000L/15000L)` intactos (ms, correcto).
-- Versiones a **3** (`build.gradle.kts` iba en 1, `plugins.json` en 2 — otro desync; `fileSize` pendiente).
-- ?? **Pendiente**: compilar, instalar y (1) pedir logcat del hang en Android buscando la excepción exacta; (2) probar otro `http` en CS3 para confirmar bloqueo app-wide (workaround: reproductor externo VLC).
+**Reporte (usuario)**: Studio Universal opciï¿½n 3 (`http://187.102.210.46/universo/index.m3u8`, sin S) se queda "cargando" eternamente en CloudStream Android, pero abre en VLC y en cs3d Windows. Mismo sï¿½ntoma en el provider de Ranita (v1) y en el del beta (v2).
+**Verificado**: el servidor responde 200 con playlist vï¿½lida (1080p, dual audio) en 0.2s; NO acepta https (000). Red y servidor OK ? es lado app Android.
+**Hipï¿½tesis principal**: bloqueo de cleartext (`http://`) en la cadena de la app Android (VLC/mpv no lo aplican) ? ExoPlayer reintenta = loading eterno. Pendiente confirmar con logcat del hang (`playerError`/Cleartext/timeout) + test de otro link `http` en CS3.
+**Fix v3 (cï¿½digo)**: `safeGet` usaba `timeout = timeoutMs * attempt` con `15000L/20000L` = miles de segundos sin timeout real (regla 03 Oct 2026). Ahora `timeoutSec` en segundos (15Lï¿½intento, load 20L). `withTimeoutOrNull(20000L/15000L)` intactos (ms, correcto).
+- Versiones a **3** (`build.gradle.kts` iba en 1, `plugins.json` en 2 ï¿½ otro desync; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar y (1) pedir logcat del hang en Android buscando la excepciï¿½n exacta; (2) probar otro `http` en CS3 para confirmar bloqueo app-wide (workaround: reproductor externo VLC).
 
-### ?? Veredicto por opción (14 Oct 2026, sin cambio de código)
+### ?? Veredicto por opciï¿½n (14 Oct 2026, sin cambio de cï¿½digo)
 **Medido (usuario en dispositivo + PC)**:
-| Opción | URL | En teléfono | Desde PC | Veredicto |
+| Opciï¿½n | URL | En telï¿½fono | Desde PC | Veredicto |
 |---|---|---|---|---|
-| 3 | `187.102.210.46` (:80) | cuelga en silencio | 200 instantáneo | ruta/middlebox puerto 80 |
+| 3 | `187.102.210.46` (:80) | cuelga en silencio | 200 instantï¿½neo | ruta/middlebox puerto 80 |
 | 4 | `15.204.246.24:8080` | 2004 | **403** con y sin headers | proxy muerto/IP-locked, nada que hacer |
-| 5 | `138.121.15.230:9002` | reproduce + freezes | — | CDN lento (clásico) |
-| 6 | `190.93.224.42` (:80) | cuelga igual que 3 | 200 instantáneo | igual que 3 |
-- Patrón: las dos en **puerto 80** cuelgan en el teléfono pero responden al instante desde fuera + abren en VLC ? middlebox transparente del operador/red hacia esas IPs (tarpit en sesiones largas; VLC reconecta agresivo y lo tolera, ExoPlayer espera). Descartado: headers (200 con y sin ellos), cleartext-policy (sin excepción), DNS, servidor.
-- Siguiente paso (usuario): **VPN en el teléfono** y probar 3 y 6 — el túnel cifrado evita la intercepción del puerto 80. Si con VPN abren, caso cerrado.
+| 5 | `138.121.15.230:9002` | reproduce + freezes | ï¿½ | CDN lento (clï¿½sico) |
+| 6 | `190.93.224.42` (:80) | cuelga igual que 3 | 200 instantï¿½neo | igual que 3 |
+- Patrï¿½n: las dos en **puerto 80** cuelgan en el telï¿½fono pero responden al instante desde fuera + abren en VLC ? middlebox transparente del operador/red hacia esas IPs (tarpit en sesiones largas; VLC reconecta agresivo y lo tolera, ExoPlayer espera). Descartado: headers (200 con y sin ellos), cleartext-policy (sin excepciï¿½n), DNS, servidor.
+- Siguiente paso (usuario): **VPN en el telï¿½fono** y probar 3 y 6 ï¿½ el tï¿½nel cifrado evita la intercepciï¿½n del puerto 80. Si con VPN abren, caso cerrado.
 
-### ?? Auto-activación ante 403 (14 Oct 2026 v3)
-**Hallazgo (código de activar_25.php)**: la "activación" es `fetch("", {method:"POST"})` — POST vacío a la propia página, SIN enviar ningún código (`copyCode` solo copia al portapapeles) y con el `10h 00m` hardcodeado en el JS. El único efecto servidor posible es listar la IP de origen (~10h). Mecanismo de la hipótesis del usuario CONFIRMADO a nivel código.
+### ?? Auto-activaciï¿½n ante 403 (14 Oct 2026 v3)
+**Hallazgo (cï¿½digo de activar_25.php)**: la "activaciï¿½n" es `fetch("", {method:"POST"})` ï¿½ POST vacï¿½o a la propia pï¿½gina, SIN enviar ningï¿½n cï¿½digo (`copyCode` solo copia al portapapeles) y con el `10h 00m` hardcodeado en el JS. El ï¿½nico efecto servidor posible es listar la IP de origen (~10h). Mecanismo de la hipï¿½tesis del usuario CONFIRMADO a nivel cï¿½digo.
 **Fix**: `tryActivate()` replica ese POST (misma IP del dispositivo, lock + cooldown 30min) y el interceptor, ante 403 de `strymix.com`, activa y **reintenta UNA vez** (`[activar] POST -> code` + `[cdn] retry -> code`). Sin 403 no hay requests extra. Omite leer estado de la app INFINITY (imposible entre paquetes) y no muestra avisos (un provider no puede).
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
-- ?? **Pendiente**: compilar, instalar y validar en el experimento 22:30 — esperado `[cdn] ... -> 403` ? `[activar] POST -> 2xx` ? `[cdn] retry -> 200`.
+- ?? **Pendiente**: compilar, instalar y validar en el experimento 22:30 ï¿½ esperado `[cdn] ... -> 403` ? `[activar] POST -> 2xx` ? `[cdn] retry -> 200`.

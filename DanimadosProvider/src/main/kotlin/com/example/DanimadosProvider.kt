@@ -222,7 +222,7 @@ class DanimadosProvider : MainAPI() {
     private val challengeHosts = listOf("voe.", "hglink", "streamwish", "johnbeyondnation")
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val cdnDomains = listOf("acek-cdn", "dramiyos", "vidhidepro", "vidhide", "premilkyway", "cyou")
+        val cdnDomains = listOf("acek-cdn", "dramiyos", "vidhidepro", "vidhide", "premilkyway", "cyou", "okcdn", "ok.ru")
         val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/")
         return Interceptor { chain ->
             val request = chain.request()
@@ -312,6 +312,7 @@ class DanimadosProvider : MainAPI() {
                 videoUrl.contains("bysedikamoum.com") || videoUrl.contains("4meplayer.pro") -> "Byse"
                 videoUrl.contains("hglink.to") || videoUrl.contains("hgglink") -> "HgLink"
                 videoUrl.contains("voe.sx") || videoUrl.contains("voe.") -> "VOE"
+                videoUrl.contains("ok.ru") -> "Okru"
                 else -> "Server$nume"
             }
             Log.d("Danimados", "loadLinks $embedLabel: $videoUrl")
@@ -340,6 +341,11 @@ class DanimadosProvider : MainAPI() {
                         videoUrl.contains("awish.pro") -> {
                         Log.d("Danimados", "loadLinks StreamWish -> parse + WebView")
                         tryStreamwishDanimados(videoUrl, data, subtitleCallback, callback)
+                    }
+
+                    videoUrl.contains("ok.ru") -> {
+                        Log.d("Danimados", "loadLinks Okru -> extractor propio")
+                        tryOkruDanimados(videoUrl, data, callback)
                     }
 
                     else -> false
