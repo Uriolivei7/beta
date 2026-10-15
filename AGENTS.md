@@ -2150,3 +2150,20 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 **Fix v3 (código)**: `safeGet` usaba `timeout = timeoutMs * attempt` con `15000L/20000L` = miles de segundos sin timeout real (regla 03 Oct 2026). Ahora `timeoutSec` en segundos (15L×intento, load 20L). `withTimeoutOrNull(20000L/15000L)` intactos (ms, correcto).
 - Versiones a **3** (`build.gradle.kts` iba en 1, `plugins.json` en 2 — otro desync; `fileSize` pendiente).
 - ?? **Pendiente**: compilar, instalar y (1) pedir logcat del hang en Android buscando la excepción exacta; (2) probar otro `http` en CS3 para confirmar bloqueo app-wide (workaround: reproductor externo VLC).
+
+### ?? Veredicto por opción (14 Oct 2026, sin cambio de código)
+**Medido (usuario en dispositivo + PC)**:
+| Opción | URL | En teléfono | Desde PC | Veredicto |
+|---|---|---|---|---|
+| 3 | `187.102.210.46` (:80) | cuelga en silencio | 200 instantáneo | ruta/middlebox puerto 80 |
+| 4 | `15.204.246.24:8080` | 2004 | **403** con y sin headers | proxy muerto/IP-locked, nada que hacer |
+| 5 | `138.121.15.230:9002` | reproduce + freezes | — | CDN lento (clásico) |
+| 6 | `190.93.224.42` (:80) | cuelga igual que 3 | 200 instantáneo | igual que 3 |
+- Patrón: las dos en **puerto 80** cuelgan en el teléfono pero responden al instante desde fuera + abren en VLC ? middlebox transparente del operador/red hacia esas IPs (tarpit en sesiones largas; VLC reconecta agresivo y lo tolera, ExoPlayer espera). Descartado: headers (200 con y sin ellos), cleartext-policy (sin excepción), DNS, servidor.
+- Siguiente paso (usuario): **VPN en el teléfono** y probar 3 y 6 — el túnel cifrado evita la intercepción del puerto 80. Si con VPN abren, caso cerrado.
+
+### ?? Auto-activación ante 403 (14 Oct 2026 v3)
+**Hallazgo (código de activar_25.php)**: la "activación" es `fetch("", {method:"POST"})` — POST vacío a la propia página, SIN enviar ningún código (`copyCode` solo copia al portapapeles) y con el `10h 00m` hardcodeado en el JS. El único efecto servidor posible es listar la IP de origen (~10h). Mecanismo de la hipótesis del usuario CONFIRMADO a nivel código.
+**Fix**: `tryActivate()` replica ese POST (misma IP del dispositivo, lock + cooldown 30min) y el interceptor, ante 403 de `strymix.com`, activa y **reintenta UNA vez** (`[activar] POST -> code` + `[cdn] retry -> code`). Sin 403 no hay requests extra. Omite leer estado de la app INFINITY (imposible entre paquetes) y no muestra avisos (un provider no puede).
+- Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ?? **Pendiente**: compilar, instalar y validar en el experimento 22:30 — esperado `[cdn] ... -> 403` ? `[activar] POST -> 2xx` ? `[cdn] retry -> 200`.
