@@ -2179,3 +2179,11 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 **Fix**: `tryActivate()` replica ese POST (misma IP del dispositivo, lock + cooldown 30min) y el interceptor, ante 403 de `strymix.com`, activa y **reintenta UNA vez** (`[activar] POST -> code` + `[cdn] retry -> code`). Sin 403 no hay requests extra. Omite leer estado de la app INFINITY (imposible entre paquetes) y no muestra avisos (un provider no puede).
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ?? **Pendiente**: compilar, instalar y validar en el experimento 22:30 ï¿½ esperado `[cdn] ... -> 403` ? `[activar] POST -> 2xx` ? `[cdn] retry -> 200`.
+
+### ??? Renombre a StrymixTV (14 Oct 2026, reseteo a v1)
+**Motivo (usuario)**: no usar la marca de la app INFINITY.
+- Módulo `InfinityProvider/` ? `StrymixtvProvider/` (clases `StrymixtvPlugin`/`StrymixtvProvider`, `name = "StrymixTV"`, TAG de logs `StrymixTV`). Los labels `"$name [...]"` se actualizan solos. Namespace interno de data-URLs (`/infinity/channel/`) se deja intacto (invisible).
+- `plugins.json`: entrada `Infinity` reemplazada por `StrymixtvProvider`/`StrymixTV` v1 (código ex-v3, `fileSize: 0` pendiente).
+- Icono recomendado: favicon auto de Google sobre `fluxa.strymix.com` (`strymix.com/favicon.ico` da 404) — neutral, sin marca ajena, siempre resuelve.
+- ?? **Consecuencia**: al cambiar `internalName`+`name`, CS3 lo ve como plugin NUEVO — desinstalar el viejo `Infinity` tras instalar este; favoritos guardados con apiName `Infinity` no migran solos.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :StrymixtvProvider:make --console=plain -q`), `fileSize`, instalar y filtrar logs con `StrymixTV:V` (el TAG cambió).
