@@ -105,15 +105,15 @@ class InfinityProvider : MainAPI() {
     }
 
     private val categories = listOf(
-        "133" to "Eventos Deportivos", "29" to "Costa Rica", "28" to "Panamá",
-        "27" to "Infantiles", "26" to "Películas", "25" to "Noticias",
-        "24" to "Guatemala", "23" to "México", "22" to "Religión",
-        "21" to "Puerto Rico", "20" to "Chile", "19" to "Perú",
-        "18" to "España", "17" to "Colombia", "16" to "Argentina",
-        "15" to "El Salvador", "14" to "Cine 24/7", "13" to "Ahorro Datos",
-        "12" to "USA", "11" to "HD", "10" to "Entretenimiento",
-        "9" to "Nicaragua", "8" to "Uruguay", "7" to "Cultura",
-        "6" to "Deportes", "5" to "24/7", "2" to "Música",
+        "5" to "24/7", "14" to "Cine 24/7", "11" to "HD",
+        "19" to "Perú", "27" to "Infantiles", "26" to "Películas",
+        "10" to "Entretenimiento", "12" to "USA", "13" to "Ahorro Datos",
+        "25" to "Noticias", "7" to "Cultura", "6" to "Deportes",
+        "2" to "Música", "29" to "Costa Rica", "28" to "Panamá",
+        "17" to "Colombia", "24" to "Guatemala", "23" to "México",
+        "22" to "Religión", "21" to "Puerto Rico", "20" to "Chile",
+        "18" to "España", "16" to "Argentina", "15" to "El Salvador",
+        "9" to "Nicaragua", "8" to "Uruguay",
     )
 
     override val mainPage = mainPageOf(

@@ -75,11 +75,11 @@ class DanimadosProvider : MainAPI() {
     override val mainPage = mainPageOf(
         "/" to "Últimas Series Agregadas",
         "/network/cartoon-network/" to "Cartoon Network",
-        "/network/boomerang/" to "Boomerang",
-        "/network/nickelodeon/" to "Nickelodeon",
-        "/network/disney-xd/" to "Disney XD",
         "/network/disney-channel/" to "Disney Channel",
+        "/network/disney-xd/" to "Disney XD",
+        "/network/nickelodeon/" to "Nickelodeon",
         "/network/fox-kids/" to "FOX Kids",
+        "/network/boomerang/" to "Boomerang",
         "/network/fox/" to "FOX",
         "/network/fx/" to "FX",
         "/network/the-wb/" to "Warner",
@@ -88,12 +88,12 @@ class DanimadosProvider : MainAPI() {
         "/network/comedy-central/" to "Comedy Central",
         "/network/locomotion-tv/" to "Locomotion",
         "/network/hbo-max/" to "HBO Max",
+        "/network/apple-tv/" to "Apple TV",
+        "/network/disney/" to "Disney+",
+        "/network/hulu/" to "Hulu",
+        "/network/paramount/" to "Paramount+",
         "/network/netflix/" to "Netflix",
         "/network/prime-video/" to "Prime Video",
-        "/network/disney/" to "Disney+",
-        "/network/paramount/" to "Paramount+",
-        "/network/apple-tv/" to "Apple TV",
-        "/network/hulu/" to "Hulu",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -168,7 +168,6 @@ class DanimadosProvider : MainAPI() {
                 ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
                 ?: ""
 
-
             val background = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
 
             val description = doc.selectFirst(".hero-overview, .wp-content p")?.text()
@@ -217,7 +216,6 @@ class DanimadosProvider : MainAPI() {
             null
         }
     }
-
 
     private val challengeHosts = listOf("voe.", "hglink", "streamwish", "johnbeyondnation")
 
@@ -632,5 +630,4 @@ class DanimadosProvider : MainAPI() {
         @JsonProperty("embed_url") val embedUrl: String? = null,
         @JsonProperty("type") val type: String? = null,
     )
-
 }

@@ -2055,7 +2055,7 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Log v6 (usuario, Silvestre y Piolín)**: un solo servidor `ok.ru/videoembed/2487200909897` → `loadExtractor` retornó `true` con 0 links → `success=true` pero "enlaces no encontrados". Danimados no tenía rama ok.ru (Donghualife sí, con `emitOkru`).
 **Fix**: port de `emitOkru` → `tryOkruDanimados()` (`data-options` → `flashvars.metadata.hlsManifestUrl` → HLS; fallback `videos[]` progresivos con calidades full/hd/sd/low/mobile) + rama en `loadLinks` + etiqueta `Okru` + `okcdn`/`ok.ru` al interceptor (Referer = embed, como Donghualife). `source = "Danimados"` en todo lo emitido.
 - Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
-- ⏸️ **Pendiente**: compilar, instalar y probar Silvestre y Piolín buscando `[Okru] ... -> HLS`. Si sale `sin URLs`, el video está borrado/privado en ok.ru.
+- ✅ **VERIFICADO en dispositivo (15 Oct 2026, Silvestre y Piolín)**: `[Okru] 2487200909897 -> HLS` → link `Danimados [ok.ru]` (`vd641.okcdn.ru/video.m3u8?...`) → `OkHttpDataSource` + segmentos fluyendo por el interceptor → **reproduce**. Y el fix archive.org también: Duckman emite `https://archive.org/download/duckman-temporada-1/...mp4` bien formado (antes `https:/download/...` roto).
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---
