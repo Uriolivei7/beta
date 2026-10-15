@@ -319,7 +319,7 @@ private suspend fun parseVoeHtml(
             m3u8,
             "$pageOrigin/",
             headers = mapOf("Origin" to "$pageOrigin/"),
-            name = "Voe",
+            name = "Danimados [Voe]",
         ).forEach(callback)
         emitted = true
     }
@@ -418,7 +418,7 @@ internal suspend fun tryVoeExtractDanimados(
             return tryMirrors()
         }
         Log.d(DANI_TAG, "[Voe] found ${if (m3u8 != null) "m3u8" else "mp4"}: ${videoUrl.take(120)}")
-        callback(newExtractorLink("Danimados", "Voe", videoUrl, ExtractorLinkType.M3U8) {
+        callback(newExtractorLink("Danimados", "Danimados [Voe]", videoUrl, ExtractorLinkType.M3U8) {
             this.referer = finalUrl
             this.headers = headers
         })

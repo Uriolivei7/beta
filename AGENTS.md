@@ -2056,6 +2056,12 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: port de `emitOkru` → `tryOkruDanimados()` (`data-options` → `flashvars.metadata.hlsManifestUrl` → HLS; fallback `videos[]` progresivos con calidades full/hd/sd/low/mobile) + rama en `loadLinks` + etiqueta `Okru` + `okcdn`/`ok.ru` al interceptor (Referer = embed, como Donghualife). `source = "Danimados"` en todo lo emitido.
 - Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ✅ **VERIFICADO en dispositivo (15 Oct 2026, Silvestre y Piolín)**: `[Okru] 2487200909897 -> HLS` → link `Danimados [ok.ru]` (`vd641.okcdn.ru/video.m3u8?...`) → `OkHttpDataSource` + segmentos fluyendo por el interceptor → **reproduce**. Y el fix archive.org también: Duckman emite `https://archive.org/download/duckman-temporada-1/...mp4` bien formado (antes `https:/download/...` roto).
+
+### 🏷️ Etiqueta VOE como los demás (15 Oct 2026 v8)
+**Pedido del usuario**: el link VOE salía como `Voe` solo; debe ser `Danimados [Voe]` como el resto.
+**Fix**: `name = "Danimados [Voe]"` en `generateM3u8` y en la rama directa m3u8/mp4 (`source` sigue `"Danimados"` → interceptor intacto).
+- Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y comprobar el nombre en la lista.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---
