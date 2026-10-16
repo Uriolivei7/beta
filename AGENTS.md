@@ -2262,3 +2262,11 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 - `load()` ya cubria `/series/{slug}` por la rama plural (episodios = videos listados).
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (deben salir episodios con Pooh/Tigger arriba) + abrir la seccion Series.
+
+### ?? Fix hrefs absolutos + fallback índice de series (Tokyvideo 16 Oct 2026 v3)
+**Log v2 (usuario)**: search con scoring OK (37 resultados), secciones de video OK (24 c/u), pero **sección `Series` ? 0 items** con HTML recibido. Misma causa raíz probable que el `fixUrl()` de Donghualife v6: el selector `a[href^=/series/]` (empieza-por) no matchea si el servidor manda hrefs **absolutos** (`https://...`).
+**Fix**:
+- `parseSerieCards`: `^=` ? `*=` (contiene) + fallback genérico (`a[href*=/series/]` con nombre de `.thumb-serie__name`/img-alt/texto/slug) + log con `html.length` para diagnosticar el markup real si sigue en 0.
+- `search()`: si el mejor video matchea <2 tokens y hay =2 tokens, barre el índice `/series/{N}` (máx 6 págs, stop al primer match bueno): serie con score=2 (o =1 si videos en 0) se antepone a los videos. Es lo que pone la página "Mis amigos" arriba para "mis amigos tigger y pooh".
+- Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y (1) abrir sección Series (debe listar); (2) buscar "mis amigos tigger y pooh" (la serie arriba + episodios Pooh/Tigger).
