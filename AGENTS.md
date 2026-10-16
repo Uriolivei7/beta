@@ -2297,3 +2297,24 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 **Fix**: `load()` normaliza la base (quita `/N` final) y junta `div.thumb-video` de p1..p10 con stop sin hrefs nuevos (`seenHrefs`), numeración global. Ambos videos resuelven mp4 directo (`cdnst90...?secure=`, verificado) sin cambios en `loadLinks`.
 - Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir Mis amigos (deben salir los 63).
+
+### ?? Serie vía página del video (Tokyvideo 16 Oct 2026 v8)
+**Log v7**: el barrido del índice corre (p1-p6) pero da **0 matches en las 6** — al dispositivo `/es/series` le llega sin cards parseables (en PC sí hay 24 `div.thumb-serie`; causa exacta sin diagnosticar: posible challenge/consent para esa ruta en el cliente).
+**Hallazgo (HTML de video)**: cada página de video trae `global_tokyvideo_serie_name = 'mis-amigos'` (+ `_mtm serieVideo`). Es la vía que usa el propio sitio para asociar episodios?serie.
+**Fix**: en vez de barrer el índice, se resuelve la serie de los 4 mejores videos (fetch de la página + regex del slug ? card `/es/serie/{slug}` antepuesta). Más barato (=4 fetches chicos) y fiable (las páginas de video sí parsean en el dispositivo).
+- Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" buscando `search ... serie: Mis Amigos` en el log.
+
+### ?? Search vía API de sugerencias (Tokyvideo 16 Oct 2026 v9)
+**Hallazgo (usuario)**: al escribir en el buscador salen dos tipos (series + videos) ANTES de buscar — es el select2 con AJAX a `https://api.tokyvideo.com/search-ajax?q=` (URL en `global_tokyvideo_search_api` del HTML; funciona sin Referer).
+**Verificado**: devuelve `{results:[{text, children:[{title|name, thumb, id, type: video|serie}]}]}` (~15KB). Grupo "Serie results" existe (ej. `q=running` ? 1 serie + 56 videos), pero para "mis amigos" el grupo serie trae ruido o vacío (el API matchea flojo igual que la web).
+**Fix**: `search()` usa el API (query + tokens, máx 5 fetches chicos) parseando AMBOS grupos con el mismo scoring; series del API primero, luego resolución video?serie (v8, se conserva para "Mis amigos" vía sus episodios). JSON con `org.json` (nunca kotlinx).
+- Versiones a **9** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (log `api -> N series + M videos`).
+
+### ?? lang=es_ES abre el grupo de series (Tokyvideo 16 Oct 2026 v10)
+**Aporte (usuario, curl con cookies de navegador)**: su request con `?lang=es_ES&q=mis+amigos&wr=` + cookies devolvía "Resultados en series" con **Mis amigos** (`/es/serie/mis-amigos`) + Spidey, cosa que mis pruebas sin `lang` jamás traían.
+**Aislado**: `lang=es_ES` es la llave (probado `?lang=es_ES&q=&wr=` sin cookies ? "Resultados en series" 2 + vídeos 56; sin `lang` ? solo "Video results" en inglés). Las cookies (`url_type=series_videos` etc.) son contexto de su navegación, no necesarias.
+**Fix**: `search-ajax?lang=es_ES&q=...&wr=` en todas las queries del `search()`.
+- Versiones a **10** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y buscar "mis amigos" (serie Mis amigos primera, sin necesidad del fallback video?serie).

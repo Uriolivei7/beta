@@ -3,6 +3,7 @@ package com.example
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -123,42 +124,70 @@ class TokyvideoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-
         val toks = fold(query).split(Regex("\\s+")).filter { it.length >= 3 }.distinct()
         val queries = (listOf(query) + toks).distinct().take(5)
-        val scored = linkedMapOf<String, Pair<SearchResponse, Int>>()
+        val videos = linkedMapOf<String, Pair<SearchResponse, Int>>()
+        val apiSeries = linkedMapOf<String, Pair<SearchResponse, Int>>()
         for (q in queries) {
-            val url = "$mainUrl/search?q=${URLEncoder.encode(q, "UTF-8")}"
-            val html = safeGet(url) ?: continue
-            for (card in parseVideoCards(Jsoup.parse(html, url))) {
-                val s = if (toks.isEmpty()) 1 else toks.count { fold(card.name).contains(it) }
-                val prev = scored[card.url]
-
-                if (s > 0 && (prev == null || s > prev.second)) scored[card.url] = card to s
-            }
-        }
-        val items = scored.values.sortedByDescending { it.second }.map { it.first }.take(40)
-        val bestVideo = scored.values.maxOfOrNull { it.second } ?: 0
-        Log.d(TAG, "search '$query' -> ${items.size} videos (de ${queries.size} queries, best=$bestVideo)")
-        
-        val series = mutableListOf<SearchResponse>()
-        
-        if ((toks.size >= 2 && bestVideo < 2) || (toks.size >= 3 && bestVideo <= 2)) {
-            var p = 1
-            while (p <= 6 && series.isEmpty()) {
-                val surl = if (p <= 1) "$mainUrl/es/series" else "$mainUrl/es/series/$p"
-                val shtml = safeGet(surl) ?: break
-                for (card in parseSerieCards(Jsoup.parse(shtml, surl))) {
-                    val s = toks.count { fold(card.name).contains(it) }
-                    if (s >= 2 || (s >= 1 && bestVideo == 0)) {
-                        if (series.none { it.url == card.url }) series.add(card)
+            val url = "https://api.tokyvideo.com/search-ajax?lang=es_ES&q=${URLEncoder.encode(q, "UTF-8")}&wr="
+            val text = safeGet(url) ?: continue
+            try {
+                val groups = JSONObject(text).optJSONArray("results") ?: continue
+                for (gi in 0 until groups.length()) {
+                    val children = groups.optJSONObject(gi)?.optJSONArray("children") ?: continue
+                    for (ci in 0 until children.length()) {
+                        val c = children.optJSONObject(ci) ?: continue
+                        if (c.optString("type") == "serie") {
+                            val name = c.optString("name").trim()
+                            val id = c.optString("id").trim()
+                            if (name.isBlank() || id.isBlank()) continue
+                            val s = if (toks.isEmpty()) 1 else toks.count { fold(name).contains(it) }
+                            val prev = apiSeries[id]
+                            if (s > 0 && (prev == null || s > prev.second)) {
+                                val thumb = c.optString("thumb").takeIf { it.isNotBlank() }
+                                apiSeries[id] = newTvSeriesSearchResponse(name, id, TvType.TvSeries) { this.posterUrl = thumb } to s
+                            }
+                        } else {
+                            val title = c.optString("title").trim()
+                            val id = c.optString("id").trim()
+                            if (title.isBlank() || id.isBlank()) continue
+                            val s = if (toks.isEmpty()) 1 else toks.count { fold(title).contains(it) }
+                            val prev = videos[id]
+                            if (s > 0 && (prev == null || s > prev.second)) {
+                                val thumb = c.optString("thumb").takeIf { it.isNotBlank() }
+                                videos[id] = newMovieSearchResponse(title, id, TvType.Movie) { this.posterUrl = thumb } to s
+                            }
+                        }
                     }
                 }
-                Log.d(TAG, "search '$query' series p$p: ${series.size} matches")
-                p++
+            } catch (_: Exception) { }
+        }
+        val rankedVideos = videos.values.sortedByDescending { it.second }.map { it.first }
+        val bestVideo = videos.values.maxOfOrNull { it.second } ?: 0
+        val rankedApiSeries = apiSeries.values.sortedByDescending { it.second }.map { it.first }
+        Log.d(TAG, "search '$query' api -> ${rankedApiSeries.size} series + ${rankedVideos.size} videos (best=$bestVideo)")
+        
+        val series = linkedMapOf<String, SearchResponse>()
+        rankedApiSeries.forEach { series[it.url] = it }
+        if ((toks.size >= 2 && bestVideo < 2) || (toks.size >= 3 && bestVideo <= 2)) {
+            val top = rankedVideos.take(4)
+            for (card in top) {
+                try {
+                    val vhtml = safeGet(fixUrl(card.url)) ?: continue
+                    val slug = Regex("""global_tokyvideo_serie_name\s*=\s*'([^']+)'""").find(vhtml)?.groupValues?.get(1)?.trim()
+                        ?: Regex("""serieVideo['"]\s*:\s*["']([^"']+)""").find(vhtml)?.groupValues?.get(1)?.trim()
+                        ?: continue
+                    if (slug.isBlank()) continue
+                    val surl = "$mainUrl/es/serie/$slug"
+                    if (!series.containsKey(surl)) {
+                        val stitle = slug.split("-").joinToString(" ") { w -> w.replaceFirstChar { c -> c.uppercase() } }
+                        Log.d(TAG, "search '$query' serie: $stitle ($surl)")
+                        series[surl] = newTvSeriesSearchResponse(stitle, surl, TvType.TvSeries) { }
+                    }
+                } catch (_: Exception) { }
             }
         }
-        return (series + items).take(40)
+        return (series.values.toList() + rankedVideos).take(40)
     }
 
     private fun cleanTitle(t: String): String {
@@ -182,7 +211,7 @@ class TokyvideoProvider : MainAPI() {
             }?.let { fixUrl(it) }
                 ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             val plot = doc.selectFirst(".series-detail--content--desc")?.text()?.take(500)
-            
+
             val serieBase = url.trimEnd('/').replace(Regex("/\\d+$"), "")
             val seenHrefs = linkedSetOf<String>()
             val cards = mutableListOf<org.jsoup.nodes.Element>()
