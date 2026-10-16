@@ -2284,3 +2284,16 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 **Fix**: match `href*=/serie` (cubre singular + plural) en `parseSerieCards` directo y fallback (+ exclusión del propio índice `/es/series`). Verificado contra HTML con headers de la app: 24 `div.thumb-serie` + 48 hrefs `/es/serie/`.
 - Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir Series + buscar "mis amigos tigger y pooh" (serie antepuesta).
+
+### ?? Barrido de series también en empates (Tokyvideo 16 Oct 2026 v6)
+**Log v5**: `search mis amigos tigger y pooh -> 37 videos (best=2)` sin líneas de serie: con `best=2` no se disparaba el barrido y la página Mis amigos nunca se anteponía (los videos con 2 tokens suelen ser ruido musical que empata).
+**Fix**: el barrido corre también con 3+ tokens y `best<=2` (los videos con match fuerte 3+ lo siguen evitando). La serie empatada (Mis amigos = mis+amigos) va primera.
+- Versiones a **6** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (serie antepuesta) + abrir sección Series (aún sin verificar en v5).
+
+### ?? Episodios multi-página (Tokyvideo 16 Oct 2026 v7)
+**Reporte (usuario)**: los videos `2x20-3` y `2x21-3` no aparecían en la lista de Mis amigos.
+**Verificado**: sí están — en la página 1 (24 videos; /2 ? 24, /3 ? 15 = 63 total). El `load()` solo leía UNA página (la de entrada), así que según por dónde entraras faltaban episodios.
+**Fix**: `load()` normaliza la base (quita `/N` final) y junta `div.thumb-video` de p1..p10 con stop sin hrefs nuevos (`seenHrefs`), numeración global. Ambos videos resuelven mp4 directo (`cdnst90...?secure=`, verificado) sin cambios en `loadLinks`.
+- Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y abrir Mis amigos (deben salir los 63).

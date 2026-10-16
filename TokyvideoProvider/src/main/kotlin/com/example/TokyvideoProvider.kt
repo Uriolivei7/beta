@@ -60,7 +60,7 @@ class TokyvideoProvider : MainAPI() {
     }
 
     private fun parseSerieCards(doc: org.jsoup.nodes.Document): List<SearchResponse> {
-        
+
         val direct = doc.select("div.thumb-serie").mapNotNull { card ->
             val a = card.selectFirst("a[href*=/serie]") ?: return@mapNotNull null
             val href = a.attr("abs:href")
@@ -142,7 +142,8 @@ class TokyvideoProvider : MainAPI() {
         Log.d(TAG, "search '$query' -> ${items.size} videos (de ${queries.size} queries, best=$bestVideo)")
         
         val series = mutableListOf<SearchResponse>()
-        if (toks.size >= 2 && bestVideo < 2) {
+        
+        if ((toks.size >= 2 && bestVideo < 2) || (toks.size >= 3 && bestVideo <= 2)) {
             var p = 1
             while (p <= 6 && series.isEmpty()) {
                 val surl = if (p <= 1) "$mainUrl/es/series" else "$mainUrl/es/series/$p"
@@ -181,7 +182,28 @@ class TokyvideoProvider : MainAPI() {
             }?.let { fixUrl(it) }
                 ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             val plot = doc.selectFirst(".series-detail--content--desc")?.text()?.take(500)
-            val episodes = doc.select("div.thumb-video").mapIndexedNotNull { idx, card ->
+            
+            val serieBase = url.trimEnd('/').replace(Regex("/\\d+$"), "")
+            val seenHrefs = linkedSetOf<String>()
+            val cards = mutableListOf<org.jsoup.nodes.Element>()
+            var p = 1
+            while (p <= 10) {
+                val pdoc = if (p == 1) doc else {
+                    val phtml = safeGet(if (p <= 1) serieBase else "$serieBase/$p") ?: break
+                    Jsoup.parse(phtml, serieBase)
+                }
+                var fresh = 0
+                for (card in pdoc.select("div.thumb-video")) {
+                    val href = card.selectFirst("a.thumb-duracion[href]")?.attr("abs:href")
+                    if (href.isNullOrBlank() || !seenHrefs.add(href)) continue
+                    cards.add(card)
+                    fresh++
+                }
+                Log.d(TAG, "load serie p$p: +$fresh eps")
+                if (fresh == 0) break
+                p++
+            }
+            val episodes = cards.mapIndexedNotNull { idx, card ->
                 val a = card.selectFirst("a.thumb-duracion[href]") ?: return@mapIndexedNotNull null
                 val href = a.attr("abs:href")
                 if (href.isBlank()) return@mapIndexedNotNull null
