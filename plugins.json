@@ -1303,7 +1303,7 @@
   {
    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TokyvideoProvider.cs3",
    "status": 1,
-   "version": 1,
+   "version": 2,
    "apiVersion": 1,
    "name": "Tokyvideo",
    "internalName": "TokyvideoProvider",
@@ -1313,7 +1313,8 @@
    "description": "Videos y series (tokyvideo.com)",
    "tvTypes": [
     "Movie",
-    "TvSeries"
+    "TvSeries",
+    "Cartoon"
    ],
    "iconUrl": "https://www.tokyvideo.com/favicon.ico",
    "language": "mx",

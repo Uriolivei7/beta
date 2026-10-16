@@ -28,6 +28,7 @@ class TokyvideoProvider : MainAPI() {
         "/cartoon-series" to "Dibujos",
         "/television-series" to "Series TV",
         "/movies" to "Películas",
+        "/series" to "Series",
     )
 
     private suspend fun safeGet(url: String): String? {
@@ -58,16 +59,40 @@ class TokyvideoProvider : MainAPI() {
         return doc.select("div.thumb-video").mapNotNull { it.toVideoCard() }.distinctBy { it.url }
     }
 
+    private fun parseSerieCards(doc: org.jsoup.nodes.Document): List<SearchResponse> {
+        return doc.select("div.thumb-serie").mapNotNull { card ->
+            val a = card.selectFirst("a[href^=/series/]") ?: return@mapNotNull null
+            val href = a.attr("abs:href")
+            if (href.isBlank()) return@mapNotNull null
+            val title = card.selectFirst(".thumb-serie__name")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                ?: a.selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val poster = card.selectFirst("img")?.let { img ->
+                img.attr("data-src").trim().takeIf { it.isNotBlank() && !it.startsWith("data:") }
+                    ?: img.attr("src").trim().takeIf { it.isNotBlank() && !it.startsWith("data:") }
+            }?.let { fixUrl(it) }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) { this.posterUrl = poster }
+        }.distinctBy { it.url }
+    }
+
+    private fun fold(s: String): String =
+        java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .lowercase()
+
     private fun pageUrl(base: String, page: Int): String {
         if (page <= 1) return base
-        return if (base.contains("?")) "$base&page=$page" else "$base?page=$page"
+
+        return if (base.endsWith("/series")) "$base/$page"
+        else if (base.contains("?")) "$base&page=$page" else "$base?page=$page"
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val base = "$mainUrl${request.data}"
         val html = safeGet(pageUrl(base, page)) ?: return null
         val doc = Jsoup.parse(html, base)
-        val items = parseVideoCards(doc)
+
+        val items = if (request.data == "/series") parseSerieCards(doc) else parseVideoCards(doc)
         if (items.isEmpty()) {
             Log.w(TAG, "getMainPage '${request.name}' p$page: 0 items")
             return null
@@ -78,10 +103,22 @@ class TokyvideoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search?q=${URLEncoder.encode(query, "UTF-8")}"
-        val html = safeGet(url) ?: return emptyList()
-        val items = parseVideoCards(Jsoup.parse(html, url))
-        Log.d(TAG, "search '$query': ${items.size}")
+
+        val toks = fold(query).split(Regex("\\s+")).filter { it.length >= 3 }.distinct()
+        val queries = (listOf(query) + toks).distinct().take(5)
+        val scored = linkedMapOf<String, Pair<SearchResponse, Int>>()
+        for (q in queries) {
+            val url = "$mainUrl/search?q=${URLEncoder.encode(q, "UTF-8")}"
+            val html = safeGet(url) ?: continue
+            for (card in parseVideoCards(Jsoup.parse(html, url))) {
+                val s = if (toks.isEmpty()) 1 else toks.count { fold(card.name).contains(it) }
+                val prev = scored[card.url]
+                
+                if (s > 0 && (prev == null || s > prev.second)) scored[card.url] = card to s
+            }
+        }
+        val items = scored.values.sortedByDescending { it.second }.map { it.first }.take(40)
+        Log.d(TAG, "search '$query' -> ${items.size} (de ${queries.size} queries)")
         return items
     }
 

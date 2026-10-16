@@ -2252,3 +2252,13 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 - Archivos: `build.gradle.kts` (v1, es, Movie+TvSeries), `AndroidManifest.xml`, `TokyvideoPlugin.kt`, `TokyvideoProvider.kt`; `plugins.json` ? entrada `Tokyvideo` v1 (`fileSize: 0` pendiente).
 - Balance `bal_check.py` ? OK.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :TokyvideoProvider:make --console=plain -q`), `fileSize`, instalar y probar home/search (cards y paginación de secciones), serie Mis amigos (episodios con posters) y reproducción del mp4 directo. Logs: `adb logcat -s Tokyvideo:V`.
+
+### Search multi-palabra + seccion Series (Tokyvideo 16 Oct 2026 v2)
+**Reporte (usuario)**: buscar "mis amigos tigger y pooh" no trae lo esperado (la pagina de la serie).
+**Causa**: el `/search?q=` del sitio es flojo con multi-palabra (OR ruidoso: musica con "mi"/"amigos") y no devuelve paginas de serie, solo videos sueltos. No hay endpoint de suggest/series (`/api/search` y `/search/suggest` dan 404; `/series?search=` se ignora).
+**Fix**:
+- `search()`: query completa + cada token significativo (>=3 letras, folding de acentos) como queries separadas (max 5 fetches); score = n. de tokens matcheados en el titulo; filtra `score>0`, ordena desc, tope 40. Asi esa query trae los episodios con Pooh/Tigger arriba.
+- Nueva seccion home `/series` (indice paginado `/series/{N}`, cards `div.thumb-serie` con `.thumb-serie__name` + `img[data-src]`); `pageUrl()` distingue ese patron de `?page=`.
+- `load()` ya cubria `/series/{slug}` por la rama plural (episodios = videos listados).
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (deben salir episodios con Pooh/Tigger arriba) + abrir la seccion Series.
