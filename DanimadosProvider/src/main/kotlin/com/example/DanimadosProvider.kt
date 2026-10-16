@@ -145,9 +145,8 @@ class DanimadosProvider : MainAPI() {
                 if (results.isNotEmpty()) break
             }
 
-            if (results.isEmpty()) {
-                for (article in doc.select("article")) {
-                    
+            for (article in doc.select("article")) {
+
                     val link = article.select(".details .title a[href*='/series/']").first()
                         ?: article.select(".data h3 a[href*='/series/']").first()
                         ?: article.select("h3 a[href*='/series/']").first()
@@ -162,7 +161,6 @@ class DanimadosProvider : MainAPI() {
                     if (title.isBlank()) continue
                     val poster = article.select("img").first()?.attr("src")?.let { fixUrl(it) }
                     results.add(newMovieSearchResponse(title, href, TvType.Cartoon) { this.posterUrl = poster })
-                }
             }
 
             val filtered = results.distinctBy {

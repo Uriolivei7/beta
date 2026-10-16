@@ -2091,6 +2091,13 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: el fallback prefiere el link CON texto (`.details .title a` primero) y si el link sale vacío rescata el título de `.details .title` o `img[alt]`.
 - Versiones a **11** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y buscar "zorro" → debe salir `El Zorro: Serie Animada`.
+
+### 🐛 Fix fallback condicionado (13 Oct 2026 v12)
+**Log v11 (usuario)**: `search 'zorro' → 10 descartados` OTRA VEZ con v11 instalada. `phineas: 1 relevantes` OK.
+**Causa raíz**: el fallback de `<article>` pelados solo corría `if (results.isEmpty())` — pero los 10 `w_item_a` de relleno SÍ parsean, así que el fallback jamás ejecutaba y el match real (`/series/zorro/`) nunca se parseaba.
+**Fix**: el loop de `<article>` pelados corre SIEMPRE (no solo en vacío); `distinctBy { url }` evita duplicados.
+- Versiones a **12** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y buscar "zorro" → `El Zorro: Serie Animada` + `phineas` sigue en 1.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---
