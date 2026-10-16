@@ -2270,3 +2270,10 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 - `search()`: si el mejor video matchea <2 tokens y hay =2 tokens, barre el índice `/series/{N}` (máx 6 págs, stop al primer match bueno): serie con score=2 (o =1 si videos en 0) se antepone a los videos. Es lo que pone la página "Mis amigos" arriba para "mis amigos tigger y pooh".
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y (1) abrir sección Series (debe listar); (2) buscar "mis amigos tigger y pooh" (la serie arriba + episodios Pooh/Tigger).
+
+### ?? Sección Series en español (Tokyvideo 16 Oct 2026 v4)
+**Detalle (usuario)**: `https://www.tokyvideo.com/es/series` es el índice de series en español.
+**Verificado**: paginado `/es/series/{N}`, cards `div.thumb-serie` ? `/es/serie/{slug}` (mismo formato que Mis amigos, `load()` lo cubre).
+**Fix**: sección Series ? `/es/series` (antes `/series` en inglés); el barrido de search también usa `/es/series` (nombres en español matchean mejor queries en español). `pageUrl()` ya lo cubría (`endsWith("/series")`).
+- Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar e instalar (trae todo v2-v4 de una vez).

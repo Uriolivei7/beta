@@ -28,7 +28,7 @@ class TokyvideoProvider : MainAPI() {
         "/cartoon-series" to "Dibujos",
         "/television-series" to "Series TV",
         "/movies" to "Películas",
-        "/series" to "Series",
+        "/es/series" to "Series",
     )
 
     private suspend fun safeGet(url: String): String? {
@@ -144,7 +144,7 @@ class TokyvideoProvider : MainAPI() {
         if (toks.size >= 2 && bestVideo < 2) {
             var p = 1
             while (p <= 6 && series.isEmpty()) {
-                val surl = if (p <= 1) "$mainUrl/series" else "$mainUrl/series/$p"
+                val surl = if (p <= 1) "$mainUrl/es/series" else "$mainUrl/es/series/$p"
                 val shtml = safeGet(surl) ?: break
                 for (card in parseSerieCards(Jsoup.parse(shtml, surl))) {
                     val s = toks.count { fold(card.name).contains(it) }
