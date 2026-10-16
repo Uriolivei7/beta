@@ -2084,6 +2084,13 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 - Versiones a **10** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y buscar "naruto" → deben salir los resultados con naruto en el título.
 - ✅ **Verificado sin código (query "paso a paso")**: la web devuelve exactamente 10 cards genéricas (Ed Edd y Eddy, Spiderman, Phineas...) y **ninguna contiene "paso"** — es lista de relleno, no matches. El filtro v9/v10 las descarta todas → vacío correcto (lo pedido en v9). Sin fix.
+
+### 🐛 Fix match real con markup pelado (13 Oct 2026 v11)
+**Log v10 (usuario)**: `search 'zorro'` → 10 descartados, pero la web muestra 1 resultado real (`El Zorro: Serie Animada`, `/series/zorro/`).
+**Causa raíz (HTML real)**: el match verdadero viene en `<article>` SIN clase (`.image .thumbnail a` + `.details .title a` + `.meta`), seguido de los 10 `w_item_a` de relleno. Mi fallback agarraba el PRIMER `a[href*=/series/]` (el del thumbnail, texto vacío) → `title.isBlank()` → descartado siempre.
+**Fix**: el fallback prefiere el link CON texto (`.details .title a` primero) y si el link sale vacío rescata el título de `.details .title` o `img[alt]`.
+- Versiones a **11** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y buscar "zorro" → debe salir `El Zorro: Serie Animada`.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---

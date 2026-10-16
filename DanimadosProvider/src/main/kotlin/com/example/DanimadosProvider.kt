@@ -127,7 +127,7 @@ class DanimadosProvider : MainAPI() {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val doc = app.get("$BASE_URL/?s=$encoded", headers = browserHeaders).document
             val results = mutableListOf<SearchResponse>()
-            
+
             val witems = doc.select("article.w_item_a").mapNotNull { art ->
                 val a = art.selectFirst("a[href*='/series/']") ?: return@mapNotNull null
                 val href = a.attr("abs:href")
@@ -147,12 +147,19 @@ class DanimadosProvider : MainAPI() {
 
             if (results.isEmpty()) {
                 for (article in doc.select("article")) {
-                    val link = article.select(".data h3 a[href*='/series/']").first()
+                    
+                    val link = article.select(".details .title a[href*='/series/']").first()
+                        ?: article.select(".data h3 a[href*='/series/']").first()
                         ?: article.select("h3 a[href*='/series/']").first()
                         ?: article.select("a[href*='/series/']").first() ?: continue
                     val href = link.attr("abs:href")
-                    val title = link.text().trim()
-                    if (title.isBlank() || !href.contains("/series/")) continue
+                    if (!href.contains("/series/")) continue
+                    val title = link.text().trim().ifBlank {
+                        article.selectFirst(".details .title")?.text()?.trim()
+                            ?: article.selectFirst("img")?.attr("alt")?.trim()
+                            ?: ""
+                    }
+                    if (title.isBlank()) continue
                     val poster = article.select("img").first()?.attr("src")?.let { fixUrl(it) }
                     results.add(newMovieSearchResponse(title, href, TvType.Cartoon) { this.posterUrl = poster })
                 }
