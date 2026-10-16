@@ -127,6 +127,18 @@ class DanimadosProvider : MainAPI() {
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val doc = app.get("$BASE_URL/?s=$encoded", headers = browserHeaders).document
             val results = mutableListOf<SearchResponse>()
+            
+            val witems = doc.select("article.w_item_a").mapNotNull { art ->
+                val a = art.selectFirst("a[href*='/series/']") ?: return@mapNotNull null
+                val href = a.attr("abs:href")
+                if (href.isBlank() || !href.contains("/series/")) return@mapNotNull null
+                val title = art.selectFirst(".data h3")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                    ?: a.selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                val poster = art.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                newMovieSearchResponse(title, href, TvType.Cartoon) { this.posterUrl = poster }
+            }
+            results.addAll(witems)
             for (selector in listOf("article.item.tvshows", "article.item", ".result-item", ".search-item")) {
                 val found = doc.select(selector).mapNotNull { it.toSearchResponse() }
                 results.addAll(found)
@@ -146,10 +158,8 @@ class DanimadosProvider : MainAPI() {
                 }
             }
 
-            // WP devuelve resultados laxos (cualquier coincidencia parcial); filtrar por query
-            // para que una serie inexistente dé vacío en vez de ruido
             val filtered = results.distinctBy {
-                // newMovieSearchResponse guarda la URL; usarla como clave
+
                 it.url
             }.filter { matchesQuery(it.name, query) }
             if (filtered.isEmpty()) Log.w("Danimados", "search '$query': sin resultados relevantes (${results.size} descartados)")
@@ -161,9 +171,14 @@ class DanimadosProvider : MainAPI() {
         }
     }
 
+    private fun fold(s: String): String =
+        java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .lowercase()
+
     private fun matchesQuery(title: String, query: String): Boolean {
-        val norm = title.lowercase()
-        val tokens = query.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
+        val norm = fold(title)
+        val tokens = fold(query).split(Regex("\\s+")).filter { it.length >= 2 }
         if (tokens.isEmpty()) return true
         return tokens.all { tok ->
             norm.contains(tok) || (tok.length > 3 && tok.endsWith("s") && norm.contains(tok.dropLast(1)))

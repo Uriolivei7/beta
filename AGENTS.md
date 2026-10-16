@@ -2076,6 +2076,14 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix** (patrón VerAnime): `matchesQuery()` — todos los tokens del query (≥2 letras, con tolerancia a plural `s` final) deben aparecer en el título; `URLEncoder.encode` del query; se devuelve lista vacía (no null) cuando nada es relevante.
 - Versiones a **9** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y buscar algo inexistente (ej. "xyzqwe") → debe salir vacío; y algo real (ej. "naruto") → solo resultados con ese nombre.
+
+### 🔍 Search vacío aunque la web sí tiene resultados (13 Oct 2026 v10)
+**Reporte (usuario)**: en la web "naruto" trae resultados pero el plugin sale vacío.
+**Causa raíz (HTML real de `/?s=naruto`)**: el search usa cards DISTINTAS (`article.w_item_a > a[href=/series/] > .image img + .data h3` con título SIN link) que ningún selector cubría (`article.item.tvshows`, `article.item`, `.result-item`, `.search-item` → 0; el fallback exigía `h3 a` o `.title` → también 0).
+**Fix**: rama `article.w_item_a` en `search()` (título `.data h3` o `img[alt]`, poster `img[src]` w780) + `fold()` con `Normalizer` (quita acentos: "pokemon" matchea "Pokémon") en `matchesQuery()`.
+- Versiones a **10** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y buscar "naruto" → deben salir los resultados con naruto en el título.
+- ✅ **Verificado sin código (query "paso a paso")**: la web devuelve exactamente 10 cards genéricas (Ed Edd y Eddy, Spiderman, Phineas...) y **ninguna contiene "paso"** — es lista de relleno, no matches. El filtro v9/v10 las descarta todas → vacío correcto (lo pedido en v9). Sin fix.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---
