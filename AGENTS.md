@@ -2231,3 +2231,24 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 - Icono recomendado: favicon auto de Google sobre `fluxa.strymix.com` (`strymix.com/favicon.ico` da 404) ï¿½ neutral, sin marca ajena, siempre resuelve.
 - ?? **Consecuencia**: al cambiar `internalName`+`name`, CS3 lo ve como plugin NUEVO ï¿½ desinstalar el viejo `Infinity` tras instalar este; favoritos guardados con apiName `Infinity` no migran solos.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :StrymixtvProvider:make --console=plain -q`), `fileSize`, instalar y filtrar logs con `StrymixTV:V` (el TAG cambiï¿½).
+
+---
+
+## TokyvideoProvider — Plugin nuevo (16 Oct 2026 v1)
+
+Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
+
+### Cadena verificada end-to-end (serie Mis amigos + video 1x14)
+- Serie `/es/serie/{slug}/{N}` (paginada): header `.series-detail--content--title/desc`, poster `img[data-src]` (lazy: `src` es gif 1px), episodios `div.thumb-video` (link `a.thumb-duracion[href=/es/video/]`, thumb `img[data-src]` `img89.../thumbs_0001.jpg`, `span.duracion`, título `.thumb-video__meta h3 a` con forma `1x14. ...`).
+- Video `/es/video/{slug}`: **`video#tokyvideo_player > source[src]` con mp4 directo `https://cdnst{N}.tokyvideo.com/videos/.../mp4/{hash}.mp4?secure={token},{expiry}`** (server-rendered, token fresco por request, atado a la IP que pide la página).
+- Playback verificado desde PC: `206 video/mp4` con Range y SIN headers/referer. Search `/search?q=` server-side OK.
+
+### Implementación (v1, sin compilar por regla del repo)
+- `getMainPage`: 4 secciones (Tendencia `/series/trends`, Películas `/movies`, Dibujos `/cartoon-series`, Series TV `/television-series`); pag `?page=N` (patrón inferido, verificar); `hasNext` por `.pagination/[rel=next]/[href*=page]`.
+- `search()`: `/search?q=` + `URLEncoder`, mismo parser de cards.
+- `load()`: `/serie/` ? `TvSeriesLoadResponse` (temporada/episodio del `1x14` del título, poster por episodio); `/video/` ? `MovieLoadResponse` con `dataUrl=url`.
+- `loadLinks()`: `video#tokyvideo_player source[src]` ? fallback `video source` ? fallback regex mp4; emite VIDEO directo con referer = página.
+- Timeouts en segundos (`15L`); sin interceptor (mp4 directo sin requisitos); JSON innecesario (todo DOM).
+- Archivos: `build.gradle.kts` (v1, es, Movie+TvSeries), `AndroidManifest.xml`, `TokyvideoPlugin.kt`, `TokyvideoProvider.kt`; `plugins.json` ? entrada `Tokyvideo` v1 (`fileSize: 0` pendiente).
+- Balance `bal_check.py` ? OK.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :TokyvideoProvider:make --console=plain -q`), `fileSize`, instalar y probar home/search (cards y paginación de secciones), serie Mis amigos (episodios con posters) y reproducción del mp4 directo. Logs: `adb logcat -s Tokyvideo:V`.

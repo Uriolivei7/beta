@@ -1299,5 +1299,24 @@
    "iconUrl": "https://img.icons8.com/?size=100&id=7846&format=png",
    "language": "mx",
    "fileSize": 18000
+  },
+  {
+   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TokyvideoProvider.cs3",
+   "status": 1,
+   "version": 1,
+   "apiVersion": 1,
+   "name": "Tokyvideo",
+   "internalName": "TokyvideoProvider",
+   "authors": [
+    "Ranita"
+   ],
+   "description": "Videos y series (tokyvideo.com)",
+   "tvTypes": [
+    "Movie",
+    "TvSeries"
+   ],
+   "iconUrl": "https://www.tokyvideo.com/favicon.ico",
+   "language": "mx",
+   "fileSize": 0
   }
 ]
