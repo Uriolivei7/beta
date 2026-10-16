@@ -4,7 +4,7 @@ version = 1
 cloudstream {
     language = "mx"
     description = "Mira tus Series, Películas y Animes en Latino Online!"
-    authors = listOf("ByAyzen")
+    authors = listOf("Ranita")
 
     /**
      * Status int as the following:

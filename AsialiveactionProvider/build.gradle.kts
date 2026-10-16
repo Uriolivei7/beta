@@ -4,7 +4,7 @@ version = 5
 
 cloudstream {
     language = "es"
-    authors = listOf("Stormunblessed")
+    authors = listOf("Ranita")
     status = 1
     tvTypes = listOf("AsianDrama")
     iconUrl = "https://asialiveaction.com/favicon.ico"

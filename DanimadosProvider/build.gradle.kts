@@ -1,9 +1,9 @@
-version = 12
+version = 13
 
 cloudstream {
     description = "Series animadas y caricaturas en Español Latino"
     language = "mx"
-    authors = listOf("ruthriveiro")
+    authors = listOf("Ranita")
 
     status = 1
 

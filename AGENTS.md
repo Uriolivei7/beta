@@ -2098,6 +2098,14 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: el loop de `<article>` pelados corre SIEMPRE (no solo en vacío); `distinctBy { url }` evita duplicados.
 - Versiones a **12** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y buscar "zorro" → `El Zorro: Serie Animada` + `phineas` sigue en 1.
+- ✅ **VERIFICADO v12 en dispositivo (15 Oct)**: `zorro: 1 relevantes`, `phineas: 1`, `randy: 2`, `house: 3`, `boon: 1`, `naruto: sin resultados (20 descartados)` — search OK. Bonus: Los Boondocks fluye íntegro (VH-Pro ×3, SW vía `loadExtractor` → `hglamioz`, Byse 404 `video record missing` bien manejado). **Mirror VOE nuevo**: `megankiddifference.com` — el regex de JS-redirect lo siguió solo, sin cambios. El `StandaloneCoroutine was cancelled` del PoW VOE es benigno: el usuario tocó un link a los ~60s y CS3 canceló el scope (ya había `success=true, 4 players`).
+
+### 🔧 Rama Byse generalizada (15 Oct 2026 v13)
+**Log v12 (usuario, House of Mouse EP5)**: `loadLinks Server1: https://bysekoze.com/e/...` → `success=true` pero "enlaces no encontrados" (el `loadExtractor` genérico retornó `true` con 0 links, mismo patrón que ok.ru en v6).
+**Causa**: la rama Byse solo matcheaba `bysedikamoum.com`/`4meplayer.pro`; `bysekoze.com` caía al genérico. El `ByseHttpExtractor` es agnóstico al host (probea `Byse Frontend`), así que basta rutear.
+**Fix**: condición `videoUrl.contains("byse")` (cubre `bysekoze.com` y futuros mirrors `byse*.com`) en etiqueta + rama.
+- Versiones a **13** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y probar House of Mouse EP5 buscando `[Byse] flujo HTTP` + sources.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---

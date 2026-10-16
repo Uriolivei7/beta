@@ -4,7 +4,7 @@ version = 1
 
 cloudstream {
     language = "mx"
-    authors = listOf("misajimenezmx")
+    authors = listOf("Ranita")
 
     status = 1
     tvTypes = listOf(

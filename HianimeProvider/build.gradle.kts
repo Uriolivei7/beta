@@ -30,7 +30,7 @@ dependencies {
 
 cloudstream {
     language = "en"
-    authors = listOf("Stormunblessed", "KillerDogeEmpire", "RowdyRushya", "Phisher98")
+    authors = listOf("Ranita")
 
     status = 1
     tvTypes = listOf(
