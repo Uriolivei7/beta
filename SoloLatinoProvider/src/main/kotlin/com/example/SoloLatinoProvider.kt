@@ -702,7 +702,6 @@ private fun decryptAESLocal(encryptedBase64: String, aesKey: ByteArray): String?
 }
 
 private const val SW_READY_JS = "h.includes('.m3u8')||h.includes('jwplayer')"
-private const val VOE_READY_JS = "(!h.includes('altcha-widget'))&&(h.includes('.m3u8')||h.includes('application/json'))"
 private const val DUMP_JS = "(function(){try{NativeBridge.onHtml(document.documentElement.outerHTML);}catch(e){NativeBridge.onHtml('ERR:'+e);}})()"
 
 private val webViewMutex = Mutex()
@@ -1125,18 +1124,6 @@ private fun unpackPackedJS(html: String): String? {
     return unescaped
 }
 
-private fun webViewCookies(url: String): Map<String, String> {
-    return try {
-        val raw = android.webkit.CookieManager.getInstance().getCookie(url) ?: return emptyMap()
-        raw.split(";").mapNotNull { part ->
-            val kv = part.trim().split("=", limit = 2)
-            if (kv.size == 2 && kv[0].isNotBlank()) kv[0].trim() to kv[1] else null
-        }.toMap()
-    } catch (_: Exception) {
-        emptyMap()
-    }
-}
-
 private suspend fun tryVoeExtraction(
     url: String,
     referer: String,
@@ -1207,14 +1194,7 @@ private suspend fun tryVoeExtraction(
             Log.w("SoloLatino", "[Voe] challenge detectado en $finalUrl")
 
             if (VoeExtractor().parseHtml(finalHtml, finalUrl, "SoloLatino", subtitleCallback, callback, finalCookies)) return true
-            if (tryMirrors()) return true
-            Log.d("SoloLatino", "[Voe] probando WebView (Altcha se auto-resuelve): $finalUrl")
-            val rendered = renderViaWebView(finalUrl, url, readyJs = VOE_READY_JS)
-            if (rendered != null && VoeExtractor().parseHtml(rendered, finalUrl, "SoloLatino", subtitleCallback, callback, webViewCookies(finalUrl))) {
-                Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
-                return true
-            }
-            return false
+            return tryMirrors()
         }
 
         val m3u8 = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""").find(finalHtml)?.groupValues?.get(1)
@@ -1225,14 +1205,7 @@ private suspend fun tryVoeExtraction(
             Log.w("SoloLatino", "[Voe] no m3u8/mp4 found in $finalUrl")
 
             if (VoeExtractor().parseHtml(finalHtml, finalUrl, "SoloLatino", subtitleCallback, callback, finalCookies)) return true
-            if (tryMirrors()) return true
-            Log.d("SoloLatino", "[Voe] probando WebView: $finalUrl")
-            val rendered = renderViaWebView(finalUrl, url, readyJs = VOE_READY_JS)
-            if (rendered != null && VoeExtractor().parseHtml(rendered, finalUrl, "SoloLatino", subtitleCallback, callback, webViewCookies(finalUrl))) {
-                Log.d("SoloLatino", "[Voe] WebView fallback emitió links")
-                return true
-            }
-            return false
+            return tryMirrors()
         }
 
         val type = ExtractorLinkType.M3U8

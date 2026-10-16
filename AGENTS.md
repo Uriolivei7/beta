@@ -1954,6 +1954,13 @@ En `tryVoeExtraction` (Serieskao `SerieskaoExtractors.kt:912`; SoloLatino `SoloL
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q` y `.\gradlew.bat :SerieskaoProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar en celular físico (NO emulador): cargar un episodio con VOE varias veces seguidas sin reiniciar — esperado: sin cierres ni congelamiento (a cambio, el PoW puede tardar unos segundos más por ir serializado).
 - ⏸️ **Si aún se cierra**: capturar `adb logcat -b crash -d` (descarta `FATAL EXCEPTION`) + `adb shell dmesg | grep -i lowmemorykiller` (confirma LMK) + intervalo completo del logcat sin filtros con hora inicio-fin.
 
+### ✂️ Recorte peor caso VOE: fuera el fallback WebView (11 Oct 2026; SoloLatino v33, SeriesKao v29)
+**Pedido del usuario**: VOE tarda 20-60s en estar disponible (PoW ALTCHA: 81 intentos/23s, 202/48s en sus logs) vs VidHide (2-5s) y StreamWish (ms). Preguntó si quitar el WebView afectaba lo que ya reproduce.
+**Veredicto (logs del propio usuario)**: el que resuelve SIEMPRE es el solver (`ALTCHA resuelto` → `Found M3U8` → segmentos 200 en ambos providers); el WebView de VOE nunca fue el héroe. Cadena: solver → mirrors → WebView (último).
+**Fix (sin cambiar resultados)**: las 2 ramas WebView de `tryVoeExtraction` ahora retornan `tryMirrors()` directo; eliminados `VOE_READY_JS` + `webViewCookies()` (quedaban sin uso). `renderViaWebView` + `webViewMutex` se conservan (StreamWish los usa). **Danimados sin cambios**: su VOE nunca tuvo WebView (solver+mirrors desde v2, peor caso ya ~60s).
+- **Estado**: SoloLatino **33** / SeriesKao **29** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente). **No compilado por regla del repo.**
+- ⏸️ **Pendiente**: compilar ambos, instalar y medir tiempo hasta links VOE en celular físico (esperado: peor caso ~60s en vez de ~90s; caso normal idéntico).
+
 ---
 
 ## OkruProvider — Extractor OK.ru de Kraptor123/Cs-Karma (10 Oct 2026 v1)
@@ -2062,6 +2069,13 @@ Sitio: `danimados.cc` (DooPlay). Rama `loadLinks`: AJAX `doo_player_ajax` ? embe
 **Fix**: `name = "Danimados [Voe]"` en `generateM3u8` y en la rama directa m3u8/mp4 (`source` sigue `"Danimados"` → interceptor intacto).
 - Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - ⏸️ **Pendiente**: compilar, instalar y comprobar el nombre en la lista.
+
+### 🔍 Filtro de search contra ruido de WP (13 Oct 2026 v9)
+**Pedido del usuario**: buscar algo inexistente devolvía series sin nada que ver en vez de vacío.
+**Causa**: `/?s=` de WP es laxo (coincidencias parciales en contenido) y el provider devolvía todo tal cual (además sin URL-encode del query).
+**Fix** (patrón VerAnime): `matchesQuery()` — todos los tokens del query (≥2 letras, con tolerancia a plural `s` final) deben aparecer en el título; `URLEncoder.encode` del query; se devuelve lista vacía (no null) cuando nada es relevante.
+- Versiones a **9** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- ⏸️ **Pendiente**: compilar, instalar y buscar algo inexistente (ej. "xyzqwe") → debe salir vacío; y algo real (ej. "naruto") → solo resultados con ese nombre.
 - ?? **Pendiente**: compilar (`.\gradlew.bat :DanimadosProvider:make --console=plain -q`), instalar y probar Scooby-Doo (VOE ? `[Voe] JS redirect` ? `ALTCHA resuelto` ? `Found M3U8`; HgLink ? `[SW] M3U8 (eval)` o `[SW-Web]`), Galaxia Wander (fastream con interceptor ? sin 403) y Mr Young (archive.org con URL bien formada).
 
 ---
@@ -2182,8 +2196,8 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 
 ### ??? Renombre a StrymixTV (14 Oct 2026, reseteo a v1)
 **Motivo (usuario)**: no usar la marca de la app INFINITY.
-- M�dulo `InfinityProvider/` ? `StrymixtvProvider/` (clases `StrymixtvPlugin`/`StrymixtvProvider`, `name = "StrymixTV"`, TAG de logs `StrymixTV`). Los labels `"$name [...]"` se actualizan solos. Namespace interno de data-URLs (`/infinity/channel/`) se deja intacto (invisible).
-- `plugins.json`: entrada `Infinity` reemplazada por `StrymixtvProvider`/`StrymixTV` v1 (c�digo ex-v3, `fileSize: 0` pendiente).
-- Icono recomendado: favicon auto de Google sobre `fluxa.strymix.com` (`strymix.com/favicon.ico` da 404) � neutral, sin marca ajena, siempre resuelve.
-- ?? **Consecuencia**: al cambiar `internalName`+`name`, CS3 lo ve como plugin NUEVO � desinstalar el viejo `Infinity` tras instalar este; favoritos guardados con apiName `Infinity` no migran solos.
-- ?? **Pendiente**: compilar (`.\gradlew.bat :StrymixtvProvider:make --console=plain -q`), `fileSize`, instalar y filtrar logs con `StrymixTV:V` (el TAG cambi�).
+- M�dulo `InfinityProvider/` ? `StrymixtvProvider/` (clases `StrymixtvPlugin`/`StrymixtvProvider`, `name = "StrymixTV"`, TAG de logs `StrymixTV`). Los labels `"$name [...]"` se actualizan solos. Namespace interno de data-URLs (`/infinity/channel/`) se deja intacto (invisible).
+- `plugins.json`: entrada `Infinity` reemplazada por `StrymixtvProvider`/`StrymixTV` v1 (c�digo ex-v3, `fileSize: 0` pendiente).
+- Icono recomendado: favicon auto de Google sobre `fluxa.strymix.com` (`strymix.com/favicon.ico` da 404) � neutral, sin marca ajena, siempre resuelve.
+- ?? **Consecuencia**: al cambiar `internalName`+`name`, CS3 lo ve como plugin NUEVO � desinstalar el viejo `Infinity` tras instalar este; favoritos guardados con apiName `Infinity` no migran solos.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :StrymixtvProvider:make --console=plain -q`), `fileSize`, instalar y filtrar logs con `StrymixTV:V` (el TAG cambi�).
