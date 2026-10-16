@@ -60,9 +60,9 @@ class TokyvideoProvider : MainAPI() {
     }
 
     private fun parseSerieCards(doc: org.jsoup.nodes.Document): List<SearchResponse> {
+        
         val direct = doc.select("div.thumb-serie").mapNotNull { card ->
-
-            val a = card.selectFirst("a[href*=/series/]") ?: return@mapNotNull null
+            val a = card.selectFirst("a[href*=/serie]") ?: return@mapNotNull null
             val href = a.attr("abs:href")
             if (href.isBlank()) return@mapNotNull null
             val title = card.selectFirst(".thumb-serie__name")?.text()?.trim()?.takeIf { it.isNotBlank() }
@@ -77,14 +77,15 @@ class TokyvideoProvider : MainAPI() {
         if (direct.isNotEmpty()) return direct
 
         Log.d(TAG, "parseSerieCards: sin div.thumb-serie, genérico (html=${doc.html().length})")
-        return doc.select("a[href*=/series/]").mapNotNull { a ->
+        return doc.select("a[href*=/serie]").mapNotNull { a ->
             val href = a.attr("abs:href")
-            if (href.isBlank() || href.removeSuffix("/") == "$mainUrl/series") return@mapNotNull null
+            val clean = href.removeSuffix("/")
+            if (href.isBlank() || clean == "$mainUrl/series" || clean == "$mainUrl/es/series") return@mapNotNull null
             val title = a.selectFirst(".thumb-serie__name")?.text()?.trim()?.takeIf { it.isNotBlank() }
                 ?: a.selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
                 ?: a.text().trim().takeIf { it.isNotBlank() && it.length < 80 }
                 ?: a.attr("title")?.trim()?.takeIf { it.isNotBlank() }
-                ?: href.substringAfterLast("/series/").trim('/').replace("-", " ").takeIf { it.isNotBlank() }
+                ?: href.substringAfterLast("/").trim('/').replace("-", " ").takeIf { it.isNotBlank() }
                 ?: return@mapNotNull null
             val poster = a.selectFirst("img")?.let { img ->
                 img.attr("data-src").trim().takeIf { it.isNotBlank() && !it.startsWith("data:") }

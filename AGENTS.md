@@ -2277,3 +2277,10 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 **Fix**: sección Series ? `/es/series` (antes `/series` en inglés); el barrido de search también usa `/es/series` (nombres en español matchean mejor queries en español). `pageUrl()` ya lo cubría (`endsWith("/series")`).
 - Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar e instalar (trae todo v2-v4 de una vez).
+
+### ?? Fix singular/plural serie (Tokyvideo 16 Oct 2026 v5)
+**Log v4**: sección `Series` ? 0 items con HTML recibido (y el barrido de search también fallaba por lo mismo).
+**Causa raíz**: las cards de `/es/series` enlazan a `/es/serie/` (SINGULAR) y el selector pedía `href*=/series/` (plural). Mismo bug conceptual que el `^=` de v3, al revés.
+**Fix**: match `href*=/serie` (cubre singular + plural) en `parseSerieCards` directo y fallback (+ exclusión del propio índice `/es/series`). Verificado contra HTML con headers de la app: 24 `div.thumb-serie` + 48 hrefs `/es/serie/`.
+- Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Pendiente: compilar, instalar y abrir Series + buscar "mis amigos tigger y pooh" (serie antepuesta).
