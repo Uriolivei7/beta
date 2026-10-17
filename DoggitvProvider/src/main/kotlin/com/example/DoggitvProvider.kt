@@ -227,11 +227,15 @@ class DoggitvProvider : MainAPI() {
     }
 
     private fun posterFor(name: String, logo: String?): String {
-        if (!logo.isNullOrBlank()) return logo
         val clean = name.replace(Regex("""\s*[\(\[]\s*\d{3,4}p\s*[\)\]]"""), "").trim().ifBlank { name }
-        val text = java.net.URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
-        return "https://placehold.co/320x320/1e1e2e/e0e0e0/png?text=$text"
+        val placeholder = "https://placehold.co/320x320/1e1e2e/e0e0e0/png?text=" + enc(clean)
+        val l = logo?.trim()
+        if (l.isNullOrBlank()) return placeholder
+        return "https://wsrv.nl/?url=${enc(l)}&w=320&h=320&fit=contain&default=${enc(placeholder)}"
     }
+
+    private fun enc(s: String): String =
+        java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
     private val adultKeywords = listOf(
         "xxx", "adult", "nsfw", "porn", "erotic", "erotico", "er\u00f3tico",
