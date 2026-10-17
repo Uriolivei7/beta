@@ -151,11 +151,37 @@ class DoggitvProvider : MainAPI() {
             path.endsWith(".mp4") || path.endsWith(".mkv") || path.endsWith(".webm") -> ExtractorLinkType.VIDEO
             else -> ExtractorLinkType.M3U8
         }
-        Log.d(TAG, "loadLinks -> $type $u")
-        callback(newExtractorLink(name, name, u, type) {
+        var target = u
+        if (type == ExtractorLinkType.M3U8) {
+            muxedVariant(u)?.let { mux ->
+                target = mux
+                Log.d(TAG, "master con grupo de audio -> variant muxado $mux")
+            }
+        }
+        Log.d(TAG, "loadLinks -> $type $target")
+        callback(newExtractorLink(name, name, target, type) {
             this.quality = Qualities.Unknown.value
         })
         return true
+    }
+
+    private suspend fun muxedVariant(master: String): String? {
+        return try {
+            val body = app.get(master, timeout = 15L).text
+            if (!body.contains("#EXT-X-MEDIA:TYPE=AUDIO")) return null
+            val lines = body.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+            val infos = lines.indices.filter { lines[it].startsWith("#EXT-X-STREAM-INF") }
+            if (infos.size != 1) return null
+            val idx = infos[0]
+            val variant = if (idx + 1 < lines.size) lines[idx + 1] else null
+            if (variant.isNullOrBlank() || variant.startsWith("#")) return null
+            java.net.URI(master).resolve(variant).toString()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "muxedVariant '$master' fallo: ${e.message}")
+            null
+        }
     }
 
     private suspend fun fetchChannels(listUrl: String): List<ChannelInfo> {

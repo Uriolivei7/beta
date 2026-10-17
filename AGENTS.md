@@ -2354,3 +2354,30 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 ### Pendiente
 - Compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home (23 paises) + un pais (p.ej. Argentina/Mexico) + reproducir un canal. Logs: `adb logcat -s DoggiTV:V`.
 - Opcional si el usuario quiere: mostrar flag por pais (decodificar el base64 `Flag` a archivo local) y/o listar canales directamente en el home.
+
+### ?? Canales negros/sin audio en emulador WSA (18 Oct 2026, diagnostico, sin cambio de codigo)
+**Reporte (usuario)**: en el CloudStream original corriendo en **emulador WSA**, algunos canales quedan "reproduciendo" en negro sin audio; en **cs3d** (Windows, misma red) reproducen. Ejemplos: `Studio Universal Latin America Brazil (720p)`, `Sony Channel (Argentina) (1080p)`.
+**Medido (PC)**:
+- Ambas IPs son **restreamers** con el patron `tracks-v1a1/mono.m3u8` + audio en grupo `#EXT-X-MEDIA TYPE=AUDIO` (spa default + eng):
+  - `Studio Universal LA Brazil` = `http://187.102.210.46/universo/index.m3u8` (**puerto 80**, 1080p avc1.640028, 5.5 Mbps).
+  - `Sony Channel Argentina` = `http://138.121.15.230:9002/SONY/index.m3u8` (**puerto 9002**, 1080p).
+- **Son las mismas IPs ya documentadas en la seccion Teleonline** (`187.102.210.46:80` = "cuelga en el telefono en silencio, 200 instantaneo desde PC, middlebox puerto 80"; `138.121.15.230:9002` = "reproduce + freezes, CDN lento").
+- Master y **segmentos responden 200/206 desde PC** (por eso cs3d reproduce). Master con UA ExoPlayer vs Chrome = identico; codecs `avc1`+`mp4a` estandar; CloudStream Android tiene `usesCleartextTraffic="true"` (verificado en el manifest oficial) -> **no es headers, ni codecs, ni cleartext**.
+**Veredicto WSA**: en WSA el problema puede ser su NAT; pero el usuario confirmo que **tambien falla en celular fisico en la MISMA WiFi que la PC** (donde cs3d reproduce) -> **no es la red, es el player Android**.
+**Descartado en PC (misma red)**: master/segmentos 200/206; UA ExoPlayer vs Chrome identico; `Keep-Alive` reutilizando conexion OK (no es tarpit de pooling); audio renditions `tracks-a1/a2` y video `tracks-v1a1` con segmentos OK. Cleartext permitido en la app. Codecs `avc1`(H.264)+`mp4a`(AAC) estandar.
+**Estructura del master (sospechosa)**: `#EXTM3U` **sin `#EXT-X-VERSION`** + `#EXT-X-MEDIA:TYPE=AUDIO` (spa/eng) con URIs `tracks-a{1,2}/mono.m3u8` + un unico `#EXT-X-STREAM-INF AUDIO="aac" RESOLUTION=1920x1080 CODECS="avc1.640028"` -> `tracks-v1a1/mono.m3u8`. Verificado por bytes del segmento: `tracks-v1a1/mono.m3u8` **ya trae video+audio muxado** (H.264 startcodes + sync ADTS AAC). Hipotesis: ExoPlayer gestiona mal este master (rendicion de audio separada / version ausente) -> "cargando" infinito; un player desktop lo tolera.
+**Posible fix (pendiente de decidir)**: en `loadLinks`, si el `.m3u8` es un master restreamer, emitir la **media playlist del variant muxado** (`tracks-v1a1/mono.m3u8`) directo en vez de/ademas del master, evitando `#EXT-X-MEDIA`. Falta confirmar con logcat del celular fisico (`ExoPlayer`/`MediaCodec`/`CS3IPlayer`) si es parseo del master o decodificador.
+
+### Fix: master con grupo de audio -> emitir variant muxado (19 Oct 2026 v2)
+**Logcat del celular fisico (SM-A065M, Android 36, app `com.lagradost.cloudstream3.prerelease`, AndroidXMedia3/1.9.3, `Using CronetDataSource`)** en `Studio Universal Latin America Brazil`:
+- `loadOnlinePlayer ExtractorLink(name=DoggiTV, url=http://187.102.210.46/universo/index.m3u8, referer=, type=M3U8)`.
+- `avc_utils: found AVC codec config (1920 x 1080, High-profile level 4.0)` -> el video SI se parsea; se crean decoders de video (`c2.mtk.avc.decoder`) **y de audio** (`c2.sec.mp3.decoder.mpeg-L2`, mime `audio/mpeg` = MP3, 48000 Hz 2ch, `DEFAULT=YES` = rendition `tracks-a1`).
+- El decoder de audio da `E/Codec2-ComponentInterface: We have a failed config` + `D/CCodecConfig: config failed => CORRUPTED`; y el estado queda **`BUFFERING(6), position=-1, buffered=-1`** repitiendose cada ~3s sin avanzar (nunca primer frame) -> "reproduce" en negro sin audio.
+**Prueba TS (PC, `doggi_pids.py`/`doggi_pmt.py` sobre el primer segmento)**:
+- Master real: `#EXTM3U` **sin `#EXT-X-VERSION`** + 2x `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",...URI="tracks-a{1,2}/mono.m3u8"` + un unico `#EXT-X-STREAM-INF ...,AUDIO="aac",RESOLUTION=1920x1080,CODECS="avc1.640028",CLOSED-CAPTIONS=NONE` -> `tracks-v1a1/mono.m3u8`.
+- Conteo de PIDs del TS: `tracks-a1` = **solo audio** (PID 0xdd, 83-89%); `tracks-v1a1` = **muxado video+audio** (PID 0xd3 55-56% + PID 0xdd 38-39%). O sea el variant ya trae el audio; el grupo `#EXT-X-MEDIA` es redundante.
+**Causa raiz**: media3 1.9.3 + este master no estandar (sin version + grupo de audio separado + variante unica muxada) selecciona la rendition de audio separada (MP3) y se atasca en `BUFFERING` (`position=-1`) con el decoder MP3 en `CORRUPTED`; un player desktop (cs3d) lo tolera.
+**Fix (`DoggitvProvider.kt:loadLinks`)**: nueva `muxedVariant(master)`: si el body del `.m3u8` contiene `#EXT-X-MEDIA:TYPE=AUDIO` y hay **exactamente un** `#EXT-X-STREAM-INF`, devuelve la URI del variant resuelta absoluta (`java.net.URI(master).resolve(...)`); si falla -> null. En `loadLinks`, para type `M3U8`, si `muxedVariant` no es null se emite **esa** playlist en vez del master (evita el grupo de audio). 1 fetch extra por reproduccion (barato; los masters que no matchean devuelven null). Fail-open: si el fetch/parse falla, emite el master como antes.
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0). Balance `bal_check.py` OK.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar `Studio Universal Latin America Brazil` + `Sony Channel (Argentina)` — buscar `master con grupo de audio -> variant muxado` en logcat y confirmar que reproduce con audio (sin `BUFFERING position=-1`).
+- Nota: si algun dia un canal iptv-org trae un variant **solo-video** con grupo de audio, este fix lo dejaria sin audio (edge case aceptado; los restreamers de estas listas son muxados).
