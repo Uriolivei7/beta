@@ -8,9 +8,10 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONArray
 import kotlinx.coroutines.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 
 class DoggitvProvider : MainAPI() {
-    override var mainUrl = "https://sswwswsw.github.io"
+    override var mainUrl = "https://iptv-org.github.io"
     override var name = "DoggiTV"
     override var lang = "mx"
     override val supportedTypes = setOf(TvType.Live)
@@ -27,24 +28,53 @@ class DoggitvProvider : MainAPI() {
         val group: String?,
     )
 
-    private val countriesCache = mutableMapOf<String, String>()
+    private val countries = listOf(
+        Country("Per\u00fa", "https://iptv-org.github.io/iptv/countries/pe.m3u"),
+        Country("Argentina", "https://iptv-org.github.io/iptv/countries/ar.m3u"),
+        Country("Colombia", "https://iptv-org.github.io/iptv/countries/co.m3u"),
+        Country("Estados Unidos", "https://iptv-org.github.io/iptv/countries/us.m3u"),
+        Country("Brasil", "https://iptv-org.github.io/iptv/countries/br.m3u"),
+        Country("M\u00e9xico", "https://iptv-org.github.io/iptv/countries/mx.m3u"),
+        Country("Chile", "https://iptv-org.github.io/iptv/countries/cl.m3u"),
+        Country("Bolivia", "https://iptv-org.github.io/iptv/countries/bo.m3u"),
+        Country("Uruguay", "https://iptv-org.github.io/iptv/countries/uy.m3u"),
+        Country("Ecuador", "https://iptv-org.github.io/iptv/countries/ec.m3u"),
+        Country("Panam\u00e1", "https://iptv-org.github.io/iptv/countries/pa.m3u"),
+        Country("Honduras", "https://iptv-org.github.io/iptv/countries/hn.m3u"),
+        Country("Cuba", "https://iptv-org.github.io/iptv/countries/cu.m3u"),
+        Country("Nicaragua", "https://iptv-org.github.io/iptv/countries/ni.m3u"),
+        Country("Venezuela", "https://iptv-org.github.io/iptv/countries/ve.m3u"),
+        Country("Costa Rica", "https://iptv-org.github.io/iptv/countries/cr.m3u"),
+        Country("Francia", "https://iptv-org.github.io/iptv/countries/fr.m3u"),
+        Country("Rusia", "https://iptv-org.github.io/iptv/countries/ru.m3u"),
+        Country("Puerto Rico", "https://iptv-org.github.io/iptv/countries/pr.m3u"),
+        Country("Deportes", "https://iptv-org.github.io/iptv/categories/sports.m3u"),
+        Country("Deportes Latam", "https://sswwswsw.github.io/sports.m3u"),
+        Country("Espa\u00f1a", "https://iptv-org.github.io/iptv/countries/es.m3u"),
+    )
+
+    override val mainPage = mainPageOf(
+        *countries.map { it.listUrl to it.name }.toTypedArray()
+    )
+
+    private val channelNames = ConcurrentHashMap<String, String>()
+
+    private fun channelItem(ch: ChannelInfo): SearchResponse =
+        newLiveSearchResponse(ch.name, ch.url, TvType.Live) {
+            if (!ch.logo.isNullOrBlank()) this.posterUrl = ch.logo
+        }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         if (page > 1) return null
-        val countries = fetchCountries()
-        if (countries.isEmpty()) {
-            Log.e(TAG, "getMainPage: sin paises")
+        val listUrl = request.data.ifBlank { countries.firstOrNull()?.listUrl ?: return null }
+        val channels = fetchChannels(listUrl)
+        if (channels.isEmpty()) {
+            Log.e(TAG, "getMainPage '${request.name}': sin canales")
             return null
         }
-        val items = countries.map { c ->
-            countriesCache[c.listUrl] = c.name
-            newLiveSearchResponse(c.name, c.listUrl, TvType.Live)
-        }
-        Log.d(TAG, "getMainPage: ${items.size} paises")
-        return newHomePageResponse(
-            listOf(HomePageList("Paises", items, isHorizontalImages = true)),
-            hasNext = false,
-        )
+        val items = channels.map { ch -> channelItem(ch) }
+        Log.d(TAG, "getMainPage '${request.name}': ${items.size} canales")
+        return newHomePageResponse(HomePageList(request.name, items), false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -52,18 +82,13 @@ class DoggitvProvider : MainAPI() {
         if (q.isBlank()) return emptyList()
         val qn = fold(q)
         return try {
-            val countries = fetchCountries()
             val lists = countries.amap { c -> fetchChannels(c.listUrl) }
             val results = lists.flatten()
                 .asSequence()
                 .filter { fold(it.name).contains(qn) }
                 .distinctBy { it.url }
                 .take(80)
-                .map { ch ->
-                    newLiveSearchResponse(ch.name, ch.url, TvType.Live) {
-                        if (!ch.logo.isNullOrBlank()) this.posterUrl = ch.logo
-                    }
-                }
+                .map { ch -> channelItem(ch) }
                 .toList()
             Log.d(TAG, "search '$q' -> ${results.size}")
             results
@@ -82,7 +107,7 @@ class DoggitvProvider : MainAPI() {
             if (isPlaylist(u)) {
                 val channels = fetchChannels(u)
                 if (channels.isEmpty()) return null
-                val title = countriesCache[u] ?: "Canales"
+                val title = countries.firstOrNull { it.listUrl == u }?.name ?: "Canales"
                 val episodes = channels.map { ch ->
                     newEpisode(ch.url) {
                         this.name = ch.name
@@ -95,7 +120,11 @@ class DoggitvProvider : MainAPI() {
                     this.plot = "$title - ${channels.size} canales (iptv-org)"
                 }
             } else {
-                newTvSeriesLoadResponse("En Vivo", u, TvType.Live, listOf(newEpisode(u) { this.name = "En Vivo" }))
+                val title = channelNames[u] ?: "En Vivo"
+                Log.d(TAG, "load canal '$title' -> $u")
+                newTvSeriesLoadResponse(title, u, TvType.Live, listOf(newEpisode(u) { this.name = title })) {
+                    this.plot = title
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -129,26 +158,6 @@ class DoggitvProvider : MainAPI() {
         return true
     }
 
-    private suspend fun fetchCountries(): List<Country> {
-        return try {
-            val txt = app.get(CANALES_URL, timeout = 30L).text
-            val arr = JSONArray(txt)
-            val out = ArrayList<Country>()
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val name = o.optString("Name").ifBlank { "Pais ${i + 1}" }
-                val listUrl = o.optString("listURL")
-                if (listUrl.isNotBlank()) out.add(Country(name, listUrl))
-            }
-            out
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "fetchCountries fallo: ${e.message}")
-            emptyList()
-        }
-    }
-
     private suspend fun fetchChannels(listUrl: String): List<ChannelInfo> {
         return try {
             val txt = app.get(listUrl, timeout = 40L).text
@@ -180,6 +189,7 @@ class DoggitvProvider : MainAPI() {
             } else if (line.startsWith("http")) {
                 val channelName = nm?.takeIf { it.isNotBlank() } ?: id?.takeIf { it.isNotBlank() } ?: "Canal"
                 out.add(ChannelInfo(channelName, line, logo, group))
+                channelNames[line] = channelName
                 group = null; id = null; logo = null; nm = null
             }
         }
@@ -196,6 +206,5 @@ class DoggitvProvider : MainAPI() {
 
     companion object {
         const val TAG = "DoggiTV"
-        private const val CANALES_URL = "https://sswwswsw.github.io/canales.json"
     }
 }

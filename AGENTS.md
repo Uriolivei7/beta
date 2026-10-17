@@ -2339,11 +2339,13 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 - 21 fuentes son de `iptv-org.github.io/iptv/countries/{bo,ar,co,us,br,mx,es,cl,uy,ec,pa,hn,pe,cu,ni,ve,cr,fr,ru,pr}.m3u` + `categories/sports.m3u`; 2 propias de Serbero: `sswwswsw.github.io/sports.m3u` (77 canales, verificado) y una XXX. Sin auth ni cifrado; los canales son HLS `.m3u8` directos (tamano listas: us 318 KB max).
 
 ### Implementacion (v1, sin compilar por regla del repo)
-- `getMainPage`: lee `canales.json` -> 1 fila "Paises" con 23 items `newLiveSearchResponse(Name, listURL, TvType.Live)`.
-- `load(url)`: si `isPlaylist(url)` (`.m3u`) -> baja y parsea el M3U -> `newTvSeriesLoadResponse(Name, url, TvType.Live, episodios=canales)` (nombre + poster del canal); si no -> single-episode "En Vivo".
+- `mainPage = mainPageOf(...)`: 23 secciones (una por pais, `listUrl to label`) con los paises hardcodeados (derivados de `canales.json`); asi el home carga **solo la seccion que se ve** (lazy), estilo StrymixTV.
+- `getMainPage(page, request)`: `request.data` = `listUrl` -> `fetchChannels` -> `HomePageList(request.name, canales)` con **los canales directos** (no una fila de paises). Al tocar un canal va a `load()`.
+- `load(url)`: si `isPlaylist(url)` (`.m3u`) -> lista los canales del pais (fallback); si es canal -> `newTvSeriesLoadResponse(<nombre del canal>, url, TvType.Live, [episodio])`. **El nombre real del canal sale de `channelNames`** (ConcurrentHashMap url->nombre, poblado en `parseM3U`), asi al abrir NO dice "En Vivo" sino el nombre del canal.
 - `loadLinks(data=HLS)`: emite `newExtractorLink(name, name, url, type)` (type por extension: `.mpd`->DASH, `.mp4/.mkv/.webm`->VIDEO, resto M3U8). Sin headers/referer (los streams iptv-org no los piden). `source == "DoggiTV"`.
-- `search(query)`: `amap` sobre las 23 listas, filtra por nombre (fold de acentos con `Normalizer`), `distinctBy url`, tope 80 -> `newLiveSearchResponse`.
-- Timeouts en segundos (`30L`/`40L`). Sin interceptores. URLs siempre absolutas (evita el prepend de `fixUrl`). `import com.lagradost.cloudstream3.amap`.
+- `search(query)`: `amap` sobre las 23 listas (sintaxis de punto `countries.amap { }`, NO `amap(countries)` — en Kotlin las extensiones no se llaman asi), filtra por nombre (fold de acentos con `Normalizer`), `distinctBy url`, tope 80 -> `newLiveSearchResponse`. **Verificado contra datos reales: 5122 canales; "espn"->86, "tyc"->6, "cnn"->8.**
+- Timeouts en segundos (`40L`). Sin interceptores. URLs siempre absolutas (evita el prepend de `fixUrl`). `import com.lagradost.cloudstream3.amap`.
+- Etiquetas de pais con acentos via escapes `\uXXXX` (`M\u00e9xico`, `Espa\u00f1a`, `Panam\u00e1`, `Per\u00fa`) para evitar problemas de encoding.
 - Archivos: `build.gradle.kts` (v1, mx, `Live`), `AndroidManifest.xml`, `DoggitvPlugin.kt`, `DoggitvProvider.kt`. `settings.gradle.kts` auto-incluye (el dir tiene `build.gradle.kts`). Balance `bal_check.py` OK.
 - `plugins.json`: entrada `DoggiTV`/`DoggitvProvider` v1 (`fileSize: 0` pendiente).
 
