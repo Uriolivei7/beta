@@ -2422,3 +2422,22 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 - Nota: si `load()` corre en una sesion donde la lista no se descargo antes (app recien abierta), `channelLogos[u]` es null y cae al placeholder (nunca negro).
 - Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0). v3+v4 salen en el mismo build (v3 nunca se compilo). Balance `bal_check.py` OK.
 - ⏸️ **Pendiente**: compilar, actualizar `fileSize`, instalar y abrir un canal (ej. `Studio Universal`) — el detalle debe mostrar el logo (o el placeholder con el nombre), no negro.
+
+### 🐛 Causa raiz: wsrv.nl NO puede con imgur (Peru = 166/207 imgur) (19 Oct 2026 v5)
+**Reporte (usuario)**: en los canales de **Peru** (ATV Peru, Global TV, Ucayalina de Television) en vez del poster sale **el nombre** (el placeholder); America Television (logo de **wikimedia**) si muestra poster.
+**Causa raiz (medida con Python en la red del usuario)**: `wsrv.nl` **devuelve el placeholder (`default`) para `i.imgur.com`** (404 upstream). El clasificador de los tests anteriores era flojo (comparaba contra un tamano fijo de placeholder y el placeholder cambia de tamano segun el texto) -> daba "207/207 OK". Con deteccion por **hash del placeholder real de cada canal**:
+| Lista | logos | wsrv OK | placeholder | hosts que fallan |
+|---|---|---|---|---|
+| pe | 207 | 38 | 169 | **imgur 166**, rudo.video 2, chikitoonz 1 |
+| ar | 207 | 70 | 137 | imgur 132, i0.wp 2 |
+| mx | 173 | 20 | 153 | imgur 153 |
+| co | 148 | 36 | 112 | imgur 112 |
+| cl | 247 | 61 | 186 | imgur 179, postimg 3, paste.pics 2 |
+| es | 323 | 107 | 216 | imgur 214, wikia 2 |
+- En **todas** las listas imgur es el **70% de los logos (3074 de 4348)** -> afecta sobre todo a Peru (166/207 = 80%).
+- wsrv SI sirve (comprobado): `upload/thumb.wikimedia.org`, `images.pluto.tv`, `i.ibb.co`, `cdn.m3u.cl`, `imgx.fubo.tv`, `provider-static.plex.tv`, `gia.tv`, `yt3.googleusercontent.com`, `iili.io`, `m.media-amazon.com`, `encrypted-tbn0.gstatic.com`.
+- wsrv NO sirve: `i.imgur.com`, `i.postimg.cc`, `static.wikia.nocookie.net` (directo tb 403), `i2.paste.pics` (SSL roto), `i0.wp.com`/`assets.rudo.video`/`chikitoonz.com` (muertos en origen, ahi el placeholder es correcto).
+- **Directo imgur funciona**: 206 sin headers (ojo: **sin User-Agent imgur da 429**). Proxies alternativos descartados para imgur: allorigins/codetabs 522, corsproxy.io 401, images.weserv.nl 404.
+**Fix**: nueva `directPoster(l)` en `posterFor()`: los logos `i.imgur.com` se emiten **directos con la variante `m` de 320px** (`https://i.imgur.com/{id}m.{ext}`) y `i.postimg.cc` directo; el resto sigue por wsrv (mantiene rasterizado de SVG + placeholder para hosts muertos). La variante `m` se verifico **300/300 OK** (mediana **10 KB**, max 35 KB, vs originales de hasta 1.8 MB).
+- Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0). v3+v4+v5 salen en el mismo build. Balance `bal_check.py` OK.
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y comprobar que ATV Peru / Global TV / Ucayalina muestran poster (y que el detalle ya no sale negro, fix v4).
