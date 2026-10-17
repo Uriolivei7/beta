@@ -2411,3 +2411,14 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 **Fix**: `posterFor()` ahora envuelve el logo en **wsrv.nl** con fallback: `https://wsrv.nl/?url=<logo>&w=320&h=320&fit=contain&default=<placeholder>`. Verificado (200 image/png): logo png ok (8209 B), svg convertido a png (9522 B), **URL muerta -> devuelve el placeholder** (4358 B = tamano exacto del `placehold.co`), http/svg/hosts con 429-404-400 cubiertos por `default`. Sin logo sigue devolviendo `placehold.co` directo (ya funcionaba). Ventaja extra: resize 320px -> posters mas livianos.
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0). Balance `bal_check.py` OK.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y comprobar que TODOS los canales muestran poster (logo real o placeholder con el nombre) — en particular `chikitoonz`, `Latina Noticias 24/7`, `Disney Channel Latin America` y `GOLPERU`.
+
+### 🖼️ Fix poster negro en el detalle (load) (19 Oct 2026 v4)
+**Reporte (usuario)**: al entrar a un canal, la pantalla de detalle (`load`) sale **negra** (sin poster), aunque la card del home sí tenga imagen.
+**Causa raiz**: `load()` devolvia `newTvSeriesLoadResponse(...)` **sin `posterUrl`** en ninguna de las 2 ramas (canal suelto y playlist de pais). El detalle usa el poster del `LoadResponse`, no el del `SearchResponse` de la card -> negro siempre, aunque el logo exista.
+**Fix**:
+- Nuevo mapa `channelLogos` (`ConcurrentHashMap<String,String>`) poblado en `parseM3U` junto a `channelNames` (misma key = URL del stream).
+- Rama canal: `posterUrl = posterFor(title, channelLogos[u])` en el `LoadResponse` **y** en el `Episode` (el `newEpisode` antes tampoco lo tenia).
+- Rama playlist de pais: `posterUrl = posterFor(title, null)` (placeholder con el nombre del pais).
+- Nota: si `load()` corre en una sesion donde la lista no se descargo antes (app recien abierta), `channelLogos[u]` es null y cae al placeholder (nunca negro).
+- Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0). v3+v4 salen en el mismo build (v3 nunca se compilo). Balance `bal_check.py` OK.
+- ⏸️ **Pendiente**: compilar, actualizar `fileSize`, instalar y abrir un canal (ej. `Studio Universal`) — el detalle debe mostrar el logo (o el placeholder con el nombre), no negro.
