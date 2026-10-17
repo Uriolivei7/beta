@@ -166,7 +166,7 @@ class TokyvideoProvider : MainAPI() {
         val bestVideo = videos.values.maxOfOrNull { it.second } ?: 0
         val rankedApiSeries = apiSeries.values.sortedByDescending { it.second }.map { it.first }
         Log.d(TAG, "search '$query' api -> ${rankedApiSeries.size} series + ${rankedVideos.size} videos (best=$bestVideo)")
-        
+
         val series = linkedMapOf<String, SearchResponse>()
         rankedApiSeries.forEach { series[it.url] = it }
         if ((toks.size >= 2 && bestVideo < 2) || (toks.size >= 3 && bestVideo <= 2)) {

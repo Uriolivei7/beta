@@ -2234,24 +2234,24 @@ Origen: APKs `ACTIVADOR v1.0` (WebView shell inofensivo) + `INFINITY FREE V6.4.4
 
 ---
 
-## TokyvideoProvider — Plugin nuevo (16 Oct 2026 v1)
+## TokyvideoProvider ï¿½ Plugin nuevo (16 Oct 2026 v1)
 
 Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 
 ### Cadena verificada end-to-end (serie Mis amigos + video 1x14)
-- Serie `/es/serie/{slug}/{N}` (paginada): header `.series-detail--content--title/desc`, poster `img[data-src]` (lazy: `src` es gif 1px), episodios `div.thumb-video` (link `a.thumb-duracion[href=/es/video/]`, thumb `img[data-src]` `img89.../thumbs_0001.jpg`, `span.duracion`, título `.thumb-video__meta h3 a` con forma `1x14. ...`).
-- Video `/es/video/{slug}`: **`video#tokyvideo_player > source[src]` con mp4 directo `https://cdnst{N}.tokyvideo.com/videos/.../mp4/{hash}.mp4?secure={token},{expiry}`** (server-rendered, token fresco por request, atado a la IP que pide la página).
+- Serie `/es/serie/{slug}/{N}` (paginada): header `.series-detail--content--title/desc`, poster `img[data-src]` (lazy: `src` es gif 1px), episodios `div.thumb-video` (link `a.thumb-duracion[href=/es/video/]`, thumb `img[data-src]` `img89.../thumbs_0001.jpg`, `span.duracion`, tï¿½tulo `.thumb-video__meta h3 a` con forma `1x14. ...`).
+- Video `/es/video/{slug}`: **`video#tokyvideo_player > source[src]` con mp4 directo `https://cdnst{N}.tokyvideo.com/videos/.../mp4/{hash}.mp4?secure={token},{expiry}`** (server-rendered, token fresco por request, atado a la IP que pide la pï¿½gina).
 - Playback verificado desde PC: `206 video/mp4` con Range y SIN headers/referer. Search `/search?q=` server-side OK.
 
-### Implementación (v1, sin compilar por regla del repo)
-- `getMainPage`: 4 secciones (Tendencia `/series/trends`, Películas `/movies`, Dibujos `/cartoon-series`, Series TV `/television-series`); pag `?page=N` (patrón inferido, verificar); `hasNext` por `.pagination/[rel=next]/[href*=page]`.
+### Implementaciï¿½n (v1, sin compilar por regla del repo)
+- `getMainPage`: 4 secciones (Tendencia `/series/trends`, Pelï¿½culas `/movies`, Dibujos `/cartoon-series`, Series TV `/television-series`); pag `?page=N` (patrï¿½n inferido, verificar); `hasNext` por `.pagination/[rel=next]/[href*=page]`.
 - `search()`: `/search?q=` + `URLEncoder`, mismo parser de cards.
-- `load()`: `/serie/` ? `TvSeriesLoadResponse` (temporada/episodio del `1x14` del título, poster por episodio); `/video/` ? `MovieLoadResponse` con `dataUrl=url`.
-- `loadLinks()`: `video#tokyvideo_player source[src]` ? fallback `video source` ? fallback regex mp4; emite VIDEO directo con referer = página.
+- `load()`: `/serie/` ? `TvSeriesLoadResponse` (temporada/episodio del `1x14` del tï¿½tulo, poster por episodio); `/video/` ? `MovieLoadResponse` con `dataUrl=url`.
+- `loadLinks()`: `video#tokyvideo_player source[src]` ? fallback `video source` ? fallback regex mp4; emite VIDEO directo con referer = pï¿½gina.
 - Timeouts en segundos (`15L`); sin interceptor (mp4 directo sin requisitos); JSON innecesario (todo DOM).
 - Archivos: `build.gradle.kts` (v1, es, Movie+TvSeries), `AndroidManifest.xml`, `TokyvideoPlugin.kt`, `TokyvideoProvider.kt`; `plugins.json` ? entrada `Tokyvideo` v1 (`fileSize: 0` pendiente).
 - Balance `bal_check.py` ? OK.
-- ?? **Pendiente**: compilar (`.\gradlew.bat :TokyvideoProvider:make --console=plain -q`), `fileSize`, instalar y probar home/search (cards y paginación de secciones), serie Mis amigos (episodios con posters) y reproducción del mp4 directo. Logs: `adb logcat -s Tokyvideo:V`.
+- ?? **Pendiente**: compilar (`.\gradlew.bat :TokyvideoProvider:make --console=plain -q`), `fileSize`, instalar y probar home/search (cards y paginaciï¿½n de secciones), serie Mis amigos (episodios con posters) y reproducciï¿½n del mp4 directo. Logs: `adb logcat -s Tokyvideo:V`.
 
 ### Search multi-palabra + seccion Series (Tokyvideo 16 Oct 2026 v2)
 **Reporte (usuario)**: buscar "mis amigos tigger y pooh" no trae lo esperado (la pagina de la serie).
@@ -2263,58 +2263,90 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 - Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (deben salir episodios con Pooh/Tigger arriba) + abrir la seccion Series.
 
-### ?? Fix hrefs absolutos + fallback índice de series (Tokyvideo 16 Oct 2026 v3)
-**Log v2 (usuario)**: search con scoring OK (37 resultados), secciones de video OK (24 c/u), pero **sección `Series` ? 0 items** con HTML recibido. Misma causa raíz probable que el `fixUrl()` de Donghualife v6: el selector `a[href^=/series/]` (empieza-por) no matchea si el servidor manda hrefs **absolutos** (`https://...`).
+### ?? Fix hrefs absolutos + fallback ï¿½ndice de series (Tokyvideo 16 Oct 2026 v3)
+**Log v2 (usuario)**: search con scoring OK (37 resultados), secciones de video OK (24 c/u), pero **secciï¿½n `Series` ? 0 items** con HTML recibido. Misma causa raï¿½z probable que el `fixUrl()` de Donghualife v6: el selector `a[href^=/series/]` (empieza-por) no matchea si el servidor manda hrefs **absolutos** (`https://...`).
 **Fix**:
-- `parseSerieCards`: `^=` ? `*=` (contiene) + fallback genérico (`a[href*=/series/]` con nombre de `.thumb-serie__name`/img-alt/texto/slug) + log con `html.length` para diagnosticar el markup real si sigue en 0.
-- `search()`: si el mejor video matchea <2 tokens y hay =2 tokens, barre el índice `/series/{N}` (máx 6 págs, stop al primer match bueno): serie con score=2 (o =1 si videos en 0) se antepone a los videos. Es lo que pone la página "Mis amigos" arriba para "mis amigos tigger y pooh".
+- `parseSerieCards`: `^=` ? `*=` (contiene) + fallback genï¿½rico (`a[href*=/series/]` con nombre de `.thumb-serie__name`/img-alt/texto/slug) + log con `html.length` para diagnosticar el markup real si sigue en 0.
+- `search()`: si el mejor video matchea <2 tokens y hay =2 tokens, barre el ï¿½ndice `/series/{N}` (mï¿½x 6 pï¿½gs, stop al primer match bueno): serie con score=2 (o =1 si videos en 0) se antepone a los videos. Es lo que pone la pï¿½gina "Mis amigos" arriba para "mis amigos tigger y pooh".
 - Versiones a **3** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
-- Pendiente: compilar, instalar y (1) abrir sección Series (debe listar); (2) buscar "mis amigos tigger y pooh" (la serie arriba + episodios Pooh/Tigger).
+- Pendiente: compilar, instalar y (1) abrir secciï¿½n Series (debe listar); (2) buscar "mis amigos tigger y pooh" (la serie arriba + episodios Pooh/Tigger).
 
-### ?? Sección Series en español (Tokyvideo 16 Oct 2026 v4)
-**Detalle (usuario)**: `https://www.tokyvideo.com/es/series` es el índice de series en español.
+### ?? Secciï¿½n Series en espaï¿½ol (Tokyvideo 16 Oct 2026 v4)
+**Detalle (usuario)**: `https://www.tokyvideo.com/es/series` es el ï¿½ndice de series en espaï¿½ol.
 **Verificado**: paginado `/es/series/{N}`, cards `div.thumb-serie` ? `/es/serie/{slug}` (mismo formato que Mis amigos, `load()` lo cubre).
-**Fix**: sección Series ? `/es/series` (antes `/series` en inglés); el barrido de search también usa `/es/series` (nombres en español matchean mejor queries en español). `pageUrl()` ya lo cubría (`endsWith("/series")`).
+**Fix**: secciï¿½n Series ? `/es/series` (antes `/series` en inglï¿½s); el barrido de search tambiï¿½n usa `/es/series` (nombres en espaï¿½ol matchean mejor queries en espaï¿½ol). `pageUrl()` ya lo cubrï¿½a (`endsWith("/series")`).
 - Versiones a **4** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar e instalar (trae todo v2-v4 de una vez).
 
 ### ?? Fix singular/plural serie (Tokyvideo 16 Oct 2026 v5)
-**Log v4**: sección `Series` ? 0 items con HTML recibido (y el barrido de search también fallaba por lo mismo).
-**Causa raíz**: las cards de `/es/series` enlazan a `/es/serie/` (SINGULAR) y el selector pedía `href*=/series/` (plural). Mismo bug conceptual que el `^=` de v3, al revés.
-**Fix**: match `href*=/serie` (cubre singular + plural) en `parseSerieCards` directo y fallback (+ exclusión del propio índice `/es/series`). Verificado contra HTML con headers de la app: 24 `div.thumb-serie` + 48 hrefs `/es/serie/`.
+**Log v4**: secciï¿½n `Series` ? 0 items con HTML recibido (y el barrido de search tambiï¿½n fallaba por lo mismo).
+**Causa raï¿½z**: las cards de `/es/series` enlazan a `/es/serie/` (SINGULAR) y el selector pedï¿½a `href*=/series/` (plural). Mismo bug conceptual que el `^=` de v3, al revï¿½s.
+**Fix**: match `href*=/serie` (cubre singular + plural) en `parseSerieCards` directo y fallback (+ exclusiï¿½n del propio ï¿½ndice `/es/series`). Verificado contra HTML con headers de la app: 24 `div.thumb-serie` + 48 hrefs `/es/serie/`.
 - Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir Series + buscar "mis amigos tigger y pooh" (serie antepuesta).
 
-### ?? Barrido de series también en empates (Tokyvideo 16 Oct 2026 v6)
-**Log v5**: `search mis amigos tigger y pooh -> 37 videos (best=2)` sin líneas de serie: con `best=2` no se disparaba el barrido y la página Mis amigos nunca se anteponía (los videos con 2 tokens suelen ser ruido musical que empata).
-**Fix**: el barrido corre también con 3+ tokens y `best<=2` (los videos con match fuerte 3+ lo siguen evitando). La serie empatada (Mis amigos = mis+amigos) va primera.
+### ?? Barrido de series tambiï¿½n en empates (Tokyvideo 16 Oct 2026 v6)
+**Log v5**: `search mis amigos tigger y pooh -> 37 videos (best=2)` sin lï¿½neas de serie: con `best=2` no se disparaba el barrido y la pï¿½gina Mis amigos nunca se anteponï¿½a (los videos con 2 tokens suelen ser ruido musical que empata).
+**Fix**: el barrido corre tambiï¿½n con 3+ tokens y `best<=2` (los videos con match fuerte 3+ lo siguen evitando). La serie empatada (Mis amigos = mis+amigos) va primera.
 - Versiones a **6** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
-- Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (serie antepuesta) + abrir sección Series (aún sin verificar en v5).
+- Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (serie antepuesta) + abrir secciï¿½n Series (aï¿½n sin verificar en v5).
 
-### ?? Episodios multi-página (Tokyvideo 16 Oct 2026 v7)
-**Reporte (usuario)**: los videos `2x20-3` y `2x21-3` no aparecían en la lista de Mis amigos.
-**Verificado**: sí están — en la página 1 (24 videos; /2 ? 24, /3 ? 15 = 63 total). El `load()` solo leía UNA página (la de entrada), así que según por dónde entraras faltaban episodios.
-**Fix**: `load()` normaliza la base (quita `/N` final) y junta `div.thumb-video` de p1..p10 con stop sin hrefs nuevos (`seenHrefs`), numeración global. Ambos videos resuelven mp4 directo (`cdnst90...?secure=`, verificado) sin cambios en `loadLinks`.
+### ?? Episodios multi-pï¿½gina (Tokyvideo 16 Oct 2026 v7)
+**Reporte (usuario)**: los videos `2x20-3` y `2x21-3` no aparecï¿½an en la lista de Mis amigos.
+**Verificado**: sï¿½ estï¿½n ï¿½ en la pï¿½gina 1 (24 videos; /2 ? 24, /3 ? 15 = 63 total). El `load()` solo leï¿½a UNA pï¿½gina (la de entrada), asï¿½ que segï¿½n por dï¿½nde entraras faltaban episodios.
+**Fix**: `load()` normaliza la base (quita `/N` final) y junta `div.thumb-video` de p1..p10 con stop sin hrefs nuevos (`seenHrefs`), numeraciï¿½n global. Ambos videos resuelven mp4 directo (`cdnst90...?secure=`, verificado) sin cambios en `loadLinks`.
 - Versiones a **7** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y abrir Mis amigos (deben salir los 63).
 
-### ?? Serie vía página del video (Tokyvideo 16 Oct 2026 v8)
-**Log v7**: el barrido del índice corre (p1-p6) pero da **0 matches en las 6** — al dispositivo `/es/series` le llega sin cards parseables (en PC sí hay 24 `div.thumb-serie`; causa exacta sin diagnosticar: posible challenge/consent para esa ruta en el cliente).
-**Hallazgo (HTML de video)**: cada página de video trae `global_tokyvideo_serie_name = 'mis-amigos'` (+ `_mtm serieVideo`). Es la vía que usa el propio sitio para asociar episodios?serie.
-**Fix**: en vez de barrer el índice, se resuelve la serie de los 4 mejores videos (fetch de la página + regex del slug ? card `/es/serie/{slug}` antepuesta). Más barato (=4 fetches chicos) y fiable (las páginas de video sí parsean en el dispositivo).
+### ?? Serie vï¿½a pï¿½gina del video (Tokyvideo 16 Oct 2026 v8)
+**Log v7**: el barrido del ï¿½ndice corre (p1-p6) pero da **0 matches en las 6** ï¿½ al dispositivo `/es/series` le llega sin cards parseables (en PC sï¿½ hay 24 `div.thumb-serie`; causa exacta sin diagnosticar: posible challenge/consent para esa ruta en el cliente).
+**Hallazgo (HTML de video)**: cada pï¿½gina de video trae `global_tokyvideo_serie_name = 'mis-amigos'` (+ `_mtm serieVideo`). Es la vï¿½a que usa el propio sitio para asociar episodios?serie.
+**Fix**: en vez de barrer el ï¿½ndice, se resuelve la serie de los 4 mejores videos (fetch de la pï¿½gina + regex del slug ? card `/es/serie/{slug}` antepuesta). Mï¿½s barato (=4 fetches chicos) y fiable (las pï¿½ginas de video sï¿½ parsean en el dispositivo).
 - Versiones a **8** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" buscando `search ... serie: Mis Amigos` en el log.
 
-### ?? Search vía API de sugerencias (Tokyvideo 16 Oct 2026 v9)
-**Hallazgo (usuario)**: al escribir en el buscador salen dos tipos (series + videos) ANTES de buscar — es el select2 con AJAX a `https://api.tokyvideo.com/search-ajax?q=` (URL en `global_tokyvideo_search_api` del HTML; funciona sin Referer).
-**Verificado**: devuelve `{results:[{text, children:[{title|name, thumb, id, type: video|serie}]}]}` (~15KB). Grupo "Serie results" existe (ej. `q=running` ? 1 serie + 56 videos), pero para "mis amigos" el grupo serie trae ruido o vacío (el API matchea flojo igual que la web).
-**Fix**: `search()` usa el API (query + tokens, máx 5 fetches chicos) parseando AMBOS grupos con el mismo scoring; series del API primero, luego resolución video?serie (v8, se conserva para "Mis amigos" vía sus episodios). JSON con `org.json` (nunca kotlinx).
+### ?? Search vï¿½a API de sugerencias (Tokyvideo 16 Oct 2026 v9)
+**Hallazgo (usuario)**: al escribir en el buscador salen dos tipos (series + videos) ANTES de buscar ï¿½ es el select2 con AJAX a `https://api.tokyvideo.com/search-ajax?q=` (URL en `global_tokyvideo_search_api` del HTML; funciona sin Referer).
+**Verificado**: devuelve `{results:[{text, children:[{title|name, thumb, id, type: video|serie}]}]}` (~15KB). Grupo "Serie results" existe (ej. `q=running` ? 1 serie + 56 videos), pero para "mis amigos" el grupo serie trae ruido o vacï¿½o (el API matchea flojo igual que la web).
+**Fix**: `search()` usa el API (query + tokens, mï¿½x 5 fetches chicos) parseando AMBOS grupos con el mismo scoring; series del API primero, luego resoluciï¿½n video?serie (v8, se conserva para "Mis amigos" vï¿½a sus episodios). JSON con `org.json` (nunca kotlinx).
 - Versiones a **9** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y buscar "mis amigos tigger y pooh" (log `api -> N series + M videos`).
 
 ### ?? lang=es_ES abre el grupo de series (Tokyvideo 16 Oct 2026 v10)
-**Aporte (usuario, curl con cookies de navegador)**: su request con `?lang=es_ES&q=mis+amigos&wr=` + cookies devolvía "Resultados en series" con **Mis amigos** (`/es/serie/mis-amigos`) + Spidey, cosa que mis pruebas sin `lang` jamás traían.
-**Aislado**: `lang=es_ES` es la llave (probado `?lang=es_ES&q=&wr=` sin cookies ? "Resultados en series" 2 + vídeos 56; sin `lang` ? solo "Video results" en inglés). Las cookies (`url_type=series_videos` etc.) son contexto de su navegación, no necesarias.
+**Aporte (usuario, curl con cookies de navegador)**: su request con `?lang=es_ES&q=mis+amigos&wr=` + cookies devolvï¿½a "Resultados en series" con **Mis amigos** (`/es/serie/mis-amigos`) + Spidey, cosa que mis pruebas sin `lang` jamï¿½s traï¿½an.
+**Aislado**: `lang=es_ES` es la llave (probado `?lang=es_ES&q=&wr=` sin cookies ? "Resultados en series" 2 + vï¿½deos 56; sin `lang` ? solo "Video results" en inglï¿½s). Las cookies (`url_type=series_videos` etc.) son contexto de su navegaciï¿½n, no necesarias.
 **Fix**: `search-ajax?lang=es_ES&q=...&wr=` en todas las queries del `search()`.
 - Versiones a **10** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
 - Pendiente: compilar, instalar y buscar "mis amigos" (serie Mis amigos primera, sin necesidad del fallback video?serie).
+
+### ? Veredicto EP1/EP5 Mis amigos: archivos mal en origen (16 Oct 2026, sin cambio de cï¿½digo)
+**Reporte (usuario)**: EP5 se congela cada 2-3s, EP1 no inicia. V10 verificado OK (serie 63 eps + links mp4 emitidos).
+**Medido**: ambos mp4 ~390MB (~2.7 Mbps), mismo host `cdnst89`, descarga rï¿½pida desde PC (2MB en <1s), extracciï¿½n idï¿½ntica.
+**Confirmaciï¿½n (usuario)**: en la web pasa IGUAL (EP5 congela, EP1 no arranca) ? archivos/streaming mal en origen (CDN), no provider, no dispositivo, no ruta.
+- Sin fix de cï¿½digo. Recomendaciï¿½n: otros episodios u otro horario; si un episodio falla igual en web y plugin, es la fuente.
+
+---
+
+## DoggitvProvider â€” Plugin TV en vivo desde indice IPTV (16 Oct 2026 v1)
+
+### Que es
+- Seccion de **TV en vivo** del APK Serbero Play TV (`com.serberoplaytv` v3.0, versionCode 12) portada a CloudStream. Solo el live TV; el catalogo de pelis/series (Firestore+TMDB+extractores de embeds) NO se porto.
+- Nombre elegido por el usuario para evitar la marca original: **DoggiTV** (modulo `DoggitvProvider`). Creditos: autor Ranita; fuentes = playlists publicas de **iptv-org**; inspirado en Serbero Play TV.
+
+### Cadena verificada (APK, con jadx)
+- `ChannelsApi.getChannels()` = `@GET("canales.json")` sobre base `UrlApi.CHANNELS_API_URL = https://sswwswsw.github.io/` -> `GET https://sswwswsw.github.io/canales.json` (200, ~13 KB) -> array `{Flag (PNG base64), listURL, Name}` con **23 paises/categorias**.
+- Cada `listURL` es un **M3U** estandar; `ChannelsRepositoryImpl.parseM3U` lee `#EXTINF` (`tvg-id`,`tvg-logo`,`group-title`,`,name`) + linea URL -> `Channel{tvgId,tvgLogo,groupTitle,name,url}`.
+- 21 fuentes son de `iptv-org.github.io/iptv/countries/{bo,ar,co,us,br,mx,es,cl,uy,ec,pa,hn,pe,cu,ni,ve,cr,fr,ru,pr}.m3u` + `categories/sports.m3u`; 2 propias de Serbero: `sswwswsw.github.io/sports.m3u` (77 canales, verificado) y una XXX. Sin auth ni cifrado; los canales son HLS `.m3u8` directos (tamano listas: us 318 KB max).
+
+### Implementacion (v1, sin compilar por regla del repo)
+- `getMainPage`: lee `canales.json` -> 1 fila "Paises" con 23 items `newLiveSearchResponse(Name, listURL, TvType.Live)`.
+- `load(url)`: si `isPlaylist(url)` (`.m3u`) -> baja y parsea el M3U -> `newTvSeriesLoadResponse(Name, url, TvType.Live, episodios=canales)` (nombre + poster del canal); si no -> single-episode "En Vivo".
+- `loadLinks(data=HLS)`: emite `newExtractorLink(name, name, url, type)` (type por extension: `.mpd`->DASH, `.mp4/.mkv/.webm`->VIDEO, resto M3U8). Sin headers/referer (los streams iptv-org no los piden). `source == "DoggiTV"`.
+- `search(query)`: `amap` sobre las 23 listas, filtra por nombre (fold de acentos con `Normalizer`), `distinctBy url`, tope 80 -> `newLiveSearchResponse`.
+- Timeouts en segundos (`30L`/`40L`). Sin interceptores. URLs siempre absolutas (evita el prepend de `fixUrl`). `import com.lagradost.cloudstream3.amap`.
+- Archivos: `build.gradle.kts` (v1, mx, `Live`), `AndroidManifest.xml`, `DoggitvPlugin.kt`, `DoggitvProvider.kt`. `settings.gradle.kts` auto-incluye (el dir tiene `build.gradle.kts`). Balance `bal_check.py` OK.
+- `plugins.json`: entrada `DoggiTV`/`DoggitvProvider` v1 (`fileSize: 0` pendiente).
+
+### Pendiente
+- Compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar home (23 paises) + un pais (p.ej. Argentina/Mexico) + reproducir un canal. Logs: `adb logcat -s DoggiTV:V`.
+- Opcional si el usuario quiere: mostrar flag por pais (decodificar el base64 `Flag` a archivo local) y/o listar canales directamente en el home.
