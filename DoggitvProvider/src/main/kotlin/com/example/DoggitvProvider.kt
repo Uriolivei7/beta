@@ -61,7 +61,7 @@ class DoggitvProvider : MainAPI() {
 
     private fun channelItem(ch: ChannelInfo): SearchResponse =
         newLiveSearchResponse(ch.name, ch.url, TvType.Live) {
-            if (!ch.logo.isNullOrBlank()) this.posterUrl = ch.logo
+            this.posterUrl = posterFor(ch.name, ch.logo)
         }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -111,7 +111,7 @@ class DoggitvProvider : MainAPI() {
                 val episodes = channels.map { ch ->
                     newEpisode(ch.url) {
                         this.name = ch.name
-                        if (!ch.logo.isNullOrBlank()) this.posterUrl = ch.logo
+                        this.posterUrl = posterFor(ch.name, ch.logo)
                         this.description = ch.group
                     }
                 }
@@ -188,12 +188,35 @@ class DoggitvProvider : MainAPI() {
                 nm = line.substringAfterLast("\",", "").ifBlank { line.substringAfter(",", "").trim() }
             } else if (line.startsWith("http")) {
                 val channelName = nm?.takeIf { it.isNotBlank() } ?: id?.takeIf { it.isNotBlank() } ?: "Canal"
-                out.add(ChannelInfo(channelName, line, logo, group))
-                channelNames[line] = channelName
+                val g = group
+                val i = id
+                val l = logo
                 group = null; id = null; logo = null; nm = null
+                if (isAdult(channelName, g, i)) continue
+                out.add(ChannelInfo(channelName, line, l, g))
+                channelNames[line] = channelName
             }
         }
         return out
+    }
+
+    private fun posterFor(name: String, logo: String?): String {
+        if (!logo.isNullOrBlank()) return logo
+        val clean = name.replace(Regex("""\s*[\(\[]\s*\d{3,4}p\s*[\)\]]"""), "").trim().ifBlank { name }
+        val text = java.net.URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
+        return "https://placehold.co/320x320/1e1e2e/e0e0e0/png?text=$text"
+    }
+
+    private val adultKeywords = listOf(
+        "xxx", "adult", "nsfw", "porn", "erotic", "erotico", "er\u00f3tico",
+        "18+", "+18", "brazzers", "hustler", "penthouse", "playboy",
+        "sextreme", "dorcel", "blue hustler", "adults only", "sex tv",
+    )
+
+    private fun isAdult(name: String?, group: String?, id: String?): Boolean {
+        val s = listOfNotNull(name, group, id).joinToString(" ").lowercase()
+        if (s.contains("adult swim")) return false
+        return adultKeywords.any { s.contains(it) }
     }
 
     private fun isPlaylist(u: String): Boolean =
