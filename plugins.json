@@ -133,7 +133,7 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PlushdProvider.cs3",
   "status": 1,
-  "version": 3,
+  "version": 22,
   "apiVersion": 1,
   "name": "PlusHD",
   "internalName": "PlushdProvider",
@@ -1341,7 +1341,7 @@
   {
    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/IptvProvider.cs3",
    "status": 1,
-   "version": 2,
+   "version": 3,
    "apiVersion": 1,
    "name": "IPTV",
    "internalName": "IptvProvider",
@@ -1354,7 +1354,7 @@
     "Live"
    ],
    "iconUrl": "https://avatars.githubusercontent.com/u/70979529?v=4",
-   "language": "mx",
+   "language": "un",
    "fileSize": 0
   }
 ]
