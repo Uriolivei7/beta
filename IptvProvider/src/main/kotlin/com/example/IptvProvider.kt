@@ -42,7 +42,11 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
                 throw e
             }
             if (playlist.items.isEmpty()) {
-                Log.d(TAG, "ensureLoaded: 0 canales code=${resp.code} len=${text.length} body=${snippet(text)}")
+                if (isAuthError(text)) {
+                    Log.e(TAG, "get.php AUTH rechazada por el panel: ${snippet(text)}")
+                } else {
+                    Log.d(TAG, "ensureLoaded: 0 canales code=${resp.code} len=${text.length} body=${snippet(text)}")
+                }
             } else {
                 Log.d(TAG, "ensureLoaded: len=${text.length} canales=${playlist.items.size}")
             }
@@ -58,6 +62,10 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
             val apiBase = "${c.base}/player_api.php?username=${c.user}&password=${c.pass}"
             val catNames = mutableMapOf<String, String>()
             val catsText = app.get("$apiBase&action=get_live_categories", headers = headers, timeout = 40L).text
+            if (isAuthError(catsText)) {
+                Log.e(TAG, "xtream AUTH rechazada por el panel: ${snippet(catsText)}")
+                return null
+            }
             if (catsText.trim().startsWith("[")) {
                 val cats = JSONArray(catsText)
                 for (i in 0 until cats.length()) {
@@ -104,6 +112,10 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
 
     private fun snippet(text: String): String =
         text.replace("\r", " ").replace("\n", " ").take(300)
+
+    private fun isAuthError(text: String): Boolean =
+        text.contains("INVALID_AUTH", true) || text.contains("\"login\":false", true) ||
+            text.contains("invalid user", true) || text.contains("invalid authorization", true)
 
     private fun makeResponse(item: PlaylistItem): LiveSearchResponse {
         val streamUrl = item.url.toString()

@@ -6,8 +6,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -324,28 +322,33 @@ class PlushdProvider : MainAPI() {
             subtitleCallback.invoke(file)
         }
 
-        val wrappedCallback: (ExtractorLink) -> Unit = { link ->
-            val extraHeaders = mapOf(
-                "Referer" to data,
-                "Origin" to "$mainUrl",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept" to "*/*"
-            )
-            CoroutineScope(Dispatchers.IO).launch {
-                callback(newExtractorLink(link.source, link.name, link.url) {
-                    this.referer = link.referer ?: data
-                    this.quality = link.quality
-                    this.headers = link.headers + extraHeaders
-                })
-            }
-        }
+        val pendingLinks = java.util.concurrent.ConcurrentLinkedQueue<ExtractorLink>()
 
         var hasValidServer = false
         val foundLinks = java.util.concurrent.atomic.AtomicInteger(0)
 
         val wrappedCallback2: (ExtractorLink) -> Unit = { link ->
             foundLinks.incrementAndGet()
-            wrappedCallback(link)
+            pendingLinks.add(link)
+        }
+
+        // newExtractorLink es suspend: la emision real se hace en el body de loadLinks
+        suspend fun emitPendingLinks() {
+            while (true) {
+                val link = pendingLinks.poll() ?: break
+                val extraHeaders = mapOf(
+                    "Referer" to data,
+                    "Origin" to "$mainUrl",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept" to "*/*"
+                )
+                Log.d("PlushdProvider", "callback -> ${link.name} (source=$name)")
+                callback(newExtractorLink(name, link.name, link.url) {
+                    this.referer = link.referer ?: data
+                    this.quality = link.quality
+                    this.headers = link.headers + extraHeaders
+                })
+            }
         }
 
         suspend fun processServer(serverData: String, playerReferer: String, extractorReferer: String) {
@@ -456,6 +459,7 @@ class PlushdProvider : MainAPI() {
                 launch { processServer(serverLi.attr("data-server"), data, data) }
             }
         }
+        emitPendingLinks()
 
         if (foundLinks.get() == 0 && hasValidServer) {
             Log.d("PlushdProvider", "=== loadLinks === No se encontraron links (1ª pasada), reintentando (2ª pasada)...")
@@ -464,6 +468,7 @@ class PlushdProvider : MainAPI() {
                     launch { processServer(serverLi.attr("data-server"), "$mainUrl/", "$mainUrl/") }
                 }
             }
+            emitPendingLinks()
         }
 
         Log.d("PlushdProvider", "=== loadLinks FIN: hasValidServer=$hasValidServer linksFound=${foundLinks.get()} ===")

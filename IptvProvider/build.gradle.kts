@@ -1,5 +1,5 @@
 // Use an integer for version numbers
-version = 2
+version = 3
 
 cloudstream {
     description = "Reproduce listas IPTV (.m3u) y cuentas Xtream Codes (host|usuario|clave). Basado en el plugin IPTV de doGior."
