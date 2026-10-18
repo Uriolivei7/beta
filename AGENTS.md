@@ -1,6 +1,7 @@
 # AGENTS.md - Netmirror Plugin Development
 
 ## Reglas de trabajo (OBLIGATORIAS)
+- **Las respuestas siempre en español**
 - **NUNCA ejecutar Gradle por cuenta propia.** Ni `compileReleaseKotlin`, ni `make`, ni `installDebug`, ni tests. Aunque el código "debería" compilar y aunque los errores sean obvios: **primero termina todos los cambios del proveedor, y solo compila cuando el usuario lo pida expresamente.** Si crees que hay un error de compilación, descríbelo y sigue editando; no lanc gradle para confirmarlo.
 - **NUNCA hacer `git commit`, `git push`, `git tag` ni `git rebase` sin que el usuario lo pida de forma explícita.** Al terminar un proveedor: enumera los archivos tocados y el comando de compilación exacto que debe correr el usuario, y qué queda pendiente de probar en dispositivo.
 - Al cerrar cada proveedor o fix importante, **añadir su sección a este `AGENTS.md`** con: arquitectura verificada, reglas del sitio, causa raíz, fix aplicado, estado de compilación y qué queda pendiente de probar en dispositivo. Es el único sitio donde se registra el progreso.
@@ -2441,3 +2442,84 @@ Sitio: `tokyvideo.com` (portal de videos + series subidos por usuarios, ES/EN).
 **Fix**: nueva `directPoster(l)` en `posterFor()`: los logos `i.imgur.com` se emiten **directos con la variante `m` de 320px** (`https://i.imgur.com/{id}m.{ext}`) y `i.postimg.cc` directo; el resto sigue por wsrv (mantiene rasterizado de SVG + placeholder para hosts muertos). La variante `m` se verifico **300/300 OK** (mediana **10 KB**, max 35 KB, vs originales de hasta 1.8 MB).
 - Versiones a **5** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0). v3+v4+v5 salen en el mismo build. Balance `bal_check.py` OK.
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y comprobar que ATV Peru / Global TV / Ucayalina muestran poster (y que el detalle ya no sale negro, fix v4).
+
+---
+
+## TVLibre.st - revision de factibilidad (17 Oct 2026) - NO se implementa (decision del usuario: "no hacer nada por ahora")
+
+**Pregunta del usuario**: evaluar `https://tvlibre.st/` para un plugin nuevo.
+**Veredicto**: es **gemelo de Telelibre** (mismo operador y backend: assets `bestleague.pl`, players `bestleague.life`, CDN `cvattv.com.ar`, mismo `tok.html`). Es *escribible* pero **no reproduce sin IP de Argentina/Uruguay/Paraguay** -> mismo geo-bloqueo ya documentado para Telelibre v3/v4. Descartado.
+
+### Catalogo (trivial, verificado en PC)
+- Home `/` (108 KB) trae los **177 canales** completos: `a.canal[href=/en-vivo/{slug}]` con badge de pais/genero (`span.badge`), logo `//bestleague.pl/img/{nombre}.{png|webp}` (lazy) y titulo `h2.title`.
+- Sin paginacion. Filtros (`#filters`) y buscador (`input#q` placeholder "Buscar canal o etiqueta..") son **client-side** -> se replicarian en Kotlin sobre la lista cacheada.
+- Badges/categorias: Entretenimiento 44, Deportes 34, Argentina 34, Documentales 17, Espana 14, Paraguay 10, Infantiles 9, Mexico 9, Musica 7, Uruguay 7, Colombia 3, Adultos 3, EEUU 2, Gastronomia 2, Europa 1, Peru 1.
+
+### Cadena de streams (misma que Telelibre)
+- Detalle `/en-vivo/{slug}`: `iframe#iframe` + botones `.btn-md` (`Opcion 1 (FL)`, `Opcion PC`, y sub-senales).
+- **Opcion 1 (FL)**: `/html/fl/?get={b64}` -> JS `GET /html/cv.json` -> `{"urls":["bestleague.life"]}` -> iframe `//bestleague.life/cvatt.html?get={b64}&lang=1` -> **DASH ClearKey**: `var mpd = "//"+mt[random]+".cvattv.com.ar/live/c"+number+"eds/"+atob(getURL)+"/SA_Live_dash_enc_C/"+atob(getURL)+".mpd"` con `mt=["cdn","chromecast"]`, `number` 3 o 4 segun canal, y `keyId`/`key` **hardcodeados por canal** (hex) en el propio HTML.
+- **Opcion PC**: `bestleague.life/tok.html?get={b64}` -> lista de `token: "tok_eyJ..."` (JWT con `sip` atado a la IP origen y `path` `/live/cXeds/{canal}/SA_Live_dash_enc_/`) sobre `edge-live01-cen.cvattv.com.ar`; el HTML exige PC ("Dispositivo no compatible").
+- **Opcion 2 (Telefe)**: `thl.html` -> `GET tlf.php` -> `{url: ...akamaized.net/.../master.m3u8?hdnea=...}` - **token expirado 21-jun-2026** (Akamai 400). `tlf.php` devuelve SIEMPRE Telefe (hardcodeado, no varia por Referer).
+
+### Bloqueador medido (igual que Telelibre)
+- `cdn.cvattv.com.ar` (201.235.66.115) y `chromecast.cvattv.com.ar` (181.12.36.150): resuelven DNS pero **TCP 443 y 80 = False** desde PC.
+- El propio sitio lo dice: *"Las opciones (FL) estan disponibles en Argentina, Uruguay y Paraguay. Fuera de esos paises necesitas usar una VPN."*
+- `bestleague.life` y `bestleague.pl` (:443) SI responden (el bloqueo es solo del CDN de video).
+
+### Como se implementaria (si se retoma)
+- Modulo nuevo reutilizando la logica ClearKey/`cvattv` de `TelelibreProvider` (`handleTokHtml`/`hexToB64Url`), o anadirlo como segunda fuente dentro de TelelibreProvider.
+- Catalogo: parsear el home una vez y filtrar en memoria (search/filtros client-side).
+- Requisito: VPN/red en AR-UY-PY (mismo caveat que Telelibre).
+- **No se implemento por decision del usuario (17 Oct 2026).**
+---
+
+## IptvProvider - Plugin nuevo: listas IPTV (M3U) + cuentas Xtream Codes (18 Oct 2026 v1)
+
+Origen: plugin **IPTV** de doGior (`github.com/doGior/doGiorsHadEnough`), portado al repo y **extendido** para aceptar cuentas **Xtream Codes**.
+
+### Que hace
+- Reproduce **listas IPTV** (.m3u/.m3u8) y **cuentas Xtream Codes**.
+- Un `MainAPI` por lista (`IptvProvider`) registrado dinamicamente desde `IptvPlugin.reload()`.
+- `getMainPage`: parsea la lista y agrupa los canales por `group-title` (una fila por grupo). `search`/`quickSearch` filtran por titulo. `load` = canal + recomendaciones del mismo grupo. `loadLinks` emite el link del canal.
+- El reproductor usa el tipo por extension: los canales en vivo de Xtream (`.ts`) salen como VIDEO y los HLS (`.m3u8`) como M3U8.
+
+### Formatos aceptados (`normalizeIptvLink`, IptvUtil.kt)
+| Entrada | Resultado |
+|---|---|
+| `http(s)://host/lista.m3u` | se usa tal cual |
+| `host\|usuario\|clave` o `host:puerto\|usuario\|clave` | `http(s)://host/get.php?username=..&password=..&type=m3u` |
+| `http(s)://host/player_api.php?username=..&password=..` | mismo `get.php` (extrae credenciales y base) |
+| `http(s)://host/get.php?...&type=m3u_plus` | fuerza `type=m3u` (solo TV en vivo) |
+- El dialogo "Add link" guarda en la clave `iptv_links` (`Array<IptvLink>`), mismo formato que el plugin original -> **no migra** los datos de una instalacion previa del IPTV de doGior (otro plugin id).
+- El campo Link del dialogo ahora dice "Link (M3U o host|usuario|clave)".
+
+### Cambios respecto al original de doGior
+1. **Xtream**: `normalizeIptvLink()` (nuevo `IptvUtil.kt`); campo unico `host|usuario|clave`.
+2. **Tipo de link por extension** en `loadLinks`: `.mpd` -> `newDrmExtractorLink` (ClearKey con `key`/`keyid` del `#EXTINF`); `.m3u8`/`.m3u` -> `M3U8`; `.ts`/`.mp4`/`.mkv`/`.avi`/`.flv`/`.webm` -> `VIDEO`; resto -> `M3U8`. (Antes forzaba `M3U8` siempre: los VOD `.ts`/`.mp4` de Xtream fallaban.)
+3. **`loadLinks` null-safe**: si `items[name]` es null re-descarga la lista, y usa `firstOrNull { it.url == .. }` con fallback (antes `items[name]!!.items.first{}` -> NPE al volver de fondo / saltar de episodio).
+4. **`reload()` idempotente** (`IptvPlugin.unregisterExisting()`): quita los `IptvProvider` previos de `APIHolder.allProviders` + `removePluginMapping` antes de re-registrar. Evita duplicados al re-guardar y aplica los **borrados** de la lista. Se elimino el uso de `PluginManager.getPluginsOnline()/unloadPlugin` del original (podia descargar plugins ajenos: matcheaba `internalName.contains(link.name)`).
+5. `getKey`/`setKey` via `CloudStreamApp.Companion` (el original usaba el mismo; `AcraApplication.Companion` esta **deprecado** en el jar actual y rompe la compilacion con `DeprecationLevel.ERROR`).
+6. Sin `getVideoInterceptor` (el original devolvia un interceptor no-op).
+7. Clases en `com.example`: `IptvPlugin`, `IptvProvider`, `IptvParser` (`IptvPlaylistParser` + `IptvLink`/`Playlist`/`PlaylistItem`/`LoadData`), `IptvSettingsFragment`. Se renombro `Link` -> `IptvLink` por posible choque con el wildcard de `com.lagradost.cloudstream3.*`.
+8. Recursos copiados **verbatim** (4 layouts + 5 drawables) con `requiresResources = true`; se anadio `material` 1.13.0 (BottomSheetDialogFragment) y `viewBinding`.
+
+### Archivos
+- `IptvProvider/build.gradle.kts` (version 1, `tvTypes = ["Live"]`, `language = "un"`, `requiresResources = true`)
+- `IptvProvider/src/main/AndroidManifest.xml`
+- `IptvProvider/src/main/kotlin/com/example/{IptvPlugin,IptvProvider,IptvParser,IptvUtil,IptvSettingsFragment}.kt`
+- `IptvProvider/src/main/res/layout/{add_link,list_link,manager,settings}.xml`
+- `IptvProvider/src/main/res/drawable/{delete_icon,edit_icon,outline,settings_icon,telegram}.xml`
+
+### Estado v1
+- `settings.gradle.kts` auto-incluye el modulo (escanea dirs con `build.gradle.kts`) - sin registro manual.
+- `plugins.json`: entrada `IPTV`/`IptvProvider` v1 (`fileSize: 0` pendiente; 72 entradas).
+- Balance `bal_check.py` -> BALANCE OK en los 5 `.kt`.
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :IptvProvider:make --console=plain -q`) - **no compilado por regla del repo**.
+- Pendiente: compilar, actualizar `fileSize`, instalar y probar: (1) una lista M3U; (2) una cuenta Xtream `host|usuario|clave`; (3) que los canales `.ts` de Xtream reproduzcan (VIDEO); (4) que borrar una lista la quite sin reiniciar (idempotencia).
+
+### Notas tecnicas (verificado por bytecode en el jar de este repo)
+- `newDrmExtractorLink` tiene overload para `java.util.UUID` (`CLEARKEY_UUID`) y `kotlin.uuid.Uuid` (`CLEARKEY_DRM_UUID`); se usa `CLEARKEY_UUID` (igual que el original de doGior).
+- `AtomicMutableList.remove(Object)`/`removeAll(Collection)` SI estan implementados (no lanzan `UnsupportedOperationException`); `AtomicList.filter()` devuelve una **copia** -> seguro iterar mientras se elimina.
+- `APIHolder` expone `allProviders` (`AtomicMutableList`), `apis`, `getApiFromNameNull`, `addPluginMapping`, `removePluginMapping`.
+- `registerMainAPI` vive en `BasePlugin`; `MainActivity.afterPluginsLoadedEvent` es accesible y refresca la lista de providers.
+- `AppUtils.parseJson`/`toJson` se usan en ~29 modulos del repo -> seguros en este plugin (el transporte del `LoadData` va como JSON en la URL del canal).

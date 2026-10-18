@@ -242,7 +242,7 @@ class DoggitvProvider : MainAPI() {
         directPoster(l)?.let { return it }
         return "https://wsrv.nl/?url=${enc(l)}&w=320&h=320&fit=contain&default=${enc(placeholder)}"
     }
-    
+
     private val imgurRx = Regex(
         """^https?://i[.]imgur[.]com/([A-Za-z0-9]+)[.](jpe?g|png|gif|webp)$""",
         RegexOption.IGNORE_CASE
