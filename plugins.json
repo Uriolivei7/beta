@@ -1341,7 +1341,7 @@
   {
    "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/IptvProvider.cs3",
    "status": 1,
-   "version": 1,
+   "version": 2,
    "apiVersion": 1,
    "name": "IPTV",
    "internalName": "IptvProvider",

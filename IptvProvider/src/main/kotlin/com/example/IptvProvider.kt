@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import org.json.JSONArray
 
 class IptvProvider(override var mainUrl: String, override var name: String) : MainAPI() {
     override val hasMainPage = true
@@ -17,19 +18,92 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
     private val headers = mapOf("User-Agent" to "Player (Linux; Android 14)")
 
     private suspend fun ensureLoaded() {
-        if (items[name] == null) {
-            Log.d(TAG, "ensureLoaded: fetch $mainUrl")
-            try {
-                val text = app.get(mainUrl, headers = headers, timeout = 40L).text
-                val playlist = IptvPlaylistParser().parseM3U(text)
-                Log.d(TAG, "ensureLoaded: len=${text.length} canales=${playlist.items.size}")
-                items[name] = playlist
+        if (items[name] != null) return
+
+        val creds = parseXtreamCreds(mainUrl)
+        Log.d(TAG, "ensureLoaded: fetch $mainUrl xtream=${creds != null}")
+
+        if (creds != null) {
+            val viaApi = loadXtreamApi(creds)
+            if (!viaApi.isNullOrEmpty()) {
+                items[name] = Playlist(viaApi)
+                return
+            }
+            Log.d(TAG, "ensureLoaded: xtream API sin canales, probando M3U")
+        }
+
+        try {
+            val resp = app.get(mainUrl, headers = headers, timeout = 40L)
+            val text = resp.text
+            val playlist = try {
+                IptvPlaylistParser().parseM3U(text)
             } catch (e: Exception) {
-                Log.e(TAG, "ensureLoaded fallo url=$mainUrl", e)
+                Log.e(TAG, "ensureLoaded: M3U invalido code=${resp.code} len=${text.length} body=${snippet(text)}", e)
                 throw e
             }
+            if (playlist.items.isEmpty()) {
+                Log.d(TAG, "ensureLoaded: 0 canales code=${resp.code} len=${text.length} body=${snippet(text)}")
+            } else {
+                Log.d(TAG, "ensureLoaded: len=${text.length} canales=${playlist.items.size}")
+            }
+            items[name] = playlist
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureLoaded fallo url=$mainUrl", e)
+            throw e
         }
     }
+
+    private suspend fun loadXtreamApi(c: XtreamCreds): List<PlaylistItem>? {
+        return try {
+            val apiBase = "${c.base}/player_api.php?username=${c.user}&password=${c.pass}"
+            val catNames = mutableMapOf<String, String>()
+            val catsText = app.get("$apiBase&action=get_live_categories", headers = headers, timeout = 40L).text
+            if (catsText.trim().startsWith("[")) {
+                val cats = JSONArray(catsText)
+                for (i in 0 until cats.length()) {
+                    val o = cats.optJSONObject(i) ?: continue
+                    catNames[o.optString("category_id")] = o.optString("category_name")
+                }
+                Log.d(TAG, "xtream categorias=${cats.length()} nombres=${catNames.size}")
+            } else {
+                Log.d(TAG, "xtream categorias no JSON: ${snippet(catsText)}")
+            }
+
+            val streamsText = app.get("$apiBase&action=get_live_streams", headers = headers, timeout = 90L).text
+            if (!streamsText.trim().startsWith("[")) {
+                Log.d(TAG, "xtream streams no JSON: ${snippet(streamsText)}")
+                return null
+            }
+            val arr = JSONArray(streamsText)
+            val out = ArrayList<PlaylistItem>(arr.length())
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("stream_id")
+                if (id.isBlank()) continue
+                val catId = o.optString("category_id")
+                val cat = catNames[catId] ?: catId
+                val ext = o.optString("container_extension").ifBlank { "ts" }
+                out.add(
+                    PlaylistItem(
+                        title = o.optString("name").ifBlank { id },
+                        attributes = mapOf(
+                            "group-title" to cat,
+                            "tvg-logo" to o.optString("stream_icon")
+                        ),
+                        url = "${c.base}/live/${c.user}/${c.pass}/$id.$ext"
+                    )
+                )
+            }
+            Log.d(TAG, "xtream API: canales=${out.size} categorias=${catNames.size}")
+            out
+        } catch (e: Exception) {
+            Log.e(TAG, "xtream API fallo", e)
+            null
+        }
+    }
+
+    private fun snippet(text: String): String =
+        text.replace("\r", " ").replace("\n", " ").take(300)
 
     private fun makeResponse(item: PlaylistItem): LiveSearchResponse {
         val streamUrl = item.url.toString()

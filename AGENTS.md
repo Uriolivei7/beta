@@ -2547,3 +2547,27 @@ Origen: plugin **IPTV** de doGior (`github.com/doGior/doGiorsHadEnough`), portad
 **`ensureLoaded`**: `app.get(mainUrl, headers, timeout = 40L)` (timeout en SEGUNDOS, regla 03 Oct 2026; antes sin timeout -> el fetch podia colgarse hasta el kill de 120s de CS3).
 - Balance: BALANCE OK en los 5 `.kt`.
 - ⏸️ Pendiente: compilar, `fileSize`, instalar y con `adb logcat -s IPTV:V` confirmar si el provider entra a `apis` (`refreshApi: .. agregado a apis`) y que devuelve `ensureLoaded`.
+### Fix: get.php devuelve 47 bytes -> camino API JSON de Xtream (19 Oct 2026 v1)
+**Logs del usuario (xdplus.site:2082, panel Xtream)**:
+```
+unregisterExisting: quitados=0 / reload: guardados=1 / registrando 'tv' type=m3u url=...get.php?...type=m3u
+refreshApi: tv ya estaba en apis / reload: apis=1 providers=1     <- registro OK (el evento ya poblaba apis)
+borrado 'tv' restantes=0 -> unregisterExisting: quitados=1 -> reload: apis=0 providers=0   <- borrado OK
+getMainPage page=1 name=tv / ensureLoaded: fetch ...&type=m3u_plus
+ensureLoaded: len=47 canales=0        <- el get.php NO devuelve la lista M3U (47 bytes)
+getMainPage: canales=0 grupos=0 / search: 'studio' resultados=0
+```
+Conclusion: el registro (`refreshApi` + `afterPluginsLoadedEvent`) y el borrado funcionan; el problema es que ese panel no entrega M3U por `get.php` (devuelve 47 bytes, 0 canales). Nota: `apis=1` con `refreshApi: ya estaba en apis` demuestra que el `invoke` del evento ya re-construye `apis` (el append solo evita duplicados).
+**Fix**: camino **API JSON de Xtream** antes del M3U (mismo mecanismo que usa la app original de Xtream):
+- `parseXtreamCreds(url)` en `IptvUtil.kt` (publico): solo si la URL contiene `get.php`/`player_api.php` y trae `username`+`password` -> `XtreamCreds(base, user, pass)` (base = origen, reutiliza `baseUrl`/`queryParam`).
+- `loadXtreamApi(creds)` en el provider: `GET {base}/player_api.php?username=..&password=..&action=get_live_categories` (mapa `category_id`->`category_name`) + `&action=get_live_streams` (timeout 90s) -> por stream: titulo=`name`, grupo=`category_name`, poster=`stream_icon`, url=`{base}/live/{user}/{pass}/{stream_id}.{extension|ts}`. Si da canales, se usa eso y no se toca el M3U.
+- Fallback intacto: si no hay creds o la API da 0 -> M3U por `get.php` como antes.
+**Logs nuevos**: `ensureLoaded: fetch <url> xtream=<bool>`, `xtream categorias=N nombres=M`, `xtream API: canales=N categorias=M`, `xtream categorias/streams no JSON: <300 chars>`, `xtream API fallo`, y en la rama M3U `ensureLoaded: 0 canales code=.. len=.. body=<300 chars>` / `ensureLoaded: M3U invalido code=.. len=.. body=..` (antes no se veia el cuerpo, por eso los 47 bytes eran invisibles).
+- Balance: BALANCE OK en los 5 `.kt`.
+- ⏸️ Pendiente: compilar, `fileSize`, instalar y en `adb logcat -s IPTV:V` buscar `xtream API: canales=N` (si sale >0, la lista anda); si sale `xtream streams no JSON` el cuerpo dira si el panel rechaza credenciales/UA.
+- Versiones a **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0).
+
+### Cuenta Xtream con campos separados (19 Oct 2026 v2)
+**Pedido del usuario**: en vez de una sola caja `host|usuario|clave`, cajas independientes (nombre, host, usuario, clave).
+**Fix**: `add_link.xml` -> se conservan `name` + `link_label`/`link` (solo M3U) y se añade el contenedor `xtream_fields` (visibilidad `gone`) con labels "Host"/"Usuario"/"Clave" y los EditText `host` (inputType `textUri`), `user`, `pass`. `IptvSettingsFragment.showAddLinkDialog` oculta/muestra según el tipo; `xtreamRaw()` arma `host|usuario|clave` (si el host viene como `host|user|pass` o como URL de panel, `parseXtreamCreds()` extrae base/user/pass); `fillXtreamFields()` prellena las 3 cajas desde el portapapeles; `saveLink()` unifica el guardado (evita duplicados por nombre, log `guardar ...`). El título "Nombre" del layout se corrigió de "Name" a "Nombre".
+- Versiones a **2** (mismo build que el fix de la API JSON).

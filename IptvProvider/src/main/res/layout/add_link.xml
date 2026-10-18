@@ -15,7 +15,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Name"
+            android:text="Nombre"
             android:textSize="18sp" />
 
         <EditText
@@ -30,7 +30,7 @@
             android:id="@+id/link_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Link"
+            android:text="URL M3U"
             android:textSize="18sp" />
 
         <EditText
@@ -40,6 +40,57 @@
             android:padding="5dp"
             android:layout_marginBottom="10dp"
             android:inputType="text" />
+
+        <LinearLayout
+            android:id="@+id/xtream_fields"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Host"
+                android:textSize="18sp" />
+
+            <EditText
+                android:id="@+id/host"
+                android:layout_height="wrap_content"
+                android:layout_width="match_parent"
+                android:padding="5dp"
+                android:layout_marginBottom="10dp"
+                android:inputType="textUri" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Usuario"
+                android:textSize="18sp" />
+
+            <EditText
+                android:id="@+id/user"
+                android:layout_height="wrap_content"
+                android:layout_width="match_parent"
+                android:padding="5dp"
+                android:layout_marginBottom="10dp"
+                android:inputType="text" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Clave"
+                android:textSize="18sp" />
+
+            <EditText
+                android:id="@+id/pass"
+                android:layout_height="wrap_content"
+                android:layout_width="match_parent"
+                android:padding="5dp"
+                android:layout_marginBottom="10dp"
+                android:inputType="text" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

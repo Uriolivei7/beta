@@ -140,13 +140,24 @@ class IptvSettingsFragment(private val plugin: IptvPlugin) : BottomSheetDialogFr
         val credsView = getLayout("add_link", inflater, container)
         val nameInput = credsView.findView<EditText>("name")
         val linkInput = credsView.findView<EditText>("link")
-        credsView.findView<TextView>("link_label").text =
-            if (isXtream) "Cuenta Xtream (host|usuario|clave)" else "URL M3U"
+        val linkLabel = credsView.findView<TextView>("link_label")
+        val xtreamFields = credsView.findView<LinearLayout>("xtream_fields")
+        val hostInput = credsView.findView<EditText>("host")
+        val userInput = credsView.findView<EditText>("user")
+        val passInput = credsView.findView<EditText>("pass")
+
+        linkLabel.visibility = if (isXtream) View.GONE else View.VISIBLE
+        linkInput.visibility = if (isXtream) View.GONE else View.VISIBLE
+        xtreamFields.visibility = if (isXtream) View.VISIBLE else View.GONE
 
         val clipboardManager = context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         val clipboardText = clipboardManager?.primaryClip?.getItemAt(0)?.text?.toString()
-        if (!clipboardText.isNullOrEmpty() && looksLike(clipboardText, type)) {
-            linkInput.setText(clipboardText)
+        if (!clipboardText.isNullOrEmpty()) {
+            if (isXtream) {
+                fillXtreamFields(clipboardText, hostInput, userInput, passInput)
+            } else if (looksLike(clipboardText, type)) {
+                linkInput.setText(clipboardText)
+            }
         }
 
         AlertDialog.Builder(context ?: throw Exception("Unable to build alert dialog"))
@@ -155,36 +166,92 @@ class IptvSettingsFragment(private val plugin: IptvPlugin) : BottomSheetDialogFr
             .setPositiveButton("Save", object : DialogInterface.OnClickListener {
                 override fun onClick(p0: DialogInterface, p1: Int) {
                     val name = nameInput.text.trim().toString()
-                    val raw = linkInput.text.trim().toString()
 
-                    if (name.isEmpty() || !looksLike(raw, type)) {
-                        showToast(
-                            if (isXtream) "Usa host|usuario|clave o la URL del panel"
-                            else "Pega una URL M3U valida"
-                        )
+                    if (isXtream) {
+                        val raw = xtreamRaw(hostInput, userInput, passInput)
+                        if (name.isEmpty() || raw == null) {
+                            showToast("Completa host, usuario y clave")
+                        } else {
+                            saveLink(name, raw, TYPE_XTREAM, normalizeXtreamLink(raw))
+                        }
                     } else {
-                        try {
-                            val normalized = if (isXtream) normalizeXtreamLink(raw) else normalizeM3uLink(raw)
-                            val existingLinks = getKey<Array<IptvLink>>("iptv_links") ?: emptyArray()
-                            Log.d(IptvPlugin.TAG, "guardar '$name' type=$type raw=${raw.take(60)} -> ${normalized.take(100)}")
-                            if (existingLinks.any { it.name == name }) {
-                                showToast("This name already exists")
-                            } else {
-                                val updatedLinks = existingLinks.toMutableList().apply {
-                                    add(IptvLink(name, normalized, type))
-                                }
-                                setKey("iptv_links", updatedLinks)
-                                showToast("Save link success")
-                                plugin.reload()
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            showToast("Error add link")
+                        val raw = linkInput.text.trim().toString()
+                        if (name.isEmpty() || !looksLike(raw, TYPE_M3U)) {
+                            showToast("Pega una URL M3U valida")
+                        } else {
+                            saveLink(name, raw, TYPE_M3U, normalizeM3uLink(raw))
                         }
                     }
                 }
             })
             .show()
+    }
+
+    private fun fillXtreamFields(clipboard: String, host: EditText, user: EditText, pass: EditText) {
+        val s = clipboard.trim()
+        val parts = s.split("|").map { it.trim() }
+        if (parts.size == 3 && parts.none { it.isEmpty() }) {
+            host.setText(parts[0])
+            user.setText(parts[1])
+            pass.setText(parts[2])
+            return
+        }
+        val creds = parseXtreamCreds(s)
+        if (creds != null) {
+            host.setText(creds.base)
+            user.setText(creds.user)
+            pass.setText(creds.pass)
+        } else if (s.startsWith("http", true)) {
+            host.setText(s)
+        }
+    }
+
+    private fun xtreamRaw(host: EditText, user: EditText, pass: EditText): String? {
+        var hostValue = host.text.trim().toString()
+        var userValue = user.text.trim().toString()
+        var passValue = pass.text.trim().toString()
+        if (hostValue.isEmpty()) return null
+
+        if (hostValue.contains("|")) {
+            val parts = hostValue.split("|").map { it.trim() }
+            if (parts.size == 3) {
+                hostValue = parts[0]
+                if (userValue.isEmpty()) userValue = parts[1]
+                if (passValue.isEmpty()) passValue = parts[2]
+            }
+        }
+
+        if (userValue.isEmpty() || passValue.isEmpty()) {
+            val creds = parseXtreamCreds(hostValue)
+            if (creds != null) {
+                if (userValue.isEmpty()) userValue = creds.user
+                if (passValue.isEmpty()) passValue = creds.pass
+                if (creds.base.isNotEmpty()) hostValue = creds.base
+            }
+        }
+
+        if (hostValue.isEmpty() || userValue.isEmpty() || passValue.isEmpty()) return null
+        return "$hostValue|$userValue|$passValue"
+    }
+
+    private fun saveLink(name: String, raw: String, type: String, normalized: String) {
+        try {
+            val existingLinks = getKey<Array<IptvLink>>("iptv_links") ?: emptyArray()
+            Log.d(IptvPlugin.TAG, "guardar '$name' type=$type raw=${raw.take(60)} -> ${normalized.take(100)}")
+            if (existingLinks.any { it.name == name }) {
+                showToast("This name already exists")
+            } else {
+                val updatedLinks = existingLinks.toMutableList().apply {
+                    add(IptvLink(name, normalized, type))
+                }
+                setKey("iptv_links", updatedLinks)
+                showToast("Save link success")
+                plugin.reload()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            showToast("Error add link")
+        }
     }
 
     private fun looksLike(raw: String, type: String): Boolean {

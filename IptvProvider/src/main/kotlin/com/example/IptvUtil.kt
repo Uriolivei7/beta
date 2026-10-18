@@ -7,7 +7,19 @@ import java.net.URLEncoder
 const val TYPE_M3U = "m3u"
 const val TYPE_XTREAM = "xtream"
 
+data class XtreamCreds(val base: String, val user: String, val pass: String)
+
 private val TYPE_PARAM = Regex("(?i)([?&])type=[^&]*")
+
+fun parseXtreamCreds(url: String): XtreamCreds? {
+    if (!url.contains("get.php", ignoreCase = true) && !url.contains("player_api.php", ignoreCase = true)) return null
+    val user = queryParam(url, "username") ?: return null
+    val pass = queryParam(url, "password") ?: return null
+    if (user.isBlank() || pass.isBlank()) return null
+    val base = baseUrl(url)
+    if (base.isBlank()) return null
+    return XtreamCreds(base, user, pass)
+}
 
 fun normalizeIptvLink(raw: String): String {
     val s = raw.trim()
