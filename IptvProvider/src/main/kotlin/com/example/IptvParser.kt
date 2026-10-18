@@ -5,6 +5,7 @@ import java.io.InputStream
 data class IptvLink(
     val name: String,
     val link: String,
+    val type: String? = null,
 )
 
 data class Playlist(

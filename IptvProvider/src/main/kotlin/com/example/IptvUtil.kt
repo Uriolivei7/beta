@@ -4,9 +4,27 @@ import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 
+const val TYPE_M3U = "m3u"
+const val TYPE_XTREAM = "xtream"
+
 private val TYPE_PARAM = Regex("(?i)([?&])type=[^&]*")
 
 fun normalizeIptvLink(raw: String): String {
+    val s = raw.trim()
+    if (s.isEmpty()) return s
+    if (s.contains("|") || s.contains("get.php", true) || s.contains("player_api.php", true)) {
+        return normalizeXtreamLink(s)
+    }
+    return normalizeM3uLink(s)
+}
+
+fun normalizeM3uLink(raw: String): String {
+    val s = raw.trim()
+    if (s.isEmpty()) return s
+    return if (s.startsWith("http", ignoreCase = true)) s else "http://" + s
+}
+
+fun normalizeXtreamLink(raw: String): String {
     val s = raw.trim()
     if (s.isEmpty()) return s
 
@@ -20,20 +38,22 @@ fun normalizeIptvLink(raw: String): String {
         return buildXtreamUrl(host, pipeParts[1], pipeParts[2])
     }
 
-    if (s.contains("player_api.php", ignoreCase = true)) {
-        val user = queryParam(s, "username")
-        val pass = queryParam(s, "password")
+    val withScheme = if (s.contains("://")) s else "http://" + s
+
+    if (withScheme.contains("player_api.php", ignoreCase = true)) {
+        val user = queryParam(withScheme, "username")
+        val pass = queryParam(withScheme, "password")
         if (!user.isNullOrBlank() && !pass.isNullOrBlank()) {
-            return buildXtreamUrl(baseUrl(s), user, pass)
+            return buildXtreamUrl(baseUrl(withScheme), user, pass)
         }
-        return s
+        return withScheme
     }
 
-    if (s.contains("get.php", ignoreCase = true)) {
-        return ensureLiveOnly(s)
+    if (withScheme.contains("get.php", ignoreCase = true)) {
+        return ensureLiveOnly(withScheme)
     }
 
-    return s
+    return withScheme
 }
 
 private fun buildXtreamUrl(host: String, user: String, pass: String): String {

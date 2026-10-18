@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -7,7 +8,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 
 class IptvProvider(override var mainUrl: String, override var name: String) : MainAPI() {
     override val hasMainPage = true
-    override var lang = "mx"
+    override var lang = "un"
     override val hasQuickSearch = true
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Live)
@@ -17,7 +18,16 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
 
     private suspend fun ensureLoaded() {
         if (items[name] == null) {
-            items[name] = IptvPlaylistParser().parseM3U(app.get(mainUrl, headers = headers).text)
+            Log.d(TAG, "ensureLoaded: fetch $mainUrl")
+            try {
+                val text = app.get(mainUrl, headers = headers, timeout = 40L).text
+                val playlist = IptvPlaylistParser().parseM3U(text)
+                Log.d(TAG, "ensureLoaded: len=${text.length} canales=${playlist.items.size}")
+                items[name] = playlist
+            } catch (e: Exception) {
+                Log.e(TAG, "ensureLoaded fallo url=$mainUrl", e)
+                throw e
+            }
         }
     }
 
@@ -37,32 +47,41 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        Log.d(TAG, "getMainPage page=$page name=$name")
         ensureLoaded()
 
+        val groups = items[name]!!.items.groupBy { it.attributes["group-title"] }.map { group ->
+            HomePageList(
+                group.key ?: "",
+                group.value.map { makeResponse(it) },
+                isHorizontalImages = true
+            )
+        }
+        Log.d(TAG, "getMainPage: canales=${items[name]?.items?.size} grupos=${groups.size}")
+
         return newHomePageResponse(
-            items[name]!!.items.groupBy { it.attributes["group-title"] }.map { group ->
-                HomePageList(
-                    group.key ?: "",
-                    group.value.map { makeResponse(it) },
-                    isHorizontalImages = true
-                )
-            },
+            groups,
             hasNext = false
         )
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d(TAG, "search: '$query' name=$name")
         ensureLoaded()
 
-        return items[name]!!.items.filter {
+        val results = items[name]!!.items.filter {
             it.title.toString().lowercase().contains(query.lowercase())
         }.map { makeResponse(it) }
+        Log.d(TAG, "search: '$query' resultados=${results.size}")
+
+        return results
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse> = search(query)
 
     override suspend fun load(url: String): LoadResponse {
         val loadData = parseJson<LoadData>(url)
+        Log.d(TAG, "load: ${loadData.title} grupo=${loadData.group} name=$name")
         ensureLoaded()
 
         val recommendations = mutableListOf<LiveSearchResponse>()
@@ -73,6 +92,7 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
                 recommendations.add(makeResponse(item))
             }
         }
+        Log.d(TAG, "load: ${loadData.title} recomendaciones=${recommendations.size}")
 
         return newLiveStreamLoadResponse(
             name = loadData.title,
@@ -91,8 +111,10 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val loadData = parseJson<LoadData>(data)
+        Log.d(TAG, "loadLinks: ${loadData.title} url=${loadData.url} name=$name")
         ensureLoaded()
         val item = items[name]?.items?.firstOrNull { it.url == loadData.url }
+        Log.d(TAG, "loadLinks: item encontrado=${item != null} headers=${item?.headers?.keys}")
 
         if (loadData.url.contains(".mpd", ignoreCase = true)) {
             callback.invoke(
@@ -107,6 +129,7 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
                     this.key = loadData.key ?: ""
                 }
             )
+            Log.d(TAG, "loadLinks: emitido DASH con DRM")
             return true
         }
 
@@ -122,8 +145,8 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
 
         callback.invoke(
             newExtractorLink(
-                name = this.name,
-                source = loadData.title,
+                name = loadData.title,
+                source = this.name,
                 url = loadData.url,
                 type = linkType
             ) {
@@ -132,6 +155,11 @@ class IptvProvider(override var mainUrl: String, override var name: String) : Ma
                 this.quality = Qualities.Unknown.value
             }
         )
+        Log.d(TAG, "loadLinks: emitido $linkType ok")
         return true
+    }
+
+    companion object {
+        const val TAG = "IPTV"
     }
 }

@@ -2483,18 +2483,31 @@ Origen: plugin **IPTV** de doGior (`github.com/doGior/doGiorsHadEnough`), portad
 - `getMainPage`: parsea la lista y agrupa los canales por `group-title` (una fila por grupo). `search`/`quickSearch` filtran por titulo. `load` = canal + recomendaciones del mismo grupo. `loadLinks` emite el link del canal.
 - El reproductor usa el tipo por extension: los canales en vivo de Xtream (`.ts`) salen como VIDEO y los HLS (`.m3u8`) como M3U8.
 
-### Formatos aceptados (`normalizeIptvLink`, IptvUtil.kt)
+### Dialogo en dos pasos: primero el tipo, luego el dato
+- Al pulsar "Add link" se abre un selector **"Tipo de entrada"** con 2 opciones: **URL M3U** y **Cuenta Xtream**.
+- Segun la eleccion, el dialogo de alta cambia titulo, etiqueta del campo y validacion (`looksLike(raw, type)`):
+
+| Tipo | Etiqueta del campo | Validacion | Normalizacion |
+|---|---|---|---|
+| **URL M3U** (`TYPE_M3U`) | "URL M3U" | empieza con `http` o contiene `.m3u` | `normalizeM3uLink()` (sin esquema -> antepone `http://`) |
+| **Cuenta Xtream** (`TYPE_XTREAM`) | "Cuenta Xtream (host\|usuario\|clave)" | 3 partes separadas por `\|`, o contiene `get.php` / `player_api.php` | `normalizeXtreamLink()` |
+
+- `IptvLink` tiene un 3er campo `type` (`"m3u"` / `"xtream"`, nullable); en la lista de guardados el nombre se muestra con su etiqueta `[M3U]` / `[Xtream]` / `[Auto]`.
+- **Compatibilidad**: los guardados previos (sin `type`) siguen funcionando via `normalizeIptvLink()` (auto-deteccion: `\|`/`get.php`/`player_api.php` -> Xtream; si no -> M3U).
+
+### Formatos aceptados (IptvUtil.kt)
 | Entrada | Resultado |
 |---|---|
-| `http(s)://host/lista.m3u` | se usa tal cual |
-| `host\|usuario\|clave` o `host:puerto\|usuario\|clave` | `http(s)://host/get.php?username=..&password=..&type=m3u` |
-| `http(s)://host/player_api.php?username=..&password=..` | mismo `get.php` (extrae credenciales y base) |
-| `http(s)://host/get.php?...&type=m3u_plus` | fuerza `type=m3u` (solo TV en vivo) |
-- El dialogo "Add link" guarda en la clave `iptv_links` (`Array<IptvLink>`), mismo formato que el plugin original -> **no migra** los datos de una instalacion previa del IPTV de doGior (otro plugin id).
-- El campo Link del dialogo ahora dice "Link (M3U o host|usuario|clave)".
+| `http(s)://host/lista.m3u` (tipo M3U) | se usa tal cual |
+| `host/lista.m3u` sin esquema (tipo M3U) | antepone `http://` |
+| `host\|usuario\|clave` o `host:puerto\|usuario\|clave` (tipo Xtream) | `http(s)://host/get.php?username=..&password=..&type=m3u` |
+| `http(s)://host/player_api.php?username=..&password=..` (tipo Xtream) | mismo `get.php` (extrae credenciales y base) |
+| `http(s)://host/get.php?...&type=m3u_plus` (tipo Xtream) | fuerza `type=m3u` (solo TV en vivo) |
+| URL/incompleto (cualquier tipo) | `normalizeXtreamLink()` antepone `http://` si falta esquema |
+- El dialogo guarda en la clave `iptv_links` (`Array<IptvLink>`), mismo formato base que el plugin original -> **no migra** los datos de una instalacion previa del IPTV de doGior (otro plugin id).
 
 ### Cambios respecto al original de doGior
-1. **Xtream**: `normalizeIptvLink()` (nuevo `IptvUtil.kt`); campo unico `host|usuario|clave`.
+1. **Xtream**: `normalizeXtreamLink()` + `normalizeM3uLink()` (nuevo `IptvUtil.kt`); dialogo en **dos pasos** (elige tipo -> pide el dato) con campo `host|usuario|clave` o URL del panel.
 2. **Tipo de link por extension** en `loadLinks`: `.mpd` -> `newDrmExtractorLink` (ClearKey con `key`/`keyid` del `#EXTINF`); `.m3u8`/`.m3u` -> `M3U8`; `.ts`/`.mp4`/`.mkv`/`.avi`/`.flv`/`.webm` -> `VIDEO`; resto -> `M3U8`. (Antes forzaba `M3U8` siempre: los VOD `.ts`/`.mp4` de Xtream fallaban.)
 3. **`loadLinks` null-safe**: si `items[name]` es null re-descarga la lista, y usa `firstOrNull { it.url == .. }` con fallback (antes `items[name]!!.items.first{}` -> NPE al volver de fondo / saltar de episodio).
 4. **`reload()` idempotente** (`IptvPlugin.unregisterExisting()`): quita los `IptvProvider` previos de `APIHolder.allProviders` + `removePluginMapping` antes de re-registrar. Evita duplicados al re-guardar y aplica los **borrados** de la lista. Se elimino el uso de `PluginManager.getPluginsOnline()/unloadPlugin` del original (podia descargar plugins ajenos: matcheaba `internalName.contains(link.name)`).
@@ -2515,7 +2528,7 @@ Origen: plugin **IPTV** de doGior (`github.com/doGior/doGiorsHadEnough`), portad
 - `plugins.json`: entrada `IPTV`/`IptvProvider` v1 (`fileSize: 0` pendiente; 72 entradas).
 - Balance `bal_check.py` -> BALANCE OK en los 5 `.kt`.
 - Compilacion: pendiente por el usuario (`.\gradlew.bat :IptvProvider:make --console=plain -q`) - **no compilado por regla del repo**.
-- Pendiente: compilar, actualizar `fileSize`, instalar y probar: (1) una lista M3U; (2) una cuenta Xtream `host|usuario|clave`; (3) que los canales `.ts` de Xtream reproduzcan (VIDEO); (4) que borrar una lista la quite sin reiniciar (idempotencia).
+- Pendiente: compilar, actualizar `fileSize`, instalar y probar: (1) el selector "Tipo de entrada" (M3U vs Xtream) al pulsar Add link; (2) una lista M3U; (3) una cuenta Xtream `host|usuario|clave`; (4) que los canales `.ts` de Xtream reproduzcan (VIDEO); (5) que borrar una lista la quite sin reiniciar (idempotencia).
 
 ### Notas tecnicas (verificado por bytecode en el jar de este repo)
 - `newDrmExtractorLink` tiene overload para `java.util.UUID` (`CLEARKEY_UUID`) y `kotlin.uuid.Uuid` (`CLEARKEY_DRM_UUID`); se usa `CLEARKEY_UUID` (igual que el original de doGior).
@@ -2523,3 +2536,14 @@ Origen: plugin **IPTV** de doGior (`github.com/doGior/doGiorsHadEnough`), portad
 - `APIHolder` expone `allProviders` (`AtomicMutableList`), `apis`, `getApiFromNameNull`, `addPluginMapping`, `removePluginMapping`.
 - `registerMainAPI` vive en `BasePlugin`; `MainActivity.afterPluginsLoadedEvent` es accesible y refresca la lista de providers.
 - `AppUtils.parseJson`/`toJson` se usan en ~29 modulos del repo -> seguros en este plugin (el transporte del `LoadData` va como JSON en la URL del canal).
+
+### Causa raiz: home/search vacios tras agregar una lista (19 Oct 2026, v1 sin compilar)
+**Sintoma (usuario)**: tras guardar una URL M3U no aparece el getMainPage ni el search.
+**Causa raiz (verificado por bytecode en el jar del repo)**: `BasePlugin.registerMainAPI(MainAPI)` solo hace `APIHolder.allProviders.add(element)` + `addPluginMapping(element)`; **NO** toca `APIHolder.apis`. `apis` (lo que consumen `HomeViewModel` linea ~312 y `SearchViewModel`) se re-construye con `setApis(...)` en solo 2 sitios, ambos de arranque: `MainActivity$onCreate$19` y `MainActivity$onAllPluginsLoaded$1` (este ultimo: `getAllProviders().withLock { ... setApis(distinctBy { lang+name+mainUrl+clase }) ; setApiMap(null) }`). El original de doGior confiaba solo en `MainActivity.afterPluginsLoadedEvent.invoke(true)`.
+**Fix**: ademas del evento, `IptvPlugin.refreshApi(provider)` hace **append** de cada provider a `APIHolder.apis` (`apis = apis.plus(provider)`; no toca `apiMap` -> los indices existentes no cambian y `getApiFromNameNull` resuelve el nuevo por el fallback de `allProviders`). Idempotente (`none { it === provider || it.name == provider.name }`).
+**`lang`**: `IptvProvider.lang` estaba en `"mx"`; ahora `"un"` (igual que el original de doGior y que `language` de `plugins.json`).
+**Logs nuevos** (TAG `IPTV`, `adb logcat -s IPTV:V`): `reload: guardados=N`, `registrando '<nombre>' type=.. url=..`, `refreshApi: .. agregado a apis`, `reload: apis=N providers=N`, `unregisterExisting: quitados=N`; en el provider: `ensureLoaded: fetch <url>` -> `ensureLoaded: len=.. canales=..` (o `ensureLoaded fallo`), `getMainPage: canales=.. grupos=..`, `search: '<q>' resultados=..`, `load: .. recomendaciones=..`, `loadLinks: .. item encontrado=.. headers=..` + tipo emitido; en el fragmento: `guardar '..' type=.. raw=.. -> normalized`, `borrado .. restantes=..`, `listar links: N`. Los `catch` de `IptvPlugin` ya no se tragan la excepcion (antes `catch (e: Exception) {}` sin log).
+**`newExtractorLink`**: `source` ahora es `this.name` (nombre de la lista) -> regla del repo para que `getApiFromNameNull(link.source)` resuelva el provider; el titulo del canal sigue en `name` (display).
+**`ensureLoaded`**: `app.get(mainUrl, headers, timeout = 40L)` (timeout en SEGUNDOS, regla 03 Oct 2026; antes sin timeout -> el fetch podia colgarse hasta el kill de 120s de CS3).
+- Balance: BALANCE OK en los 5 `.kt`.
+- ⏸️ Pendiente: compilar, `fileSize`, instalar y con `adb logcat -s IPTV:V` confirmar si el provider entra a `apis` (`refreshApi: .. agregado a apis`) y que devuelve `ensureLoaded`.
