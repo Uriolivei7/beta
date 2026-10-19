@@ -16,6 +16,10 @@ import java.net.URL
 import java.util.regex.Pattern
 
 class PlushdProvider : MainAPI() {
+    companion object {
+        var pluginContext: android.content.Context? = null
+    }
+
     override var mainUrl = "https://tioplus.app"
     override var name = "PlusHD"
     override var lang = "mx"
@@ -73,6 +77,58 @@ class PlushdProvider : MainAPI() {
     @Volatile
     private var luluTlsProfile = 0
 
+    @Volatile
+    private var luluWebViewProbed = false
+
+    private suspend fun probeLuluWebView(url: String): String {
+        val ctx = pluginContext ?: return "sin contexto"
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            val res = kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+                val done = kotlinx.coroutines.CompletableDeferred<String>()
+                var webView: android.webkit.WebView? = null
+                try {
+                    val wv = android.webkit.WebView(ctx)
+                    webView = wv
+                    wv.settings.javaScriptEnabled = true
+                    wv.settings.domStorageEnabled = true
+                    wv.webViewClient = object : android.webkit.WebViewClient() {
+                        override fun onReceivedHttpError(
+                            view: android.webkit.WebView?,
+                            request: android.webkit.WebResourceRequest?,
+                            errorResponse: android.webkit.WebResourceResponse?
+                        ) {
+                            Log.d("PlushdProvider-Lulu", "[Wv] http error ${errorResponse?.statusCode} ${request?.url}")
+                            if (!done.isCompleted) done.complete("http ${errorResponse?.statusCode}")
+                        }
+
+                        override fun onPageFinished(view: android.webkit.WebView?, u: String?) {
+                            val js =
+                                "(function(){if(window.__lulu)return;window.__lulu=1;var U='" + url + "';" +
+                                    "fetch(U,{cache:'no-store'}).then(function(r){return r.text().then(function(t){" +
+                                    "var m=t.match(/^(?!#)(\\S+)/m);var seg=m?new URL(m[1],U).href:'';" +
+                                    "if(!seg){window.__pr=r.status+'|'+t.length+'|0|0';return;}" +
+                                    "return fetch(seg).then(function(r2){return r2.arrayBuffer().then(function(b){" +
+                                    "window.__pr=r.status+'|'+t.length+'|'+r2.status+'|'+b.byteLength;});});});})" +
+                                    ".catch(function(e){window.__pr='err|'+e;});})()"
+                            view?.evaluateJavascript(js, null)
+                            view?.postDelayed({
+                                view?.evaluateJavascript("window.__pr") { pr ->
+                                    Log.d("PlushdProvider-Lulu", "[Wv] fetch -> $pr")
+                                    if (!done.isCompleted) done.complete("fetch $pr")
+                                }
+                            }, 4000L)
+                        }
+                    }
+                    wv.loadUrl(url)
+                    done.await()
+                } finally {
+                    webView?.destroy()
+                }
+            }
+            res ?: "timeout"
+        }
+    }
+
     private fun luluClient(profile: Int): okhttp3.OkHttpClient {
         return luluClients.getOrPut(profile) {
             val builder = okhttp3.OkHttpClient.Builder()
@@ -122,13 +178,27 @@ class PlushdProvider : MainAPI() {
             val cronet = runCatching { Class.forName("org.chromium.net.CronetEngine"); true }.getOrDefault(false)
             Log.d("PlushdProvider-Lulu", "cronet disponible: $cronet")
             val found = (1..6).firstOrNull { profile ->
-                val code = runCatching {
-                    luluClient(profile).newCall(luluRequest(url, referer)).execute().use { it.code }
+                val res = runCatching {
+                    luluClient(profile).newCall(luluRequest(url, referer)).execute().use { r ->
+                        val detail = if (profile == 1) {
+                            val srv = r.headers["Server"] ?: "-"
+                            val via = r.headers["Via"] ?: r.headers["X-Cache"] ?: "-"
+                            val body = runCatching { r.body?.string()?.take(200) ?: "" }.getOrDefault("")
+                            " server=$srv via=$via body=${body.replace("\n", " ")}"
+                        } else ""
+                        r.code to detail
+                    }
                 }.onFailure {
                     Log.w("PlushdProvider-Lulu", "perfil TLS $profile excepcion: ${it.message}")
                 }.getOrNull()
-                Log.d("PlushdProvider-Lulu", "perfil TLS $profile -> $code")
-                code != null && code in 200..299
+                Log.d("PlushdProvider-Lulu", "perfil TLS $profile -> ${res?.first}${res?.second ?: ""}")
+                res?.first != null && res.first in 200..299
+            }
+            if ((found ?: -1) <= 0 && !luluWebViewProbed) {
+                luluWebViewProbed = true
+                Log.d("PlushdProvider-Lulu", "probando Chromium/WebView del dispositivo...")
+                val wv = runCatching { probeLuluWebView(url) }.getOrElse { "excepcion ${it.message}" }
+                Log.d("PlushdProvider-Lulu", "[Wv] resultado: $wv")
             }
             found ?: -1
         }

@@ -2707,3 +2707,20 @@ lulu -> sin interceptor (Cronet) perfil=-1
 - Pendiente (usuario): compilar `.\gradlew.bat :PlushdProvider:make --console=plain -q`, instalar y probar Goblin EP1 -> buscar `DNS i2gcnsz23x2n.tnmr.org -> ...`, `cronet disponible: ...` y `perfil TLS 5 -> code` / `perfil TLS 6 -> code`.
 - Pendiente extra: pegar las lineas **posteriores** a `lulu -> sin interceptor (Cronet)` (las de reproduccion: `Using CronetDataSource`/`Using OkHttpDataSource`, `ExoPlayer`, `2004`, `403`), que en el ultimo paste no llegaron.
 - Workaround sin codigo vigente: long-press en el link LuLu -> abrir con reproductor externo (VLC usa otra pila TLS).
+
+
+### v30: sonda Chromium/WebView + cuerpo y cabeceras del 403 (19 Oct 2026)
+**Datos del log v29 en celular (18 Oct 23:28)**: `DNS i2gcnsz23x2n.tnmr.org -> 141.94.30.163` (**una sola IPv4, sin IPv6**) y `perfil TLS 1..6 -> 403` con `perfil TLS elegido: -1` -> **descartadas la hipotesis IPv6/IPv4 y TODOS los perfiles TLS de OkHttp** (ciphers, versiones, COMPATIBLE_TLS, familia de IP). Tambien `cronet disponible: true` -> las clases de Cronet SI estan en la app (el camino v27 existe). El paste vuelve a cortar en `lulu -> sin interceptor (Cronet) perfil=-1` (faltan las lineas de reproduccion).
+
+**Fix v30 (solo diagnostico, no cambia el comportamiento)**:
+1. El probe del 403 ahora imprime **cuerpo y cabeceras** del perfil 1: `perfil TLS 1 -> 403 server=... via=... body=<200 chars>` -> identifica QUIEN bloquea (WAF propio del CDN vs middlebox/adblock/red del dispositivo).
+2. Nueva sonda **Chromium/WebView** (`probeLuluWebView`, `luluWebViewProbed`): solo corre cuando los 6 perfiles fallan. Carga el master en un `WebView`, y ya con el origen del CDN hace `fetch()` del master **y de un segmento**, logueando `[Wv] fetch -> <code|len|codeSeg|bytesSeg>` (o `[Wv] http error <code>` / `[Wv] resultado: timeout`). Mide si el stack de navegador del propio telefono puede leer master y segmentos.
+3. `PlushdProvider.pluginContext` (nuevo, seteado en `PlushdPlugin.load`) para poder crear el WebView.
+
+**Lectura / siguiente paso**:
+- `[Wv] fetch -> 200|<len>|200|<bytes>` -> el stack Chrome del dispositivo SI pasa -> v31 = **proxy local** (`ServerSocket` en 127.0.0.1, precedente `MegaExtractor` de Retrotve) que sirve el master reescrito y obtiene cada segmento por el puente WebView.
+- `[Wv] http error 403` / `[Wv] resultado: fetch err|...` -> bloqueo por **red o dispositivo** (app de VPN/adblock/DNS privado con tunel por-app, o el operador). Test sin codigo: desactivar esas apps y/o probar con datos moviles.
+
+**Versiones**: `PlushdProvider/build.gradle.kts` 29 -> **30**; `plugins.json` PlusHD 29 -> 30 (`fileSize` pendiente, sigue 44712). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+- Pendiente (usuario): compilar `.\gradlew.bat :PlushdProvider:make --console=plain -q`, instalar y probar Goblin EP1 -> buscar `perfil TLS 1 -> 403 server=`, `probando Chromium/WebView del dispositivo...`, `[Wv] ...` y `[Wv] resultado: ...`.
+- Pendiente extra: las lineas **posteriores** a `lulu -> sin interceptor (Cronet)` (`Using CronetDataSource`/`Using OkHttpDataSource`, `ExoPlayer`, `2004`), que siguen sin llegar.
