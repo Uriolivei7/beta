@@ -230,6 +230,10 @@ class PlushdProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        if (extractorLink.url.contains("tnmr") || extractorLink.url.contains("lulu")) {
+            Log.d("PlushdProvider", "lulu -> sin interceptor (Cronet) ${extractorLink.url.take(80)}")
+            return null
+        }
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
@@ -711,6 +715,7 @@ class PlushdProvider : MainAPI() {
                 Log.d(tag, "emit ${u.take(120)}")
                 callback(newExtractorLink(name, "LuluStream", u, type) {
                     this.referer = "https://luluvdo.com/"
+                    this.headers = mapOf("User-Agent" to chrome127Ua)
                 })
                 emitted++
             }
@@ -721,6 +726,7 @@ class PlushdProvider : MainAPI() {
                     Log.d(tag, "emit (scan) ${m3u8.take(120)}")
                     callback(newExtractorLink(name, "LuluStream", m3u8, ExtractorLinkType.M3U8) {
                         this.referer = "https://luluvdo.com/"
+                        this.headers = mapOf("User-Agent" to chrome127Ua)
                     })
                     emitted++
                 }
