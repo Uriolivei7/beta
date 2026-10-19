@@ -91,6 +91,7 @@ class PlushdProvider : MainAPI() {
                     webView = wv
                     wv.settings.javaScriptEnabled = true
                     wv.settings.domStorageEnabled = true
+                    wv.settings.userAgentString = chrome127Ua
                     wv.webViewClient = object : android.webkit.WebViewClient() {
                         override fun onReceivedHttpError(
                             view: android.webkit.WebView?,
@@ -104,19 +105,24 @@ class PlushdProvider : MainAPI() {
                         override fun onPageFinished(view: android.webkit.WebView?, u: String?) {
                             val js =
                                 "(function(){if(window.__lulu)return;window.__lulu=1;var U='" + url + "';" +
-                                    "fetch(U,{cache:'no-store'}).then(function(r){return r.text().then(function(t){" +
+                                    "var out={ua:navigator.userAgent,lang:navigator.language};var left=2;" +
+                                    "function done(k,v){out[k]=v;if(--left===0){window.__pr=JSON.stringify(out);}}" +
+                                    "function run(tag,h,cb){fetch(U,{cache:'no-store',credentials:'omit',headers:h})" +
+                                    ".then(function(r){return r.text().then(function(t){" +
                                     "var m=t.match(/^(?!#)(\\S+)/m);var seg=m?new URL(m[1],U).href:'';" +
-                                    "if(!seg){window.__pr=r.status+'|'+t.length+'|0|0';return;}" +
-                                    "return fetch(seg).then(function(r2){return r2.arrayBuffer().then(function(b){" +
-                                    "window.__pr=r.status+'|'+t.length+'|'+r2.status+'|'+b.byteLength;});});});})" +
-                                    ".catch(function(e){window.__pr='err|'+e;});})()"
+                                    "if(!seg){cb(tag+'|'+r.status+'|'+t.length+'|0|0');return;}" +
+                                    "return fetch(seg,{cache:'no-store',credentials:'omit',headers:h})" +
+                                    ".then(function(r2){return r2.arrayBuffer().then(function(b){cb(tag+'|'+r.status+'|'+t.length+'|'+r2.status+'|'+b.byteLength);});});});})" +
+                                    ".catch(function(e){cb(tag+'|err|'+e);});}" +
+                                    "run('plain',{},function(v){done('plain',v);});" +
+                                    "run('noal',{'Accept-Language':''},function(v){done('noal',v);});})()"
                             view?.evaluateJavascript(js, null)
                             view?.postDelayed({
                                 view?.evaluateJavascript("window.__pr") { pr ->
                                     Log.d("PlushdProvider-Lulu", "[Wv] fetch -> $pr")
                                     if (!done.isCompleted) done.complete("fetch $pr")
                                 }
-                            }, 4000L)
+                            }, 6000L)
                         }
                     }
                     wv.loadUrl(url)
@@ -165,6 +171,8 @@ class PlushdProvider : MainAPI() {
             .header("User-Agent", chrome127Ua)
             .header("Referer", referer)
             .header("Accept", "*/*")
+            .removeHeader("Accept-Language")
+            .removeHeader("accept-language")
         if (range != null) builder.header("Range", range)
         return builder.build()
     }
@@ -184,7 +192,7 @@ class PlushdProvider : MainAPI() {
                             val srv = r.headers["Server"] ?: "-"
                             val via = r.headers["Via"] ?: r.headers["X-Cache"] ?: "-"
                             val body = runCatching { r.body?.string()?.take(200) ?: "" }.getOrDefault("")
-                            " server=$srv via=$via body=${body.replace("\n", " ")}"
+                            " server=$srv via=$via proto=${r.protocol} body=${body.replace("\n", " ")}"
                         } else ""
                         r.code to detail
                     }
@@ -416,6 +424,7 @@ class PlushdProvider : MainAPI() {
                 val response: Response
                 if (isLulu) {
                     val profile = luluTlsProfile
+                    Log.d("PlushdProvider", "lulu req headers=${request.headers.names().joinToString(",")}")
                     val fetched = runCatching {
                         val referer = extractorLink.referer.ifBlank { "https://luluvdo.com/" }
                         luluClient(profile).newCall(luluRequest(url, referer, request.header("Range"))).execute()
@@ -856,7 +865,6 @@ class PlushdProvider : MainAPI() {
             val pageHeaders = mapOf(
                 "User-Agent" to chrome127Ua,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
                 "Referer" to url,
             )
             val html = app.get(url, headers = pageHeaders).text

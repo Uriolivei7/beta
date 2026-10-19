@@ -2724,3 +2724,39 @@ lulu -> sin interceptor (Cronet) perfil=-1
 **Versiones**: `PlushdProvider/build.gradle.kts` 29 -> **30**; `plugins.json` PlusHD 29 -> 30 (`fileSize` pendiente, sigue 44712). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
 - Pendiente (usuario): compilar `.\gradlew.bat :PlushdProvider:make --console=plain -q`, instalar y probar Goblin EP1 -> buscar `perfil TLS 1 -> 403 server=`, `probando Chromium/WebView del dispositivo...`, `[Wv] ...` y `[Wv] resultado: ...`.
 - Pendiente extra: las lineas **posteriores** a `lulu -> sin interceptor (Cronet)` (`Using CronetDataSource`/`Using OkHttpDataSource`, `ExoPlayer`, `2004`), que siguen sin llegar.
+
+
+### Causa raiz REAL del 403 de LuLu/tnmr: `Accept-Language` (19 Oct 2026 v31)
+**Hallazgo medido en PC (matriz de cabeceras, token fresco, `lulu_hdrshape.py` + `lulu_lang.py`)**:
+- El CDN `*.tnmr.org` devuelve **200 len=623** con `User-Agent` Chrome/127 Windows **y SIN `Accept-Language`**.
+- Con **cualquier** `Accept-Language` no vacia -> **403 len=146** (pagina nginx). Probadas: `es-ES,es;q=0.9`, `es-419,...`, `es`, `en-US,en;q=0.9`, `en`, `en-GB`, `fr-FR`, `pt-BR`, `zh-CN`, `*` -> todas 403.
+- `Accept-Language` **vacia** (`Accept-Language: `) -> **200**. Es decir: la regla del WAF es "si viene la cabecera, bloquear" (no importa el idioma).
+- Otras cabeceras NO influyen (todas 200 con AL ausente): `Accept: */*`, `Accept-Encoding: gzip|gzip, deflate|identity`, `Connection: Keep-Alive`, `Accept-Charset: utf-8`, `Range: bytes=0-`, `Referer` (propio o `https://luluvdo.com/`), `Cache-Control`, `TE: trailers`, header en minusculas.
+- La pagina **embed** (`luluvdo.com/e/...`) NO se ve afectada por `Accept-Language` (200 con es-419 y en-US): la regla vive solo en el CDN de video.
+- La matriz de UA sigue vigente: **solo** el UA exacto `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36` pasa; Android/`wv`/149/Firefox/Edge/Safari/VLC/python -> 403. Sufijos y variantes del UA127 tambien fallan (`sin Safari`, `Chrome/127`, `+ Coffee`).
+- **Por que fallaban los caminos de la app**: Cronet (Chromium) y WebView inyectan `Accept-Language` del sistema -> 403; la sonda WebView de v30 ademas usaba el UA `; wv)` -> doble motivo.
+- **Por que fallaba el probe OkHttp (consumo real)**: `luluClient` es un `OkHttpClient.Builder()` limpio (sin interceptores, sin AL) y aun asi dio 403 en dispositivo con UA127 y sin AL -> el WAF discrimina ademas por **huella del stack** (TLS/HTTP de OkHttp/Conscrypt en Android); python/OpenSSL y curl/Schannel pasan desde PC con el mismo juego de cabeceras. No se puede cambiar el proveedor TLS de OkHttp en Android (Conscrypt), asi que la via real es un stack Chromium.
+- **Espejos**: `luluvdo.com`, `lulustream.com`, `luluvdoo.com`, `/e/`, `/d/`, `/embed/`, `POST /dl` (`op=embed`) devuelven **el mismo CDN y la misma ruta** (`i2gcnsz23x2n.tnmr.org/hls2/.../master.m3u8`) -> no hay CDN alternativo que usar. `download`/`download2` no devuelven packer. `/v/` -> 404.
+- **Master (payload real, PC)**: `#EXTM3U` + `#EXT-X-MEDIA:TYPE=SUBTITLES` (es) + una sola variante 1920x1080 (BANDWIDTH 2501341). El payload del player trae `duration:"5310.96"` (~88 min) -> es el episodio completo.
+
+**CAUSA RAIZ DEFINITIVA (medida en PC, `lulu_embedhdr.py`)**: el **token esta firmado con el `Accept-Language` del fetch del EMBED**. Prueba A/B/C/D (mismo codigo, token fresco por caso):
+| Embed pedido con | Master pedido con | Resultado |
+|---|---|---|
+| `UA127 + Accept + Accept-Language: es-ES,es;q=0.9,en;q=0.8` | `UA127` (sin AL) | **403** |
+| `UA127` solo | `UA127` (sin AL) | **200 len=623** |
+| `UA127 + Accept` | `UA127` (sin AL) | **200 len=623** |
+| `UA127 + Referer` | `UA127` (sin AL) | **200 len=623** |
+- O sea: **el WAF del CDN bloquea cualquier peticion con `Accept-Language`**, y ademas el token emitido por un embed pedido con `Accept-Language` nace envenenado (403 en TODAS las peticiones de video, incluso sin AL). Eso explica por que fallaban a la vez OkHttp (perfiles 1..6), Cronet y WebView: los tres usaban el token envenenado.
+- **Descartado el fingerprint TLS**: experimento con **OkHttp 4.12 + Conscrypt 2.5.2 (BoringSSL) en la PC** -> `200 len=622 proto=http/1.1` (mismo resultado que JDK TLS). Conscrypt/Android no es el bloqueo; era el token.
+
+**FIX REAL v31 (`PlushdProvider.kt`)**:
+1. **`tryLuluExtraction`**: eliminado `"Accept-Language" to "es-ES,es;q=0.9,en;q=0.8"` de `pageHeaders` -> el token sale limpio y el master/variante/segmentos responden 200. **Esta es la correccion que arregla la reproduccion.**
+2. `luluRequest`: `removeHeader("Accept-Language")` defensivo (OkHttp no la anade por defecto, pero se blinda).
+3. `probeLuluWebView`: `wv.settings.userAgentString = chrome127Ua` + `fetch` A/B (`plain` vs `noal` con `Accept-Language: ''`), master + segmento; resultado JSON con `ua`, `lang`, ambos estados. Queda solo como diagnostico de ultimo recurso.
+4. `probeLuluTls`: log `proto=` en el perfil 1 (confirma HTTP/1.1) y `lulu req headers=<nombres>` en el interceptor (que manda ExoPlayer).
+- **OJO con el camino Cronet**: Cronet/Chromium inyectan `Accept-Language` del sistema -> 403 por la regla del WAF. Por eso, si algun dia los perfiles OkHttp fallan, Cronet NO es la salida (habria que servir por WebView con `fetch` y AL vacia).
+- Verificacion: `bal_check.py` -> BALANCE OK; `plugins.json` -> JSON valido, 72 entradas.
+- Versiones: `build.gradle.kts` 30 -> **31**; `plugins.json` PlusHD 30 -> **31** (`fileSize` pendiente, sigue 44712). **No compilado por regla del repo.**
+
+- Pendiente (usuario): compilar (`.\gradlew.bat :PlushdProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Goblin EP1 -> en logcat deberia verse `perfil TLS 1 -> 200` y `lulu req headers=...` (sin `Accept-Language`), y el video debe reproducir. Si no, pegar esas lineas.
+- Leccion general para el repo: cuando un CDN devuelve 403 fijo con `Server: nginx` y cuerpo de ~146 B, probar **presencia/ausencia de `Accept-Language`** tanto en la peticion de video como en la del embed que emite el token (el token puede estar firmado con esas cabeceras).
