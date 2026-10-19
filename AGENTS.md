@@ -2683,3 +2683,27 @@ Conclusion: el registro (`refreshApi` + `afterPluginsLoadedEvent`) y el borrado 
 - El filtro 1080p/CF del interceptor se salta para lulu; el resto de hosts (vidhide/acek) intacto.
 **Versiones**: PlushdProvider/build.gradle.kts 27 -> **28**; plugins.json PlusHD 27 -> 28 (ileSize pendiente, sigue 44712). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
 - Pendiente (usuario): compilar, instalar y probar Goblin EP1 buscando perfil TLS N -> code (probara 1..4) y luego lulu perfil <ganador> -> 200; si sale perfil TLS elegido: -1 + sin interceptor (Cronet) es que ninguna huella OkHttp sirve y queda medir Cronet/WebView.
+
+
+### Perfiles TLS descartados -> hipotesis IPv6 (19 Oct 2026 v29)
+**Log del usuario (v28, celular fisico, Goblin EP1)**: los 4 perfiles dieron 403 seguidos y luego el camino Cronet:
+```
+perfil TLS 1 -> 403
+perfil TLS 2 -> 403
+perfil TLS 3 -> 403
+perfil TLS 4 -> 403
+perfil TLS elegido: -1
+emit https://i2gcnsz23x2n.tnmr.org/hls2/01/02389/,wo70vtmvtau9_h,lang/spa/wo70vtmvtau9_spa,.urlset/master.m3u8?t=Kgp3ls5aKbNw
+callback -> LuluStream (source=PlusHD)
+lulu -> sin interceptor (Cronet) perfil=-1
+```
+**Lectura**: ni ciphers ni versiones TLS ni `COMPATIBLE_TLS` cambian nada -> **descartado que sea el perfil TLS de OkHttp**. Queda: (a) extensiones/GREASE del ClientHello (Conscrypt no las replica; Chrome si) o (b) algo de la **red del dispositivo** que hace fallar la ruta usada por OkHttp pero no la de Chrome.
+**Hipotesis nueva (barata y muy probable): IPv6 vs IPv4.** Chrome (Happy Eyeballs) y Chrome-movil pueden caer a IPv4 mientras OkHttp usa la **primera** IP resuelta (normalmente IPv6); si el ISP del movil entrega IPv6 por una ruta interceptada/rota hacia el CDN (OVH), el 403 llega de un nodo distinto mientras Chrome acaba yendo por IPv4. El PC (donde python da 200) puede no tener IPv6.
+**Fix (v29, sigue siendo auto-diagnostico)**:
+- `luluClient` perfiles 5 y 6: `dns(luluIpv4Dns)` / `dns(luluIpv6Dns)` (objetos `okhttp3.Dns` que filtran `Inet4Address`/`Inet6Address`; OJO: `okhttp3.Dns` es interfaz **Kotlin**, no `fun interface` -> se implementa con `object : okhttp3.Dns { override fun lookup(...) }`, no con lambda).
+- `probeLuluTls` ahora recorre **1..6** y loguea: `DNS <host> -> <ip,ip>` (las IPs que resuelve el telefono) y `cronet disponible: true/false` (via `Class.forName("org.chromium.net.CronetEngine")`, para saber si el camino Cronet de v27 existe de verdad en la app).
+- Si el perfil 5 (IPv4) da 200 -> causa raiz confirmada y queda como ruta fija; si 6 (IPv6) da 200 -> el ISP prefiere IPv6 y hay que forzar esa familia; si los 6 dan 403 -> la discriminacion es el ClientHello (extensiones/GREASE) o un middlebox, y el unico camino es el stack de Chrome real (WebView vertical/JS) o reproductor externo (VLC).
+**Versiones**: `PlushdProvider/build.gradle.kts` 28 -> **29**; `plugins.json` PlusHD 28 -> 29 (`fileSize` pendiente, sigue 44712). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+- Pendiente (usuario): compilar `.\gradlew.bat :PlushdProvider:make --console=plain -q`, instalar y probar Goblin EP1 -> buscar `DNS i2gcnsz23x2n.tnmr.org -> ...`, `cronet disponible: ...` y `perfil TLS 5 -> code` / `perfil TLS 6 -> code`.
+- Pendiente extra: pegar las lineas **posteriores** a `lulu -> sin interceptor (Cronet)` (las de reproduccion: `Using CronetDataSource`/`Using OkHttpDataSource`, `ExoPlayer`, `2004`, `403`), que en el ultimo paste no llegaron.
+- Workaround sin codigo vigente: long-press en el link LuLu -> abrir con reproductor externo (VLC usa otra pila TLS).

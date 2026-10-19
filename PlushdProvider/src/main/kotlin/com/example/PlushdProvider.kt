@@ -56,6 +56,20 @@ class PlushdProvider : MainAPI() {
 
     private val luluClients = java.util.concurrent.ConcurrentHashMap<Int, okhttp3.OkHttpClient>()
 
+    private val luluIpv4Dns = object : okhttp3.Dns {
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            val all = okhttp3.Dns.SYSTEM.lookup(hostname)
+            return all.filter { it is java.net.Inet4Address }.ifEmpty { all }
+        }
+    }
+
+    private val luluIpv6Dns = object : okhttp3.Dns {
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            val all = okhttp3.Dns.SYSTEM.lookup(hostname)
+            return all.filter { it is java.net.Inet6Address }.ifEmpty { all }
+        }
+    }
+
     @Volatile
     private var luluTlsProfile = 0
 
@@ -82,6 +96,8 @@ class PlushdProvider : MainAPI() {
                     )
                 )
                 4 -> builder.connectionSpecs(listOf(okhttp3.ConnectionSpec.COMPATIBLE_TLS))
+                5 -> builder.dns(luluIpv4Dns)
+                6 -> builder.dns(luluIpv6Dns)
             }
             builder.build()
         }
@@ -100,7 +116,12 @@ class PlushdProvider : MainAPI() {
     private suspend fun probeLuluTls(url: String, referer: String): Int {
         if (luluTlsProfile != 0) return luluTlsProfile
         val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val found = (1..4).firstOrNull { profile ->
+            val host = runCatching { java.net.URL(url).host }.getOrDefault("")
+            val inets = runCatching { okhttp3.Dns.SYSTEM.lookup(host) }.getOrNull()
+            Log.d("PlushdProvider-Lulu", "DNS $host -> ${inets?.joinToString { it.hostAddress } ?: "error"}")
+            val cronet = runCatching { Class.forName("org.chromium.net.CronetEngine"); true }.getOrDefault(false)
+            Log.d("PlushdProvider-Lulu", "cronet disponible: $cronet")
+            val found = (1..6).firstOrNull { profile ->
                 val code = runCatching {
                     luluClient(profile).newCall(luluRequest(url, referer)).execute().use { it.code }
                 }.onFailure {
