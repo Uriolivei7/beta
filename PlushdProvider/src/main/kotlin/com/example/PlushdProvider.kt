@@ -37,6 +37,8 @@ class PlushdProvider : MainAPI() {
         "doramas" to "Doramas",
     )
 
+    private val chrome127Ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+
     private fun base64Encode(bytes: ByteArray): String {
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
@@ -239,12 +241,35 @@ class PlushdProvider : MainAPI() {
                 }
 
                 val newRequest = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+                    .header("User-Agent", chrome127Ua)
                     .header("Referer", extractorLink.referer)
                     .header("Origin", mainUrl)
                     .build()
 
                 val response = chain.proceed(newRequest)
+
+                if (response.code == 403 && (url.contains("tnmr") || url.contains("lulu"))) {
+                    try {
+                        Log.d("PlushdProvider", "403 CDN ${url.take(80)} wire-UA=${response.request.header("User-Agent")} conCookie=${response.request.header("Cookie") != null}")
+                        val clean = okhttp3.OkHttpClient.Builder()
+                            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+                            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
+                        val retryReq = okhttp3.Request.Builder()
+                            .url(url)
+                            .header("User-Agent", chrome127Ua)
+                            .header("Referer", "https://luluvdo.com/")
+                            .header("Accept", "*/*")
+                            .apply { request.header("Range")?.let { header("Range", it) } }
+                            .build()
+                        val retry = clean.newCall(retryReq).execute()
+                        Log.d("PlushdProvider", "reintento limpio -> ${retry.code} len=${retry.body?.contentLength()}")
+                        if (retry.isSuccessful) return retry
+                    } catch (t: Throwable) {
+                        Log.e("PlushdProvider", "reintento limpio fallo: ${t.message}")
+                    }
+                }
 
                 try {
                     if (isPlaylist) {
@@ -341,7 +366,7 @@ class PlushdProvider : MainAPI() {
                 val extraHeaders = mapOf(
                     "Referer" to data,
                     "Origin" to "$mainUrl",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent" to chrome127Ua,
                     "Accept" to "*/*"
                 )
                 Log.d("PlushdProvider", "callback -> ${link.name} (source=$name)")
@@ -662,7 +687,7 @@ class PlushdProvider : MainAPI() {
         val tag = "PlushdProvider-Lulu"
         try {
             val pageHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "User-Agent" to chrome127Ua,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
                 "Referer" to url,
