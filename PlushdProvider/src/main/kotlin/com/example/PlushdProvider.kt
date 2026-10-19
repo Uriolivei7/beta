@@ -248,6 +248,7 @@ class PlushdProvider : MainAPI() {
 
                 try {
                     if (isPlaylist) {
+                        Log.d("PlushdProvider", "intercept playlist ${response.code} ${url.take(120)}")
                         val peek = response.peekBody(2097152L)
                         val html = peek.string()
                         if (html.contains("Just a moment", ignoreCase = true) ||
@@ -255,7 +256,8 @@ class PlushdProvider : MainAPI() {
                             Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
                             return cloudflareKiller.intercept(chain)
                         }
-                        if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=")) {
+                        val streamInfCount = html.lines().count { it.contains("#EXT-X-STREAM-INF") }
+                        if (url.contains(".m3u8") && html.startsWith("#EXTM3U") && html.contains("RESOLUTION=") && streamInfCount > 1) {
                             val lines = html.lines()
                             val filtered = mutableListOf<String>()
                             var skip = false
@@ -288,6 +290,8 @@ class PlushdProvider : MainAPI() {
                                     return response.newBuilder().body(okhttp3.ResponseBody.create(mediaType, filteredBody)).build()
                                 }
                             }
+                        } else if (url.contains(".m3u8") && streamInfCount <= 1) {
+                            Log.d("PlushdProvider", "M3U8 con $streamInfCount variante(s), sin filtrar (len=${html.length})")
                         }
                     }
                 } catch (_: Exception) { }
@@ -429,7 +433,7 @@ class PlushdProvider : MainAPI() {
                     Log.d(tag, "URL VidHide detectada, usando extractor directo...")
                     val ok = tryVidHideExtraction(
                         url = fixedLink,
-                        referer = fixedLink, 
+                        referer = fixedLink,
                         subtitleCallback = loggingSubtitleCallback,
                         callback = wrappedCallback2
                     )
