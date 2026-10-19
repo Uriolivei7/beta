@@ -211,7 +211,6 @@ class PlushdProvider : MainAPI() {
             .replaceFirst("https://doodstream.com", "https://dood.la")
             .replaceFirst("https://streamtape.com", "https://streamtape.cc")
             .replace("https://sblanh.com", "https://lvturbo.com")
-            .replaceFirst("https://emturbovid.com", "https://turbovidhls.com")
     }
 
     private val REGEX_LINK = Pattern.compile(
@@ -332,7 +331,6 @@ class PlushdProvider : MainAPI() {
             pendingLinks.add(link)
         }
 
-        // newExtractorLink es suspend: la emision real se hace en el body de loadLinks
         suspend fun emitPendingLinks() {
             while (true) {
                 val link = pendingLinks.poll() ?: break
@@ -405,10 +403,6 @@ class PlushdProvider : MainAPI() {
                     return
                 }
 
-                if (fixedLink.contains("turbovidhls.com")) {
-                    Log.w(tag, "turbovid (error 3003), saltando")
-                    return
-                }
                 if (fixedLink.contains("#") && (
                             fixedLink.contains("upns.pro") ||
                                     fixedLink.contains("rpmstream.live") ||
@@ -422,16 +416,41 @@ class PlushdProvider : MainAPI() {
 
                 hasValidServer = true
 
-                if (fixedLink.contains("vidhide")) {
+                if (fixedLink.contains("turbovid")) {
+                    val embUrl = fixedLink.replace("https://turbovidhls.com", "https://emturbovid.com")
+                    Log.d(tag, "turbovid -> EmturbovidExtractor: ${embUrl.take(120)}")
+                    loadExtractor(
+                        url = embUrl,
+                        referer = extractorReferer,
+                        subtitleCallback = loggingSubtitleCallback,
+                        callback = wrappedCallback2
+                    )
+                } else if (fixedLink.contains("vidhide")) {
                     Log.d(tag, "URL VidHide detectada, usando extractor directo...")
                     val ok = tryVidHideExtraction(
                         url = fixedLink,
-                        referer = fixedLink, // MhdflixVidHide usa URL como referer
+                        referer = fixedLink, 
                         subtitleCallback = loggingSubtitleCallback,
                         callback = wrappedCallback2
                     )
                     if (!ok) {
                         Log.w(tag, "VidHide directo fallo, probando loadExtractor...")
+                        loadExtractor(
+                            url = fixedLink,
+                            referer = extractorReferer,
+                            subtitleCallback = loggingSubtitleCallback,
+                            callback = wrappedCallback2
+                        )
+                    }
+                } else if (fixedLink.contains("lulu")) {
+                    Log.d(tag, "URL LuLu detectada, usando desempaquetado propio...")
+                    val ok = tryLuluExtraction(
+                        url = fixedLink,
+                        referer = extractorReferer,
+                        callback = wrappedCallback2
+                    )
+                    if (!ok) {
+                        Log.w(tag, "LuLu directo fallo, probando loadExtractor...")
                         loadExtractor(
                             url = fixedLink,
                             referer = extractorReferer,
@@ -604,6 +623,86 @@ class PlushdProvider : MainAPI() {
             Log.e(tag, "Error: ${e.message}")
         }
         return false
+    }
+
+    private val luluPackedRegex = Regex("""\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
+
+    private fun unpackLuluPacked(html: String): String? {
+        val m = luluPackedRegex.find(html) ?: return null
+        return try {
+            val dict = m.groupValues[4].split("|")
+            val base = m.groupValues[2].toIntOrNull() ?: 36
+            val count = m.groupValues[3].toIntOrNull() ?: 0
+            val sb = StringBuilder(m.groupValues[1])
+            for (idx in count - 1 downTo 0) {
+                val key = idx.toString(base)
+                val value = dict.getOrElse(idx) { "" }
+                if (key.isNotEmpty() && value.isNotEmpty()) {
+                    val replaced = Regex("\\b${Regex.escape(key)}\\b").replace(sb, Regex.escapeReplacement(value))
+                    sb.clear()
+                    sb.append(replaced)
+                }
+            }
+            sb.toString().replace("\\'", "'")
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun tryLuluExtraction(
+        url: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        if (!url.contains("lulu")) return false
+        val tag = "PlushdProvider-Lulu"
+        try {
+            val pageHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "es-ES,es;q=0.9,en;q=0.8",
+                "Referer" to url,
+            )
+            val html = app.get(url, headers = pageHeaders).text
+            Log.d(tag, "GET ${url.take(110)} len=${html.length}")
+
+            val decoded = unpackLuluPacked(html)
+            if (decoded == null) {
+                Log.w(tag, "no packed JS encontrado (len=${html.length})")
+                return false
+            }
+            Log.d(tag, "decoded len=${decoded.length}")
+
+            val linkRegex = Regex("""(?:file|src|source)\s*:\s*["']((?:https?:)?//[^"']+\.(?:m3u8|mp4|txt)[^"']*)["']""", RegexOption.IGNORE_CASE)
+            var emitted = 0
+            for (m in linkRegex.findAll(decoded)) {
+                var u = m.groupValues[1].replace("\\/", "/").trim()
+                if (u.startsWith("//")) u = "https:$u"
+                val type = if (u.contains(".mp4")) ExtractorLinkType.VIDEO else ExtractorLinkType.M3U8
+                Log.d(tag, "emit ${u.take(120)}")
+                callback(newExtractorLink(name, "LuluStream", u, type) {
+                    this.referer = "https://luluvdo.com/"
+                })
+                emitted++
+            }
+
+            if (emitted == 0) {
+                val m3u8 = Regex("""(https?://[^"'\s<>]+\.(?:m3u8|mp4)[^"'\s<>]*)""", RegexOption.IGNORE_CASE).find(decoded)?.value
+                if (m3u8 != null) {
+                    Log.d(tag, "emit (scan) ${m3u8.take(120)}")
+                    callback(newExtractorLink(name, "LuluStream", m3u8, ExtractorLinkType.M3U8) {
+                        this.referer = "https://luluvdo.com/"
+                    })
+                    emitted++
+                }
+            }
+
+            Log.d(tag, "emitted=$emitted")
+            return emitted > 0
+        } catch (e: Exception) {
+            Log.e(tag, "Error: ${e.message}")
+            return false
+        }
     }
 
     private suspend fun extractUrlFromPlayerPage(playerDoc: org.jsoup.nodes.Document): String {
