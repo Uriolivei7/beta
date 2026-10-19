@@ -39,6 +39,83 @@ class PlushdProvider : MainAPI() {
 
     private val chrome127Ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
 
+    private val luluChromeCiphers = listOf(
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+        "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+        "TLS_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_RSA_WITH_AES_128_CBC_SHA",
+        "TLS_RSA_WITH_AES_256_CBC_SHA",
+    )
+
+    private val luluClients = java.util.concurrent.ConcurrentHashMap<Int, okhttp3.OkHttpClient>()
+
+    @Volatile
+    private var luluTlsProfile = 0
+
+    private fun luluClient(profile: Int): okhttp3.OkHttpClient {
+        return luluClients.getOrPut(profile) {
+            val builder = okhttp3.OkHttpClient.Builder()
+                .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            when (profile) {
+                2 -> builder.connectionSpecs(
+                    listOf(
+                        okhttp3.ConnectionSpec.Builder(okhttp3.ConnectionSpec.MODERN_TLS)
+                            .tlsVersions(okhttp3.TlsVersion.TLS_1_2)
+                            .build()
+                    )
+                )
+                3 -> builder.connectionSpecs(
+                    listOf(
+                        okhttp3.ConnectionSpec.Builder(okhttp3.ConnectionSpec.MODERN_TLS)
+                            .cipherSuites(*luluChromeCiphers.toTypedArray())
+                            .build()
+                    )
+                )
+                4 -> builder.connectionSpecs(listOf(okhttp3.ConnectionSpec.COMPATIBLE_TLS))
+            }
+            builder.build()
+        }
+    }
+
+    private fun luluRequest(url: String, referer: String, range: String? = null): okhttp3.Request {
+        val builder = okhttp3.Request.Builder()
+            .url(url)
+            .header("User-Agent", chrome127Ua)
+            .header("Referer", referer)
+            .header("Accept", "*/*")
+        if (range != null) builder.header("Range", range)
+        return builder.build()
+    }
+
+    private suspend fun probeLuluTls(url: String, referer: String): Int {
+        if (luluTlsProfile != 0) return luluTlsProfile
+        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val found = (1..4).firstOrNull { profile ->
+                val code = runCatching {
+                    luluClient(profile).newCall(luluRequest(url, referer)).execute().use { it.code }
+                }.onFailure {
+                    Log.w("PlushdProvider-Lulu", "perfil TLS $profile excepcion: ${it.message}")
+                }.getOrNull()
+                Log.d("PlushdProvider-Lulu", "perfil TLS $profile -> $code")
+                code != null && code in 200..299
+            }
+            found ?: -1
+        }
+        luluTlsProfile = result
+        Log.d("PlushdProvider-Lulu", "perfil TLS elegido: $luluTlsProfile")
+        return result
+    }
+
     private fun base64Encode(bytes: ByteArray): String {
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
@@ -230,8 +307,9 @@ class PlushdProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        if (extractorLink.url.contains("tnmr") || extractorLink.url.contains("lulu")) {
-            Log.d("PlushdProvider", "lulu -> sin interceptor (Cronet) ${extractorLink.url.take(80)}")
+        val isLulu = extractorLink.url.contains("tnmr") || extractorLink.url.contains("lulu")
+        if (isLulu && luluTlsProfile <= 0) {
+            Log.d("PlushdProvider", "lulu -> sin interceptor (Cronet) perfil=$luluTlsProfile ${extractorLink.url.take(80)}")
             return null
         }
         return object : Interceptor {
@@ -244,35 +322,29 @@ class PlushdProvider : MainAPI() {
                     return chain.proceed(request)
                 }
 
-                val newRequest = request.newBuilder()
-                    .header("User-Agent", chrome127Ua)
-                    .header("Referer", extractorLink.referer)
-                    .header("Origin", mainUrl)
-                    .build()
-
-                val response = chain.proceed(newRequest)
-
-                if (response.code == 403 && (url.contains("tnmr") || url.contains("lulu"))) {
-                    try {
-                        Log.d("PlushdProvider", "403 CDN ${url.take(80)} wire-UA=${response.request.header("User-Agent")} conCookie=${response.request.header("Cookie") != null}")
-                        val clean = okhttp3.OkHttpClient.Builder()
-                            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
-                            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                            .build()
-                        val retryReq = okhttp3.Request.Builder()
-                            .url(url)
-                            .header("User-Agent", chrome127Ua)
-                            .header("Referer", "https://luluvdo.com/")
-                            .header("Accept", "*/*")
-                            .apply { request.header("Range")?.let { header("Range", it) } }
-                            .build()
-                        val retry = clean.newCall(retryReq).execute()
-                        Log.d("PlushdProvider", "reintento limpio -> ${retry.code} len=${retry.body?.contentLength()}")
-                        if (retry.isSuccessful) return retry
-                    } catch (t: Throwable) {
-                        Log.e("PlushdProvider", "reintento limpio fallo: ${t.message}")
+                val response: Response
+                if (isLulu) {
+                    val profile = luluTlsProfile
+                    val fetched = runCatching {
+                        val referer = extractorLink.referer.ifBlank { "https://luluvdo.com/" }
+                        luluClient(profile).newCall(luluRequest(url, referer, request.header("Range"))).execute()
+                    }.onFailure {
+                        Log.e("PlushdProvider", "lulu perfil $profile fallo: ${it.message}")
+                    }.getOrNull()
+                    if (fetched == null) {
+                        Log.w("PlushdProvider", "lulu perfil $profile null, cadena OkHttp")
+                        response = chain.proceed(request.newBuilder().header("User-Agent", chrome127Ua).build())
+                    } else {
+                        Log.d("PlushdProvider", "lulu perfil $profile -> ${fetched.code} ${url.take(120)}")
+                        response = fetched
                     }
+                } else {
+                    val newRequest = request.newBuilder()
+                        .header("User-Agent", chrome127Ua)
+                        .header("Referer", extractorLink.referer)
+                        .header("Origin", mainUrl)
+                        .build()
+                    response = chain.proceed(newRequest)
                 }
 
                 try {
@@ -280,8 +352,8 @@ class PlushdProvider : MainAPI() {
                         Log.d("PlushdProvider", "intercept playlist ${response.code} ${url.take(120)}")
                         val peek = response.peekBody(2097152L)
                         val html = peek.string()
-                        if (html.contains("Just a moment", ignoreCase = true) ||
-                            html.contains("Attention Required", ignoreCase = true)) {
+                        if (!isLulu && (html.contains("Just a moment", ignoreCase = true) ||
+                                html.contains("Attention Required", ignoreCase = true))) {
                             Log.d("PlushdProvider", "Cloudflare detected in video stream, resolving...")
                             return cloudflareKiller.intercept(chain)
                         }
@@ -711,6 +783,7 @@ class PlushdProvider : MainAPI() {
             for (m in linkRegex.findAll(decoded)) {
                 var u = m.groupValues[1].replace("\\/", "/").trim()
                 if (u.startsWith("//")) u = "https:$u"
+                if (u.contains(".m3u8") && luluTlsProfile == 0) probeLuluTls(u, "https://luluvdo.com/")
                 val type = if (u.contains(".mp4")) ExtractorLinkType.VIDEO else ExtractorLinkType.M3U8
                 Log.d(tag, "emit ${u.take(120)}")
                 callback(newExtractorLink(name, "LuluStream", u, type) {
@@ -723,6 +796,7 @@ class PlushdProvider : MainAPI() {
             if (emitted == 0) {
                 val m3u8 = Regex("""(https?://[^"'\s<>]+\.(?:m3u8|mp4)[^"'\s<>]*)""", RegexOption.IGNORE_CASE).find(decoded)?.value
                 if (m3u8 != null) {
+                    if (luluTlsProfile == 0) probeLuluTls(m3u8, "https://luluvdo.com/")
                     Log.d(tag, "emit (scan) ${m3u8.take(120)}")
                     callback(newExtractorLink(name, "LuluStream", m3u8, ExtractorLinkType.M3U8) {
                         this.referer = "https://luluvdo.com/"
