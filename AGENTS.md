@@ -2809,3 +2809,36 @@ once).
 
 - Pendiente (usuario): compilar (.\gradlew.bat :DoramasytProvider:make --console=plain -q), actualizar ileSize, instalar y abrir un episodio -> debe verse Botones encontrados: 8 + Link final (filemoon): https://bysekoze.com/e/... y yse sources=N.
 - **Pendiente de portar (opcional)**: solver ALTCHA de VOE (desde SoloLatino/Serieskao) para el server "voe", y MegaExtractor (proxy local + AES-CTR, desde RetrotveProvider) para el server "mega".
+#### ✅ VERIFICADO EN DISPOSITIVO (20 Oct 2026, v2, celular fisico)
+Logcat (You Are the Apple of My Eye EP1 y Acaramelados Latino EP1): Botones encontrados: 8 / 9 -> Link final (filemoon): https://bysekoze.com/e/gfxg3ku18yak/ -> [Byse] attest ok -> captcha difficulty=16 -> captcha ok -> decrypted len=542 -> **yse sources=1**; Link final (lulu): https://luluvdo.com/e/em52xe4f7zvb -> lulu GET len=16285 -> **lulu emit https://ismhvhamoflz.tnmr.org/hls2/03/03457/em52xe4f7zvb_h/master.m3u8?t=...**. Los demas servidores van a loadExtractor (CS3). Tambien funciono el slug con typo: 	winkling-watermelon -> el sitio dio er/winkling-watermelon-episodio-1 (URL real del caplist) y abrio bien. **"Enlaces no encontrados" RESUELTO.**
+
+#### 🐛 Fix mapping dsvplay (20 Oct 2026 v3)
+El v2 remapeaba dsvplay.com -> doodstream.com (por analogia con otros providers) y eso **rompia** el server: CS3 **ya tiene** los extractores Dsvplay (https://dsvplay.com) y Dhcplay (https://dhcplay.com) (verificado por bytecode del jar). Ademas doodstream.com/e/{id} responde **404** desde PC. **Fix**: quitar el remapeo (v3).
+
+**Cobertura real por servidor (extractores CS3 del jar verificados)**: mega.nz **no** hay extractor | filemoon.bysekoze.com -> **nuestro Byse** | voe.sx -> Voe/Voe1/Voe2 (probable 0 por el stub JS + ALTCHA) | luluvdo/luluvdoo -> **nuestro unpacker** (CS3 LuluStream no desempaqueta) | mixdrop.top / mxdrop.to -> MixDropTo/MxDropTo | dsvplay.com -> Dsvplay | streamtape.com -> StreamTape* | filemoon.sx -> FileMoonSx | dhcplay.com -> Dhcplay | mp4upload.com -> Mp4Upload (el sitio a veces da embed-undef.html, roto en origen) | savefiles / listeamed / do7go -> **sin extractor** (0 links).
+- Versiones a **3** (uild.gradle.kts + plugins.json; ileSize pendiente, sigue 20000). **No compilado por regla del repo.**
+- Pendiente (usuario): compilar (.\gradlew.bat :DoramasytProvider:make --console=plain -q), actualizar ileSize, instalar y comprobar que el server **doodstream** (dsvplay) ahora emite link.
+- Opcional a futuro: solver ALTCHA de VOE (desde SoloLatino) y MegaExtractor (desde RetrotveProvider) para cubrir oe y mega.
+---
+
+## RetrotveProvider - Fix MEGA: cambio de episodio rompe y deja el archivo corrupto (20 Oct 2026 v75)
+
+**Sintoma (usuario)**: en una serie con servidor MEGA, el **episodio 1 se reproducia bien**; al **cambiar a otro episodio** -> error, no reproducia y **el reproductor se cerraba** (sin enlace); y una vez cerrado, **volver a intentar el episodio 1 ya no reproducia** (quedaba roto de forma persistente).
+
+**Causa raiz (3 bugs en MegaExtractor.kt, todos de corrupcion/estado)**:
+1. **Escritura sin lock en el path principal**: en downloadChunkWithFreshUrl/downloadChunkFromShard el af.seek(sc.filePos) + af.write(dec) iban **fuera de synchronized(fileLock)** (solo el path UFA y el on-demand lo usaban). En Phase 4 los **hilos de shard escriben en el MISMO RandomAccessFile**: seek()+write() no son atomicos -> las escrituras se intercalan y el **MP4 queda corrupto** (ExoPlayer no lo parsea -> 2001). El ileLock era **por instancia de DiskStream**, asi que un resume no se sincronizaba con el downloader viejo.
+2. **af.setLength(start)** (truncado del archivo) en el camino de "chunk incompleto": **borra lo que escribieron otros hilos** en paralelo (el fix de v72 lo habia quitado solo del path cross-shard).
+3. **Sin validacion de integridad**: cleanup() meteia en cachedFiles cualquier archivo con downloadComplete && length >= fileSize -> un MP4 corrupto (por 1 y 2) queda **cacheado en disco para siempre** -> el episodio 1 "ya no reproducía" ni aunque se reinicie la app.
+
+**Fix v75 (MegaExtractor.kt)**:
+1. **Escrituras con lock compartido por archivo**: ileLocks (companion) indexado por ruta absoluta -> todas las instancias del mismo archivo (downloader, on-demand, UFA) comparten el lock; el path CDN ahora hace synchronized(stream.fileLock) { raf.seek(writePos); raf.write(dec) } con writePos creciente (seek+write atomicos).
+2. **Eliminado el setLength()** (no truncar en descargas paralelas).
+3. **alidateMp4File(file, expectedSize)**: comprueba tamano exacto + cabecera MP4 valida (typ/moov...). Si el archivo cacheado esta corrupto -> **se borra y se re-descarga** en vez de servir basura.
+4. **Retry de la API de MEGA** (getFileInfo): hasta **3 intentos** (1.5s/3s) + timeouts de la API 10s/20s. Antes un 509/429 transitorio -> 
+ull -> **sin enlace** -> el reproductor cerraba.
+5. **Registro de downloaders** (ctiveDownloaders): al cambiar de episodio, cleanup() marca ailed=true y **espera (join 3s)** a que el downloader viejo termine antes de escribir el bitmap/resumir -> no hay dos escritores sobre el mismo archivo.
+
+**Estado**: uild.gradle.kts 35 (desync) -> **75**; plugins.json RetroTVE 74 -> **75** (ileSize pendiente, sigue 101190). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
+
+- Pendiente (usuario): compilar (.\gradlew.bat :RetrotveProvider:make --console=plain -q), actualizar ileSize, instalar y probar la serie: cambiar de episodio y volver al 1. Logs a mirar (TAG MegaExtractor): Downloader anterior para <id> detenido, Archivo corrupto al cachear ... se borra, MEGA metadata fallo (intento N/3), y que NO aparezca MEGA metadata fallo permanente.
+- Si aun asi el episodio 2 no da enlace, pegar el logcat completo de MegaExtractor (con MEGA API[...] y Phase 1..4) para ver si es throttle 509 del CDN.- **Fix de compilacion (v75)**: ConcurrentHashMap.computeIfAbsent es **API 24+** (el min del plugin es 21) -> lint error. Reemplazado por getFileLock(path) con get + putIfAbsent (Map, API 1). Verificar en cualquier codigo nuevo: nada de computeIfAbsent/computeIfPresent/merge en plugins.

@@ -35,6 +35,8 @@ object MegaExtractor {
         (File(root, "mega_stream_cache")).also { if (!it.exists()) it.mkdirs() }
     }
     private val cachedFiles = ConcurrentHashMap<String, File>()
+    private val fileLocks = ConcurrentHashMap<String, Any>()
+    private val activeDownloaders = ConcurrentHashMap<String, Thread>()
 
     private fun cacheFile(fileId: String): File = File(cacheDir, "mega_$fileId.mp4")
 
@@ -65,11 +67,41 @@ object MegaExtractor {
         return Pair(aesKey, iv)
     }
 
+    private fun getFileLock(path: String): Any {
+        fileLocks[path]?.let { return it }
+        val lock = Any()
+        val prev = fileLocks.putIfAbsent(path, lock)
+        return prev ?: lock
+    }
+
     private fun isMp4Signature(bytes: ByteArray): Boolean {
         if (bytes.size < 8) return false
         val sig = String(bytes, 4, minOf(4, bytes.size - 4), Charsets.US_ASCII)
         val validSignatures = listOf("ftyp", "moov", "mdat", "free", "wide", "skip", "junk", "uuid", "pdat", "stbl", "mvhd", "trak", "mdia")
         return validSignatures.any { sig.startsWith(it) }
+    }
+
+    private fun validateMp4File(file: File, expectedSize: Long): Boolean {
+        return try {
+            if (!file.exists() || file.length() <= 0) return false
+            if (expectedSize > 0 && file.length() != expectedSize) {
+                Log.w(TAG, "validate: tamaño ${file.length()} != $expectedSize")
+                return false
+            }
+            val raf = RandomAccessFile(file, "r")
+            val head = ByteArray(16)
+            try {
+                raf.readFully(head)
+            } finally {
+                raf.close()
+            }
+            val ok = isMp4Signature(head)
+            if (!ok) Log.w(TAG, "validate: cabecera no MP4 valida en ${file.name}")
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "validate error: ${e.message}")
+            false
+        }
     }
 
     data class MegaFileInfo(val downloadUrl: String, val fileSize: Long, val fileName: String, val faHash: String?, val ufaUrl: String? = null)
@@ -79,7 +111,17 @@ object MegaExtractor {
             try {
                 val apiUrl = "https://g.api.mega.co.nz/cs?"
                 Log.d(TAG, "MEGA Step 1: get metadata for $fileId")
-                val step1 = megaApiPost(apiUrl, """[{"a":"g","ad":1,"p":"$fileId"}]""", 0) ?: return@withContext null
+                var step1: org.json.JSONObject? = null
+                for (attempt in 1..3) {
+                    step1 = megaApiPost(apiUrl, """[{"a":"g","ad":1,"p":"$fileId"}]""", 0)
+                    if (step1 != null && step1.optLong("s", 0L) > 0) break
+                    Log.w(TAG, "MEGA metadata fallo (intento $attempt/3), reintentando en ${attempt * 1500}ms")
+                    Thread.sleep(attempt * 1500L)
+                }
+                if (step1 == null || step1.optLong("s", 0L) <= 0) {
+                    Log.e(TAG, "MEGA metadata fallo permanente para $fileId (sin enlace)")
+                    return@withContext null
+                }
                 val fileSize = step1.optLong("s", 0L)
                 val encryptedAttrs = step1.optString("at", "")
                 val fa = step1.optString("fa", "")
@@ -112,7 +154,7 @@ object MegaExtractor {
     private fun megaApiPost(apiUrl: String, body: String, sessionId: Int = 0): org.json.JSONObject? {
         try {
             val conn = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"; doOutput = true; connectTimeout = 15000; readTimeout = 30000
+                requestMethod = "POST"; doOutput = true; connectTimeout = 10000; readTimeout = 20000
                 setRequestProperty("Content-Type", "text/plain;charset=UTF-8")
                 setRequestProperty("User-Agent", MEGA_UA)
                 setRequestProperty("Origin", "https://mega.nz")
@@ -156,7 +198,7 @@ object MegaExtractor {
         val writtenBytes = AtomicLong(0L)
         val downloadComplete = AtomicBoolean(false)
         val availableChunks = Collections.synchronizedSet(mutableSetOf<Int>())
-        val fileLock = Any() // synchronized lock for raf.seek+write in parallel threads
+        val fileLock: Any = MegaExtractor.getFileLock(tempFile.absolutePath)
         @Volatile var cdnUrl: String? = null
         @Volatile var failed = false
         @Volatile var errorMsg: String? = null
@@ -185,9 +227,6 @@ object MegaExtractor {
             return availableChunks.contains(ci) || downloadComplete.get()
         }
 
-        // Fetch a single chunk on-demand via the UFA full-file mirror URL.
-        // Called from the serve loop when ExoPlayer needs a chunk the background
-        // downloader hasn't reached yet (seek-ahead or stalled shard).
         fun fetchChunkOnDemand(ci: Int): Boolean {
             if (!ondemandFetching.add(ci)) {
                 // Another serve thread is already fetching this chunk
@@ -206,10 +245,7 @@ object MegaExtractor {
             return try {
                 val start = chunkStart(ci)
                 val end = chunkEnd(ci)
-
-                // Build sub-chunks from CDN URLs (same logic as downloadChunkWithFreshUrl,
-                // which is the server-verified path). UFA URL is a file-attribute URL that
-                // returns HTTP 400 for range requests — it is NOT a content mirror.
+                
                 data class SubChunk(val filePos: Long, val fileSize: Long, val cdnUrl: String, val relStart: Long, val relEnd: Long)
                 val subChunks = mutableListOf<SubChunk>()
                 val shards = shardOffsets
@@ -438,8 +474,13 @@ object MegaExtractor {
                 Log.e(TAG, "Background download error: ${e.message}")
                 stream.failed = true
                 stream.errorMsg = e.message
+            } finally {
+                activeDownloaders.remove(fileId)
             }
-        }.start()
+        }.also { thread ->
+            activeDownloaders[fileId] = thread
+            thread.start()
+        }
     }
 
     private fun downloadChunkWithFreshUrl(stream: DiskStream, raf: RandomAccessFile, ci: Int, aesKey: ByteArray, baseIv: ByteArray, fileId: String, faHash: String?) {
@@ -618,8 +659,8 @@ val code = conn.responseCode
                     cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(useAesKey, "AES"), IvParameterSpec(ivForSub))
 
                     var subWritten = 0L
+                    var writePos = sc.filePos
                     conn.inputStream.use { enc ->
-                        raf.seek(sc.filePos)
                         val buf = ByteArray(256 * 1024)
                         var firstEncBuf: java.io.ByteArrayOutputStream? = null
                         if (ci == 0 && si == 0) firstEncBuf = java.io.ByteArrayOutputStream()
@@ -630,7 +671,11 @@ val code = conn.responseCode
                                 if (eb.size() < 64 * 1024) eb.write(buf, 0, minOf(n, (64 * 1024 - eb.size())))
                             }
                             val dec = cipher.update(buf, 0, n) ?: continue
-                            raf.write(dec)
+                            synchronized(stream.fileLock) {
+                                raf.seek(writePos)
+                                raf.write(dec)
+                            }
+                            writePos += dec.size
                             if (firstBytes == null && dec.isNotEmpty()) {
                                 firstBytes = dec.copyOf(minOf(32, dec.size))
                             }
@@ -677,8 +722,7 @@ val code = conn.responseCode
                     } else if (totalWritten < expectedSize) {
                         Log.w(TAG, "Chunk $ci incomplete: got $totalWritten/$expectedSize bytes, retrying")
                         stream.writtenBytes.addAndGet(-totalWritten)
-                        raf.seek(start)
-                        raf.setLength(start)
+                        // No truncate: setLength() here destroys data written by parallel shard threads
                         // Fast-fail: very small response likely means wrong shard
                         if (totalWritten < 1024 && stream.cdnUrls.size > 1) {
                             retries++
@@ -1626,12 +1670,23 @@ val code = conn.responseCode
             Log.d(TAG, "Cleaning up proxy for $fileId (port ${result.port})")
             result.stream.failed = true
             try { result.serverSocket?.close() } catch (_: Exception) {}
+            activeDownloaders.remove(fileId)?.let { dl ->
+                try { dl.join(3000L) } catch (_: Exception) {}
+                Log.d(TAG, "Downloader anterior para $fileId detenido (alive=${dl.isAlive})")
+            }
             if (result.stream.fromCache) {
                 Log.d(TAG, "Stream served from cache, file kept: ${result.stream.tempFile.name}")
             } else if (result.stream.downloadComplete.get() && result.stream.tempFile.length() >= result.stream.fileSize) {
-                Log.d(TAG, "Completed download cached for $fileId: ${result.stream.tempFile.name} (${result.stream.tempFile.length() / 1024 / 1024}MB)")
-                cachedFiles[fileId] = result.stream.tempFile
-                evictCache(fileId)
+                if (validateMp4File(result.stream.tempFile, result.stream.fileSize)) {
+                    cachedFiles[fileId] = result.stream.tempFile
+                    evictCache(fileId)
+                    Log.d(TAG, "Completed download cached for $fileId: ${result.stream.tempFile.name} (${result.stream.tempFile.length() / 1024 / 1024}MB)")
+                } else {
+                    Log.w(TAG, "Archivo corrupto al cachear $fileId, se borra y se re-descarga")
+                    try { result.stream.tempFile.delete() } catch (_: Exception) {}
+                    val bad = progressFile(result.stream)
+                    if (bad.exists()) try { bad.delete() } catch (_: Exception) {}
+                }
             } else {
                 writeChunkBitmap(result.stream)
                 if (result.stream.tempFile.length() > 0) {
@@ -1763,12 +1818,20 @@ val code = conn.responseCode
 
                 val cached = cachedFiles[urlInfo.fileId]
                 if (cached != null && cached.exists() && cached.length() > 0) {
-                    Log.d(TAG, "Opening proxy from completed cache for ${urlInfo.fileId} (${cached.length() / 1024 / 1024}MB)")
-                    val cachedResult = startStreamProxy(cached.length(), ByteArray(16), ByteArray(16), urlInfo.fileId, null, null, null, cached)
-                        ?: return@withContext null
-                    val proxyResult = MegaProxyResult(cachedResult.url, cachedResult.port, cachedResult.stream, cachedResult.serverSocket)
-                    activeProxies[urlInfo.fileId] = proxyResult
-                    return@withContext proxyResult
+                    if (!validateMp4File(cached, 0L)) {
+                        Log.w(TAG, "Cache corrupto para ${urlInfo.fileId}, se borra y se re-descarga")
+                        val bad = cachedFiles.remove(urlInfo.fileId)
+                        try { bad?.delete() } catch (_: Exception) {}
+                        val badSidecar = File((bad?.absolutePath ?: cacheFile(urlInfo.fileId).absolutePath) + ".chunks")
+                        if (badSidecar.exists()) try { badSidecar.delete() } catch (_: Exception) {}
+                    } else {
+                        Log.d(TAG, "Opening proxy from completed cache for ${urlInfo.fileId} (${cached.length() / 1024 / 1024}MB)")
+                        val cachedResult = startStreamProxy(cached.length(), ByteArray(16), ByteArray(16), urlInfo.fileId, null, null, null, cached)
+                            ?: return@withContext null
+                        val proxyResult = MegaProxyResult(cachedResult.url, cachedResult.port, cachedResult.stream, cachedResult.serverSocket)
+                        activeProxies[urlInfo.fileId] = proxyResult
+                        return@withContext proxyResult
+                    }
                 } else if (cached != null) {
                     val stale = cachedFiles.remove(urlInfo.fileId)
                     try { stale?.delete() } catch (_: Exception) {}

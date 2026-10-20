@@ -391,7 +391,6 @@ class DoramasytProvider : MainAPI() {
             .replace("swdyu.com", "streamwish.to")
             .replace("mivalyo.com", "vidhidepro.com")
             .replace("filemoon.link", "filemoon.sx")
-            .replace("dsvplay.com", "doodstream.com")
 
         Log.d("Doramasyt", "Llamando extractor para: $fixedUrl")
         try {
