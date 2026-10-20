@@ -2735,7 +2735,7 @@ lulu -> sin interceptor (Cronet) perfil=-1
 - La pagina **embed** (`luluvdo.com/e/...`) NO se ve afectada por `Accept-Language` (200 con es-419 y en-US): la regla vive solo en el CDN de video.
 - La matriz de UA sigue vigente: **solo** el UA exacto `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36` pasa; Android/`wv`/149/Firefox/Edge/Safari/VLC/python -> 403. Sufijos y variantes del UA127 tambien fallan (`sin Safari`, `Chrome/127`, `+ Coffee`).
 - **Por que fallaban los caminos de la app**: Cronet (Chromium) y WebView inyectan `Accept-Language` del sistema -> 403; la sonda WebView de v30 ademas usaba el UA `; wv)` -> doble motivo.
-- **Por que fallaba el probe OkHttp (consumo real)**: `luluClient` es un `OkHttpClient.Builder()` limpio (sin interceptores, sin AL) y aun asi dio 403 en dispositivo con UA127 y sin AL -> el WAF discrimina ademas por **huella del stack** (TLS/HTTP de OkHttp/Conscrypt en Android); python/OpenSSL y curl/Schannel pasan desde PC con el mismo juego de cabeceras. No se puede cambiar el proveedor TLS de OkHttp en Android (Conscrypt), asi que la via real es un stack Chromium.
+- **FALSA PISTA (descartada en v31)**: parecia que el WAF discriminaba por **huella TLS** porque `luluClient` (OkHttp limpio, UA127, sin AL) tambien daba 403 en dispositivo. La causa real era el **token envenenado**: `tryLuluExtraction` pedia el embed con `Accept-Language` en `pageHeaders` -> el token nacia atado a esa cabecera -> 403 en todas las peticiones siguientes aunque el cliente ya no enviara AL. Verificado con OkHttp 4.12 + Conscrypt 2.5.2 en PC: 200, asi que TLS/Conscrypt nunca fue el problema.
 - **Espejos**: `luluvdo.com`, `lulustream.com`, `luluvdoo.com`, `/e/`, `/d/`, `/embed/`, `POST /dl` (`op=embed`) devuelven **el mismo CDN y la misma ruta** (`i2gcnsz23x2n.tnmr.org/hls2/.../master.m3u8`) -> no hay CDN alternativo que usar. `download`/`download2` no devuelven packer. `/v/` -> 404.
 - **Master (payload real, PC)**: `#EXTM3U` + `#EXT-X-MEDIA:TYPE=SUBTITLES` (es) + una sola variante 1920x1080 (BANDWIDTH 2501341). El payload del player trae `duration:"5310.96"` (~88 min) -> es el episodio completo.
 
@@ -2758,5 +2758,54 @@ lulu -> sin interceptor (Cronet) perfil=-1
 - Verificacion: `bal_check.py` -> BALANCE OK; `plugins.json` -> JSON valido, 72 entradas.
 - Versiones: `build.gradle.kts` 30 -> **31**; `plugins.json` PlusHD 30 -> **31** (`fileSize` pendiente, sigue 44712). **No compilado por regla del repo.**
 
-- Pendiente (usuario): compilar (`.\gradlew.bat :PlushdProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Goblin EP1 -> en logcat deberia verse `perfil TLS 1 -> 200` y `lulu req headers=...` (sin `Accept-Language`), y el video debe reproducir. Si no, pegar esas lineas.
-- Leccion general para el repo: cuando un CDN devuelve 403 fijo con `Server: nginx` y cuerpo de ~146 B, probar **presencia/ausencia de `Accept-Language`** tanto en la peticion de video como en la del embed que emite el token (el token puede estar firmado con esas cabeceras).
+#### ✅ VERIFICADO EN DISPOSITIVO (19 Oct 2026, celular fisico, v31 compilada por el usuario)
+Logcat de Goblin EP1: `GET .../e/wo70vtmvtau9 len=14166` -> `decoded len=5187` -> `perfil TLS 1 -> 200 server=nginx via=- proto=http/1.1` -> `perfil TLS elegido: 1` -> `emit .../wo70vtmvtau9_spa,.urlset/master.m3u8?t=...`; interceptor: `lulu req headers=Accept,Origin,referer,User-Agent` (**sin `Accept-Language`**) y `lulu perfil 1 -> 200` para master, variante `index-v1-a1.m3u8`, subtitulos y segmentos `seg-1..6-v1-a1.ts`. Sintoma resuelto (el usuario confirmo la reproduccion; VidHide hls3/hls4 del mismo episodio tambien OK). No se dispararon `[ip]`/`[Wv]` porque el perfil 1 paso a la primera.
+- **Pendiente menor**: actualizar `fileSize` de PlusHD en `plugins.json` (sigue 44712; el `.cs3` compilado cambio de tamano).
+- **`LuLu len=1124` = archivo BORRADO (verificado en PC, sin fix)**: `6z8x6d4kj5tg`, `4pmpp56xyoeu`, `qt81f6otsl4r` devuelven 200 con **757 B** y el texto `File is no longer available as it expired or has been deleted.` (mas el script de Cloudflare, que en el dispositivo redondea a 1124 B). No es un stub/redirect que se pueda seguir: la fuente esta muerta y caer a `loadExtractor` (0 links) es correcto. El episodio se salva por VidHide.
+- **Descartados**: SPA `upns.pro`/`rpmstream.live`/`strp2p.com` (siguen en `error 2001, saltando`) y `emturbovid.com` (0 links en dispositivo).
+- Leccion general para el repo: cuando un CDN devuelve 403 fijo con `Server: nginx` y cuerpo de ~146 B, probar **presencia/ausencia de `Accept-Language`** tanto en la peticion de video como en la del embed que emite el token (el token puede estar firmado con esas cabeceras). Y no confundir con TLS: si el embed lleva AL, todos los clientes nuevos heredan el 403.
+
+---
+
+## DoggitvProvider - Fix nombre del canal en load / favoritos (19 Oct 2026 v6)
+
+**Sintoma (usuario)**: al abrir un canal, el detalle muestra **"En Vivo"** en vez del nombre real del canal. Tras cerrar y reabrir la app, los canales guardados en **favoritos** tambien salen como "En Vivo" (hay que volver a abrir la lista del pais para que aparezca el nombre).
+
+**Causa raiz**: channelNames / channelLogos eran mapas **solo en memoria** (ConcurrentHashMap) que se llenan unicamente en parseM3U (al bajar la lista M3U de un pais). Al reabrir la app, CS3 llama load(urlDelStream) directamente (favoritos / continue watching) sin haber parseado ninguna lista -> channelNames[u] era 
+ull -> titulo "En Vivo" y poster de placeholder.
+
+**Fix v6 (DoggitvProvider.kt)**:
+1. **Cache en disco** ilesDir/doggitv_channels.tsv (formato url<TAB>nombreEnc<TAB>logoEnc, enc/dec con URLEncoder): persistChannels() escribe (merge) al terminar getMainPage (lista del pais completa) y search (solo los 80 resultados); loadDiskCache() lo lee una vez por sesion al arranque de un load() fallido.
+2. **esolveChannel(url)** en load(): memoria -> cache disco -> **escaneo de respaldo** (scanAllLists(): baja las 22 listas en paralelo con countries.amap {} = ParCollectionsKt.amap, verificado que corre en paralelo) y persiste el resultado. Con esto los favoritos **creados antes del fix** tambien recuperan el nombre (tarda ~5-15 s la primera vez).
+3. DoggitvProvider.pluginContext (setado en DoggitvPlugin.load con pplicationContext) -> acceso a ilesDir.
+4. El logo tambien sale del cache -> el poster del detalle sigue siendo el real tras reiniciar.
+
+**Estado**: uild.gradle.kts 5 -> **6**; plugins.json DoggiTV ersion: 6 (ileSize sigue 0, pendiente). al_check.py -> BALANCE OK en los 2 .kt. **No compilado por regla del repo.**
+
+- Pendiente (usuario): compilar (.\gradlew.bat :DoggitvProvider:make --console=plain -q), actualizar ileSize, instalar y abrir un canal -> el log debe traer load canal 'TUDN' -> ... (nombre real) en vez de load canal 'En Vivo'. Tras reiniciar la app, el favorito debe mostrar el nombre tambien.
+- Nota: el cache de disco se crea la primera vez que se abre un pais (o se hace una busqueda); el escaneo de respaldo cubre el resto.
+---
+
+## DoramasytProvider - Fix enlaces no encontrados (19 Oct 2026 v2)
+
+**Sintoma (usuario, logcat)**: Botones encontrados: 0 -> "enlaces no encontrados", aunque en la web hay varios enlaces.
+
+**Causa raiz (verificada en PC)**: el provider construye la URL del episodio a mano (.../ver/{slug}-episodio-{num}), pero **el indice del slug NO siempre coincide con el numero de episodio**. El propio sitio da la URL correcta en su AJAX:
+- POST /ajax/ajax_pagination/{id} -> {"paginate_url":".../ajax/caplist/{id}","perpage":50,"eps":[{"num":1}]} (sin URLs)
+- POST /ajax/caplist/{id} -> {"caps":[{"episodio":1,"url":"https://www.doramasyt.com/ver/you-are-the-apple-of-my-eye-episodio-0","thumb":"..."}]} (**con la URL real**)
+- Ejemplos medidos: you-are-the-apple-of-my-eye (1 eps) usa **-episodio-0**; la-luz-que-aun-nos-guia-latino (10 eps) usa -episodio-1..10. Con el patron viejo, el primero daba **404** -> pagina sin botones -> 0 links.
+
+**Fix v2 (DoramasytProvider.kt)**:
+1. load() ahora lee paginate_url del primer AJAX y hace el 2º POST a /ajax/caplist/{id} -> usa **cap.url** (URL real del sitio) para cada episodio; fallback al constructor viejo (uildEpisodeUrl) si ese endpoint falla. CapList + CapDetail ganan los campos paginate_url y url.
+2. **ByseExtractor.kt portado** (17 KB, autocontenido: Jackson + OkHttp propio + JCA) desde TudoramaProvider -> el server "filemoon" del sitio apunta a **ysekoze.com**, que **NO** esta en los extractores de CS3 (solo byse.sx / bysebuho / byseqekaho / bysevepoin / bysezejataos). Verificado en PC: POST https://bysekoze.com/api/videos/access/challenge -> 200 con el schema de Byse (challenge_id, 
+once).
+3. **LuLu**: port del desempaquetador Dean Edwards de PlushdProvider (unpackLuluPacked + 	ryLuluExtraction) para luluvdo.com, **sin Accept-Language** en el fetch del embed (causa raiz del 403 en tnmr, ver PlusHD v31) + getVideoInterceptor que fuerza User-Agent Chrome/127 y quita Accept-Language en hosts 	nmr/lulu.
+4. Labels por servidor (ilemoon - Byse, lulu - LuluStream) y dsvplay.com -> doodstream.com.
+5. loadLinks devuelve ound real (antes 	rue siempre) y usa cookies + response.cookies para /reproductor?video=.
+
+**Servidores del sitio (medidos, 8 por episodio)**: mega (mega.nz, sin extractor en CS3) | filemoon (ysekoze.com -> Byse) | voe (voe.sx, stub JS + ALTCHA -> CS3 puede dar 0) | lulu (luluvdo.com, empaquetado) | mxdrop (mixdrop.top, CS3 MixDropTo) | doodstream (dsvplay.com, CS3 no lo cubre) | streamtape (streamtape.com, CS3) | mp4upload (embed-undef.html -> el sitio mismo trae la URL rota).
+
+**Estado**: uild.gradle.kts 6 (bogno, copiado) -> **2**; plugins.json DoramasYT 1 -> **2** (ileSize sigue 20000, pendiente). al_check.py (reescrito: maneja raw strings """, templates ${} y comentarios) -> BALANCE OK en los 2 .kt. **No compilado por regla del repo.**
+
+- Pendiente (usuario): compilar (.\gradlew.bat :DoramasytProvider:make --console=plain -q), actualizar ileSize, instalar y abrir un episodio -> debe verse Botones encontrados: 8 + Link final (filemoon): https://bysekoze.com/e/... y yse sources=N.
+- **Pendiente de portar (opcional)**: solver ALTCHA de VOE (desde SoloLatino/Serieskao) para el server "voe", y MegaExtractor (proxy local + AES-CTR, desde RetrotveProvider) para el server "mega".
