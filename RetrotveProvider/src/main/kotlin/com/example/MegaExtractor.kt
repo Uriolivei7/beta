@@ -245,9 +245,17 @@ object MegaExtractor {
             return try {
                 val start = chunkStart(ci)
                 val end = chunkEnd(ci)
-                
+
                 data class SubChunk(val filePos: Long, val fileSize: Long, val cdnUrl: String, val relStart: Long, val relEnd: Long)
                 val subChunks = mutableListOf<SubChunk>()
+                if (shardOffsets.size <= 1 && cdnUrls.size > 1) {
+                    Log.d(TAG, "On-demand chunk $ci: esperando mapa de shards (${shardOffsets.size} listos)...")
+                    val mapDeadline = System.currentTimeMillis() + 20000L
+                    while (shardOffsets.size <= 1 && System.currentTimeMillis() < mapDeadline && !failed) {
+                        Thread.sleep(300L)
+                    }
+                    Log.d(TAG, "On-demand chunk $ci: mapa de shards = ${shardOffsets.size}")
+                }
                 val shards = shardOffsets
                 if (shards.size > 1) {
                     val sortedShards = shards.entries.sortedBy { it.value }
@@ -371,7 +379,10 @@ object MegaExtractor {
                         Thread {
                             try {
                                 probeResult = probeShardOffsets(stream.cdnUrls, aesKey, baseIv, stream.fileSize)
-                                Log.d(TAG, "Phase 2 probe complete: ${probeResult?.size} shards")
+                                if (probeResult != null && probeResult!!.isNotEmpty()) {
+                                    stream.shardOffsets = probeResult!!
+                                    Log.d(TAG, "Phase 2 probe complete: ${probeResult!!.size} shards (mapa publicado)")
+                                }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Phase 2 probe failed: ${e.message}")
                             }
@@ -1295,9 +1306,9 @@ val code = conn.responseCode
 
         val numUrls = cdnUrls.size
         val SHARD_SIZE = 66L * 1024 * 1024  // 66MB per CDN connection
-        val PROBE_START_SIZE = 1024L * 1024  // 1MB from start
-        val PROBE_END_SIZE = 1024L * 1024    // 1MB from end
-        Log.d(TAG, "Probing $numUrls CDN URLs (fileSize=${fileSize / 1024 / 1024}MB, probe=1MB×2 per URL)")
+        val PROBE_START_SIZE = 512L
+        val PROBE_END_SIZE = 512L
+                Log.d(TAG, "Probing $numUrls CDN URLs (fileSize=${fileSize / 1024 / 1024}MB, probe=512B x2 per URL)")
 
         // Quick test: no-range to detect mirrors vs shards
         try {
@@ -1625,7 +1636,10 @@ val code = conn.responseCode
                         }
                     }
 
-                    if (!stream.availableChunks.contains(ci)) break
+                    if (!stream.availableChunks.contains(ci)) {
+                        Log.w(TAG, "Serve abort: chunk $ci no disponible (pos=$pos, disponibles=${stream.availableChunks.size}/${stream.totalChunks()}, mapa=${stream.shardOffsets.size})")
+                        break
+                    }
 
                     raf.seek(pos)
                     val toRead = minOf(buf.size.toLong(), stream.chunkEnd(ci) - pos + 1, actualEnd - pos + 1).toInt()

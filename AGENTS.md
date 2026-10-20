@@ -2842,3 +2842,17 @@ ull -> **sin enlace** -> el reproductor cerraba.
 
 - Pendiente (usuario): compilar (.\gradlew.bat :RetrotveProvider:make --console=plain -q), actualizar ileSize, instalar y probar la serie: cambiar de episodio y volver al 1. Logs a mirar (TAG MegaExtractor): Downloader anterior para <id> detenido, Archivo corrupto al cachear ... se borra, MEGA metadata fallo (intento N/3), y que NO aparezca MEGA metadata fallo permanente.
 - Si aun asi el episodio 2 no da enlace, pegar el logcat completo de MegaExtractor (con MEGA API[...] y Phase 1..4) para ver si es throttle 509 del CDN.- **Fix de compilacion (v75)**: ConcurrentHashMap.computeIfAbsent es **API 24+** (el min del plugin es 21) -> lint error. Reemplazado por getFileLock(path) con get + putIfAbsent (Map, API 1). Verificar en cualquier codigo nuevo: nada de computeIfAbsent/computeIfPresent/merge en plugins.
+### 🔧 Fix timeout 2001: on-demand de chunk cross-shard sin mapa (20 Oct 2026 v76)
+**Sintoma (logcat del usuario, v75)**: el episodio 1 (Zt8m3LYQ) descarga bien, pero al cambiar al episodio 2 (44NxgQha) el player falla con ERROR_CODE_IO_NETWORK_CONNECTION_FAILED (2001). En el log:
+`
+Chunk 15 not ready after 5s, fetching on-demand from CDN (pos=66251780)
+On-demand CDN sub[0] chunk 16 incomplete: got 2772555/4194304      <-- x12 intentos, todos iguales
+`
+**Causa raiz**: el chunk 16 (bytes 67108864-71303167) **cruza la frontera de shard** (66MB). El on-demand calculaba los sub-chunks con stream.shardOffsets, pero **el mapa de shards todavia no existia** (el probe tardaba ~28s) -> usaba un solo CDN con el rango completo -> ese CDN solo tiene su shard (66MB) -> devolvia **2772555 B truncados** -> el fetch fallaba siempre. Cuando el mapa llegaba (12:21:33) el mismo fetch con 2 sub-chunks funcionaba (On-demand CDN chunk 16 OK: 4194304 bytes), pero ExoPlayer ya habia景德izado la conexion (reset a los ~18s).
+**Fix v76 (MegaExtractor.kt)**:
+1. **Probe 20x mas rapido**: PROBE_START_SIZE/PROBE_END_SIZE de **1MB -> 512B** (el scan solo usa los primeros 512B) -> el mapa de shards pasa de ~28s a ~2-3s.
+2. **El mapa se publica al instante**: el hilo del probe ahora hace stream.shardOffsets = probeResult (ya no espera al join) -> el on-demand lo ve de inmediato.
+3. **El on-demand espera el mapa**: si shardOffsets.size <= 1 y hay varios CDN, espera hasta 20s a que el probe termine antes de construir los sub-chunks (si no, el rango truncado falla siempre).
+4. Log de diagnostico en el serve: Serve abort: chunk N no disponible (pos=..., mapa=...).
+**Estado**: uild.gradle.kts 75 -> **76**; plugins.json RetroTVE 75 -> **76** (ileSize pendiente, sigue 101190). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
+- Pendiente (usuario): compilar (.\gradlew.bat :RetrotveProvider:make --console=plain -q), actualizar ileSize, instalar y cambiar de episodio. En el log debe verse Phase 2 probe complete: 6 shards (mapa publicado) **antes** de ~5s y On-demand CDN chunk 16 OK: 4194304 bytes (no incomplete).
