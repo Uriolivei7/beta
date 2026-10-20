@@ -2856,3 +2856,34 @@ On-demand CDN sub[0] chunk 16 incomplete: got 2772555/4194304      <-- x12 inten
 4. Log de diagnostico en el serve: Serve abort: chunk N no disponible (pos=..., mapa=...).
 **Estado**: uild.gradle.kts 75 -> **76**; plugins.json RetroTVE 75 -> **76** (ileSize pendiente, sigue 101190). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
 - Pendiente (usuario): compilar (.\gradlew.bat :RetrotveProvider:make --console=plain -q), actualizar ileSize, instalar y cambiar de episodio. En el log debe verse Phase 2 probe complete: 6 shards (mapa publicado) **antes** de ~5s y On-demand CDN chunk 16 OK: 4194304 bytes (no incomplete).
+### 🎯 CAUSA RAIZ REAL del 2001: los archivos MEGA de retrotve estan TRUNCADOS (20 Oct 2026 v77)
+**Sintoma (logcat del usuario, v76)**: el on-demand ya funciona (On-demand CDN chunk 98 OK: 4194304 bytes, mapa de shards = 6) pero el player sigue fallando con ERROR_CODE_IO_NETWORK_CONNECTION_FAILED (2001) y ExoPlayer pide offsets imposibles: ytes=3962471763-, ytes=453646114-, ytes=2465293655- (mayores que el archivo).
+
+**Investigacion desde PC (medida con la API de MEGA + descifrado AES-CTR real)**:
+- Cada URL de g (6) sirve una **ventana de ~76MB** (no 66MB): Content-Length = 76291842 / 76291840 (EP1) y 83837152 / 83837136 (EP2). La suma de ventanas (457MB) > archivo (381MB) -> las ventanas **se solapan** y una de las 6 URLs esta **sobrante** (el archivo son **5 partes** de 76291840 B: la suma cuadra EXACTO).
+- g[1] es la que tiene el **ftyp** (descifrado en 0 =  0000020 66747970 69736f6d); el probe lo confirma (Shard #1: MATCH at 0MB). El orden de la lista **NO** es el orden de las partes -> el mapa por eliminacion (66MB fijo) asignaba offsets equivocados -> **MP4 corrupto**.
+- **El dato clave**: el box 2 del archivo (el mdat) declara un tamaño **mayor que el archivo**:
+  | archivo | fileSize | mdat declarado | falta |
+  |---|---|---|---|
+  | Zt8m3LYQ (SBS 1x01) | 381.459.202 (364MB) | **3.962.471.731 (3779MB)** | 3.6GB |
+  | 44NxgQha (SBS 1x05) | 349.407.051 (333MB) | **2.465.293.623 (2351MB)** | 2GB |
+  | I10hCa6C (SBS 1x02) | 419.185.698 (400MB) | **453.646.082 (433MB)** | 33MB |
+  Y ExoPlayer pide **exactamente** mdat_size + 32 (3962471763 = 3962471731+32) -> busca el moov al final del mdat, que **no esta** (el archivo esta truncado = subida parcial).
+- Los atributos (t) se descifran bien (MEGA{"n":"SBS - 1x01 - Piloto.SeriesRetro.com.mp4"}) -> la clave y el descifrado **son correctos**.
+- **Conclusion**: los MEGA de retrotve son **subidas parciales**: tienen el typ + parte del mdat pero **sin moov** -> **ExoPlayer no puede parsearlos nunca** -> el 2001 es **del origen, no del plugin**.
+
+**Fix v77 (MegaExtractor.kt)**:
+1. detectTruncatedMega(): antes de emitir el enlace, lee 128 B de la cabeza, descifra, lee el tamano del box 2 y compara con ileSize; si typ + box2 > fileSize -> **no se emite el enlace** (log MEGA truncado: el archivo declara X B pero solo hay Y B (falta el moov)) -> el player ofrece los OTROS servidores del episodio en vez de un link que da 2001.
+2. El probe usa el **tamaño de ventana medido** (Content-Length del no-range) en vez del 66MB hardcodeado (shardSize).
+3. Orden del sondeo de la cabeza: indice 1 primero (historicamente el del ftyp), luego 0 y 2..n.
+
+**Limitacion pendiente**: para archivos MEGA **completos** el mapa de shards sigue siendo aproximado (la lista g no viene en orden de partes y las ventanas pueden diferir en 2 B). Solucion definitiva: deducir los offsets exactos por **continuidad del keystream CTR** entre partes (o pedir a MEGA el mapa). Pendiente si aparecen MEGA completos.
+**Estado**: uild.gradle.kts 76 -> **77**; plugins.json RetroTVE 76 -> **77** (ileSize pendiente, sigue 101190). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
+- Pendiente (usuario): compilar (.\gradlew.bat :RetrotveProvider:make --console=plain -q), actualizar ileSize, instalar y abrir un episodio con MEGA -> en el log debe verse MEGA truncado: el archivo declara ... pero solo hay ... y **no** debe aparecer el enlace MEGA (se Offeredcen los otros servidores).
+- Si un episodio tiene MEGA como unico servidor, dara "sin enlaces" -> es correcto (el archivo esta roto en origen).
+### 🔧 Detectar la cuota de MEGA (509) y no ofrecer el enlace (20 Oct 2026 v78)
+**Reporte (usuario)**: al reproducir el episodio, MEGA muestra *"Cuota de transferencia agotada - La reproducción de este video se ha interrumpido porque sobrepasarias la cuota de transferencia gratuita asignada a tu direccion IP. Amplia tu cuenta a Pro..."*.
+**Que es**: es el **limite de la cuenta free de MEGA por IP** (450 GB/mes). El mismo limite aplica a la API/CDN: las peticiones devuelven **HTTP 509 "Bandwidth Limit Exceeded"** (el codigo ya lo sabia: en downloadChunkWithFreshUrl hay backoff exponencial + fallback UFA, pero si la cuota esta agotada no se recupera). No es cosa del plugin ni de la web del sitio: es MEGA.
+**Fix v78 (MegaExtractor.kt)**: detectTruncatedMega() ahora devuelve el problema detectado ("truncado" / "quota" / null) y httpGetRange devuelve el codigo HTTP: si la cabeza responde **509** -> log MEGA 509: cuota de transferencia agotada para esta IP -> **no se emite el enlace** (se ofrecen los otros servidores del episodio) en vez de dejar un link que va a fallar con 2001/509.
+**Estado**: uild.gradle.kts 77 -> **78**; plugins.json RetroTVE 77 -> **78** (ileSize pendiente, sigue 101190). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
+- Nota: la cuota es **por IP** -> otra red (datos moviles/VPN) la evita, pero el archivo **sigue truncado** (sin moov), asi que ese servidor no reproduce en ningun caso.

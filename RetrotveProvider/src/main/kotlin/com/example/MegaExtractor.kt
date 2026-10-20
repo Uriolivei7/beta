@@ -1289,6 +1289,71 @@ val code = conn.responseCode
         }
     }
 
+    private fun httpGetRange(url: String, start: Long, end: Long): Pair<Int, ByteArray?> {
+        return try {
+            val conn = (URL("$url/$start-$end").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10000; readTimeout = 20000
+                setRequestProperty("User-Agent", MEGA_UA)
+                setRequestProperty("Origin", "https://mega.nz")
+                setRequestProperty("Referer", "https://mega.nz/")
+                instanceFollowRedirects = true
+            }
+            val code = conn.responseCode
+            if (code !in listOf(200, 206)) {
+                conn.disconnect()
+                return code to null
+            }
+            val data = conn.inputStream.readBytes()
+            conn.disconnect()
+            code to data
+        } catch (e: Exception) {
+            0 to null
+        }
+    }
+
+    private fun beInt(b: ByteArray, off: Int): Long {
+        if (off + 4 > b.size) return -1
+        return ((b[off].toLong() and 0xFF) shl 24) or ((b[off + 1].toLong() and 0xFF) shl 16) or
+                ((b[off + 2].toLong() and 0xFF) shl 8) or (b[off + 3].toLong() and 0xFF)
+    }
+
+    private fun detectTruncatedMega(fileId: String, fileSize: Long, keyBytes: ByteArray): String? {
+        return try {
+            val urls = getDownloadUrls(fileId)
+            if (urls.isEmpty()) return null
+            val (aesKey, baseIv) = deriveKeyAndIv(keyBytes)
+            val order = (listOf(1, 0) + (2 until urls.size).toList()).filter { it in urls.indices }
+            for (idx in order) {
+                val u = urls[idx]
+                val (code, raw) = httpGetRange(u, 0, 127)
+                if (code == 509) {
+                    Log.w(TAG, "MEGA 509: cuota de transferencia agotada para esta IP (no se emite el enlace)")
+                    return "quota"
+                }
+                if (raw == null || raw.size < 16) continue
+                val head = tryDecryptAtOffset(aesKey, baseIv, 0, raw) ?: continue
+                if (head.size < 16) continue
+                val ftypSize = beInt(head, 0)
+                if (ftypSize <= 0 || ftypSize > 4096) continue
+                if (head[4] != 'f'.code.toByte() || head[5] != 't'.code.toByte() ||
+                    head[6] != 'y'.code.toByte() || head[7] != 'p'.code.toByte()
+                ) continue
+                val box2 = beInt(head, ftypSize.toInt())
+                if (box2 <= 0) continue
+                Log.d(TAG, "MEGA head: ftyp=$ftypSize nextBox=$box2 fileSize=$fileSize")
+                if (ftypSize + box2 > fileSize) {
+                    Log.w(TAG, "MEGA truncado: el archivo declara ${ftypSize + box2} B pero solo hay $fileSize B (falta el moov)")
+                    return "truncado"
+                }
+                return null
+            }
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "detectTruncatedMega fallo: ${e.message}")
+            null
+        }
+    }
+
     /**
      * For msd:1 files with multiple CDN URLs, probe each URL to find which byte range (shard) it serves.
      * v60 strategy:
@@ -1305,11 +1370,12 @@ val code = conn.responseCode
         if (cdnUrls.size <= 1) return result
 
         val numUrls = cdnUrls.size
-        val SHARD_SIZE = 66L * 1024 * 1024  // 66MB per CDN connection
+        val SHARD_SIZE = 66L * 1024 * 1024  // fallback si no se puede medir la ventana
         val PROBE_START_SIZE = 512L
         val PROBE_END_SIZE = 512L
                 Log.d(TAG, "Probing $numUrls CDN URLs (fileSize=${fileSize / 1024 / 1024}MB, probe=512B x2 per URL)")
 
+        var measuredWindowSize = 0L
         // Quick test: no-range to detect mirrors vs shards
         try {
             val testUrl = cdnUrls.first()
@@ -1324,6 +1390,9 @@ val code = conn.responseCode
             val contentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L
             Log.d(TAG, "No-range test: HTTP $code, Content-Length=$contentLength (${contentLength / 1024 / 1024}MB)")
             conn.disconnect()
+            if (code in 200..299 && contentLength in 1 until fileSize) {
+                measuredWindowSize = contentLength
+            }
 
             if (code == 200 && contentLength >= fileSize - 1024) {
                 Log.d(TAG, "URLs are MIRRORS (full file). Single URL mode.")
@@ -1340,13 +1409,14 @@ val code = conn.responseCode
         }
 
         // Candidate shard offsets
+        val shardSize = if (measuredWindowSize > 0 && measuredWindowSize < fileSize) measuredWindowSize else SHARD_SIZE
         val candidateOffsets = mutableListOf<Long>()
         var off = 0L
         while (off < fileSize) {
             candidateOffsets.add(off)
-            off += SHARD_SIZE
+            off += shardSize
         }
-        Log.d(TAG, "Candidate offsets: ${candidateOffsets.map { "${it / 1024 / 1024}MB" }}")
+        Log.d(TAG, "Candidate offsets: ${candidateOffsets.map { "${it / 1024 / 1024}MB" }} (shard=${shardSize / 1024 / 1024}MB)")
 
         // Phase 1: Download 1MB from start of each URL — fast (6×1MB = 6MB total)
         data class ProbeResult(val url: String, val foundOffset: Long, val boxName: String)
@@ -1871,6 +1941,17 @@ val code = conn.responseCode
                 Log.d(TAG, "keyHex=${aesKey.joinToString("") { "%02x".format(it) }}")
                 Log.d(TAG, "ivHex=${iv.joinToString("") { "%02x".format(it) }}")
                 Log.d(TAG, "keyBytesLen=${keyBytes.size}, keyBytesHex=${keyBytes.take(32).joinToString("") { "%02x".format(it) }}")
+
+                when (detectTruncatedMega(urlInfo.fileId, fileInfo.fileSize, keyBytes)) {
+                    "truncado" -> {
+                        Log.e(TAG, "MEGA ${urlInfo.fileId} esta truncado (subida parcial): no se emite el enlace")
+                        return@withContext null
+                    }
+                    "quota" -> {
+                        Log.e(TAG, "MEGA ${urlInfo.fileId} bloqueado por cuota de transferencia (509): no se emite el enlace")
+                        return@withContext null
+                    }
+                }
 
                 val result = startStreamProxy(
                     fileInfo.fileSize, aesKey, iv, urlInfo.fileId, fileInfo.faHash, keyBytes, fileInfo.ufaUrl,
