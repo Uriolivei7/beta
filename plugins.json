@@ -1356,5 +1356,24 @@
    "iconUrl": "https://avatars.githubusercontent.com/u/70979529?v=4",
    "language": "un",
    "fileSize": 0
+  },
+  {
+   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/PelismasterProvider.cs3",
+   "status": 1,
+   "version": 1,
+   "apiVersion": 1,
+   "name": "PelisMaster",
+   "internalName": "PelismasterProvider",
+   "authors": [
+    "Ranita"
+   ],
+   "description": "https://pelismaster.com/",
+   "tvTypes": [
+    "Movie",
+    "TvSeries"
+   ],
+   "iconUrl": "https://pelismaster.com/content/uploads/2026/10/869742a7c4689a33-32.png",
+   "language": "mx",
+   "fileSize": 0
   }
-]
+ ]
