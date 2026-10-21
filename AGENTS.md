@@ -2928,3 +2928,33 @@ Sitio: pelismaster.com (CMS **MovieMaster / MoneyPlayer**, API en pi-encrypted.
 - Pendiente (usuario): compilar (.\gradlew.bat :PelismasterProvider:make --console=plain -q), actualizar ileSize, instalar y probar home/busqueda/detalle/links. Logs: db logcat -s PelisMaster:V (TAG PelisMaster), buscar servidores -> N y link: Servidor 1 [LAT] (hls, P720).
 - **Riesgo principal**: hay Cloudflare delante (server: cloudflare) pero **no bloqueo nada desde PC**; si el movil recibe challenge, habria que anadir UA de navegador/cookies (aun no se mitido en movil).
 - Los servidores mode=proxy y algunos directo devuelven **502** (muertos) -> se filtran con el chequeo del master.
+---
+
+## KatanimeProvider - Fix load() tras rediseño del sitio (20 Oct 2026 v2)
+
+**Sintoma (usuario)**: "el load no me carga como debería, creo que la estructura cambió en la web".
+
+**Causa raiz (verificada en PC)**: la pagina de anime fue **rediseñada**. Los selectores viejos devolvian null/vacio:
+| Antes (roto) | Ahora | Estado |
+|---|---|---|
+| h1.comics-title | h1.anime-title | **cambiado** |
+| div#animeinfo img | img[data-src*='/original/'] (el src es un GIF placeholder) | **eliminado** |
+| span#estado | span.badge.badge-status (+ div.detail-item "Estado") | **eliminado** |
+| div.details-by (año) | div.anime-meta (<span class="meta-text">Otoño 2026</span>) y div.detail-item | **eliminado** |
+| div.anime-genres a | div.genres-anime a.genre-tag | **eliminado** |
+| #sinopsis p | p.anime-synopsis | **eliminado** |
+| div._pagination (data-url) | div.episodes-grid._pagination (misma data-url) | **ok** (mas especifico) |
+| API de episodios | POST {data-url} + _token + cookies -> {"ep":{current_page,data,total,last_page..},"last":{numero}} | **ok** (misma forma) |
+
+Lo que **NO** cambio y sigue funcionando (verificado end-to-end desde PC): el flow de loadLinks (ul.ul-drop li a[data-player] -> /reproductor?url= -> ar e='...' -> descifrado AES-CBC con MD5/salt) -> devuelve mega.nz, voe.sx, sfastwish.com, bysetayico.com... con los 10 servers (Mega, StreamW, VOE, FileMoon, Mp4Upload, Streamtape, LuluStream, Hexupload, Doodstream, Mediafire).
+
+**Fix v2 (KatanimeProvider.kt)**:
+1. load() con los selectores nuevos + **fallback a los viejos** (h1.comics-title, div#animeinfo img, span#estado, div.anime-genres a, #sinopsis p) para no romper si vuelven a cambiar.
+2. Año desde div.anime-meta (con fallback a los div.detail-item).
+3. piUrl con selector mas especifico div.episodes-grid._pagination (fallback div._pagination).
+4. **Parseo de tarjetas robusto**: helper parseCards(doc) que saca el **titulo del lt del <img>** (atributo estable) en vez de la clase hasheada ._2uHIS, y el link de ._1A2Dc con fallback [href*='/anime/']. Asi el home/search sobreviven a un rebuild de Tailwind (las clases _135yj/_1A2Dc/_2uHIS son hasheadas y cambian).
+5. uild.gradle.kts 21 (desync) -> **2**; plugins.json Katanime 1 -> **2** (ileSize pendiente). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
+
+- Verificado desde PC: 	itle, poster, status (Finalizado / En emision), year, genres, plot y la lista de episodios (**One Piece: total=1179, 48 paginas de 25**) extraen bien con los selectores nuevos.
+- Pendiente (usuario): compilar (.\gradlew.bat :KatanimeProvider:make --console=plain -q), actualizar ileSize, instalar y abrir un anime -> debe verse titulo + poster + sinopsis + episodios.
+- **Aviso**: el sitio usa clases hasheadas (Tailwind) -> en el proximo rebuild los selectores div._135yj pueden cambiar. Por eso el parseo usa lt/href/itemprop cuando se puede.
