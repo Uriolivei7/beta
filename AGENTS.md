@@ -2887,3 +2887,44 @@ On-demand CDN sub[0] chunk 16 incomplete: got 2772555/4194304      <-- x12 inten
 **Fix v78 (MegaExtractor.kt)**: detectTruncatedMega() ahora devuelve el problema detectado ("truncado" / "quota" / null) y httpGetRange devuelve el codigo HTTP: si la cabeza responde **509** -> log MEGA 509: cuota de transferencia agotada para esta IP -> **no se emite el enlace** (se ofrecen los otros servidores del episodio) en vez de dejar un link que va a fallar con 2001/509.
 **Estado**: uild.gradle.kts 77 -> **78**; plugins.json RetroTVE 77 -> **78** (ileSize pendiente, sigue 101190). al_check.py -> BALANCE OK. **No compilado por regla del repo.**
 - Nota: la cuota es **por IP** -> otra red (datos moviles/VPN) la evita, pero el archivo **sigue truncado** (sin moov), asi que ese servidor no reproduce en ningun caso.
+---
+
+## PelismasterProvider - Plugin nuevo (20 Oct 2026 v1)
+
+Sitio: pelismaster.com (CMS **MovieMaster / MoneyPlayer**, API en pi-encrypted.moviemaster.lat). Peliculas y series en Latino/Castellano/Subtitulado.
+
+### Estructura verificada (PC, sin captcha)
+| | |
+|---|---|
+| Home | / · /movies · /series (24 items/vista, **sin paginacion**) · /page/N |
+| Orden | /movies?sort=trending|popular|release|rating (funciona) |
+| Busqueda | /search?q=batman&page=2 (**si pagina**) |
+| Pelicula | /movie/{slug} |
+| Serie | /series/{slug} + /series/{slug}/season/{n}/episode/{m} |
+| Tarjetas | <a class="cd" href="..."><img src=póster><span class="cd-t">titulo</span><span class="cd-m">% año dur</span></a> |
+| Episodios | <ol class="eps"><li><a class="ep" href="..."><span class="ep-n">1</span><span class="ep-img"><img póster><span class="ep-d">23 min</span><span class="ep-h"><span class="ep-t">1. Episodio 1</span> |
+| Metadata | og:title ("Ver X Online Gratis en Español Latino HD - PelisMaster"), og:image, og:description, p.meta a[href*='/year/'] (año) |
+
+### Flujo del player (3 llamadas, verificado end-to-end)
+1. La pagina del episodio/pelicula trae el iframe **HTML-escapeado** en data-embed:
+   data-pass="/api/player-pass?t={movie|tv}:{tmdbId}:{hash}" + src="https://api-encrypted.moviemaster.lat/embed/{movie|tv}/{tmdb}[/{s}/{e}]?lang=LAT".
+   Ojo: hay que **des-escapar** (&quot; &lt; &gt; &amp; &#039;) antes de leer los atributos.
+2. GET /api/player-pass?t=... (mismo origen, X-Requested-With: XMLHttpRequest) -> {"ok":true,"pass":"v1.<payload_b64>.<hmac>","ttl":600} (pass firmado, 10 min, atado al titulo; payload = {d:dominio,x:exp,e:exp,n:nonce,t:tipo:id}).
+3. GET https://api-encrypted.moviemaster.lat/servers?tmdb=..&type=..[&season=..&episode=..]&pass=.. -> {"meta":{..},"servers":[{id,k,site,src,name,lang,mode,type:"hls",video}]}.
+   Medido: pelicula 8 servidores (3 LAT / 5 SUB), episodio 21-24 (**16 LAT**, 3 SUB, 2 ESP). mode = directo | proxy.
+4. GET {video} (ya trae &noiframe=1) -> **m3u8 master** (200, pplication/vnd.apple.mpegurl) con variantes y segmentos en pi-encrypted.moviemaster.lat/s/....
+   **Los segmentos responden 200 SIN Referer y con CUALQUIER UA (probado con ExoPlayerLib) -> no hace falta interceptor.**
+
+### Implementacion (v1, sin compilar por regla del repo)
+- PelismasterProvider/build.gradle.kts (v1, language = "mx", tvTypes Movie + TvSeries), AndroidManifest.xml, PelismasterPlugin.kt, PelismasterProvider.kt.
+- getMainPage: 6 filas (/movies, /series, trending, populares, estrenos, mejor valoradas) -> parseCards (.cd).
+- search: /search?q=&page= en 3 paginas en paralelo (map), dedupe por url.
+- load: /movie/ -> MovieLoadResponse; /series/ -> TvSeriesLoadResponse con **una peticion por temporada** ([href*='/season/']) y episodios de .ep (	his.season + 	his.episode + poster + duracion); /episode/ -> MovieLoadResponse (se reproduce directo).
+- loadLinks: des-escape data-embed -> pass -> servers -> por cada servidor pide el master para detectar la calidad y **descarta los caidos (502)**, ordena LAT > ESP > SUB y directo antes que proxy, y emite hasta 12 links Servidor N [LAT].
+- Si /servers responde 401/403 se **renueva el pass** (&renew=1) y se reintenta (igual que el JS del sitio).
+- plugins.json: entrada PelisMaster/PelismasterProvider v1 (ileSize 0 pendiente; 73 entradas).
+
+**Estado**: al_check.py -> BALANCE OK. **No compilado por regla del repo.**
+- Pendiente (usuario): compilar (.\gradlew.bat :PelismasterProvider:make --console=plain -q), actualizar ileSize, instalar y probar home/busqueda/detalle/links. Logs: db logcat -s PelisMaster:V (TAG PelisMaster), buscar servidores -> N y link: Servidor 1 [LAT] (hls, P720).
+- **Riesgo principal**: hay Cloudflare delante (server: cloudflare) pero **no bloqueo nada desde PC**; si el movil recibe challenge, habria que anadir UA de navegador/cookies (aun no se mitido en movil).
+- Los servidores mode=proxy y algunos directo devuelven **502** (muertos) -> se filtran con el chequeo del master.
