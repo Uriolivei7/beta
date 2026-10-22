@@ -3010,3 +3010,22 @@ Lo que **NO** cambio y sigue funcionando (verificado end-to-end desde PC): el fl
 
 - Nota: el sitio esta **muy saturado** (REST 9-41s, AJAX 8-44s, HTML 1.5-7s). Si el search sigue tardando, es el servidor.
 - Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar y buscar "universal" -> debe salir `Studio Universal ...` (log `rest search -> N items`).
+
+
+#### 🐛 Fix mojibake en los nombres de los links + posters del search (22 Oct 2026 v6)
+**Sintoma (usuario, log v5)**: (1) "no me salen los posters en los resultados del search"; (2) "los nombres de los enlaces me salen raros" -> el log mostraba `M3U8 from base64 (opciÃƒÂ³n 3)`.
+
+**Causa raiz (1) - los nombres raros**: el source tenia **mojibake** (doble codificacion UTF-8 -> cp1252 -> UTF-8) en los literales: `"En Vivo - OpciÃƒÂ³n ${idx + 1}"`, `"PerÃƒÂº"`, `"MÃƒÂ©xico"`, `"EspaÃƒÂ±a"`. **Era preexistente en git** (commit "teleonline timeout"), no de esta sesion. El fix correcto es 역 (revertir 2 niveles de cp1252->utf8); un regex ingenuo que captura solo 2 caracteres **parte** la secuencia y la deja peor, asi que se aplico un mapa explicito de secuencias -> `ó` (o), `ú` (u), `é` (e), `í` (i), `ñ` (n), `¡` (!), y `->` en el log del interceptor.
+**Nota**: el resto del repo tambien tiene mojibake preexistente (`DanimadosExtractors.kt` "Espa??ol" en los subtitulos, `TudoramaProvider.kt`, `TwitchProvider/Lang.kt`, `YoutubeProvider/Lang.kt`, `AnimeioProvider.kt`) -> pendientes de arreglar aparte.
+
+**Causa raiz (2) - sin posters**: el endpoint compacto `/wp-json/wp/v2/search` no trae media, y la cache local de secciones solo conoce los canales ya descargados (el search corria antes que el home).
+
+**Fix v6 (`TeleonlineProvider.kt`)**:
+1. El search usa **`/wp-json/wp/v2/posts?search={q}&per_page=30&_fields=id,featured_media,link,title`** (1.9s medidos) -> trae `featured_media`.
+2. Los posters se piden con **`/wp-json/wp/v2/media/{id}?_fields=source_url`** para los 15 primeros, **en paralelo** (`amap`) -> +1.5s.
+3. `cleanHtml()` limpia el titulo (viene como HTML renderizado: entities y tags).
+4. Se mantienen el fallback local y `posterForUrl` (cache de secciones) por si el REST falla.
+5. `build.gradle.kts` 5 -> **6**; `plugins.json` Teleonline 5 -> **6** (`fileSize` pendiente). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+
+- **Regla para el futuro**: al editar `.kt` desde PowerShell 5.1 NO usar `Set-Content -Encoding UTF8` / `Out-File` (decodifican con el ANSI del sistema y producen mojibake). Usar la herramienta de edicion, o escribir con python `io.open(..., encoding="utf-8", newline="")`. Verificar despues con un escaneo de caracteres no-ASCII.
+- Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar -> el search debe salir con poster y los links deben llamarse "En Vivo - Opcion N" (con la tilde correcta).
