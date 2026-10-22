@@ -93,18 +93,18 @@ class TeleonlineProvider : MainAPI() {
         "España" to "/canales/espana/",
     )
 
-    private suspend fun fetchSectionPage(name: String, path: String, page: Int): List<ChannelInfo> {
+private suspend fun fetchSectionPage(name: String, path: String, page: Int, timeoutSec: Long = 15L, attempts: Int = 2): List<ChannelInfo> {
         val key = "$name|$page"
         sectionCache[key]?.let { return it }
         val url = if (page == 1) "$mainUrl$path" else "$mainUrl${path}page/$page/"
-        val html = safeGet(url) ?: return emptyList()
+        val html = safeGet(url, timeoutSec, attempts) ?: return emptyList()
         val list = extractChannels(html)
         sectionCache[key] = list
         return list
     }
 
-    private suspend fun loadAllSections(page: Int): Map<String, List<ChannelInfo>> {
-        val results = sections.map { (name, path) -> name to fetchSectionPage(name, path, page) }.amap { it }
+    private suspend fun loadAllSections(page: Int, timeoutSec: Long = 15L, attempts: Int = 2): Map<String, List<ChannelInfo>> {
+        val results = sections.map { (name, path) -> name to fetchSectionPage(name, path, page, timeoutSec, attempts) }.amap { it }
         val map = LinkedHashMap<String, List<ChannelInfo>>()
         for ((name, list) in results) map[name] = list
         return map
@@ -117,7 +117,7 @@ class TeleonlineProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val sectionsOut = mutableListOf<HomePageList>()
 
-        val all = loadAllSections(1)
+        val all = loadAllSections(1, 15L, 2)
         for ((name, channels) in all) {
             var clean = channels.filter { it.url.isNotBlank() && !it.url.contains("\${") }
                 .distinctBy { it.url }
@@ -134,55 +134,58 @@ class TeleonlineProvider : MainAPI() {
         return newHomePageResponse(sectionsOut, hasNext = false)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+override suspend fun search(query: String): List<SearchResponse> {
         val q = query.trim()
         if (q.isBlank()) return emptyList()
-        return coroutineScope {
-            val restJob = async { fetchRestSearch(q) }
-            val localJob = async { localSearchResults(q) }
-            val out = ArrayList<SearchResponse>()
-            val seen = HashSet<String>()
-
-            for (post in restJob.await()) {
-                val titleObj = post.optJSONObject("title")
-                val title = cleanHtml(
-                    if (titleObj != null) titleObj.optString("rendered", "") else post.optString("title", "")
-                )
-                val url = post.optString("link", "").trim()
-                if (title.isBlank() || url.isBlank()) continue
-                if (!seen.add(url)) continue
-                val poster = post.optString("poster", "")
-                out.add(newLiveSearchResponse(title, url, TvType.Live) {
-                    this.posterUrl = poster.takeIf { p -> p.isNotBlank() } ?: posterForUrl(url)
-                })
-                if (out.size >= 40) break
-            }
-
-            for (ch in localJob.await()) {
+        
+        val restItems = fetchRestSearch(q)
+        val out = ArrayList<SearchResponse>()
+        val seen = HashSet<String>()
+        
+        // First, use REST results
+        for (post in restItems) {
+            val titleObj = post.optJSONObject("title")
+            val title = cleanHtml(
+                if (titleObj != null) titleObj.optString("rendered", "") else post.optString("title", "")
+            )
+            val url = post.optString("link", "").trim()
+            if (title.isBlank() || url.isBlank()) continue
+            if (!seen.add(url)) continue
+            val poster = post.optString("poster", "")
+            out.add(newLiveSearchResponse(title, url, TvType.Live) {
+                this.posterUrl = poster.takeIf { p -> p.isNotBlank() } ?: posterForUrl(url)
+            })
+            if (out.size >= 40) break
+        }
+        
+        // Only use local search as fallback if REST didn't give enough results
+        if (out.size < 5) {
+            val localItems = withTimeoutOrNull(15000L) { localSearchResults(q) } ?: emptyList()
+            for (ch in localItems) {
                 if (out.size >= 40) break
                 if (!seen.add(ch.url)) continue
                 out.add(ch.toSearchResponse())
             }
-            Log.d("Teleonline", "search '$q' -> ${out.size}")
-            out
         }
+        
+        Log.d("Teleonline", "search '$q' -> ${out.size}")
+        return out
     }
 
-    private suspend fun localSearchResults(q: String): List<ChannelInfo> {
+private suspend fun localSearchResults(q: String): List<ChannelInfo> {
         val qn = fold(q)
         val out = mutableListOf<ChannelInfo>()
         val seen = HashSet<String>()
-        for (ronda in 1..2) {
-            val all = loadAllSections(ronda)
-            for ((_, channels) in all) {
-                for (ch in channels) {
-                    if (ch.url.isBlank() || ch.url.contains("\${")) continue
-                    if (!fold(ch.name).contains(qn)) continue
-                    if (!seen.add(ch.url)) continue
-                    out.add(ch)
-                }
+        
+        // Single round with shorter timeouts for speed
+        val all = loadAllSections(1, 8L, 1)
+        for ((_, channels) in all) {
+            for (ch in channels) {
+                if (ch.url.isBlank() || ch.url.contains("\${")) continue
+                if (!fold(ch.name).contains(qn)) continue
+                if (!seen.add(ch.url)) continue
+                out.add(ch)
             }
-            if (out.size >= 20) break
         }
         return out
     }

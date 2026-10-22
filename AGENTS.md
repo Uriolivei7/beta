@@ -3094,3 +3094,20 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 **Mitigacion aplicada (v9)**: `emitAlive()` **prueba** cada m3u8 desde el propio dispositivo y descarta los que no responden -> en el WSA no aparezcan los links muertos (403 / no conecta) -> no se cuelga al elegirlos. Si el dispositivo no llega a ninguno, el search/play se queda sin enlaces (correcto, no es un crash).
 **Test valido**: **cs3d (Windows)** reproduce (el server responde al instante desde Windows) o movil fisico **con VPN**.
 - El error pegado por el usuario (`TransactionTooLargeException: data parcel size 1054620 bytes` en `com.microsoft.windows.systemapp`) es la **redireccion de portapapeles de WSA** (Windows -> Android, 1MB > limite de Binder) -> es del emulador, no de la app.
+
+
+#### 🎯 Diagnostico del "se me sale la app" en WSA: es ANR, no crash (22 Oct 2026)
+**Sintoma (usuario, WSA)**: "al momento de iniciar la reproduccion se me sale la app".
+**Como se diagnostico (WSA con adb)**: `adb connect 127.0.0.1:<puerto>` (el puerto lo muestra WSA -> Settings -> Advanced -> Developer options -> ADB debugging).
+- `adb logcat -b crash -d` -> **sin FATAL EXCEPTION de `com.lagradost.cloudstream3.prerelease`** (el unico crash es de `com.android.vending`/Play Store, sin relacion).
+- `adb logcat -d | findstr "has died lmkd Killing ANR"` ->
+  ```
+  ActivityManager:   0% 21/lmkd: 0% user + 0% kernel          <- ANR
+  ActivityManager: Killing 1217:com.lagradost.cloudstream3.prerelease/u0a87 (adj 0): user request after error
+  ActivityManager: Killing 3584:com.lagradost.cloudstream3.prerelease/u0a87 (adj 0): user request after error
+  ```
+  -> **la app se CUELGA (ANR) y el sistema la mata**. No es un crash de Java del plugin.
+**Causa raiz**: los streams de Teleonline son **http a IP:puerto alto** (`http://38.134.250.110:8000/...`, `http://138.121.15.230:9002/...`) -> el NAT del WSA no los enruta (ya estaba documentado para el movil fisico: "Opcion 3 cuelga en el telefono pero responde al instante desde PC -> middlebox de puerto 80"). El player espera ese stream -> ANR -> el sistema mata la app.
+**Mitigacion aplicada (v9)**: `emitAlive()` **prueba** cada m3u8 desde el propio dispositivo y descarta los que no responden -> en el WSA no aparezcan los links muertos (403 / no conecta) -> no se cuelga al elegirlos. Si el dispositivo no llega a ninguno, el search/play se queda sin enlaces (correcto, no es un crash).
+**Test valido**: **cs3d (Windows)** reproduce (el server responde al instante desde Windows) o movil fisico **con VPN**.
+- El error pegado por el usuario (`TransactionTooLargeException: data parcel size 1054620 bytes` en `com.microsoft.windows.systemapp`) es la **redireccion de portapapeles de WSA** (Windows -> Android, 1MB > limite de Binder) -> es del emulador, no de la app.
