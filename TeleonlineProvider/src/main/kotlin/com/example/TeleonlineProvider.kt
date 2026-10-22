@@ -6,12 +6,12 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 class TeleonlineProvider : MainAPI() {
@@ -61,18 +61,6 @@ class TeleonlineProvider : MainAPI() {
         return channels
     }
 
-    private suspend fun fetchSection(name: String, path: String, pages: Int = 1): List<ChannelInfo> {
-        val urls = (1..pages).map { p ->
-            if (p == 1) "$mainUrl$path" else "$mainUrl${path}page/$p/"
-        }
-        val lists = urls.amap { u -> safeGet(u) }
-        val channels = mutableListOf<ChannelInfo>()
-        for (html in lists) {
-            if (html != null) channels.addAll(extractChannels(html))
-        }
-        return channels
-    }
-
     private suspend fun safeGet(url: String, timeoutSec: Long = 15L, attempts: Int = 2): String? {
         for (attempt in 1..attempts) {
             try {
@@ -88,22 +76,33 @@ class TeleonlineProvider : MainAPI() {
     }
 
     private val sectionCache = ConcurrentHashMap<String, List<ChannelInfo>>()
-    private var cacheStamp = 0L
-    private val cacheTtlMs = 300000L
+    private val sections = listOf(
+        "Canales" to "/",
+        "PerÃƒÂº" to "/canales/peru/",
+        "Argentina" to "/canales/argentina/",
+        "MÃƒÂ©xico" to "/canales/mexico/",
+        "Colombia" to "/canales/colombia/",
+        "Chile" to "/canales/chile/",
+        "Estados Unidos" to "/canales/estados-unidos/",
+        "Brasil" to "/canales/brasil/",
+        "Venezuela" to "/canales/venezuela/",
+        "EspaÃƒÂ±a" to "/canales/espana/",
+    )
 
-    private suspend fun loadAllSections(): Map<String, List<ChannelInfo>> {
-        val now = System.currentTimeMillis()
-        if (now - cacheStamp < cacheTtlMs && sectionCache.isNotEmpty()) return sectionCache
-        val names = listOf("Canales", "Perú", "Argentina", "México", "Colombia", "Chile", "Estados Unidos", "Brasil", "Venezuela", "España")
-        val paths = listOf("/", "/canales/peru/", "/canales/argentina/", "/canales/mexico/", "/canales/colombia/", "/canales/chile/", "/canales/estados-unidos/", "/canales/brasil/", "/canales/venezuela/", "/canales/espana/")
-        val results = names.zip(paths).map { (name, path) ->
-            name to (if (name == "Canales") fetchSection(name, path, maxPagesGeneral) else fetchSection(name, path))
-        }.amap { it }
+    private suspend fun fetchSectionPage(name: String, path: String, page: Int): List<ChannelInfo> {
+        val key = "$name|$page"
+        sectionCache[key]?.let { return it }
+        val url = if (page == 1) "$mainUrl$path" else "$mainUrl${path}page/$page/"
+        val html = safeGet(url) ?: return emptyList()
+        val list = extractChannels(html)
+        sectionCache[key] = list
+        return list
+    }
+
+    private suspend fun loadAllSections(page: Int): Map<String, List<ChannelInfo>> {
+        val results = sections.map { (name, path) -> name to fetchSectionPage(name, path, page) }.amap { it }
         val map = LinkedHashMap<String, List<ChannelInfo>>()
         for ((name, list) in results) map[name] = list
-        sectionCache.clear()
-        sectionCache.putAll(map)
-        cacheStamp = now
         return map
     }
 
@@ -112,53 +111,91 @@ class TeleonlineProvider : MainAPI() {
             .replace(Regex("\\p{Mn}+"), "")
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val sections = mutableListOf<HomePageList>()
+        val sectionsOut = mutableListOf<HomePageList>()
 
-        val all = loadAllSections()
+        val all = loadAllSections(1)
         for ((name, channels) in all) {
-            val clean = channels.filter { it.url.isNotBlank() && !it.url.contains("\${") }
+            var clean = channels.filter { it.url.isNotBlank() && !it.url.contains("\${") }
                 .distinctBy { it.url }
+            if (name == "Canales" && maxPagesGeneral > 1) {
+                val extra = fetchSectionPage(name, "/", 2)
+                clean = (clean + extra.filter { it.url.isNotBlank() && !it.url.contains("\${") }).distinctBy { it.url }
+            }
             if (clean.isNotEmpty()) {
-                sections.add(HomePageList(name, clean.map { it.toSearchResponse() }, isHorizontalImages = true))
+                sectionsOut.add(HomePageList(name, clean.map { it.toSearchResponse() }, isHorizontalImages = true))
             }
         }
 
-        if (sections.isEmpty()) return null
-        return newHomePageResponse(sections, hasNext = false)
+        if (sectionsOut.isEmpty()) return null
+        return newHomePageResponse(sectionsOut, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.trim()
         if (q.isBlank()) return emptyList()
-        val qn = fold(q)
-        return coroutineScope {
-            val localJob = async { loadAllSections() }
-            val siteJob = async { safeGet("$mainUrl/?s=${enc(q)}", 8L, 1) }
-            val all = localJob.await()
-            val siteHtml = siteJob.await()
-            val out = ArrayList<SearchResponse>()
-            val seen = HashSet<String>()
-            loop@ for ((_, channels) in all) {
-                for (ch in channels) {
-                    if (ch.url.isBlank() || ch.url.contains("\${")) continue
-                    if (!fold(ch.name).contains(qn)) continue
-                    if (!seen.add(ch.url)) continue
-                    out.add(ch.toSearchResponse())
-                    if (out.size >= 80) break@loop
-                }
-            }
-            if (siteHtml != null) {
-                for (ch in extractChannels(siteHtml)) {
-                    if (ch.url.isBlank() || ch.url.contains("\${")) continue
-                    if (!fold(ch.name).contains(qn)) continue
-                    if (!seen.add(ch.url)) continue
-                    out.add(ch.toSearchResponse())
-                    if (out.size >= 80) break
-                }
-            }
-            Log.d("Teleonline", "search '$q' -> ${out.size} (local=${all.size} secciones, sitio=${siteHtml != null})")
-            out
+        val out = ArrayList<SearchResponse>()
+        val seen = HashSet<String>()
+
+        for (it in fetchRestSearch(q)) {
+            val title = it.optString("title", "").trim()
+            val url = it.optString("url", "").trim()
+            if (title.isBlank() || url.isBlank()) continue
+            if (!seen.add(url)) continue
+            out.add(newLiveSearchResponse(title, url, TvType.Live) {
+                this.posterUrl = posterForUrl(url)
+            })
+            if (out.size >= 60) break
         }
+
+        if (out.size < 5) {
+            val qn = fold(q)
+            for (ronda in 1..2) {
+                val all = loadAllSections(ronda)
+                loop@ for ((_, channels) in all) {
+                    for (ch in channels) {
+                        if (ch.url.isBlank() || ch.url.contains("\${")) continue
+                        if (!fold(ch.name).contains(qn)) continue
+                        if (!seen.add(ch.url)) continue
+                        out.add(ch.toSearchResponse())
+                        if (out.size >= 60) break@loop
+                    }
+                }
+                if (out.size >= 5) break
+            }
+        }
+        Log.d("Teleonline", "search '$q' -> ${out.size}")
+        return out
+    }
+
+    private suspend fun fetchRestSearch(q: String): List<JSONObject> {
+        val url = "$mainUrl/wp-json/wp/v2/search?search=${enc(q)}&per_page=40&subtype=post"
+        return try {
+            val res = app.get(url, timeout = 35L)
+            if (!res.isSuccessful) {
+                Log.w("Teleonline", "rest search -> HTTP ${res.code}")
+                return emptyList()
+            }
+            val arr = JSONArray(res.text)
+            val out = ArrayList<JSONObject>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                out.add(o)
+            }
+            Log.d("Teleonline", "rest search -> ${out.size} items")
+            out
+        } catch (e: Exception) {
+            Log.e("Teleonline", "rest search fallo: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun posterForUrl(url: String): String? {
+        for (list in sectionCache.values) {
+            for (ch in list) {
+                if (ch.url == url) return ch.poster
+            }
+        }
+        return null
     }
 
     private fun enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
@@ -224,8 +261,8 @@ class TeleonlineProvider : MainAPI() {
                         val decoded = String(Base64.decode(match.groupValues[1], Base64.DEFAULT))
                         if (decoded.contains(".m3u8")) {
                             val m3u8Url = decoded.replace("\\/", "/").trim()
-                            Log.d("Teleonline", "M3U8 from base64 (opción ${idx + 1}): $m3u8Url")
-                            callback(newExtractorLink(name, "En Vivo - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
+                            Log.d("Teleonline", "M3U8 from base64 (opciÃƒÂ³n ${idx + 1}): $m3u8Url")
+                            callback(newExtractorLink(name, "En Vivo - OpciÃƒÂ³n ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
                                 this.headers = mapOf(
                                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                                     "Referer" to data
@@ -280,7 +317,7 @@ class TeleonlineProvider : MainAPI() {
 
                     val m3u8Url = extractM3u8FromHtml(playerHtml)
                     if (m3u8Url != null) {
-                        callback(newExtractorLink(name, "$name - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
+                        callback(newExtractorLink(name, "$name - OpciÃƒÂ³n ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
                             this.headers = mapOf(
                                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                                 "Referer" to playerUrl
@@ -320,7 +357,7 @@ class TeleonlineProvider : MainAPI() {
                 }
                 val response = chain.proceed(builder.build())
                 if (response.code !in 200..299) {
-                    Log.w("Teleonline", "Intercept ${response.code} → ${request.url.toString().take(130)}")
+                    Log.w("Teleonline", "Intercept ${response.code} Ã¢â€ â€™ ${request.url.toString().take(130)}")
                 }
                 return response
             }

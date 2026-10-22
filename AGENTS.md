@@ -2991,3 +2991,22 @@ Lo que **NO** cambio y sigue funcionando (verificado end-to-end desde PC): el fl
 
 - El `load` (canal concreto) es **1 sola peticion** y el sitio tarda 3-7s en responder -> esa parte es del sitio, no del plugin.
 - Opcional a futuro: cargar mas paginas por seccion (`posts_per_page=30`, `maxPages=10` en el config del tema) para ampliar el search local; de momento son 330 canales.
+
+
+#### 🔧 Fix search: usar la API REST en vez del `?s=` roto (21 Oct 2026 v5)
+**Sintoma (usuario, log v4)**: `search 'universal' -> 0 (local=10 secciones, sitio=false)` -> el search no encontraba canales (p.ej. "Studio Universal").
+**Causa raiz**: el `/?s=` del **tema** (asap) esta roto: cuelga y el PHP lo mata a los **122s** (500). El search por paginas del plugin tampoco servia: el catalogo es enorme (p.ej. Alemania 350, y 10 secciones x 30 = 300 canales de la 1a pagina) y el sitio tardaba 4-7s por pagina -> con 3 rondas solo se veian 660 canales y aun asi 0 resultados (ademas varias peticiones fallaban por saturacion: 180 de 300).
+**Descubrimiento clave**: la **API REST de WordPress SI busca** (lo que cuelga es el search del tema):
+- `GET /wp-json/wp/v2/search?search=universal&per_page=30&subtype=post` -> **200 en 9.6-12.9s** -> `[{id,title,url,type,subtype}]` (el `url` es el link del canal) -> "Studio Universal Africa", "Studio Universal Latin America"... y `page=2` trae el resto.
+- `GET /wp-json/wp/v2/posts?search=...&per_page=30&_embed=wp:featuredmedia` -> **>50s** (descartado, demasiado pesado).
+- `GET /wp-json/wp/v2/categories?per_page=100` -> 200 en 13s (mapa pais -> cat, util a futuro).
+
+**Fix v5 (`TeleonlineProvider.kt`)**:
+1. `search()` usa **`/wp-json/wp/v2/search`** (timeout 35s, 1 peticion, hasta 60 resultados) como via principal. Los posters se toman de la cache local de secciones (`posterForUrl`).
+2. **Fallback local**: si el REST devuelve menos de 5, se filtran las secciones ya cargadas (2 rondas de paginacion) -> cubre el caso de que el REST falle.
+3. Se **elimina el uso de `/?s=`** (cuelga 122s y no aportaba nada).
+4. `fetchSectionPage` + cache por `nombre|pagina` -> el home y las rondas del search comparten cache (no se vuelve a pedir lo ya descargado).
+5. `build.gradle.kts` 4 -> **5**; `plugins.json` Teleonline 4 -> **5** (`fileSize` pendiente). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+
+- Nota: el sitio esta **muy saturado** (REST 9-41s, AJAX 8-44s, HTML 1.5-7s). Si el search sigue tardando, es el servidor.
+- Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar y buscar "universal" -> debe salir `Studio Universal ...` (log `rest search -> N items`).
