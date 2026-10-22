@@ -2958,3 +2958,36 @@ Lo que **NO** cambio y sigue funcionando (verificado end-to-end desde PC): el fl
 - Verificado desde PC: 	itle, poster, status (Finalizado / En emision), year, genres, plot y la lista de episodios (**One Piece: total=1179, 48 paginas de 25**) extraen bien con los selectores nuevos.
 - Pendiente (usuario): compilar (.\gradlew.bat :KatanimeProvider:make --console=plain -q), actualizar ileSize, instalar y abrir un anime -> debe verse titulo + poster + sinopsis + episodios.
 - **Aviso**: el sitio usa clases hasheadas (Tailwind) -> en el proximo rebuild los selectores div._135yj pueden cambiar. Por eso el parseo usa lt/href/itemprop cuando se puede.
+
+---
+
+## TeleonlineProvider - Fix lentitud del home/search (20 Oct 2026 v4)
+
+**Pregunta (usuario)**: "no se si sea el plugin o la misma pagina pero demora regular en cargar el search como el load, es normal o no?"
+
+**Medicion desde PC (con los headers que usa el plugin)**:
+| Peticion | Resultado |
+|---|---|
+| `/` (home) | 200 en **1.5s** (352KB) |
+| `/canales/peru/` | 200 en **3.7-6.8s** (295KB) |
+| `/?s=espn` (search) | **HTTP 500 tras 122s** (el search del sitio esta ROTO/colgado) |
+| `/?s=a` | no responde (>25s) |
+| `/wp-json/wp/v2/posts?cat=326` | 200 en **41s** |
+| `admin-ajax.php` (infinite scroll) | timeout >45s |
+| `/wp-json/` | 200 en 5.9s |
+
+**Diagnostico: el sitio esta saturado y su search esta roto; ademas el provider lo empeoraba**:
+1. El tema "asap" (WP) carga los canales por **infinite scroll (AJAX)**: la 1a `article-loop` de cada pagina es la **plantilla JS** (`${post.url}`, `${post.title}`) y las siguientes 30 son reales. El provider parseaba la plantilla -> 1 item basura por seccion.
+2. El `getMainPage` hacia **10 peticiones SECUECIALES** (home + /page/2/ + 8 paises) a ~4-7s cada una -> **~50s** de espera.
+3. El `search` usaba `/?s=` (roto en el sitio) con 2 intentos (15s + 30s) -> **~45s esperando para nada** y resultado vacio.
+
+**Fix v4 (`TeleonlineProvider.kt`)**:
+1. `loadAllSections()`: las 10 secciones se piden **EN PARALELO** (`amap`) -> **14.4s medidos** (antes ~50s) y 330 canales.
+2. **Search local**: filtra por nombre (con `fold` de acentos) sobre las secciones ya cargadas -> **instantaneo** con la cache de 5 min. En paralelo se intenta el `?s=` del sitio con **timeout corto (8s, 1 intento)**: si el sitio lo arregla, sus resultados se suman; si no, se pierde solo ese intento (no los 45s de antes).
+3. **Plantilla JS filtrada**: se descartan los items con `${` en la URL/titulo/poster (la plantilla del tema).
+4. `safeGet` con parametro `attempts` (el search usa 1 intento).
+5. `fetchSection` pide las paginas de una seccion en paralelo.
+6. `build.gradle.kts` 3 -> **4**; `plugins.json` Teleonline 3 -> **4** (`fileSize` pendiente). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+
+- El `load` (canal concreto) es **1 sola peticion** y el sitio tarda 3-7s en responder -> esa parte es del sitio, no del plugin.
+- Opcional a futuro: cargar mas paginas por seccion (`posts_per_page=30`, `maxPages=10` en el config del tema) para ampliar el search local; de momento son 330 canales.

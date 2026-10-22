@@ -8,9 +8,11 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
+import java.util.concurrent.ConcurrentHashMap
 
 class TeleonlineProvider : MainAPI() {
     override var mainUrl = "https://teleonline.org"
@@ -22,17 +24,6 @@ class TeleonlineProvider : MainAPI() {
     override val hasDownloadSupport = true
     private val cfKiller = CloudflareKiller()
     private val maxPagesGeneral = 2
-    private val countrySections = listOf(
-        "Perú" to "/canales/peru/",
-        "Argentina" to "/canales/argentina/",
-        "México" to "/canales/mexico/",
-        "Colombia" to "/canales/colombia/",
-        "Chile" to "/canales/chile/",
-        "Estados Unidos" to "/canales/estados-unidos/",
-        "Brasil" to "/canales/brasil/",
-        "Venezuela" to "/canales/venezuela/",
-        "España" to "/canales/espana/",
-    )
 
     private fun extractPosterFromStyle(element: org.jsoup.nodes.Element): String? {
         val style = element.attr("style")
@@ -49,9 +40,11 @@ class TeleonlineProvider : MainAPI() {
             val link = article.selectFirst("a[rel=bookmark]")?.attr("href")
                 ?: article.selectFirst("a")?.attr("href")
                 ?: return@forEach
+            if (link.isBlank() || link.contains("\${")) return@forEach
             val title = article.selectFirst(".entry-title")?.text()?.trim()
                 ?: article.selectFirst("a p")?.text()?.trim()
                 ?: return@forEach
+            if (title.isBlank() || title.contains("\${")) return@forEach
 
             var poster: String? = null
             val imgEl = article.selectFirst(".article-image")
@@ -61,6 +54,7 @@ class TeleonlineProvider : MainAPI() {
                     if (it.startsWith("http")) it else null
                 }
             }
+            if (poster != null && poster.contains("\${")) poster = null
 
             channels.add(ChannelInfo(title, link, poster))
         }
@@ -68,17 +62,19 @@ class TeleonlineProvider : MainAPI() {
     }
 
     private suspend fun fetchSection(name: String, path: String, pages: Int = 1): List<ChannelInfo> {
+        val urls = (1..pages).map { p ->
+            if (p == 1) "$mainUrl$path" else "$mainUrl${path}page/$p/"
+        }
+        val lists = urls.amap { u -> safeGet(u) }
         val channels = mutableListOf<ChannelInfo>()
-        for (p in 1..pages) {
-            val url = if (p == 1) "$mainUrl$path" else "$mainUrl${path}page/$p/"
-            val html = safeGet(url) ?: continue
-            channels.addAll(extractChannels(html))
+        for (html in lists) {
+            if (html != null) channels.addAll(extractChannels(html))
         }
         return channels
     }
 
-    private suspend fun safeGet(url: String, timeoutSec: Long = 15L): String? {
-        for (attempt in 1..2) {
+    private suspend fun safeGet(url: String, timeoutSec: Long = 15L, attempts: Int = 2): String? {
+        for (attempt in 1..attempts) {
             try {
                 val interceptor = if (attempt > 1) cfKiller else null
                 val res = app.get(url, timeout = timeoutSec * attempt, interceptor = interceptor)
@@ -91,20 +87,39 @@ class TeleonlineProvider : MainAPI() {
         return null
     }
 
+    private val sectionCache = ConcurrentHashMap<String, List<ChannelInfo>>()
+    private var cacheStamp = 0L
+    private val cacheTtlMs = 300000L
+
+    private suspend fun loadAllSections(): Map<String, List<ChannelInfo>> {
+        val now = System.currentTimeMillis()
+        if (now - cacheStamp < cacheTtlMs && sectionCache.isNotEmpty()) return sectionCache
+        val names = listOf("Canales", "Perú", "Argentina", "México", "Colombia", "Chile", "Estados Unidos", "Brasil", "Venezuela", "España")
+        val paths = listOf("/", "/canales/peru/", "/canales/argentina/", "/canales/mexico/", "/canales/colombia/", "/canales/chile/", "/canales/estados-unidos/", "/canales/brasil/", "/canales/venezuela/", "/canales/espana/")
+        val results = names.zip(paths).map { (name, path) ->
+            name to (if (name == "Canales") fetchSection(name, path, maxPagesGeneral) else fetchSection(name, path))
+        }.amap { it }
+        val map = LinkedHashMap<String, List<ChannelInfo>>()
+        for ((name, list) in results) map[name] = list
+        sectionCache.clear()
+        sectionCache.putAll(map)
+        cacheStamp = now
+        return map
+    }
+
+    private fun fold(s: String): String =
+        java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val sections = mutableListOf<HomePageList>()
 
-        // General channels
-        val general = fetchSection("Canales", "/", maxPagesGeneral)
-        if (general.isNotEmpty()) {
-            sections.add(HomePageList("Canales", general.distinctBy { it.url }.map { it.toSearchResponse() }, isHorizontalImages = true))
-        }
-
-        // Country sections
-        for ((name, path) in countrySections) {
-            val channels = fetchSection(name, path)
-            if (channels.isNotEmpty()) {
-                sections.add(HomePageList(name, channels.distinctBy { it.url }.map { it.toSearchResponse() }, isHorizontalImages = true))
+        val all = loadAllSections()
+        for ((name, channels) in all) {
+            val clean = channels.filter { it.url.isNotBlank() && !it.url.contains("\${") }
+                .distinctBy { it.url }
+            if (clean.isNotEmpty()) {
+                sections.add(HomePageList(name, clean.map { it.toSearchResponse() }, isHorizontalImages = true))
             }
         }
 
@@ -113,9 +128,40 @@ class TeleonlineProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val html = safeGet("$mainUrl/?s=$query") ?: return emptyList()
-        return extractChannels(html).distinctBy { it.url }.map { it.toSearchResponse() }
+        val q = query.trim()
+        if (q.isBlank()) return emptyList()
+        val qn = fold(q)
+        return coroutineScope {
+            val localJob = async { loadAllSections() }
+            val siteJob = async { safeGet("$mainUrl/?s=${enc(q)}", 8L, 1) }
+            val all = localJob.await()
+            val siteHtml = siteJob.await()
+            val out = ArrayList<SearchResponse>()
+            val seen = HashSet<String>()
+            loop@ for ((_, channels) in all) {
+                for (ch in channels) {
+                    if (ch.url.isBlank() || ch.url.contains("\${")) continue
+                    if (!fold(ch.name).contains(qn)) continue
+                    if (!seen.add(ch.url)) continue
+                    out.add(ch.toSearchResponse())
+                    if (out.size >= 80) break@loop
+                }
+            }
+            if (siteHtml != null) {
+                for (ch in extractChannels(siteHtml)) {
+                    if (ch.url.isBlank() || ch.url.contains("\${")) continue
+                    if (!fold(ch.name).contains(qn)) continue
+                    if (!seen.add(ch.url)) continue
+                    out.add(ch.toSearchResponse())
+                    if (out.size >= 80) break
+                }
+            }
+            Log.d("Teleonline", "search '$q' -> ${out.size} (local=${all.size} secciones, sitio=${siteHtml != null})")
+            out
+        }
     }
+
+    private fun enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
     override suspend fun load(url: String): LoadResponse? {
         try {
