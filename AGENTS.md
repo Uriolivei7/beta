@@ -3135,3 +3135,119 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 - Test valido: **cs3d (Windows)** o **movil fisico con VPN**; en WSA esos canales no reproducen.
 
 - ⏸️ **Pendiente (usuario)**: compilar `.\gradlew.bat :TeleonlineProvider:make --console=plain -q`, actualizar `fileSize` en `plugins.json`, instalar y comprobar que el home carga y que un canal reproduce (en cs3d o movil con VPN).
+
+
+## TeleonlineProvider - Audio en espanol: causas y opciones (22 Oct 2026, SIN cambio de codigo)
+
+**Pregunta (usuario)**: "Studio Universal Latin America" no da audio en espanol (la opcion 8 trae `eng`+`spa` y solo suena/reconoce `eng`).
+
+### Como se generan las "opciones" (v11)
+- El provider NO lee la UI del sitio (`div.tab-buttons`/`select.tab-select` estan **vacios**: los rellena JS). Usa `Regex("""(?:atob|btoa)\s*\(\s*['\"]([A-Za-z0-9+/=]+)['\"]""")` sobre el HTML (linea ~171) y `opcion ${idx + 1}` es el **indice global** entre TODOS los `atob`, mostrando solo los que decodifican a `.m3u8`.
+- El post de Latin America es **55577** (`/canal/studio-universal-latin-america/`, HTML 318859 B). En una descarga fresca hay **6 `atob`** (`/js/toc.js`, `DisableDevtool` y **4 m3u8**) -> las opciones 8/9 vistas en el log **no** estaban en esa descarga: **la lista de opciones rota por request / por variante del canal**. No fiarse de un solo fetch.
+- Busqueda del canal: `https://teleonline.org/wp-json/wp/v2/search?search=studio+universal&per_page=10&subtype=post` (2 resultados).
+
+### Opciones medidas (Studio Universal Latin America, PC + parseo PMT)
+| URL | Master | Renditions | Variante | PMT del segmento |
+|---|---|---|---|---|
+| `http://187.102.210.46/universo/index.m3u8` | 200 (426 B) | **2** (`spa a1` DEFAULT=YES, `eng a2`) | `tracks-v1a1/mono.m3u8` 200 | video `0xd3` (0x1B) + audio `0xdd` **`spa`** |
+| `http://190.93.224.42/STUDIO-UNIVERSAL/index.m3u8` | 200 (435 B) | **2** (`spa a1` DEFAULT=YES, `eng a2`) | `tracks-v1a1/mono.ts.m3u8` 200 | video + audio **`spa`** |
+| `http://138.121.15.230:9002/STUDIO-UNIVERSAL/index.m3u8` | 200 (172 B) | 0 | `tracks-v1a1/mono.m3u8` 200 | video + audio **`spa`** (unico) |
+| `http://15.204.246.24:8080/StudioUniversalHD/index.m3u8` | **403** | - | - | muerta |
+- En las dos primeras, las renditions de audio son **TS solo-audio**: `tracks-a1/mono.m3u8` -> `0xdd` **`spa`** (153 KB), `tracks-a2/mono.m3u8` -> `0xdd` **`eng`** (117 KB). La variante muxada trae **solo `spa`** (el audio en ingles solo existe como rendition aparte).
+
+### Causa raiz de la opcion 8 (audio `eng`, sin forma de cambiarlo en la app)
+- Su master tiene **una sola variante y NINGUNA `#EXT-X-MEDIA`**; el TS lleva `eng` en PID `0x121` y `spa` en `0x3f8`, **ambos `streamType 0x04` (MPEG-1 Layer II)**.
+- **media3 1.9.3 `TsExtractor.java`** (verificado en el fuente de la version que usa la app): `trackId = mode == MODE_HLS ? streamType : elementaryPid` + dedupe que conserva el **PID mas bajo por `streamType`** -> los dos audios MP2 colapsan en **un solo track** (`eng`); el segundo ni se crea.
+- Consecuencia: **no hay 2 pistas** -> `GeneratorPlayer.onTracksInfoChanged()` no muestra `playerTracksBtt` (solo aparece con `>1` pista de audio o video) -> **imposible elegir espanol in-app**. No es un bug del provider y no se arregla con headers/interceptor.
+
+### Que opcion usar (y por que funciona sin tocar codigo)
+- Masters reales (texto completo): `#EXTM3U` + las 2 `#EXT-X-MEDIA` de arriba + `#EXT-X-STREAM-INF:...,AUDIO="aac",RESOLUTION=1920x1080,CODECS="avc1.640028"` -> la variante **referencia el grupo de audio** (`AUDIO="aac"`), condicion que media3 exige para crear los 2 tracks (187: 1.99 Mbps; 190: 2.78 Mbps).
+- Con `187.102.210.46/universo` o `190.93.224.42/STUDIO-UNIVERSAL` (ambas con `#EXT-X-MEDIA`): ExoPlayer crea **2 tracks de audio** -> el boton de pistas se muestra y la auto-seleccion usa `setPreferredAudioTrackLanguage(...)` (`CS3IPlayer.Companion.getPreferredAudioTrackLanguage()`, publico). **DEFAULT=YES es `spa`** -> arranca en espanol y se puede cambiar a `eng` desde el boton.
+- Con `138.121.15.230:9002` el audio es **solo `spa`** (un track) -> suena en espanol aunque no haya boton de pistas.
+- `15.204.246.24:8080` (403) es opcion muerta: si el usuario la elige, error de red.
+
+### Estado
+- **Sin cambios de codigo**: v11 se queda como la version estable pedida. `build.gradle.kts` = `plugins.json` = **11**; `fileSize` sigue **24485** (pendiente tras compilar).
+- ⏸️ **Pendiente (usuario)**: compilar e instalar; en "Studio Universal Latin America" elegir la opcion que apunte a `187.102.210.46/universo` o `190.93.224.42/STUDIO-UNIVERSAL` (log `M3U8 from base64 (opcion N)`); debe sonar en espanol y, en esas dos, aparecer el boton de pistas con `spa`/`eng`.
+- ⏸️ Si se quisiera mejorar la UX (no pedido): probar cada master y marcar el link como `[ESP]`/`[ESP+ENG]` segun `#EXT-X-MEDIA`, o forzar `setPreferredAudioTrackLanguage` — ambas son cambios de codigo (v12) y con coste extra por opcion bajo saturacion.
+
+
+## TeleonlineProvider - cs3d ve el audio y Android no: libmpv vs media3 TsExtractor (22 Oct 2026, SIN cambio de codigo)
+
+**Pregunta (usuario, caso Cartoon Network Latin America, "opcion 8")**: en cs3d (Windows) el reproductor **detecta y permite el audio en espanol**; en CloudStream Android el mismo canal suena en **ingles** y no aparece el boton de pistas. Por que?
+
+### Por que cs3d si puede
+- cs3d (`lelouchcodes11/cs3d`, Compose Desktop) **no usa ExoPlayer**: reutiliza la UI del player (`com.lagradost.cloudstream3.ui.player/*`) pero la **reproduccion real la hace libmpv/FFmpeg**, que expone **todas** las pistas de audio del contenedor (enumera los PIDs del MPEG-TS). De ahi el selector de audio y el espanol.
+- No es nada del provider ni de la URL: ambos reciben el mismo enlace.
+
+### Por que Android no (media3 1.9.3, fuente real)
+- `androidx/media3/extractor/ts/TsExtractor.java` en `MODE_HLS` documenta "Enable single PMT mode, map TrackOutputs by their type (instead of PID)" y hace `int trackId = mode == MODE_HLS ? streamType : elementaryPid;`.
+- Con dos audios del mismo `streamType` se queda con **un solo track**, el del **PID mas bajo** (`trackIdToPidScratch`; condicion `elementaryPid < trackIdToPidScratch.get(trackId, MAX_PID_PLUS_ONE)`).
+- En estos canales los dos audios son **MPEG-1 Layer II (`streamType 0x04`)**: `eng 0x121` y `spa 0x3f8` -> `0x121` gana y **el espanol se descarta antes de llegar al player**. No hay 2 pistas -> sin boton de pistas y sin forma de cambiar idioma.
+- Con un master que SI trae `#EXT-X-MEDIA` (renditions separadas) media3 crea 2 tracks y el boton aparece (caso `187.102.210.46/universo`).
+
+### Cartoon Network Latin America (`/canal/cartoon-network-latin-america/`, post **33301**): 6 opciones sondeadas desde PC
+| Opcion | URL | Master | Renditions | PMT del segmento | Veredicto |
+|---|---|---|---|---|---|
+| 1 | `15.204.246.24:8080/CartoonNetworkHD/index.m3u8` | **403** | - | - | muerta |
+| 2 | `45.162.64.114/CARTOON_NETWORK/index.m3u8` | 200 | **2**: `por a1` DEFAULT + `eng a2` | audio `0xdd` AAC `por` + video `0xd3` 0x1B | **portugues + ingles** (feed brasil) -> boton de pistas, pero **sin espanol** |
+| 3 | `38.252.238.18:8000/play/a053/index.m3u8` | **ConnectTimeout** | - | - | muerta |
+| 4 | `170.244.209.30:8000/play/a027/index.m3u8` | **ConnectTimeout** | - | - | muerta |
+| 5 | `158.172.217.18:8000/play/a03a/index.m3u8` | 200 | **0** (sin `#EXT-X-MEDIA`), 1 variante | `eng 0x121` + `spa 0x3f8`, ambos **MP2 0x04**; video 0x02 | **el caso reportado** (eng por el dedupe). Unico con espanol, pero muxado -> inservible in-app |
+| 6 | (truncado en la salida) | ? | ? | ? | ? |
+- **Los indices de "opcion" rotan por request** (el indice es la posicion entre todos los `atob` del HTML): el usuario la ve como **opcion 8** y en este fetch salio como **5**. Identificar la buena por URL/IP, no por numero.
+- **Conclusion**: para CN Latin America **no hay ninguna opcion reproducible con espanol en Android** hoy: la unica con `spa` es la muxada `a03a` (media3 pierde el PID) y la de `#EXT-X-MEDIA` es portugues/ingles.
+- Otras entradas CN del sitio: `cartoon-network-latino` (17776), `cartoon-network-live-latin-america`, `cartoon-network-live-latin-america-2` -> page 200 pero **0 opciones** (sin `atob` con `.m3u8`); `cartoon-network-hd` (33299) -> 1 opcion `https://drk6xq0vhn.gpcdn.net/live/cn_hd_abr/index.m3u8` (200, 0 renditions, 1 variante, segmento 883040 B, PMT no parseado: posible fMP4) -> mismo limite, sin pista elegible.
+
+### Salidas posibles
+1. **Reproductor externo** (VLC/mpv/MPV-Android): decodifican TS con varias pistas y dejan elegir espanol. Via inmediata, cero codigo.
+2. **Proxy-remux local** (estilo `MegaExtractor` de Retrotve): descargar el segmento, reescribir el **PMT** dejando solo el PID `0x3f8` (spa) y servir por `127.0.0.1`. Costoso (CPU, red local, seek) y solo para canales asi; **no implementado** (decision pendiente del usuario).
+3. **Studio Universal LA** (si el problema es ese canal): usar la opcion de `187.102.210.46/universo` o `190.93.224.42/STUDIO-UNIVERSAL` (traen `#EXT-X-MEDIA` spa DEFAULT + eng -> 2 tracks y boton de pistas in-app).
+- **Nota cs3d**: sirve como referencia de "fuente viva/idiomas", no como prueba del comportamiento en Android.
+
+- **Estado**: sin cambios de codigo; `TeleonlineProvider` queda en **v11** (`build.gradle.kts` + `plugins.json`), `fileSize` **24485** pendiente tras compilar.
+- Scripts: `%TEMP%\opencode\tele_cnla.py` (canal completo: page -> `atob` -> master -> variante -> segmento + PMT) y `tele_cn_probe.py` (multi-canal, resumen `(esPid, streamType, langs)`).
+
+---
+
+## TeleonlineProvider - Proxy local TS para audio en espanol (22 Oct 2026 v12)
+
+### Sintoma
+- Cartoon Network Latin America (`/canal/cartoon-network-latin-america/`, post 33301) suena en **ingles** en Android y **no aparece el boton de pistas**; en cs3d (libmpv/FFmpeg) si se ve y se puede elegir espanol.
+- La opcion buena es `http://158.172.217.18:8000/play/a03a/index.m3u8`: master 200 (134 B), **una sola variante**, **sin `#EXT-X-MEDIA`**; el TS trae dos audios MPEG-1 Layer II (`0x121` eng y `0x3f8` spa).
+
+### Causa raiz (confirmada en `TsExtractor` de media3 1.9.3)
+- `MODE_HLS` mapea `trackId = streamType` (no el PID) y el dedupe conserva el **PID mas bajo por `streamType`** -> los dos MP2 (`0x04`) colapsan en un solo track (`eng`, PID menor). El `spa` se descarta **al parsear el PMT**, no al filtrar paquetes.
+- Por eso **filtrar solo los paquetes del PID `0x121` NO alcanza**: hay que reescribir el PMT (y el PAT si difiere). Con 1 track de audio, `GeneratorPlayer.onTracksInfoChanged()` no muestra `playerTracksBtt`.
+
+### Arquitectura del fix
+- `TeleonlineTsProxy.kt` (nuevo, 604 lineas): servidor HTTP local (`ServerSocket(0, 50, 127.0.0.1)`, threads daemon, solo GET, `Connection: close`, reaper por inactividad `IDLE_MS = 180000L`).
+  - `playlistUrl(variantUrl, keepPid)` -> `http://127.0.0.1:{port}/live.m3u8?u=..&p=..`; `servePlaylist` reescribe cada linea no-`#` a `/seg?u=<abs>&v=<variant>&p=<keep>` y re-consulta la variante en cada request (live reload).
+  - `serveSegment` -> descarga el segmento original (tope `PROBE_LIMIT` solo en la sonda) y llama `filterTs(data, variant, keepPid)`.
+  - `filterTs`: `alignOffset` (3 syncs `0x47`), `findPmt` por escaneo real (`table_id 0x02` + CRC ok, ignora lo que declare el PAT), `findPat`; reconstruye el PMT quitando las ES de audio != `keepPid` (`buildPmtSection`, recalcula `section_length` + CRC MPEG-2) y el PAT apuntando al PMT real (`buildPatSection`); reescribe **todas** las apariciones PSI del segmento con `rewriteSection` (AFC=3, stuffing en adaptation field, CC preservado). Fail-open al `data` original ante cualquier excepcion.
+  - Cache `ConcurrentHashMap` con clave **`"$variant|$keepPid"`** (dos links del mismo master con distinto PID no se contaminan).
+- `TeleonlineProvider.kt` v12: `emitM3u8Options()` en **dos fases** (los indices de opcion rotan por request, un budget secuencial fallaba):
+  - Fase A (paralela, barata): `options.amap { candidateOf(idx, url) }`; master con `#EXT-X-MAP`/`#EXT-X-KEY`, con `#EXT-X-MEDIA:...TYPE=AUDIO` o con >1 `#EXT-X-STREAM-INF` se descarta (se emite el crudo, sin regresion).
+  - Fase B (secuencial, `budget = 2`): `firstSegment(variant, 15000L)` + `probeTracks` (exige 2+ ES de audio) -> `ProxyPlan`.
+  - Emision: un link por pista, `spa` primero, labels `En Vivo - Opcion N [ESP]` / `[ENG]`; el crudo de esa opcion se omite solo si al menos un proxy salio.
+- Timeouts por llamada (`newCall(url, timeoutMs)` -> `Call.timeout()`), no cliente aparte: master 12 s, segmento 15 s, pagina principal 20 s, serving connect 8 s / read 20 s. Peor caso ~54 s (margen amplio vs los 120 s de CS3).
+- Sin `getVideoInterceptor`, sin tocar headers globales, `directM3u8` y el branch de iframes intactos.
+
+### Verificacion offline (sin compilar)
+- `bal_check.py` -> BALANCE OK en `TeleonlineProvider.kt` y `TeleonlineTsProxy.kt`.
+- `tele_psi_dump.py` sobre `a03a`: PMT real en PID `0x20` (43 B), pcr `0x3f3`, ES `0x04/0x121/eng`, `0x02/0x3f3` (video), `0x04/0x3f8/spa`; el PAT declara **tambien `0x20`** (el `0x5E0` de un analisis previo era misparse: `e0 20` -> `0x20`), asi que `fixPat` casi nunca se activa pero queda como salvaguarda.
+- `tele_proxy_sim.py` (simulacion fiel del `filterTs` en Python) sobre un segmento real de 432024 B: PMT idx 2, `drop=[0x121]`, 254 paquetes eliminados (delta 47752 = 254*188), salida 384272 B, PMT de salida con ES `[0x3f3, 0x3f8]`, **6 secciones PMT reescritas ok / 0 mal** y 6 PAT con CRC valido -> media3 vera un unico track de audio (`spa`).
+- `cn45` (opcion 2 de CN LA) descartada para espanol: sus renditions son `por` (DEFAULT) + `eng`; ademas media3 ya crea 2 tracks ahi (el boton aparece, pero sin espanol).
+
+### Archivos
+- `TeleonlineProvider/src/main/kotlin/com/example/TeleonlineTsProxy.kt` (nuevo, sin trackear en git)
+- `TeleonlineProvider/src/main/kotlin/com/example/TeleonlineProvider.kt`
+- `TeleonlineProvider/build.gradle.kts`: `version = 11` -> **12**
+- `plugins.json`: Teleonline `version` 11 -> **12**; `fileSize` **pendiente** (sigue 24485)
+
+### Estado / pendiente de probar en dispositivo
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`) - **no compilado por regla del repo**.
+- Probar en **celular fisico + VPN** o **cs3d** (en WSA el NAT no enruta `http://IP:puerto`): CN LA debe listar `En Vivo - Opcion N [ESP]` y `[ENG]`; reproducir el `[ESP]` y confirmar audio espanol.
+- Logs: `adb logcat -s Teleonline:V TeleonlineProxy:V` -> `opciones=.. candidatas=..`, `opcion N probe ok: 0x121:eng, 0x3f8:spa`, `PAT declara PMT 32, PMT real 32`, y en el proxy `seg ...`/`handle` sin `handle fallo`.
+- Si el `[ESP]` sale en ingles, revisar que el segmento tenga el PMT en el mismo PID en todas sus apariciones (el filtro exige `fitsPacket`: secciones >188 B no se reescriben; las de CN LA son de 43 B).
+- Opcional sin sondear: opcion 6 de CN LA (puede que el listado rote y aparezcan otras IPs).
