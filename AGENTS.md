@@ -3111,3 +3111,27 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 **Mitigacion aplicada (v9)**: `emitAlive()` **prueba** cada m3u8 desde el propio dispositivo y descarta los que no responden -> en el WSA no aparezcan los links muertos (403 / no conecta) -> no se cuelga al elegirlos. Si el dispositivo no llega a ninguno, el search/play se queda sin enlaces (correcto, no es un crash).
 **Test valido**: **cs3d (Windows)** reproduce (el server responde al instante desde Windows) o movil fisico **con VPN**.
 - El error pegado por el usuario (`TransactionTooLargeException: data parcel size 1054620 bytes` en `com.microsoft.windows.systemapp`) es la **redireccion de portapapeles de WSA** (Windows -> Android, 1MB > limite de Binder) -> es del emulador, no de la app.
+
+## TeleonlineProvider - Reversion a la version estable v1 (22 Oct 2026 v11)
+
+**Pedido (usuario)**: "reinicie el codigo de teleonline a la mas estable; el unico problema seria que en las saturaciones de la pagina el search ya no funciona y el load se demora en cargar".
+
+### Estado del working tree al iniciar
+- `TeleonlineProvider.kt` estaba reescrito a mano a **272 lineas**, igual a `ad79dd6d` (v1, "add getVideoInterceptor...") **menos** el bloque `getVideoInterceptor` (32 lineas eliminadas). Es decir: se volvio al codigo de la era v1, sin las reescrituras de search (v4-v10) y sin interceptor.
+- **DESYNC critico**: `build.gradle.kts` decia `version = 1` mientras `plugins.json` seguia en `version: 10`. Con eso la app NUNCA instala la reversion (10 > 1). Corregido.
+
+### Cambios aplicados (v11)
+1. `TeleonlineProvider/build.gradle.kts`: `version = 1` -> **11**; `plugins.json` Teleonline `version: 10` -> **11** (el .cs3 con codigo estable se publica como build nuevo).
+2. **Fix del timeout que causaba "el load se demora"**: `safeGet(url, timeoutMs: Long = 15000L)` hacia `app.get(..., timeout = timeoutMs * attempt)` -> en NiceHttp el `timeout` va en **SEGUNDOS** (regla 03 Oct 2026), asi que eran **15000 s / 30000 s** (sin timeout efectivo: la peticion colgaba hasta el killer de 120 s de CS3). Ahora `safeGet(url, timeoutSec: Long = 15L)` con `timeout = timeoutSec * attempt`; en `load()` la llamada pasa de `safeGet(url, 20000L)` a `safeGet(url, 20L)`.
+3. `fileSize` en `plugins.json`: **pendiente** (sigue 24485) tras compilar.
+- `bal_check.py` -> BALANCE OK; `plugins.json` valido (73 entradas).
+
+### Limitaciones aceptadas por el usuario
+- `search()` usa el `/?s=` del tema **asap**, que bajo saturacion cuelga hasta el kill de 122 s del PHP -> devuelve vacio. No se reintrodujo el REST search (v4-v10) porque el usuario pidio la version estable.
+- `getMainPage` pide los 10 bloques (Canales + 9 paises) **en secuencia** (hasta 15 s x2 cada uno) -> es la parte lenta del "load". La version v4 lo paralelizaba (`amap`) pero se omitio al restaurar la estable.
+
+### Diagnostico previo (queda documentado, sin fix en v11)
+- Con la v10 (REST search) el log mostraba `rest search -> 9 items` OK, pero al reproducir: `playerUrls: []` -> en **WSA** los streams `http://IP:puerto` (38.134.250.110:8000, 138.121.15.230:9002, etc.) no se enrutan por su NAT -> `emitAlive` los descarta todos -> 0 enlaces, y el player se cuelga (ANR, `MainActivity because it is not responsive`) hasta que el sistema mata la app.
+- Test valido: **cs3d (Windows)** o **movil fisico con VPN**; en WSA esos canales no reproducen.
+
+- ⏸️ **Pendiente (usuario)**: compilar `.\gradlew.bat :TeleonlineProvider:make --console=plain -q`, actualizar `fileSize` en `plugins.json`, instalar y comprobar que el home carga y que un canal reproduce (en cs3d o movil con VPN).
