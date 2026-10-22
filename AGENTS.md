@@ -3043,3 +3043,54 @@ Lo que **NO** cambio y sigue funcionando (verificado end-to-end desde PC): el fl
 
 - **La web ya no esta saturada** (medido 22 Oct): `/wp-json/wp/v2/posts?search=...&per_page=30&_fields=...` -> 1.9s; `/wp-json/wp/v2/media/{id}` -> 1.4s; `?_embed=wp:featuredmedia` -> 17.4s con 30/30 posters (alternativa en 1 solo request, mas pesada).
 - Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar -> el search debe salir con el titulo limpio y poster en todos los resultados.
+
+
+#### 🛡 Search a prueba de saturacion: REST y local EN PARALELO + reintentos (22 Oct 2026 v8)
+**Pregunta (usuario)**: "con esta correccion no importa si la web este saturada, siempre funcionara el search??"
+**Respuesta honesta**: no al 100%. Antes (v3/v4) con la web saturada el search **nunca** funcionaba (el `?s=` del tema moria a los 122s). Desde v5 usa el REST (query ligera, indexada por titulo) -> medida en el peor caso: **24.4s** con la web saturada y **1.9s** con la web normal. Pero si el REST supera el timeout, el search se quedaba vacio.
+**Fix v8 (`TeleonlineProvider.kt`)**:
+1. **REST y fallback local en PARALELO** (`async` + `coroutineScope`) y se fusionan los resultados -> el tiempo total es el max de ambos, no la suma. Si el REST cae, los resultados locales ya estan listos.
+2. **Timeout del REST subido a 40s** y con **2 intentos** (1.5s de pausa entre ellos) -> aguanta la saturacion sin quedarse sin resultados.
+3. `localSearchResults()` separado (2 rondas de paginacion de las secciones, tope 20).
+4. `build.gradle.kts` 7 -> **8**; `plugins.json` Teleonline 7 -> **8** (`fileSize` pendiente). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+
+- Limite real: si **todo** el sitio esta caido (REST + secciones), el search devuelve 0. No hay forma de buscar en un servidor que no responde.
+- El search de CS3 tiene 120s de timeout (`APIRepository.search` -> `withTimeout(getTimeout(searchTimeoutMs))`), asi que 40s + fallback entran de sobra.
+
+
+#### 🎯 Filtro de servidores MUERTOS en los links (22 Oct 2026 v9)
+**Sintoma (usuario, WSA)**: "al momento de iniciar la reproduccion se me sale la app" (emulador WSA).
+**Lo que NO era**: el error pegado (`TransactionTooLargeException: data parcel size 1054620 bytes` en `com.microsoft.windows.systemapp`) es la **redireccion de portapapeles de WSA** (el portapapeles de Windows -> Android, 1MB > limite de Binder) -> es del emulador, no de nuestra app. Para saber si hay crash real hace falta `adb logcat -b crash -d`.
+**Causa raiz encontrada (medida desde PC)**: de las 4 opciones que emitia el provider para "Studio Universal", **2 estan muertas**:
+| Opcion | URL | Estado |
+|---|---|---|
+| 3 | `http://38.134.250.110:8000/play/a006/index.m3u8` | **200 m3u8** ✓ |
+| 4 | `http://15.204.246.24:8080/UniversalHD/index.m3u8` | **403** ✗ |
+| 5 | `http://138.121.15.230:9002/UNIVERSAL-CHANNEL/index.m3u8` | **200 m3u8** ✓ |
+| 6 | `http://181.119.66.28:8081/Universal-HD/index.m3u8` | **no conecta** ✗ |
+Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en el player.
+**Fix v9 (`TeleonlineProvider.kt`)**:
+1. `emitAlive(candidates, referer, callback)`: **prueba** cada m3u8 (GET con los mismos headers del player, timeout 8s) y **solo emite los que devuelven 200 con `#EXTM3U`**; los muertos se omiten con log `servidor caido, se omite: ...` y `links vivos: X/Y`.
+2. Aplicado en las 3 ramas (base64, m3u8 directo e iframes).
+3. `PLAYER_UA` como constante.
+4. `build.gradle.kts` 8 -> **9**; `plugins.json` Teleonline 8 -> **9** (`fileSize` pendiente). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+
+- Nota: el WSA tiene su propio historial con cierres de app (ver DoggiTV: el emulador no reproduce MPEG-1 Layer II y el player queda en BUFFERING). Si el crash persiste, hace falta `adb logcat -b crash -d` para ver la excepcion real.
+- Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar y abrir el canal -> deben salir solo los links vivos (log `links vivos: 2/4`).
+
+
+#### 🎯 Diagnostico del "se me sale la app" en WSA: es ANR, no crash (22 Oct 2026)
+**Sintoma (usuario, WSA)**: "al momento de iniciar la reproduccion se me sale la app".
+**Como se diagnostico (WSA con adb)**: `adb connect 127.0.0.1:<puerto>` (el puerto lo muestra WSA -> Settings -> Advanced -> Developer options -> ADB debugging).
+- `adb logcat -b crash -d` -> **sin FATAL EXCEPTION de `com.lagradost.cloudstream3.prerelease`** (el unico crash es de `com.android.vending`/Play Store, sin relacion).
+- `adb logcat -d | findstr "has died lmkd Killing ANR"` ->
+  ```
+  ActivityManager:   0% 21/lmkd: 0% user + 0% kernel          <- ANR
+  ActivityManager: Killing 1217:com.lagradost.cloudstream3.prerelease/u0a87 (adj 0): user request after error
+  ActivityManager: Killing 3584:com.lagradost.cloudstream3.prerelease/u0a87 (adj 0): user request after error
+  ```
+  -> **la app se CUELGA (ANR) y el sistema la mata**. No es un crash de Java del plugin.
+**Causa raiz**: los streams de Teleonline son **http a IP:puerto alto** (`http://38.134.250.110:8000/...`, `http://138.121.15.230:9002/...`) -> el NAT del WSA no los enruta (ya estaba documentado para el movil fisico: "Opcion 3 cuelga en el telefono pero responde al instante desde PC -> middlebox de puerto 80"). El player espera ese stream -> ANR -> el sistema mata la app.
+**Mitigacion aplicada (v9)**: `emitAlive()` **prueba** cada m3u8 desde el propio dispositivo y descarta los que no responden -> en el WSA no aparezcan los links muertos (403 / no conecta) -> no se cuelga al elegirlos. Si el dispositivo no llega a ninguno, el search/play se queda sin enlaces (correcto, no es un crash).
+**Test valido**: **cs3d (Windows)** reproduce (el server responde al instante desde Windows) o movil fisico **con VPN**.
+- El error pegado por el usuario (`TransactionTooLargeException: data parcel size 1054620 bytes` en `com.microsoft.windows.systemapp`) es la **redireccion de portapapeles de WSA** (Windows -> Android, 1MB > limite de Binder) -> es del emulador, no de la app.
