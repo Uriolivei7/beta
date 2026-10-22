@@ -137,7 +137,10 @@ class TeleonlineProvider : MainAPI() {
         val seen = HashSet<String>()
 
         for (post in fetchRestSearch(q)) {
-            val title = cleanHtml(post.optString("title", ""))
+            val titleObj = post.optJSONObject("title")
+            val title = cleanHtml(
+                if (titleObj != null) titleObj.optString("rendered", "") else post.optString("title", "")
+            )
             val url = post.optString("link", "").trim()
             if (title.isBlank() || url.isBlank()) continue
             if (!seen.add(url)) continue
@@ -199,20 +202,27 @@ class TeleonlineProvider : MainAPI() {
         }
 
         val mediaIds = items.mapNotNull { it.optLong("featured_media", 0L).takeIf { id -> id > 0 } }
-            .distinct().take(15)
-        val posters = if (mediaIds.isEmpty()) emptyMap() else {
-            mediaIds.amap { mid ->
-                mid to try {
-                    val r = app.get("$mainUrl/wp-json/wp/v2/media/$mid?_fields=source_url", timeout = 15L)
-                    if (r.isSuccessful) JSONObject(r.text).optString("source_url", "") else ""
-                } catch (e: Exception) { "" }
-            }.toMap()
+            .distinct()
+        val posters = HashMap<Long, String>()
+        for (tanda in mediaIds.chunked(10)) {
+            val res = tanda.amap { mid -> mid to fetchMediaUrl(mid) }
+            for ((mid, u) in res) {
+                if (u.isNotBlank()) posters[mid] = u
+            }
         }
         for (it in items) {
-            val poster = posters[it.optLong("featured_media", 0L)].orEmpty()
-            it.put("poster", poster)
+            it.put("poster", posters[it.optLong("featured_media", 0L)] ?: "")
         }
         return items
+    }
+
+    private suspend fun fetchMediaUrl(mid: Long): String {
+        return try {
+            val r = app.get("$mainUrl/wp-json/wp/v2/media/$mid?_fields=source_url", timeout = 15L)
+            if (r.isSuccessful) JSONObject(r.text).optString("source_url", "") else ""
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     private fun posterForUrl(url: String): String? {

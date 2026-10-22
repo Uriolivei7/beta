@@ -3029,3 +3029,17 @@ Lo que **NO** cambio y sigue funcionando (verificado end-to-end desde PC): el fl
 
 - **Regla para el futuro**: al editar `.kt` desde PowerShell 5.1 NO usar `Set-Content -Encoding UTF8` / `Out-File` (decodifican con el ANSI del sistema y producen mojibake). Usar la herramienta de edicion, o escribir con python `io.open(..., encoding="utf-8", newline="")`. Verificar despues con un escaneo de caracteres no-ASCII.
 - Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar -> el search debe salir con poster y los links deben llamarse "En Vivo - Opcion N" (con la tilde correcta).
+
+
+#### 🐛 Fix titulo del search (objeto rendered) + posters de TODOS los resultados (22 Oct 2026 v7)
+**Sintoma (usuario, log v6)**: (1) los nombres de los canales en el search salian como `{"rendered":"Studio Universal Africa"}`; (2) "solo me salen algunos posters, no de todos los resultados".
+**Causa raiz**:
+1. Con `_fields=...,title` el titulo de WP viene como **objeto renderizado** (`{"rendered":"..."}`), no como string plano -> `optString("title")` devolvia el `toString` del JSONObject.
+2. Los posters se pedian solo para los **15 primeros** (`take(15)`) -> los otros 15 salian sin poster.
+**Fix v7 (`TeleonlineProvider.kt`)**:
+1. El titulo se lee como `post.optJSONObject("title")?.optString("rendered")` con fallback a string plano, y se pasa por `cleanHtml()`.
+2. Los posters se piden para **TODOS** los items, en **tandas de 10 en paralelo** (`chunked(10)` + `amap`) -> ~3-5s en vez de 1.5s, pero ningun resultado se queda sin poster (medido: 30/30 con poster).
+3. `build.gradle.kts` 6 -> **7**; `plugins.json` Teleonline 6 -> **7** (`fileSize` pendiente). `bal_check.py` -> BALANCE OK. **No compilado por regla del repo.**
+
+- **La web ya no esta saturada** (medido 22 Oct): `/wp-json/wp/v2/posts?search=...&per_page=30&_fields=...` -> 1.9s; `/wp-json/wp/v2/media/{id}` -> 1.4s; `?_embed=wp:featuredmedia` -> 17.4s con 30/30 posters (alternativa en 1 solo request, mas pesada).
+- Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize`, instalar -> el search debe salir con el titulo limpio y poster en todos los resultados.
