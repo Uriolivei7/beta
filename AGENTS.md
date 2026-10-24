@@ -2021,6 +2021,20 @@ Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Scooby-Doo — buscar `probe HLS -> code=206 len=1379 ok=true`, `probe DASH -> code=206 ... ok=true`, `Emitidos 2 (HLS/DASH) id=..; agregando MP4 progresivo`.
 - ⚠️ **NUNCA editar ficheros del repo con `Set-Content`/`Out-File`** (PS 5.1): corrompió `OkruProvider/build.gradle.kts` a 542 bytes de `0x00`. Usar el tool `edit`.
 
+### 🎯 v5: probe del MP4 progresivo (Range) + política fail-open (24 Oct 2026 v5)
+**Síntoma (usuario)**: con v4 el video ya trae HLS/DASH válidos, pero el player abre con el **MP4 progresivo** y falla (`ERR_CONTENT_LENGTH_MISMATCH` / "Source error"), porque ese MP4 está roto en origen.
+**Causa raíz (por qué el MP4 va primero)**: el MP4 se emite con `quality = mapQuality("hd") = Qualities.P720`, mientras HLS/DASH llevan `Qualities.Unknown.value` (-1) → CloudStream ordena **descendente** y el MP4 roto queda arriba, por delante de HLS/DASH.
+**Decisión de diseño**: **no tocar las calidades**. Un `P720` en HLS empataría con el MP4 y el desempate del player no es determinista (podría seguir eligiendo el roto). Se valida el MP4 y se omite si no responde.
+**Cambios (`OkRuExtractor.kt`)**:
+- Imports nuevos: `kotlinx.coroutines.Dispatchers`, `kotlinx.coroutines.withContext`, `okhttp3.OkHttpClient`, `okhttp3.Request`, `java.util.concurrent.TimeUnit` (`okhttp3` ya llega por dependencia transitiva; PlushdProvider lo usa sin declararla).
+- `probeClient` (`by lazy`): `OkHttpClient` con `connectTimeout`/`readTimeout` de **8 s** y `followRedirects(true)`.
+- `probeProgressive(videoUrl): Boolean?`: `withContext(Dispatchers.IO)` + `Request` con `Range: bytes=0-1023` y headers (Referer `$mainUrl/`, Origin, UA Firefox); lee **máximo 1024 B** del body (`byteStream().read(ByteArray(1024))`) y cierra. `true` si `200/206` **y** `read > 0`; `false` si respondió mal o con 0 bytes; `null` si lanza excepción (re-lanza `CancellationException`). Log `probe MP4 -> code=.. read=.. ok=..`.
+- **No se usa `app.head(`** (no existe en el repo) ni `app.get` con `Range` (el servidor puede ignorarlo y devolver ~350 MB): de ahí el cliente OkHttp con lectura parcial.
+- Política en el bucle de progresivos: `mp4Ok == true` → emitir; `mp4Ok == false` → omitir (`Log.w "MP4 <calidad> no responde, se omite"`); `null` → **omitir solo si `emitted > 0`** (ya hay HLS/DASH) y **emitir si no hay otros enlaces** (fail-open, nunca dejar el video sin enlaces). El `return@forEach` para `youtube.com`/`youtu.be` se conserva.
+**Estado**: `OkruProvider/build.gradle.kts` **4 → 5**; `plugins.json` OkruProvider **4 → 5** (estaba en 4, no en 3 como decía la nota de v3/v4) — `fileSize` **pendiente** (sigue 32000). `OkruProvider.kt` balance OK; `plugins.json` válido (73 entradas). El checker ingenuo sigue dando **falso MISMATCH** en `OkRuExtractor.kt` (raw strings `""""` en L88/97/169/184/189/237/241): verificado a mano, el fichero está balanceado (274 líneas). **No compilado por regla del repo.**
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Scooby-Doo — buscar `probe MP4 -> code=200 read=1024 ok=true` (se emite) o `probe MP4 -> code=200 read=0 ok=false` + `MP4 hd no responde, se omite` (se descarta y reproduce por HLS), y que **no** aparezca `ERR_CONTENT_LENGTH_MISMATCH`.
+- ⏸️ Si el video solo tuviera MP4 roto (sin HLS/DASH), se emite igual (fail-open) y el error se verá en el player: no hay otra fuente.
+
 ---
 
 ## TvenvivoProvider � HTTPS roto del sitio, cambio a HTTP (11 Oct 2026 v7)

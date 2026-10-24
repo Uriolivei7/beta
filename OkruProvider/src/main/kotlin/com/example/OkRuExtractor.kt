@@ -10,6 +10,11 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.fixUrl
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 open class OkRuExtractor : ExtractorApi() {
     override val name            = "OkRU"
@@ -120,6 +125,38 @@ open class OkRuExtractor : ExtractorApi() {
         }
     }
 
+    private val probeClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+    }
+
+    private suspend fun probeProgressive(videoUrl: String): Boolean? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url(videoUrl)
+                    .header("Range", "bytes=0-1023")
+                    .header("Referer", "$mainUrl/")
+                    .header("Origin", mainUrl)
+                    .header("User-Agent", userAgent)
+                    .build()
+                probeClient.newCall(request).execute().use { response ->
+                    val read = response.body?.byteStream()?.use { it.read(ByteArray(1024)) } ?: -1
+                    val ok = (response.code == 200 || response.code == 206) && read > 0
+                    Log.d(name, "probe MP4 -> code=${response.code} read=$read ok=$ok")
+                    ok
+                }
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                Log.w(name, "probe MP4 fallo: ${t.message}")
+                null
+            }
+        }
+    }
+
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -217,8 +254,15 @@ open class OkRuExtractor : ExtractorApi() {
             val cleanUrl = videoUrl
                 .replace("\\u0026", "&")
                 .replace("\\/", "/")
-            if (!cleanUrl.contains("youtube.com") && !cleanUrl.contains("youtu.be")) {
-                invokeLink(quality, cleanUrl, callback)
+            if (cleanUrl.contains("youtube.com") || cleanUrl.contains("youtu.be")) {
+                return@forEach
+            }
+            val mp4Ok = probeProgressive(cleanUrl)
+            when {
+                mp4Ok == true -> invokeLink(quality, cleanUrl, callback)
+                mp4Ok == false -> Log.w(name, "MP4 $quality no responde, se omite")
+                emitted > 0 -> Log.w(name, "MP4 $quality sin verificar; hay HLS/DASH, se omite")
+                else -> invokeLink(quality, cleanUrl, callback)
             }
         }
     }
