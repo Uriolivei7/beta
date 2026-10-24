@@ -191,11 +191,8 @@ open class OkRuExtractor : ExtractorApi() {
         }
 
         if (emitted > 0) {
-            Log.d(name, "Emitidos $emitted (HLS/DASH) id=$id")
-            return
-        }
-
-        if (hlsUrl != null || dashUrl != null) {
+            Log.d(name, "Emitidos $emitted (HLS/DASH) id=$id; agregando MP4 progresivo")
+        } else if (hlsUrl != null || dashUrl != null) {
             Log.w(name, "HLS/DASH descartados por el probe; probando MP4 progresivo")
         }
 
@@ -214,7 +211,7 @@ open class OkRuExtractor : ExtractorApi() {
             return
         }
 
-        Log.d(name, "Links found: ${videoLinks.size}")
+        Log.d(name, "MP4 progresivos: ${videoLinks.size}")
 
         videoLinks.forEach { (quality, videoUrl) ->
             val cleanUrl = videoUrl

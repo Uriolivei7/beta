@@ -2007,17 +2007,18 @@ Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/
 - ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir el video — en logcat debe verse `OkRU HLS -> https://vd686.okcdn.ru/.../ondemand/hls4_...m3u8` y el player adaptar la calidad sin 2001.
 - ⏸️ Si otro video no trae `ondemandHls`, cae a `ondemandDash`; si el DASH también fallara, el último recurso sigue siendo el progresivo.
 
-### 🛡️ v3: probe de HLS+DASH (fail-open) + logs de diagnóstico (24 Oct 2026 v3)
-**Pedido (usuario)**: "por si algo falla nuevamente" — que el extractor valide los enlaces antes de emitirlos y que `load`/`loadLinks` dejen rastro en logcat.
+### 🛡️ v3/v4: probe de HLS+DASH (fail-open) + MP4 también + logs de diagnóstico (24 Oct 2026 v4)
+**Pedido (usuario)**: "por si algo falla nuevamente" — que el extractor valide los enlaces antes de emitirlos y que `load`/`loadLinks` dejen rastro en logcat. Luego: "esto no afecta la reproducción de los demás videos, porque los demás sí me reproducen" → se decidió **no quitar** el MP4 progresivo.
 **Cambios (`OkRuExtractor.kt`)**:
 - Nueva `probeStream(url, type): Boolean?` → `app.get` con headers (Referer/Origin/UA Firefox), `timeout = 10L`; acepta `200`/`206` + marcador de cuerpo (`#EXTM3U` para M3U8, `<MPD` para DASH). Devuelve `true` = OK, `false` = fallo definitivo, `null` = excepción (**fail-open**: se emite igual). Re-lanza `CancellationException`.
 - Emisión: ahora se prueban y emiten **HLS y DASH a la vez** (HLS primero), no "HLS o DASH". Cada uno se omite solo si el probe devuelve `false` (`Log.w "HLS/DASH ondemand no responde, se omite"`).
-- Si ninguno se emite → cae al progresivo (`Log.w "HLS/DASH descartados por el probe; probando MP4 progresivo"`).
-- Log de diagnóstico: `id=$id hls=<bool> dash=<bool> videos=<bool>` + `claves=<lista>` cuando faltan ambos campos (permite ver si ok.ru renombró las claves).
+- **v4 — sin regresión**: aunque HLS/DASH se emitan, **también se emiten los MP4 progresivos** (antes había `return` tras emitir HLS/DASH). Así ningún video que hoy reproduce por MP4 pierde su enlace; los adaptativos quedan arriba en la lista. Log `Emitidos N (HLS/DASH) id=..; agregando MP4 progresivo`.
+- Si ninguno de los dos se emite → solo MP4 (`Log.w "HLS/DASH descartados por el probe; probando MP4 progresivo"`).
+- Log de diagnóstico: `id=$id hls=<bool> dash=<bool> videos=<bool>` + `claves=<lista>` cuando faltan ambos campos (permite ver si ok.ru renombró las claves). Conteo de progresivos: `MP4 progresivos: N`.
 - `probeStream` **no** se usa en los progresivos (descargaría MBs): los MP4 siguen sin probe.
 **Cambios (`OkruProvider.kt`)** — solo logging: `getMainPage '<sección>' page=N -> M items`, `search '<q>' page=N` + `len` del `data-props`/API, `load <url>` + `album/title`, `SerieLoad aid=.. eps=N (crudos=M)`, `Filmvideo title/eurl/duration`, `loadLinks <data>` + rama (`OkRuExtractor` vs `loadExtractor`) + `isFound`.
-**Estado**: `OkruProvider/build.gradle.kts` **1 → 3** (el v2 se perdió al restaurar el archivo desde git tras corromperse con `Set-Content`); `plugins.json` OkruProvider **2 → 3** (`fileSize` pendiente, sigue 32000). Balance verificado con tokenizer que respeta raw strings (`""""`) → pila vacía en ambos `.kt`; `plugins.json` válido (73 entradas). **No compilado por regla del repo.**
-- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Scooby-Doo — buscar `probe HLS -> code=206 len=1379 ok=true`, `probe DASH -> code=206 ... ok=true`, `Emitidos 2 (HLS/DASH)`.
+**Estado**: `OkruProvider/build.gradle.kts` **3 → 4**; `plugins.json` OkruProvider **3 → 4** (`fileSize` pendiente, sigue 32000). Balance verificado con tokenizer que respeta raw strings (`""""`) → pila vacía en ambos `.kt`; `plugins.json` válido (73 entradas). **No compilado por regla del repo.**
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Scooby-Doo — buscar `probe HLS -> code=206 len=1379 ok=true`, `probe DASH -> code=206 ... ok=true`, `Emitidos 2 (HLS/DASH) id=..; agregando MP4 progresivo`.
 - ⚠️ **NUNCA editar ficheros del repo con `Set-Content`/`Out-File`** (PS 5.1): corrompió `OkruProvider/build.gradle.kts` a 542 bytes de `0x00`. Usar el tool `edit`.
 
 ---
