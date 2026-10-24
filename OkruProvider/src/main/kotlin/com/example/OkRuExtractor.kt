@@ -41,7 +41,7 @@ open class OkRuExtractor : ExtractorApi() {
         callback(
             newExtractorLink(
                 name,
-                name,
+                "$name MP4",
                 fixUrl(videoUrl),
                 ExtractorLinkType.VIDEO
             ) {
@@ -53,6 +53,71 @@ open class OkRuExtractor : ExtractorApi() {
                 this.quality = mappedQuality
             }
         )
+    }
+
+    private suspend fun invokeStreamLink(
+        label: String,
+        streamUrl: String,
+        type: ExtractorLinkType,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        Log.d(name, "$label -> $streamUrl")
+        callback(
+            newExtractorLink(
+                name,
+                label,
+                streamUrl,
+                type
+            ) {
+                headers = mutableMapOf(
+                    "Referer"    to "$mainUrl/",
+                    "Origin"     to mainUrl,
+                    "User-Agent" to userAgent
+                )
+                this.quality = Qualities.Unknown.value
+            }
+        )
+    }
+
+    private fun jsonUrl(dataOptions: String, key: String): String? {
+        return Regex(""""$key":"([^"]+)"""")
+            .find(dataOptions)?.groupValues?.get(1)
+            ?.replace("\\u0026", "&")
+            ?.replace("\\/", "/")
+            ?.replace("&amp;", "&")
+            ?.takeIf { it.startsWith("http") }
+    }
+
+    private fun optionKeys(dataOptions: String): String {
+        return Regex(""""([A-Za-z0-9_]+)":""").findAll(dataOptions)
+            .map { it.groupValues[1] }
+            .distinct()
+            .joinToString(",")
+    }
+
+    private suspend fun probeStream(streamUrl: String, type: ExtractorLinkType): Boolean? {
+        val label = if (type == ExtractorLinkType.DASH) "DASH" else "HLS"
+        return try {
+            val response = app.get(
+                streamUrl,
+                headers = mapOf(
+                    "Referer"    to "$mainUrl/",
+                    "Origin"     to mainUrl,
+                    "User-Agent" to userAgent
+                ),
+                timeout = 10L
+            )
+            val body = response.text
+            val marker = if (type == ExtractorLinkType.DASH) "<MPD" else "#EXTM3U"
+            val ok = (response.code == 200 || response.code == 206) &&
+                body.contains(marker, ignoreCase = true)
+            Log.d(name, "probe $label -> code=${response.code} len=${body.length} ok=$ok")
+            ok
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            Log.w(name, "probe $label fallo: ${t.message}")
+            null
+        }
     }
 
     override suspend fun getUrl(
@@ -90,6 +155,48 @@ open class OkRuExtractor : ExtractorApi() {
             Log.d(name, "YouTube redirect: $originalUrl")
             loadExtractor(originalUrl, subtitleCallback, callback)
             return
+        }
+
+        val hlsUrl = jsonUrl(dataOptions, "ondemandHls") ?: jsonUrl(dataOptions, "hlsManifestUrl")
+        val dashUrl = jsonUrl(dataOptions, "ondemandDash") ?: jsonUrl(dataOptions, "metadataUrl")
+
+        Log.d(
+            name,
+            "id=$id hls=${hlsUrl != null} dash=${dashUrl != null} videos=${dataOptions.contains("\"videos\"")}"
+        )
+        if (hlsUrl == null && dashUrl == null) {
+            Log.w(name, "sin ondemandHls/ondemandDash; claves=${optionKeys(dataOptions)}")
+        }
+
+        var emitted = 0
+
+        if (hlsUrl != null) {
+            if (probeStream(hlsUrl, ExtractorLinkType.M3U8) != false) {
+                Log.d(name, "HLS ondemand")
+                invokeStreamLink("$name HLS", hlsUrl, ExtractorLinkType.M3U8, callback)
+                emitted++
+            } else {
+                Log.w(name, "HLS ondemand no responde, se omite")
+            }
+        }
+
+        if (dashUrl != null) {
+            if (probeStream(dashUrl, ExtractorLinkType.DASH) != false) {
+                Log.d(name, "DASH ondemand")
+                invokeStreamLink("$name DASH", dashUrl, ExtractorLinkType.DASH, callback)
+                emitted++
+            } else {
+                Log.w(name, "DASH ondemand no responde, se omite")
+            }
+        }
+
+        if (emitted > 0) {
+            Log.d(name, "Emitidos $emitted (HLS/DASH) id=$id")
+            return
+        }
+
+        if (hlsUrl != null || dashUrl != null) {
+            Log.w(name, "HLS/DASH descartados por el probe; probando MP4 progresivo")
         }
 
         val videosJson =

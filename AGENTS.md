@@ -1990,6 +1990,36 @@ Pedido del usuario: agregar `https://github.com/Kraptor123/Cs-Karma/tree/master/
 - Compilación: pendiente por el usuario (`.\gradlew.bat :OkruProvider:make --console=plain -q`) — **no compilado por regla del repo**.
 - ⏸️ **Pendiente**: compilar, actualizar `fileSize`, instalar y probar: (1) home/search/load del catálogo ok.ru; (2) reproducción de una peli (ej. la que el usuario ya verificó en el upstream); (3) un embed ok.ru en Donghualife — buscar `OkRU` en logcat y comprobar que emite junto al nativo.
 
+### 🐛 Fix 2001: emitir HLS `ondemandHls` en vez del MP4 progresivo (24 Oct 2026 v2)
+**Síntoma (usuario)**: "Scooby-Doo Estrella del circo (2012) Latino HD" (`videoembed/16964466444806`) da `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED (2001)` / "Enlaces no encontrados / Error remoto / Source error". El extractor solo emitía los progresivos `"videos":[{name,url}]`.
+**Diagnóstico (medido desde PC con el `data-options` real del embed)**:
+- `video[0].url` (progresivo, `vd686.okcdn.ru/?expires=...&srcAg=GECKO&sig=...`) → con UA Firefox: **200 con `Content-Length` pero 0 bytes de cuerpo** (`ChunkedEncodingError: IncompleteRead(0 bytes read, ...)`), también con `curl.exe` → endpoint roto/cerrado en origen. Con UA `ExoPlayerLib` o sin UA → **400 con cuerpo `10`**.
+- `ondemandHls` (misma ruta, `.../srcAg/GECKO/.../ondemand/hls4_<contentId>.<hash>.m3u8`) → UA Firefox: **206, `application/x-mpegURL`**, master real con 5 variantes (256x144 / 424x240 / 640x360 / 856x480 / 1280x720, `avc1`+`mp4a.40.2`), variante 200 con segmentos `sN.ts` de ~6 s. Probado 4 veces: determinista.
+- `ondemandDash` (`dash4_<contentId>.<hash>.mpd`) → UA Firefox: **206, `application/dash+xml`** (URL distinta de la HLS: `/ct/28/` vs `/ct/29/`).
+- El cuerpo `10` es el chequeo de `srcAg`: la URL está firmada a la familia de UA **GECKO**; por eso el UA de ExoPlayer no sirve y hay que mandar el Firefox del extractor en `headers` (CS3IPlayer los aplica al link).
+**Causa raíz**: el MP4 progresivo de este video no entrega bytes (el player agota la conexión → 2001) y el extractor no conocía los campos `ondemandHls`/`ondemandDash` del `data-options` (el regex `"videos":(\[.*?\])` además apunta a la raíz, pero el array está en `flashvars.metadata.videos`).
+**Fix (`OkRuExtractor.kt`)**:
+- Nueva `jsonUrl(dataOptions, key)` (regex `"<key>":"([^"]+)"`, desescapa `\u0026`/`\/`/`&amp;`, exige `http`).
+- Nueva `invokeStreamLink(label, url, type, callback)` con `Qualities.Unknown.value` y los mismos headers (UA Firefox 135 + `Referer`/`Origin` `https://ok.ru`).
+- Orden de emisión: **`ondemandHls` → M3U8** (`"OkRU HLS"`); si no existe, **`ondemandDash` → DASH**; si tampoco, los progresivos `videos[]` como hasta ahora. Cuando hay HLS se emite solo ese (el master ya trae todas las calidades y evita ofrecer arriba una opción rota).
+- Logs nuevos: `HLS ondemand` / `DASH ondemand` antes de emitir.
+**Estado**: `OkruProvider/build.gradle.kts` **1 → 2**; `plugins.json` OkruProvider **1 → 2** (`fileSize` pendiente, sigue 32000). Balance de llaves verificado con un checker que respeta los raw strings `""""` (`bal_check.py` da falso MISMATCH en este archivo). **No compilado por regla del repo.**
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir el video — en logcat debe verse `OkRU HLS -> https://vd686.okcdn.ru/.../ondemand/hls4_...m3u8` y el player adaptar la calidad sin 2001.
+- ⏸️ Si otro video no trae `ondemandHls`, cae a `ondemandDash`; si el DASH también fallara, el último recurso sigue siendo el progresivo.
+
+### 🛡️ v3: probe de HLS+DASH (fail-open) + logs de diagnóstico (24 Oct 2026 v3)
+**Pedido (usuario)**: "por si algo falla nuevamente" — que el extractor valide los enlaces antes de emitirlos y que `load`/`loadLinks` dejen rastro en logcat.
+**Cambios (`OkRuExtractor.kt`)**:
+- Nueva `probeStream(url, type): Boolean?` → `app.get` con headers (Referer/Origin/UA Firefox), `timeout = 10L`; acepta `200`/`206` + marcador de cuerpo (`#EXTM3U` para M3U8, `<MPD` para DASH). Devuelve `true` = OK, `false` = fallo definitivo, `null` = excepción (**fail-open**: se emite igual). Re-lanza `CancellationException`.
+- Emisión: ahora se prueban y emiten **HLS y DASH a la vez** (HLS primero), no "HLS o DASH". Cada uno se omite solo si el probe devuelve `false` (`Log.w "HLS/DASH ondemand no responde, se omite"`).
+- Si ninguno se emite → cae al progresivo (`Log.w "HLS/DASH descartados por el probe; probando MP4 progresivo"`).
+- Log de diagnóstico: `id=$id hls=<bool> dash=<bool> videos=<bool>` + `claves=<lista>` cuando faltan ambos campos (permite ver si ok.ru renombró las claves).
+- `probeStream` **no** se usa en los progresivos (descargaría MBs): los MP4 siguen sin probe.
+**Cambios (`OkruProvider.kt`)** — solo logging: `getMainPage '<sección>' page=N -> M items`, `search '<q>' page=N` + `len` del `data-props`/API, `load <url>` + `album/title`, `SerieLoad aid=.. eps=N (crudos=M)`, `Filmvideo title/eurl/duration`, `loadLinks <data>` + rama (`OkRuExtractor` vs `loadExtractor`) + `isFound`.
+**Estado**: `OkruProvider/build.gradle.kts` **1 → 3** (el v2 se perdió al restaurar el archivo desde git tras corromperse con `Set-Content`); `plugins.json` OkruProvider **2 → 3** (`fileSize` pendiente, sigue 32000). Balance verificado con tokenizer que respeta raw strings (`""""`) → pila vacía en ambos `.kt`; `plugins.json` válido (73 entradas). **No compilado por regla del repo.**
+- ⏸️ **Pendiente**: compilar (`.\gradlew.bat :OkruProvider:make --console=plain -q`), actualizar `fileSize`, instalar y reproducir Scooby-Doo — buscar `probe HLS -> code=206 len=1379 ok=true`, `probe DASH -> code=206 ... ok=true`, `Emitidos 2 (HLS/DASH)`.
+- ⚠️ **NUNCA editar ficheros del repo con `Set-Content`/`Out-File`** (PS 5.1): corrompió `OkruProvider/build.gradle.kts` a 542 bytes de `0x00`. Usar el tool `edit`.
+
 ---
 
 ## TvenvivoProvider � HTTPS roto del sitio, cambio a HTTP (11 Oct 2026 v7)
@@ -3251,3 +3281,8 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 - Logs: `adb logcat -s Teleonline:V TeleonlineProxy:V` -> `opciones=.. candidatas=..`, `opcion N probe ok: 0x121:eng, 0x3f8:spa`, `PAT declara PMT 32, PMT real 32`, y en el proxy `seg ...`/`handle` sin `handle fallo`.
 - Si el `[ESP]` sale en ingles, revisar que el segmento tenga el PMT en el mismo PID en todas sus apariciones (el filtro exige `fitsPacket`: secciones >188 B no se reescriben; las de CN LA son de 43 B).
 - Opcional sin sondear: opcion 6 de CN LA (puede que el listado rote y aparezcan otras IPs).
+
+### ✅ VERIFICADO en dispositivo (22 Oct 2026)
+- El usuario confirma: en Cartoon Network Latin America el listado muestra **En Vivo - Opcion 8 [ESP]** y **[ENG]** (mismo numero, dos pistas), y el [ESP] reproduce con audio en espanol.
+- uild.gradle.kts y plugins.json en **version 12**; ileSize sigue **24485** (pendiente de actualizar tras compilar).
+- Nota para futuros canales: el proxy solo actua cuando el master NO declara #EXT-X-MEDIA:TYPE=AUDIO y el TS trae 2+ ES de audio (caso muxado). Si el master declara las renditions, media3 ya crea 2 pistas y muestra el boton nativo (caso GloboView), sin necesidad de proxy.
