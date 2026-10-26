@@ -17,7 +17,6 @@ class OkruProvider : MainAPI() {
 
     override val mainPage = mainPageOf(
         "${mainUrl}/video/showcase" to "Videos",
-        "${mainUrl}/video/kino/soviet" to "Soviet",
         "${mainUrl}/video/kino/drama" to "Drama",
         "${mainUrl}/video/kino/action" to "Action",
         "${mainUrl}/video/kino/family" to "Family",

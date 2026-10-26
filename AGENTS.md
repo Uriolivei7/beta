@@ -3301,3 +3301,94 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 - El usuario confirma: en Cartoon Network Latin America el listado muestra **En Vivo - Opcion 8 [ESP]** y **[ENG]** (mismo numero, dos pistas), y el [ESP] reproduce con audio en espanol.
 - uild.gradle.kts y plugins.json en **version 12**; ileSize sigue **24485** (pendiente de actualizar tras compilar).
 - Nota para futuros canales: el proxy solo actua cuando el master NO declara #EXT-X-MEDIA:TYPE=AUDIO y el TS trae 2+ ES de audio (caso muxado). Si el master declara las renditions, media3 ya crea 2 pistas y muestra el boton nativo (caso GloboView), sin necesidad de proxy.
+
+---
+
+## TeleonlineProvider - Enlaces [ESP]/[ENG] intermitentes: cache de CS3 + sondeo paralelo (26 Oct 2026 v13)
+
+### Sintoma (usuario)
+- A veces, al entrar a un canal, **no aparecen** los enlaces etiquetados `En Vivo - Opcion N [ESP]` / `[ENG]`; solo sale la opcion plana (sin proxy TS, sin audio en espanol elegible).
+- Al **matar la app** y volver a entrar, si aparecen. Es decir: no es el sitio, es estado interno.
+
+### Causa raiz (verificada por bytecode en `cloudstream.jar`)
+- El player usa `com.lagradost.cloudstream3.ui.player.RepoLinkGenerator.generateLinks`, que cachea por `Pair(apiName, episodeId)` en `ui.player.Cache.getLinkCache()` (TTL 1200 s) y marca `Cache.setSaturated(!linkCache.isEmpty())` + `setLastCachedTimestamp(...)` **justo despues** de que `loadLinks` retorne.
+- Con cache valida y `saturated == true`, CS3 **NO vuelve a llamar a `loadLinks`** durante 20 min. Si la primera visita no logro plan de proxy (solo emitio la opcion plana), ese resultado queda cacheado y persiste hasta matar la app. **El provider no puede invalidar esa cache** -> el fix tiene que acertar en la primera llamada.
+
+### Por que fallaba el plan de proxy en la 1a visita
+- El sondeo de candidatas era **secuencial con `budget = 2`**: si las 2 primeras candidatas no eran el TS muxado con 2 ES de audio, no se generaba ningun `ProxyPlan`.
+- Los **indices de "opcion" rotan por request** (el indice es la posicion entre todos los `atob` del HTML), asi que "las 2 primeras" cambian entre visitas -> intermitencia.
+
+### Fix v13 (`TeleonlineProvider.kt`, `emitM3u8Options`)
+1. **Sondeo en PARALELO de todas las candidatas**: `withTimeoutOrNull(30000L) { candidates.amap { c -> ... probeCandidate(c) ... } }`, con escritura en `synchronized(plans)`, `catch (CancellationException) throw` y `catch (Exception)` con log por opcion. Eliminado `var budget = 2` y el `for` secuencial.
+2. **Reintento secuencial** si `plans.isEmpty()`: `Log.w("Teleonline", "sin planes en paralelo, reintento secuencial")` + `withTimeoutOrNull(15000L)` sobre todas las candidatas (red de seguridad para redes lentas).
+3. Log final `planes=N/M` para diagnosticar en logcat.
+4. **`PROBE_LIMIT` 3 MB -> 768 KB** (`TeleonlineTsProxy.kt`): `firstSegment` solo necesita el PMT (que va al inicio del segmento, ~100-300 KB) y los segmentos pesan ~432 KB-1,5 MB; bajar el tope acelera el probe sin riesgo. `serveSegment` usa `fetchBytes(url, Int.MAX_VALUE)` y **no** depende de esta constante.
+- Presupuesto de tiempo: `candidateOf` 12 s + probes 30 s + reintento 15 s + `mainHtml` 20 s ~ 77 s < limite de 120 s de CS3.
+
+### Estado / versiones
+- `TeleonlineProvider/build.gradle.kts` **12 -> 13**; `plugins.json` Teleonline **12 -> 13**; `fileSize` **pendiente** (sigue 24485).
+- Balance verificado con `dbg_bal.py`: `TeleonlineProvider.kt` 380 lineas, cierre de clase en L380; `emitM3u8Options` L248-358 correctamente cerrado.
+- **No compilado por regla del repo.**
+
+### Pendiente (usuario)
+- Compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar varias veces seguidas el mismo canal (sin matar la app) en celular fisico + VPN o cs3d.
+- Logs: `adb logcat -s Teleonline:V TeleonlineProxy:V` -> debe salir `opciones=N candidatas=M` y `planes=M/M` (no `planes=0`), y el listado debe traer `[ESP]`/`[ENG]` en la primera visita.
+
+---
+
+## DoggitvProvider - Proxy TS local para audio en espanol (26 Oct 2026 v7)
+
+### Sintoma
+- Canales IPTV con **doble audio** (TNT Latin America Center y TNT LA Colombia, confirmado) suenan solo en **ingles** y no aparece el boton de pistas, aunque el TS trae `spa`.
+- En un reproductor externo (VLC/libmpv) si se puede elegir espanol.
+
+### Causa raiz (confirmada en `TsExtractor` de media3 1.9.3 y con sondeo real del TS)
+- `MODE_HLS` mapea `trackId = streamType` (no el PID) y el dedupe conserva el **PID mas bajo por `streamType`** -> los dos audios colapsan en un solo track. En estos canales el PID menor es `eng`, asi que `spa` se descarta al parsear el PMT.
+- **TNT LA Center** (`http://45.171.64.30:6060/play/a03i/index.m3u8`): segmento 810844 B, PAT progs `[(669,'0x2b')]`, PMT pid `0x2b` pcr `0x6cb`, ES: **AAC eng `0x6c3`**, AAC spa `0x6c4`, H264 `0x6cb`.
+- **TNT LA Colombia** (`http://181.78.211.244:8005/play/a09g/index.m3u8`): segmento 431836 B, PAT progs `[(422,'0x38')]`, PMT pid `0x38` pcr `0x457`, ES: **MP2 eng `0x45a`**, MP2 spa `0xeef`, MPEG2V `0x457`.
+- Por eso filtrar paquetes del PID `eng` no alcanza: hay que **reescribir el PMT** (y el PAT si apunta a otro) para que media3 solo vea un audio.
+
+### Fix v7 (`DoggitvProvider.kt` + `DoggitvTsProxy.kt` nuevo)
+- `DoggitvTsProxy.kt`: port del `TeleonlineTsProxy` (proxy HTTP local `ServerSocket(0, 50, 127.0.0.1)`, threads daemon, solo GET, `Connection: close`, reaper `IDLE_MS = 180000L`, `PROBE_LIMIT = 768 * 1024`, `TAG = "DoggiProxy"`).
+  - `playlistUrl(variantUrl, keepPid)` reescribe la variante a URLs `/seg?u=..&v=..&p=..` locales y re-consulta la variante en cada request (live reload).
+  - `serveSegment` descarga el segmento original y llama `filterTs`: `alignOffset` (3 syncs `0x47`), `findPat`/`findPmt` por escaneo real con CRC (ignora lo que declare el PAT), `buildPmtSection` quita las ES de audio != `keepPid` (recalcula `section_length` + CRC MPEG-2), `buildPatSection` apunta al PMT real, `rewriteSection` reescribe todas las apariciones PSI (AFC=3, stuffing en adaptation field, CC preservado). Fail-open al `data` original.
+  - Cache `ConcurrentHashMap` con clave `"$variant|$keepPid"` (no se contaminan dos links del mismo master).
+- `loadLinks` reescrito: valida `u`; `type` por extension sobre `u.substringBefore('?').lowercase()` (`.mpd` DASH, `.mp4/.mkv/.webm` VIDEO, resto M3U8); descarga el master **una sola vez** (`app.get(u, timeout = 15L)`); si `muxedVariantOf` devuelve variante (master con `#EXT-X-MEDIA:TYPE=AUDIO` y 1 sola `#EXT-X-STREAM-INF`) la emite directo (media3 ya crea 2 pistas); si hay `#EXT-X-MAP`/`#EXT-X-KEY` se salta el probe; si no, `singleVariantOf` + `withTimeoutOrNull(20000L) { firstSegment(variant, 15000L)?.let { probeTracks(it) } }` y con `tracks.size >= 2` emite **un enlace por pista** (`playlistUrl(variant, t.pid)`), orden `sortedBy { langRank(it.lang) }`.
+  - Etiquetas: `langRank` (esp/spa=0, en/eng=1, resto=2), `langLabel` (ESP/ENG/AUDIO/`uppercase()`); titulo `"$name [ESP]"`.
+  - Helpers nuevos: `emitLink` (suspend, `quality = Qualities.Unknown.value`), `singleVariantOf`, `muxedVariantOf`. Import `kotlinx.coroutines.withTimeoutOrNull`.
+  - Fallback fail-open: si no hay plan de proxy se emite el master crudo como M3U8 (comportamiento anterior, nunca deja sin enlaces).
+- `withTimeoutOrNull` **no interrumpe** llamadas OkHttp bloqueantes (solo comprueba al volver); los timeouts reales los dan los `call.timeout()` del proxy. Se deja como red de seguridad inofensiva.
+
+### Estado / versiones
+- `DoggitvProvider/build.gradle.kts` **6 -> 7**; `plugins.json` DoggiTV **6 -> 7**; `fileSize` **pendiente** (sigue 0).
+- **No compilado por regla del repo.**
+
+### Pendiente (usuario)
+- Compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar **TNT Latin America Center** (pais Panama/Venezuela) y **TNT LA Colombia**.
+- Logs: `adb logcat -s DoggiProxy:V DoggiTV:V` -> debe salir el probe con 2+ pistas y, en el player, dos enlaces `DoggiTV [ESP]` / `DoggiTV [ENG]`; reproducir el `[ESP]` y confirmar audio espanol.
+- Si el `[ESP]` sigue en ingles, revisar que el PMT del segmento tenga el mismo PID en todas sus apariciones (el filtro exige `fitsPacket`: secciones >188 B no se reescriben).
+- Canales con master que ya declara `#EXT-X-MEDIA:TYPE=AUDIO` no usan el proxy (media3 crea las 2 pistas solo, caso GloboView); el proxy es solo para el caso muxado.
+
+---
+
+## DoggitvProvider - Blindaje del probe: 2 intentos y segmento fresco (26 Oct 2026 v8)
+
+### Motivo
+- **Riesgo de cache de CS3**: `RepoLinkGenerator` cachea por `Pair(apiName, episodeId)` (TTL 1200 s) y marca `saturated = !linkCache.isEmpty()` tras `loadLinks`; con cache valida **no se vuelve a llamar a `loadLinks`** durante 20 min. El provider no puede invalidarla.
+- Si el probe falla **una sola vez** (segmento caducado, timeout o red), el fallback emite el master crudo y ese resultado queda cacheado -> el canal se queda **sin `[ESP]`/`[ENG]`** hasta matar la app (el mismo sintoma intermitente ya documentado en Teleonline v13).
+- **Debilidad del v7**: `firstSegment` cogia el **primer** segmento de la ventana live (el mas viejo, a punto de expirar). El servidor "Astra" responde `Content-Length: 188` (un unico paquete TS nulo, PID `0x1FFF`) para un segmento caducado.
+
+### Fix v8
+- `DoggitvTsProxy.kt`: eliminado `firstSegment`; nuevos `segmentUris(text)` (lineas no-`#`, trim, no vacias) y `probeVariantTracks(variantUrl, timeoutMs = 0L)`: descarga la variante, toma los **2 ultimos segmentos** (`takeLast(2).asReversed()`, el ultimo es el mas fresco) y devuelve las pistas del primero que tenga 2+ audios. Logs `probe variant: segmento N/M sin 2+ audios (X B)` y `probeVariantTracks: variante sin segmentos`.
+- `DoggitvProvider.kt` (`loadLinks`): bucle `for (attempt in 1..2)` con `tracks = withTimeoutOrNull(40000L) { DoggitvTsProxy.probeVariantTracks(variant, 10000L) }`; sale al obtener 2+ pistas, si no `Log.w(TAG, "probe intento $attempt sin 2+ audios, reintentando")`. El fallback fail-open (master crudo) queda igual.
+- Presupuesto peor caso: master 15 s + 2 x (variante 10 s + 2 segmentos x 10 s) = 75 s < limite de 120 s de CS3. `withTimeoutOrNull` no interrumpe OkHttp bloqueante; los timeouts reales los da `call.timeout()`.
+
+### Estado / versiones
+- `DoggitvProvider/build.gradle.kts` **7 -> 8**; `plugins.json` DoggiTV **7 -> 8**; `fileSize` **pendiente** (sigue 0). JSON valido (73 entradas).
+- Balance verificado con `bal2.py`: `DoggitvTsProxy.kt` (617 lineas) y `DoggitvProvider.kt` (452 lineas) sin desbalances.
+- **No compilado por regla del repo.**
+
+### Pendiente (usuario)
+- Compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar **TNT Latin America Center** y **TNT LA Colombia** varias veces seguidas **sin matar la app**.
+- Logs: `adb logcat -s DoggiProxy:V DoggiTV:V` -> en el caso normal no debe aparecer `probe intento 2`; `probe variant: segmento 1/2 ...` solo si el ultimo segmento fallo. En el player deben salir `DoggiTV [ESP]` / `DoggiTV [ENG]`; reproducir el `[ESP]` y confirmar audio espanol.
+- Si sigue en ingles, revisar que el PMT del segmento tenga el mismo PID en todas sus apariciones (el filtro exige `fitsPacket`: secciones >188 B no se reescriben).
