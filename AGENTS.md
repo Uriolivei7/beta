@@ -3392,3 +3392,51 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 - Compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar **TNT Latin America Center** y **TNT LA Colombia** varias veces seguidas **sin matar la app**.
 - Logs: `adb logcat -s DoggiProxy:V DoggiTV:V` -> en el caso normal no debe aparecer `probe intento 2`; `probe variant: segmento 1/2 ...` solo si el ultimo segmento fallo. En el player deben salir `DoggiTV [ESP]` / `DoggiTV [ENG]`; reproducir el `[ESP]` y confirmar audio espanol.
 - Si sigue en ingles, revisar que el PMT del segmento tenga el mismo PID en todas sus apariciones (el filtro exige `fitsPacket`: secciones >188 B no se reescriben).
+
+---
+
+## DoggitvProvider - Fix 502 al reproducir por segunda vez: variante Astra caducada (26 Oct 2026 v9)
+
+### Sintoma (usuario, log 18:17-18:24)
+- `TNT LA Colombia` reproducia bien la **primera** vez (18:18:28) y despues, al volver a entrar o al elegir `[ENG]`, el player daba `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)`.
+- En el log: `handle GET /live.m3u8?u=...&p=1114` (y `p=3823`) con URLs **identicas** en todos los reintentos (18:21:41, 18:21:59, 18:22:16, 18:24:51) -> el proxy respondia **502** en el **playlist** (no en el segmento; `ParsingLoadable -> CronetDataSource.open`). Sin `probe intento 2` (el probe si acerto).
+
+### Causa raiz (medida con `curl.exe` UA Chrome/148 desde PC)
+- La URL de **variante** del servidor Astra es **rodante y con TTL de segundos**:
+  - `master_co 200 134` / `var_co 404 118` (`http://181.78.211.244:8005/play/a09g/92700371.m3u8`)
+  - `master_center 200 132` / `var_center 404 118` (`http://45.171.64.30:6060/play/a03i/81692604.m3u8`)
+  - El master devuelve un **numero distinto en cada peticion** (`72346376.m3u8`, luego `20170673.m3u8`); el `20170673` pedido al instante dio `200 size=356`.
+- El proxy v8 pedia en **cada request** la variante capturada en `loadLinks` (`u`); al caducar -> upstream 404 -> proxy 502 -> CS3 2004. Y como CS3 **cachea los links 1200 s** (`RepoLinkGenerator`), no se vuelve a llamar a `loadLinks` y el canal queda roto hasta matar la app.
+- El **master** (`index.m3u8`) es estable; los **segmentos** tambien (URLs absolutas `.../215220481_fd06.ts`), aunque la variante caduque.
+- Descartado el reaper como causa (el proxy respondio 502, no "connection refused": el servidor estaba vivo). Aun asi `IDLE_MS` subido a 30 min porque la cache de CS3 (1200 s) puede sobrevivir al proxy.
+
+### Fix v9
+- `DoggitvTsProxy.kt`:
+  1. `playlistUrl(sourceUrl, keepPid)` ahora recibe el **master** y emite `http://127.0.0.1:<port>/live.m3u8?m=<master>&p=<pid>` (param `m`).
+  2. `servePlaylist` resuelve la variante **fresca en cada request**: `source = query["m"] ?: query["u"]` (compat legacy); `fetchText(source)`; si el cuerpo tiene `#EXT-X-STREAM-INF` es master -> primera linea no-`#` (`segmentUris(...).firstOrNull()`), `absolute(source, ref)`, `fetchText(abs)`; **bucle `for (attempt in 1..2)`** que **re-pide el master** (`masterText = fetchText(source)`) si la variante falla (la variante cambia de numero). Si el cuerpo **no** tiene STREAM-INF se asume media playlist y se usa `source` tal cual (listas que apuntan directo a la variante). Si no hay texto -> `502 upstream`. Log final `playlist master=... variant=... keep=... segmentos=N`.
+  3. `IDLE_MS` 180000 -> **1800000**.
+  4. `filterTs` **fail-open**: si el PMT trae audios pero **ninguno** coincide con `keepPid` (PIDs rotados), log `PMT sin audio <pid> (...), sin filtrar` y devuelve `data` sin tocar (evita silencio).
+- `DoggitvProvider.kt` (`loadLinks`): `DoggitvTsProxy.playlistUrl(u, t.pid)` — se pasa el **master `u`** de la lista m3u, no la variante; el caso "media playlist" lo cubre el punto 2. `variant` sigue usandose solo en `probeVariantTracks`/logs.
+
+### Estado / versiones
+- `DoggitvProvider/build.gradle.kts` **8 -> 9**; `plugins.json` DoggiTV **8 -> 9**; `fileSize` **pendiente** (sigue 0). JSON valido (73 entradas).
+- Balance verificado con `bal2.py`: `DoggitvTsProxy.kt` (648 lineas) y `DoggitvProvider.kt` (453 lineas) sin desbalances.
+- **No compilado por regla del repo.**
+
+### Pendiente (usuario)
+- Compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar **TNT LA Colombia** reproduciendo **dos veces seguidas sin matar la app** (ESP y luego ENG, y volver a entrar al canal).
+- Logs: `adb logcat -s DoggiProxy:V DoggiTV:V` -> cada request del playlist debe mostrar `playlist master=... variant=http://181.78.211.244:8005/play/a09g/<numero>.m3u8 ... segmentos=N` con **numero distinto** entre visitas y **sin 502**. Si aparece `variante ... sin respuesta (intento 1)` y luego resuelve, el reintento esta funcionando.
+- Limite conocido: si una lista m3u apunta **directamente a la variante** (sin master), v9 no puede refrescarla; queda el fail-open de `filterTs`. Sin caso observado aun.
+
+### 🐛 Fix compilacion v9: `Argument type mismatch: String? -> String` (26 Oct 2026)
+**Sintoma (usuario)**: `DoggitvTsProxy.kt` lineas 239 y 242 no compilan: `Argument type mismatch: actual type is 'String?', but 'String' was expected` (`absolute(variant, l)` y `enc(variant)`).
+
+**Causa raiz (reproducida con el compilador Kotlin 2.3.0 aislado, sin Gradle)**: en `servePlaylist` la linea `val source = query["m"] ?: query["u"]` da `String?`. El guard `if (source.isNullOrBlank()) return` si aplica smart-cast **en contexto de expresion** (`fetchText(source)` compila bien), pero **NO al inferir el tipo de una declaracion sin tipo explicito**: `var variant = source` y `var resolvedUrl = source` quedan tipadas como **`String?`**. Ese `variant` nullable llega a las lineas 239/242 -> los 2 errores. (Verificado: poner `var variant: String = source` solo mueve el error a `variant = resolvedUrl`, porque `resolvedUrl` tambien es `String?`.)
+
+**Fix (1 sola linea)**: `val source = query["m"] ?: query["u"] ?: ""` -> `source: String` de verdad; `if (source.isNullOrBlank())` -> `if (source.isBlank())`. Con eso `variant` y `resolvedUrl` se infieren `String` y desaparecen los 2 errores. La funcion real extraida del archivo compila **sin errores de tipo** (frontend limpio).
+
+**Regla para el repo**: el smart-cast de `isNullOrBlank()`/`== null` protege los **usos en expresion**, no la **inferencia de tipo de `var`/`val` sin anotar**. Cuando una local viene de `query[...] ?: ...` (nullable) y luego se asigna a otra variable, hacerla no-nula en el origen (`?: ""`) o anotar el tipo explicito.
+
+- Sin cambio de version: el fix pertenece a la **v9 todavia no compilada** (`build.gradle.kts` = `plugins.json` = 9, `fileSize` pendiente = 0).
+- `bal_check.py` -> BALANCE OK.
+- ⏸️ **Pendiente (usuario)**: compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar TNT LA Colombia (v9 completa).

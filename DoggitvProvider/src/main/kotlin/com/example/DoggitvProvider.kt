@@ -283,7 +283,7 @@ class DoggitvProvider : MainAPI() {
                         Log.d(TAG, "multi-audio ${tracks.joinToString { "${it.pid}:${it.lang}" }}")
                         var emitted = 0
                         for (t in tracks.sortedBy { langRank(it.lang) }) {
-                            val proxy = DoggitvTsProxy.playlistUrl(variant, t.pid)
+                            val proxy = DoggitvTsProxy.playlistUrl(u, t.pid)
                             if (proxy == null) {
                                 Log.e(TAG, "proxy no disponible para pid ${t.pid}")
                                 continue

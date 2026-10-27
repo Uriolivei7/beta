@@ -23,7 +23,7 @@ data class DoggiTsTrackInfo(val pid: Int, val lang: String?, val streamType: Int
 object DoggitvTsProxy {
     private const val TAG = "DoggiProxy"
     private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
-    private const val IDLE_MS = 180000L
+    private const val IDLE_MS = 1800000L
     private const val PROBE_LIMIT = 768 * 1024
 
     private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
@@ -54,9 +54,9 @@ object DoggitvTsProxy {
     private data class PatInfo(val index: Int, val section: ByteArray, val pmtPid: Int)
     private data class PmtInfo(val index: Int, val pid: Int, val section: ByteArray, val tracks: List<DoggiTsTrackInfo>)
 
-    fun playlistUrl(variantUrl: String, keepPid: Int): String? {
+    fun playlistUrl(sourceUrl: String, keepPid: Int): String? {
         val s = ensureServer() ?: return null
-        return "http://127.0.0.1:${s.localPort}/live.m3u8?u=${enc(variantUrl)}&p=$keepPid"
+        return "http://127.0.0.1:${s.localPort}/live.m3u8?m=${enc(sourceUrl)}&p=$keepPid"
     }
 
     fun absolute(base: String, ref: String): String? = try {
@@ -190,13 +190,39 @@ object DoggitvTsProxy {
     }
 
     private fun servePlaylist(out: BufferedOutputStream, query: Map<String, String>) {
-        val variant = query["u"]
+        val source = query["m"] ?: query["u"] ?: ""
         val keep = query["p"]?.toIntOrNull() ?: -1
-        if (variant.isNullOrBlank()) {
-            writeBody(out, 400, "text/plain", "falta u".toByteArray())
+        if (source.isBlank()) {
+            writeBody(out, 400, "text/plain", "falta m".toByteArray())
             return
         }
-        val text = fetchText(variant)
+        var text = fetchText(source)
+        var variant = source
+        if (text != null && text.contains("#EXT-X-STREAM-INF")) {
+            var resolved: String? = null
+            var resolvedUrl = source
+            var masterText: String? = text
+            for (attempt in 1..2) {
+                val mt = masterText ?: break
+                val ref = segmentUris(mt).firstOrNull() ?: break
+                val abs = absolute(source, ref) ?: ref
+                val fresh = fetchText(abs)
+                if (fresh != null) {
+                    resolved = fresh
+                    resolvedUrl = abs
+                    break
+                }
+                Log.w(TAG, "variante $abs sin respuesta (intento $attempt)")
+                if (attempt == 1) masterText = fetchText(source)
+            }
+            if (resolved != null) {
+                variant = resolvedUrl
+                text = resolved
+            } else {
+                Log.e(TAG, "master $source sin variante fresca")
+                text = null
+            }
+        }
         if (text == null) {
             writeBody(out, 502, "text/plain", "upstream".toByteArray())
             return
@@ -219,7 +245,7 @@ object DoggitvTsProxy {
             segments++
         }
         val body = sb.toString().toByteArray(Charsets.UTF_8)
-        Log.d(TAG, "playlist $variant keep=$keep segmentos=$segments")
+        Log.d(TAG, "playlist master=$source variant=$variant keep=$keep segmentos=$segments")
         writeBody(out, 200, "application/vnd.apple.mpegurl", body, noCache = true)
     }
 
@@ -250,6 +276,11 @@ object DoggitvTsProxy {
             var cached = cache[cacheKey]
             val drop = HashSet<Int>()
             if (pmt != null) {
+                val audios = pmt.tracks.filter { AUDIO_TYPES.contains(it.streamType) }
+                if (audios.isNotEmpty() && audios.none { it.pid == keepPid }) {
+                    Log.w(TAG, "PMT sin audio $keepPid (${audios.joinToString { "${it.pid}:${it.lang}" }}), sin filtrar")
+                    return data
+                }
                 for (t in pmt.tracks) {
                     if (AUDIO_TYPES.contains(t.streamType) && t.pid != keepPid) drop.add(t.pid)
                 }
