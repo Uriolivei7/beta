@@ -3590,3 +3590,57 @@ Cloudflare protege `/api/player-url` por **huella del cliente**, no por headers:
 **Pendiente (usuario)**: compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json` (aprox 75-80 KB), y `git push` TODO junto (un run de CI trae build.yml + SoloLatino v35). Esperado en el log del run: `Compilando SoloLatinoProvider...` verde y publicacion en `builds/`; en la app: actualizar -> abrir episodio -> `[WV] resolviendo N tokens en WebView` -> `embed69 - PoW solved` -> `loadLinks FIN total emitidos=N`.
 
 ---
+
+---
+
+## DailymotionProvider - ensureJarCompatibility falla en CI (30 Oct 2026 v2)
+
+**Sintoma**: run de Actions ROJA con `> Task :DailymotionProvider:ensureJarCompatibility FAILED` (y `:YoutubeProvider:compileDebugKotlin FAILED`, otro modulo). El step "Build status" del build.yml arreglado hace fallar la run correctamente - el CI publica cs3 parciales.
+
+**Causa raiz (decompilado por javap de `EnsureJarCompatibilityTask.class` del plugin recloudstream 81b1d424d2, session 29-30 Oct)**: la task SOLO corre cuando `isCrossPlatform = true`. Ejecuta `jdeps --print-module-deps` sobre el jar del modulo y si la salida contiene `android.` lanza:
+`GradleException("The cross-platform JAR file contains Android imports! ... Remove 'isCrossPlatform = true' or remove the Android imports.")`
+Nuestro puerto del upstream recloudstream usa el plugin estandar (`DailymotionPlugin : Plugin()` con `import android.content.Context`) -> jdeps ve `android.content` -> fallo garantizado. El otro modulo con `true` (Onetouchtv) pasa por usar el viejo `BasePlugin.load()` SIN imports de android.
+
+**Fix**: `DailymotionProvider/build.gradle.kts`: `version = 1 -> 2` y `isCrossPlatform = true -> false` (repo android-only; el check queda sin efecto). `plugins.json`: Dailymotion `version: 2` (fileSize 0, pendiente tras compilar). El provider (`DailymotionProvider.kt`) no tiene imports de android; solo el Plugin lo necesita y con `false` ya no se le exige pureza.
+
+**Estado**: editado y verificado por `git diff` (2 lineas) + JSON valido (74 entradas). **No compilado por regla del repo.**
+
+**Pendiente (usuario)**: (1) pegar del log de Actions las lineas `e:` del bloque `> Task :YoutubeProvider:compileDebugKotlin FAILED` para diagnosticar el segundo fallo; (2) `git push` todo junto (build.yml fix + SoloLatino v35 + Dailymotion v2). Con Dailymotion reparado, si la run sale VERDE con BUILD_OK=1 se publican los 74 cs3.
+
+---
+
+## SoloLatinoProvider — Cloudflare challenge en /api/player-url: fix con 3 fases en WebView (30 Oct 2026 v36)
+
+**Sintoma (log del usuario, build v35)**: search/load OK (200), `2 tokens encontrados`, pero
+`POST /api/player-url HTTP 403` con body `Just a moment...` (tanto en OkHttp como en el WebView: `tok0 http=403`, `tok1 http=403`)
+→ `WebView no devolvio servidores` → **"enlaces no encontrados"**.
+
+### Arquitectura verificada (medido en PC, Chrome real por CDP + Python)
+- La pagina del episodio trae 2 botones con `data-player-token` (Laravel encryptado) y `<meta name="csrf-token">`.
+- `POST /api/player-url` con JSON `{t: token}` + header `X-XSRF-TOKEN` (cookie XSRF-TOKEN decodificada) → **200 `{"url":"https://player.pelisserieshoy.com/f/tt...","type":"iframe"}`**.
+- El backend TAMBIEN acepta `Content-Type: application/x-www-form-urlencoded` con `t=...` (misma respuesta).
+- **El challenge NO depende de headers**: probados sin/con `sec-ch-ua*` completos, `sec-fetch-*`, `X-Requested-With`, `Accept` html, `Accept-Encoding: identity`, y con **HTTP/2 (httpx)** → siempre 403 `Cf-Mitigated: challenge`, challenge JS **sin** form/hcaptcha/turnstile.
+- **Solo Python/OkHttp recibe 403; Chrome real pasa siempre** (con cualquier set de headers) → discriminacion por **fingerprint TLS (JA3) del cliente**, no por headers, cookies ni version HTTP. Por eso el POST de OkHttp del provider **nunca** va a pasar.
+- En Chrome el 403 no aparece; el unico fallo de Chrome sin el header es `419 CSRF token mismatch` (falta `X-XSRF-TOKEN`).
+- Descartado: navegacion POST con form (Cloudflare la deja pasar, pero Laravel devuelve **419 PAGE EXPIRED** aunque se mande `_token` del meta csrf-token → en navegacion no se puede enviar el header `X-XSRF-TOKEN` y el `_token` del body no valida).
+
+### Causa raiz
+Cloudflare challengea `/api/*` de sololatino.net. El WebView del plugin (Chromium) hace `fetch` y **un fetch nunca ejecuta el challenge** (solo lo resuelven las navegaciones de documento) → 403 perpetuo. Ademas el plugin setea UA Windows mientras los `sec-ch-ua-platform` del Android WebView siguen diciendo "Android" (spoof detectable).
+
+### Fix (v36, `SoloLatinoProvider.kt`, funcion `resolvePlayerUrlsViaWebView`)
+Cascada de 3 fases (timeout total 60000ms):
+1. **Fase 0 — cf_clearance**: navegar primero a `$mainUrl/api/player-url` (GET). Si `document.title` contiene "Just a moment" se recarga cada 800ms (max 12 veces) hasta que `CookieManager` tenga `cf_clearance`; si no hay challenge, pasa al instante. Watchdog de 12s.
+2. **Fase 1 — fetch**: como antes (JSON + `X-XSRF-TOKEN` desde cookie), con `__slTries` subido de 6 a 12 (~18s de reintentos) y `lastErr` capturado para el log.
+3. **Fase 2 — UA Android**: si la fase 1 devuelve 0 URLs, se cambia el `userAgentString` a Chrome Android (sin `; wv`) y se recarga la pagina (client hints coherentes con el UA) → ultimo reintento.
+- Import nuevo: `android.webkit.CookieManager`. Logs: `[WV] pagina cargada (fase N)`, `[WV] fase API: challenge=.. cf_clearance=..`, `[WV] kick(fase N)`, `[WV] 0 URLs en fase N (ultimo error: ...) -> reintentando con UA Android`.
+
+### Estado / versiones
+- `SoloLatinoProvider/build.gradle.kts` **35 -> 36**; `plugins.json` SoloLatino **35 -> 36** (`fileSize` sigue 60000, pendiente tras compilar).
+- Balance verificado con checker que respeta raw strings: OK (los 2 avisos de L1258/1264 son el falso positivo preexistente de los regex `""""(hls\d)..."`).
+- **No compilado por regla del repo.**
+
+### Pendiente (usuario)
+- Compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar un episodio (ej. Looney Tunes T1E1) con `adb logcat -s SoloLatino:V`:
+  - Esperado: `[WV] fase API: challenge=.. cf_clearance=..` → `[WV] servidores resueltos: 2 -> [...]` → `BRANCH: embed69.org` → `loadLinks FIN`.
+  - Si sigue en 403: mirar si `cf_clearance=false` (fase 0 no obtuvo cookie → el challenge no es resoluble en navegacion) y si la fase 2 (`reintentando con UA Android`) llega a emitir.
+- Scripts de diagnostico en `$TEMP/opencode/`: `cf_cdp_test.py` (POST real en Chrome), `cf_matrix.py` (matriz de headers en Chrome), `cf_form.py`/`cf_formtok.py`/`cf_formnav.py` (form-urlencoded y navegacion POST → 419).

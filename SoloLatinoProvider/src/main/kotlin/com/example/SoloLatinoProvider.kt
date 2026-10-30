@@ -13,6 +13,7 @@ import kotlin.collections.ArrayList
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -456,7 +457,7 @@ class SoloLatinoProvider : MainAPI() {
 
         if (serverUrls.isEmpty() && tokens.isNotEmpty()) {
             Log.w("SoloLatino", "loadLinks - POST bloqueado por Cloudflare, resolviendo ${tokens.size} tokens en WebView")
-            val wvUrls = resolvePlayerUrlsViaWebView(targetUrl, tokens.toList(), lazyToken)
+            val wvUrls = resolvePlayerUrlsViaWebView(targetUrl, tokens.toList(), lazyToken, mainUrl)
             if (wvUrls.isNotEmpty()) {
                 Log.d("SoloLatino", "loadLinks - WebView devolvio ${wvUrls.size} servidores")
                 serverUrls.addAll(wvUrls)
@@ -826,7 +827,8 @@ private suspend fun resolvePlayerUrlsViaWebView(
     pageUrl: String,
     tokens: List<String>,
     lazyToken: String?,
-    timeoutMs: Long = 45000L,
+    mainUrl: String,
+    timeoutMs: Long = 60000L,
 ): List<String> {
     if (tokens.isEmpty() && lazyToken.isNullOrBlank()) return emptyList()
 
@@ -898,6 +900,11 @@ private suspend fun resolvePlayerUrlsViaWebView(
             var webView: WebView? = null
             val mainHandler = Handler(Looper.getMainLooper())
             val deferred = CompletableDeferred<List<String>>()
+            // Fases: 0 = resolver challenge de Cloudflare en /api/player-url,
+            //        1 = cargar página del episodio y kick al bridge, 2 = reintentar con UA móvil
+            var phase = 0
+            var lastErr = ""
+            var clearanceTries = 0
             try {
                 webView = WebView(appCtx)
                 webView.settings.apply {
@@ -920,25 +927,50 @@ private suspend fun resolvePlayerUrlsViaWebView(
                             Log.w("SoloLatino", "[WV] JSON de servidores invalido: ${t.message}")
                             emptyList<String>()
                         }
-                        Log.d("SoloLatino", "[WV] servidores resueltos: ${list.size} -> $list")
-                        deferred.complete(list)
+                        if (list.isNotEmpty()) {
+                            Log.d("SoloLatino", "[WV] servidores resueltos: ${list.size} -> $list")
+                            deferred.complete(list)
+                            return
+                        }
+                        // 0 URLs: si aun no probamos con UA móvil, lo hacemos (última variante)
+                        if (phase < 2) {
+                            Log.w("SoloLatino", "[WV] 0 URLs en fase $phase (último error: ${lastErr.take(200)}) -> reintentando con UA Android")
+                            mainHandler.post {
+                                if (deferred.isCompleted) return@post
+                                phase = 2
+                                val wv = webView ?: return@post
+                                try {
+                                    wv.settings.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36"
+                                } catch (t: Throwable) { }
+                                mainHandler.postDelayed({
+                                    if (!deferred.isCompleted) {
+                                        Log.d("SoloLatino", "[WV] fase 2: recargando página con UA Android")
+                                        wv.loadUrl(pageUrl)
+                                    }
+                                }, 200L)
+                            }
+                        } else {
+                            Log.e("SoloLatino", "[WV] 0 URLs tras las 2 variantes (último error: ${lastErr.take(200)})")
+                            deferred.complete(emptyList())
+                        }
                     }
 
                     @JavascriptInterface
                     fun onErr(msg: String) {
+                        lastErr = msg
                         Log.w("SoloLatino", "[WV] player-url sin JSON (Cloudflare?): $msg")
                     }
                 }, "SlBridge")
 
                 fun kick() {
                     if (deferred.isCompleted) return
+                    if (phase == 0) return
                     val wv = webView ?: return
                     try {
                         wv.evaluateJavascript(kickJs) { result ->
                             val r = (result ?: "").trim('"').replace("\\\"", "\"")
-                            Log.d("SoloLatino", "[WV] kick -> $r")
-                            // Sondea hasta que el bridge entregue los URLs o venza el timeout:
-                            // 'started'/'busy' = fetch en vuelo, 'wait' = la pagina aun no tiene botones.
+                            Log.d("SoloLatino", "[WV] kick(fase $phase) -> $r")
+
                             if (!deferred.isCompleted) mainHandler.postDelayed({ kick() }, 1500L)
                         }
                     } catch (t: Throwable) {
@@ -947,14 +979,60 @@ private suspend fun resolvePlayerUrlsViaWebView(
                     }
                 }
 
+                fun gotoEpisode() {
+                    if (phase != 0) return
+                    phase = 1
+                    mainHandler.postDelayed({
+                        if (!deferred.isCompleted) webView?.loadUrl(pageUrl)
+                    }, 200L)
+                }
+
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        Log.d("SoloLatino", "[WV] pagina cargada: $url")
-                        mainHandler.postDelayed({ kick() }, 1500L)
+                        Log.d("SoloLatino", "[WV] página cargada (fase $phase): $url")
+                        if (phase == 0) {
+
+                            mainHandler.postDelayed({
+                                val wv = webView ?: return@postDelayed
+                                if (deferred.isCompleted) return@postDelayed
+                                wv.evaluateJavascript("document.title") { t ->
+                                    val title = (t ?: "").trim('"')
+                                    val challenged = title.contains("Just a moment", true)
+                                    val clearance = try {
+                                        CookieManager.getInstance().getCookie(mainUrl)?.contains("cf_clearance") == true
+                                    } catch (t2: Throwable) { false }
+                                    Log.d("SoloLatino", "[WV] fase 0: challenge=$challenged cf_clearance=$clearance title=$title")
+                                    when {
+                                        !challenged || clearance -> gotoEpisode()
+                                        clearanceTries++ < 12 -> {
+
+                                            mainHandler.postDelayed({
+                                                if (!deferred.isCompleted && phase == 0) wv.loadUrl("$mainUrl/api/player-url")
+                                            }, 800L)
+                                        }
+                                        else -> {
+                                            Log.w("SoloLatino", "[WV] challenge no resuelto en fase 0, probando igual")
+                                            gotoEpisode()
+                                        }
+                                    }
+                                }
+                            }, 1000L)
+                        } else {
+                            mainHandler.postDelayed({ kick() }, 1500L)
+                        }
                     }
                 }
+
+                mainHandler.postDelayed({
+                    if (phase == 0 && !deferred.isCompleted) {
+                        Log.w("SoloLatino", "[WV] timeout fase 0 -> página del episodio")
+                        gotoEpisode()
+                    }
+                }, 12000L)
                 Log.d("SoloLatino", "[WV] resolviendo ${tokens.size} tokens en WebView: ${pageUrl.take(100)}")
-                webView.loadUrl(pageUrl)
+                phase = 0
+                
+                webView.loadUrl("$mainUrl/api/player-url")
                 withTimeoutOrNull(timeoutMs) { deferred.await() } ?: emptyList<String>()
             } catch (e: CancellationException) {
                 throw e

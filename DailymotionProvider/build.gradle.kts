@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 1
+version = 2
 
 cloudstream {
     description = "Dailymotion"
@@ -8,5 +8,5 @@ cloudstream {
     status = 1
     tvTypes = listOf("Others")
     iconUrl = "https://www.dailymotion.com/favicon.ico"
-    isCrossPlatform = true
+    isCrossPlatform = false
 }
