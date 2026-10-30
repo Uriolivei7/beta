@@ -3440,3 +3440,114 @@ Es decir, el usuario podia elegir un link que da 403/timeout -> error de red en 
 - Sin cambio de version: el fix pertenece a la **v9 todavia no compilada** (`build.gradle.kts` = `plugins.json` = 9, `fileSize` pendiente = 0).
 - `bal_check.py` -> BALANCE OK.
 - ⏸️ **Pendiente (usuario)**: compilar (`.\gradlew.bat :DoggitvProvider:make --console=plain -q`), actualizar `fileSize`, instalar y probar TNT LA Colombia (v9 completa).
+
+---
+
+## DailymotionProvider - Plugin nuevo (29 Oct 2026 v1)
+
+### Origen
+- Portado del plugin `DailymotionProvider` de `recloudstream/extensions` (upstream `version = 4`, `status = 1`, `isCrossPlatform = true`), adaptado al repo BETA.
+- **Cambio deliberado de paquete**: upstream usa `package recloudstream`; aqui va en **`com.example`** (consistente con el resto de modulos del BETA) y el manifest es `<manifest package="com.example"/>`.
+- `settings.gradle.kts` **no se toco**: auto-incluye todo directorio de primer nivel con `build.gradle.kts`.
+
+### Que hace
+- `getMainPage`: `GET https://api.dailymotion.com/videos?fields=id,title,thumbnail_360_url&limit=26&page=N` -> una fila "Popular" (`newHomePageResponse`).
+- `search`: `GET /videos?search={q}&fields=id,title,thumbnail_360_url&limit=26&page=N` con `encodeUri` -> `toNewSearchResponseList()`.
+- `load`: `GET /video/{id}?fields=id,title,description,thumbnail_720_url` -> `newMovieLoadResponse(TvType.Movie)` con `movieData = id` (el **ID crudo**, no una URL).
+- `loadLinks`: `data` es el **ID**; pide el metadata del player `https://www.dailymotion.com/player/metadata/video/{id}` con UA Chrome/127 + Referer/Origin y emite las `qualities.*` (`.m3u8` como `M3U8`, `.mp4` como `VIDEO`, calidad por `getQualityFromName`), ademas de los subtitulos (`parseSubtitles`); si no se emitio nada cae a `loadExtractor` con el embed y devuelve `emitted > 0`.
+
+### Causa raiz del bug del upstream (0 links)
+- El DTO declara `subtitles.data` como `Map<String, SubtitleData>`, pero la API devuelve **`"data": []`** (array vacio) -> `SerializationException` de Jackson en el primer intento, y el fallback tambien falla -> la excepcion sale de `getUrl$suspendImpl`, `loadExtractor` la captura y devuelve **`true` con 0 links** (sintoma "enlaces no encontrados" con `success=true`).
+- Verificado desde PC: 5 volcados del metadata (`xbs20xm`) dan `200` y siempre `subtitles = {"enable": false, "data": []}`; descartada la hipotesis de UA/headers (200 con Chrome, OkHttp, ExoPlayerLib y sin UA).
+- **Fix**: leer el JSON con `org.json` (sin DTOs), `parseSubtitles` acepta `data` como **JSONArray o JSONObject**, y `videoIdOf` acepta un **ID desnudo** (`^[A-Za-z0-9]{4,}$`) antes de los regex de URL (`[?&]video=`, `/video/`, `/embed/video/`).
+
+### Archivos
+- `DailymotionProvider/build.gradle.kts` (v1, `language = "en"`, `tvTypes = listOf("Others")`, `isCrossPlatform = true`).
+- `DailymotionProvider/src/main/AndroidManifest.xml`.
+- `DailymotionProvider/src/main/kotlin/com/example/DailymotionPlugin.kt` (`registerMainAPI(DailymotionProvider())`).
+- `DailymotionProvider/src/main/kotlin/com/example/DailymotionProvider.kt` (provider completo).
+- `plugins.json`: entrada `DailymotionProvider`/`Dailymotion` v1 (`fileSize: 0` pendiente; 74 entradas, JSON validado).
+
+### Estado v1
+- `bal_check.py` -> BALANCE OK.
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :DailymotionProvider:make --console=plain -q`) - **no compilado por regla del repo**.
+- ⏸️ **Pendiente (usuario)**: compilar, actualizar `fileSize` en `plugins.json`, instalar y probar home / search / detalle / reproduccion. Logs: `adb logcat -s Dailymotion:V`.
+
+---
+
+## TeleonlineProvider - Variante rodante: refresco en el proxy y fail-open (29 Oct 2026 v14)
+
+### Sintoma
+- Los enlaces `[ESP]`/`[ENG]` del proxy TS reproducen la primera vez y despues el player da `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)`, sin recuperarse aunque se vuelva a entrar al canal (el canal queda roto hasta matar la app).
+- Es el mismo sintoma ya diagnosticado en DoggiTV v9: la **variante** de los restreamers Astra es **rodante y con TTL de segundos** (el master devuelve un numero de variante distinto en cada peticion) y el proxy pedia en cada request la variante capturada en `loadLinks` -> upstream 404 -> proxy 502 -> 2004.
+
+### Causa raiz
+1. `ProxyPlan` guardaba solo `variantUrl` (la variante capturada al sondear) y `playlistUrl(variantUrl, keepPid)` emitia `?u=<variante>`. Al caducar la variante, `servePlaylist` devolvia 502 para siempre.
+2. La cache de links de CS3 (`RepoLinkGenerator`, TTL 1200 s) impide re-ejecutar `loadLinks`, asi que el 502 queda cacheado 20 min.
+3. Ademas, `IDLE_MS = 180000L` (3 min) permitia que el reaper cerrase el `ServerSocket` mientras la cache de CS3 (1200 s) seguia viva; `port` no se resetea en `reaper` -> el link cacheado apuntaba a un puerto muerto.
+
+### Fix v14 (mismo patron que DoggiTV v9)
+1. `ProxyPlan(val master: String, val variantUrl: String, val tracks: List<TsTrackInfo>)` -> se guarda el **master**; se construye `ProxyPlan(c.url, c.variant, tracks)` (en `candidateOf`, `c.url` es el master cuando hay `#EXT-X-STREAM-INF`, y `c.url == c.variant` si la opcion ya es media playlist, asi que cubre ambos casos).
+2. `TeleonlineTsProxy.playlistUrl(masterUrl, keepPid)` emite `?m=<master>&p=<pid>` (antes `?u=<variante>`); en `emitM3u8Options` la llamada pasa a `playlistUrl(plan.master, t.pid)`.
+3. `servePlaylist` reescrito: `val source = query["m"] ?: query["u"] ?: ""` (compat con links viejos), 400 `falta m` si viene vacio; si el cuerpo tiene `#EXT-X-STREAM-INF` se resuelve la variante fresca con **bucle `for (attempt in 1..2)`** re-pidiendo el master entre intentos (`segmentUris(masterText).firstOrNull()` + `absolute(source, ref)`); si no hay texto o no resuelve -> `Log.e("master ... sin variante fresca")` + 502 `upstream`. Nuevo helper `segmentUris(text)` (lineas no vacias que no empiezan por `#`). Log final `playlist master=... variant=... keep=... segmentos=N`.
+4. `filterTs` **fail-open**: si el PMT trae audios pero **ninguno** coincide con `keepPid` (PIDs rotados), log `PMT sin audio <pid> (...), sin filtrar` y se devuelve el segmento original sin tocar (evita silencio).
+5. `IDLE_MS` 180000 -> **1800000** (30 min, cubre la cache de 1200 s de CS3).
+
+### Archivos
+- `TeleonlineProvider/src/main/kotlin/com/example/TeleonlineTsProxy.kt` (`IDLE_MS`, `playlistUrl`, `segmentUris`, `servePlaylist`, `filterTs`).
+- `TeleonlineProvider/src/main/kotlin/com/example/TeleonlineProvider.kt` (`ProxyPlan.master`, construccion en `probeCandidate`, `playlistUrl(plan.master, t.pid)`).
+- `TeleonlineProvider/build.gradle.kts`: `version = 13` -> **14**.
+- `plugins.json`: Teleonline `version` 13 -> **14**; `fileSize` **pendiente** (sigue 24485).
+
+### Estado
+- `bal_check.py` -> BALANCE OK; `plugins.json` valido.
+- **No compilado por regla del repo.**
+- Pendiente (usuario): compilar (`.\gradlew.bat :TeleonlineProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json`, instalar y probar Cartoon Network Latin America (o Studio Universal) reproduciendo **dos veces seguidas sin matar la app** (ESP y luego ENG, y volver a entrar al canal). Logs: `adb logcat -s TeleonlineProxy:V Teleonline:V` -> cada request del playlist debe mostrar `playlist master=... variant=<numero distinto en cada visita> ... segmentos=N` y **sin 502**; si aparece `variante ... sin respuesta (intento 1)` y luego resuelve, el reintento esta funcionando.
+- Limite conocido: si una lista apunta **directamente a la variante** (sin master), el refresco no aplica; queda mitigado por el fail-open de `filterTs`.
+---
+
+## SoloLatinoProvider — "Enlaces no encontrados": Cloudflare bloquea /api/player-url a OkHttp (29 Oct 2026 v34)
+
+### Síntoma (log del usuario, build v33 instalado)
+- `search`/`load` OK (HTTP 200, título limpio). En `loadLinks`: Sanctum 204 → Page GET 200 → **`2 tokens encontrados`** → `POST /api/player-url HTTP 403, body=<!DOCTYPE html>...<title>Just a moment...` (×2) → `No se pudo parsear respuesta JSON` → **`No se encontraron servidores en la página.`** → "enlaces no encontrados".
+- **No aparece ninguna línea `[WV]`** → el build instalado no traía el fallback WebView (se compiló después).
+
+### Causa raíz medida en PC (`post_probe.py`, `post_matrix.py`)
+Cloudflare protege `/api/player-url` por **huella del cliente**, no por headers:
+| Prueba | Resultado |
+|---|---|
+| POST headers del provider (X-Requested-With + Accept json + X-XSRF-TOKEN + sec-fetch) | **403 challenge** |
+| Sin X-Requested-With / sin X-XSRF-TOKEN / Accept text/html / mínimos (solo UA+Content-Type) / con sec-ch-ua completos | **403 challenge** (todas) |
+| `GET /api/player-url?t=...` | **403 challenge** |
+| `curl` (Schannel) y Python (OpenSSL) con los mismos headers | **403 challenge** |
+| Chrome (CDP) ejecutando el MISMO `fetch` dentro de la página | **200 → devuelve los 2 servidores** |
+- El JS del sitio (`/build/assets/app-Bd31cN3M.js`) hace exactamente `N("POST","/api/player-url",{t: token})` con `Content-Type: application/json`, `X-XSRF-TOKEN` de la cookie, `credentials: same-origin` → nuestro OkHttp ya lo replica al dedillo; **solo falla el stack de red (JA3/TLS)**.
+- Los GET de páginas (episode/search/`/f/`) sí pasan de OkHttp → por eso `search`/`load` funcionan y solo revienta este POST.
+
+### Cadena completa verificada offline antes de tocar el código
+1. **kickJs** (el JS que se inyecta al WebView) extraído del propio `.kt` y ejecutado contra la página real del episodio → devuelve `["https://player.pelisserieshoy.com/f/tt1726839-1x01","https://embed69.org/f/tt1726839-1x01"]`.
+2. Esas 2 URLs responden **200 con player real** (`title=Reproductor` / `EMBED69`), sin challenge.
+3. **Rama embed69 simulada en Python** (`e69_sim.py`): `dataLink = [{video_language:"LAT", sortedEmbeds:[vidhide,streamwish,voe]}]` + `POW_CHALLENGE`/`POW_SALT` → PoW `sha256(chal+nonce)` con prefijo `000` (nonce 3774) → clave `sha256(chal+nonce+salt)` → AES-256-CBC → **6 enlaces** (`voe.sx/e/...`, `hglink.to/e/...`, `morencius.com/embed/...` + sus `/download`). `fixHostsLinks` los mapea a `voe.sx` / `streamwish.to` / `vidhidepro.com` → los 3 tienen extractor propio en el provider.
+4. `data-lazy-embed` no existe en la página → `lazyToken = null` (el kick solo resuelve los 2 tokens).
+
+### Fix (v34, `SoloLatinoProvider.kt`)
+1. `resolvePlayerUrlsViaWebView()` (ya estaba): si OkHttp recibe 403, carga la página en un **WebView (Chromium real)** y lanza el mismo POST desde su propio JS → `SlBridge.onUrls(json)`.
+2. **kickJs blindado**:
+   - recoge `errs` (`tok0 http=403 body=<!DOCTYPE...`) y los manda por el nuevo `SlBridge.onErr` → log `[WV] player-url sin JSON (Cloudflare?): ...` (diagnóstico definitivo en logcat);
+   - si no hubo URLs, resetea `window.__slRun` y **reintenta hasta 6 veces** (`window.__slTries < 6`); solo al 6º rinde `onUrls('[]')`.
+3. `kick()` ahora **sondea cada 1.5s hasta que el bridge complete** (antes solo re-lanzaba si el resultado era `wait`/`err`; con `started` se quedaba esperando sin reintentar y el primer fallo vacío cerraba el proceso).
+- Tiempos: peor caso con WebView fallando ≈ 6 s de reintentos + timeout 45 s → muy por debajo del kill de 120 s de CS3.
+
+### Estado
+- **Compilación: pendiente por el usuario** (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`) — **no compilado por regla del repo**. Verificado con kotlinc suelto (classpath del proyecto, sin Gradle): **0 errores, 106 clases** en los 3 `.kt` del módulo.
+- Versiones: `build.gradle.kts` 33 → **34**; `plugins.json` SoloLatino 33 → **34** (`fileSize` **pendiente**, sigue 31000). JSON válido (74 entradas).
+
+### ⏸️ Pendiente de probar en dispositivo
+- Compilar, actualizar `fileSize`, instalar y abrir un episodio (ej. El Show de los Looney Tunes T1E1). Esperado en `adb logcat -s SoloLatino:V`:
+  `[WV] resolviendo 2 tokens en WebView` → `[WV] kick -> started` → `[WV] servidores resueltos: 2 -> [...]` → `BRANCH: embed69.org` → `embed69 - script con dataLink encontrado` → `embed69 - PoW solved` → `embed69 - decrypted: https://voe.sx/...` → `loadLinks FIN total emitidos=N`.
+- Si sale `[WV] player-url sin JSON (Cloudflare?): tok0 http=403 body=<!DOCTYPE...` → el WebView también recibe el challenge: siguiente paso (no implementado) = navegar una vez a la API en el WebView para conseguir `cf_clearance` y reintentar el fetch.
+- Si sale `[WV] sin context` → `SoloLatinoPlugin.load` no seteó `pluginContext`.
+
+### Notas
+- El segundo servidor (`player.pelisserieshoy.com/f/...`) cae en la rama genérica → 0 links; **no hace falta** para emitir porque embed69 ya trae los 3 hosts. Su protocolo sería `POST /s.php` con `a=1&tok=<const _t>` del script inline → pendiente solo si se quiere ese servidor también.
+- Errores del log que NO son bug: `Unloading plugin / Couldn't find plugin / version=-2147483648` = recarga normal del plugin online.

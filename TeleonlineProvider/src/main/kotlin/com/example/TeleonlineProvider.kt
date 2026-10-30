@@ -24,7 +24,7 @@ class TeleonlineProvider : MainAPI() {
     private val playerUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 
     private data class OptionCandidate(val idx: Int, val url: String, val variant: String)
-    private data class ProxyPlan(val variantUrl: String, val tracks: List<TsTrackInfo>)
+    private data class ProxyPlan(val master: String, val variantUrl: String, val tracks: List<TsTrackInfo>)
     private val countrySections = listOf(
         "Perú" to "/canales/peru/",
         "Argentina" to "/canales/argentina/",
@@ -297,7 +297,7 @@ class TeleonlineProvider : MainAPI() {
                 val tracks = plan.tracks.sortedBy { if (isSpanish(it.lang)) 0 else 1 }
                 for (t in tracks) {
                     val proxyUrl = withContext(Dispatchers.IO) {
-                        TeleonlineTsProxy.playlistUrl(plan.variantUrl, t.pid)
+                        TeleonlineTsProxy.playlistUrl(plan.master, t.pid)
                     } ?: continue
                     emitLink("$label [${langTag(t)}]", proxyUrl, referer, callback)
                     proxied = true
@@ -333,7 +333,7 @@ class TeleonlineProvider : MainAPI() {
         val segment = TeleonlineTsProxy.firstSegment(c.variant, 15000L) ?: return@withContext null
         val tracks = TeleonlineTsProxy.probeTracks(segment) ?: return@withContext null
         Log.d("Teleonline", "opción ${c.idx} probe ok: ${tracks.joinToString { "${it.pid}:${it.lang}" }}")
-        ProxyPlan(c.variant, tracks)
+        ProxyPlan(c.url, c.variant, tracks)
     }
 
     private suspend fun emitLink(label: String, url: String, referer: String, callback: (ExtractorLink) -> Unit) {
