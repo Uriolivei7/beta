@@ -358,16 +358,16 @@ class SoloLatinoProvider : MainAPI() {
 
         try {
             app.get("$mainUrl/sanctum/csrf-cookie", headers = baseHeaders, timeout = 15L).also {
-                Log.d("SoloLatino", "loadLinks - Sanctum GET HTTP ${it.code}, cookies=${it.cookies}")
+                Log.d("SoloLatino", "loadLinks - Sanctum GET HTTP ${it.code}, cookieNames=${it.cookies.keys}")
                 if (it.cookies.isNotEmpty()) sessionCookies = sessionCookies + it.cookies
             }
         } catch (_: Exception) { }
 
         val pageResp = app.get(targetUrl, headers = baseHeaders, cookies = sessionCookies, timeout = 30L)
-        Log.d("SoloLatino", "loadLinks - Page GET HTTP ${pageResp.code}, cookies=${pageResp.cookies}")
+        Log.d("SoloLatino", "loadLinks - Page GET HTTP ${pageResp.code}, cookieNames=${pageResp.cookies.keys}")
         if (!pageResp.isSuccessful) return false
         if (pageResp.cookies.isNotEmpty()) sessionCookies = sessionCookies + pageResp.cookies
-        Log.d("SoloLatino", "loadLinks - sessionCookies final=${sessionCookies}")
+        Log.d("SoloLatino", "loadLinks - session cookieNames=${sessionCookies.keys}")
 
         val html = pageResp.text
         val doc = pageResp.document
@@ -387,7 +387,7 @@ class SoloLatinoProvider : MainAPI() {
             "sec-fetch-mode" to "cors",
             "sec-fetch-site" to "same-origin",
         )
-        Log.d("SoloLatino", "loadLinks - X-XSRF-TOKEN header=${xsrfToken.take(80)}")
+        Log.d("SoloLatino", "loadLinks - X-XSRF-TOKEN presente=${xsrfToken.isNotBlank()} len=${xsrfToken.length}")
 
         val serverUrls = mutableListOf<String>()
         val tokens = mutableSetOf<String>()
@@ -933,7 +933,7 @@ private suspend fun resolvePlayerUrlsViaWebView(
                             deferred.complete(list)
                             return
                         }
-                        
+
                         if (phase < 2 && !lastErr.contains("http=403")) {
                             Log.w("SoloLatino", "[WV] 0 URLs en fase $phase (último error: ${lastErr.take(200)}) -> reintentando con UA Android")
                             mainHandler.post {
@@ -1015,7 +1015,7 @@ private suspend fun resolvePlayerUrlsViaWebView(
                                     } catch (t2: Throwable) { false }
                                     Log.d("SoloLatino", "[WV] fase 0: challenge=$challenged cf_clearance=$clearance title=$title")
                                     when {
-                                        !challenged || clearance -> gotoEpisode()
+                                        !challenged -> gotoEpisode()
                                         clearanceTries++ < 12 -> {
 
                                             mainHandler.postDelayed({
@@ -1044,8 +1044,8 @@ private suspend fun resolvePlayerUrlsViaWebView(
                 Log.d("SoloLatino", "[WV] resolviendo ${tokens.size} tokens en WebView: ${pageUrl.take(100)}")
                 phase = 0
 
-
-                webView.loadUrl(mainUrl)
+                
+                webView.loadUrl("$mainUrl/api/player-url")
                 withTimeoutOrNull(timeoutMs) { deferred.await() } ?: emptyList<String>()
             } catch (e: CancellationException) {
                 throw e

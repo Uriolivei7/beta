@@ -879,6 +879,15 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SoloLatinoProvider:compileReleaseKotlin --console=plain -q`); no ejecutada por regla del repo.
 - **Pendiente en dispositivo**: buscar `[WV] fase 0` con clearance, luego `servidores resueltos`; si persiste el 403 tras UA Android, el challenge de Cloudflare no es resoluble con este WebView desde esa red y hará falta inspeccionar la respuesta del endpoint/sesión del sitio.
 
+### 🔧 SoloLatino v37 — Cloudflare debe calentarse en `/api/player-url` (30 Oct 2026)
+- **Logs del usuario, instalado como v36**: los POST nativos reciben 403; WebView pasa por la portada (`challenge=false`, `cf_clearance=true`) y carga el episodio, pero ambos `fetch('/api/player-url')` siguen recibiendo 403. No se llega a resolver ningún servidor.
+- **Causa**: visitar la portada y observar una cookie `cf_clearance` no demuestra que el endpoint API haya superado su challenge. El fetch same-origin no ejecuta challenge de documento y repite el 403.
+- **Fix**: el WebView ahora inicia navegando directamente a `GET /api/player-url`, y vuelve a cargar ese endpoint mientras el título siga siendo el challenge; solo pasa al episodio cuando termina el challenge. La cookie queda como dato diagnóstico, no como condición para saltarse un challenge todavía visible.
+- **Seguridad de logs**: sustituir impresión de valores completos de cookies/XSRF por nombres de cookie y presencia/longitud; los valores capturados previamente son secretos de sesión y no deben volver a pegarse en logs compartidos.
+- **Versiones**: `SoloLatinoProvider/build.gradle.kts` y `plugins.json` a 37; `fileSize` pendiente de actualizar tras la compilación.
+- **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SoloLatinoProvider:make --console=plain -q`); no ejecutada por regla del repo.
+- **Pendiente en dispositivo**: instalar v37 y revisar si la navegación inicial a `/api/player-url` pasa challenge y luego aparece `[WV] servidores resueltos`; si vuelve a dar 403, guardar solo status/título/cookieNames (nunca valores de cookies/tokens) para el siguiente diagnóstico.
+
 ### Arquitectura del sitio (sololatino.net)
 - Películas y series latinas (español/VOSE)
 - Cadena: `sololatino.net` → `embed69.org` (PoW + AES decryption) → links directos (vidhidepro, streamwish, voe)
