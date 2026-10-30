@@ -880,7 +880,9 @@ private suspend fun resolvePlayerUrlsViaWebView(
                 try { SlBridge.onUrls(JSON.stringify(out)); } catch(e) {}
               } else {
                 try { SlBridge.onErr(errs.join(' || ').slice(0,400)); } catch(e) {}
-                if (window.__slTries < 6) { window.__slRun = false; }
+                // A 403 challenge is not fixed by replaying the same POST. Let the
+                // native bridge decide whether to change UA / finish this attempt.
+                if (window.__slTries < 2) { window.__slRun = false; }
                 else { try { SlBridge.onUrls('[]'); } catch(e) {}
                 }
               }
@@ -900,8 +902,7 @@ private suspend fun resolvePlayerUrlsViaWebView(
             var webView: WebView? = null
             val mainHandler = Handler(Looper.getMainLooper())
             val deferred = CompletableDeferred<List<String>>()
-            // Fases: 0 = resolver challenge de Cloudflare en /api/player-url,
-            //        1 = cargar página del episodio y kick al bridge, 2 = reintentar con UA móvil
+
             var phase = 0
             var lastErr = ""
             var clearanceTries = 0
@@ -932,8 +933,8 @@ private suspend fun resolvePlayerUrlsViaWebView(
                             deferred.complete(list)
                             return
                         }
-                        // 0 URLs: si aun no probamos con UA móvil, lo hacemos (última variante)
-                        if (phase < 2) {
+                        
+                        if (phase < 2 && !lastErr.contains("http=403")) {
                             Log.w("SoloLatino", "[WV] 0 URLs en fase $phase (último error: ${lastErr.take(200)}) -> reintentando con UA Android")
                             mainHandler.post {
                                 if (deferred.isCompleted) return@post
@@ -959,6 +960,17 @@ private suspend fun resolvePlayerUrlsViaWebView(
                     fun onErr(msg: String) {
                         lastErr = msg
                         Log.w("SoloLatino", "[WV] player-url sin JSON (Cloudflare?): $msg")
+                        if (msg.contains("http=403") && phase == 1) {
+
+                            mainHandler.post {
+                                if (deferred.isCompleted || phase != 1) return@post
+                                phase = 2
+                                webView?.settings?.userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36"
+                                webView?.loadUrl(pageUrl)
+                            }
+                        } else if (msg.contains("http=403") && phase == 2) {
+                            deferred.complete(emptyList())
+                        }
                     }
                 }, "SlBridge")
 
@@ -1028,11 +1040,12 @@ private suspend fun resolvePlayerUrlsViaWebView(
                         Log.w("SoloLatino", "[WV] timeout fase 0 -> página del episodio")
                         gotoEpisode()
                     }
-                }, 12000L)
+                }, 20000L)
                 Log.d("SoloLatino", "[WV] resolviendo ${tokens.size} tokens en WebView: ${pageUrl.take(100)}")
                 phase = 0
-                
-                webView.loadUrl("$mainUrl/api/player-url")
+
+
+                webView.loadUrl(mainUrl)
                 withTimeoutOrNull(timeoutMs) { deferred.await() } ?: emptyList<String>()
             } catch (e: CancellationException) {
                 throw e

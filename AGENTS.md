@@ -872,6 +872,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 
 ## SoloLatinoProvider — Estado (30 Ago 2026)
 
+### 🔧 Fix fallback player-url Cloudflare 403 (30 Oct 2026)
+- **Log del usuario**: Sanctum y episodio cargan (HTTP 204/200), se extraen 2 tokens; los POST nativos a `/api/player-url` responden 403 con HTML `Just a moment...`. El WebView volvía a pedir el endpoint API como navegación de documento, esperaba clearance y repetía idénticos POST varias veces, todos 403; por eso no obtenía JSON ni URLs para extractores.
+- **Fix**: el WebView ahora calienta Cloudflare cargando la raíz del sitio, luego usa la página de episodio para enviar fetch same-origin. Limita el reintento JS y si recibe 403 cambia una sola vez a UA Android y recarga episodio; el segundo 403 termina el fallback en vez de repetirlo hasta seis veces. Se amplía el margen inicial del challenge a 20 s.
+- **Arquitectura verificada**: el flujo sigue dependiendo de `/api/player-url` y sus tokens de servidor; el log confirma la puerta API bloqueada por Cloudflare, no un fallo de extractor.
+- **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SoloLatinoProvider:compileReleaseKotlin --console=plain -q`); no ejecutada por regla del repo.
+- **Pendiente en dispositivo**: buscar `[WV] fase 0` con clearance, luego `servidores resueltos`; si persiste el 403 tras UA Android, el challenge de Cloudflare no es resoluble con este WebView desde esa red y hará falta inspeccionar la respuesta del endpoint/sesión del sitio.
+
 ### Arquitectura del sitio (sololatino.net)
 - Películas y series latinas (español/VOSE)
 - Cadena: `sololatino.net` → `embed69.org` (PoW + AES decryption) → links directos (vidhidepro, streamwish, voe)
