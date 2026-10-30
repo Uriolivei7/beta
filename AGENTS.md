@@ -3551,3 +3551,42 @@ Cloudflare protege `/api/player-url` por **huella del cliente**, no por headers:
 ### Notas
 - El segundo servidor (`player.pelisserieshoy.com/f/...`) cae en la rama genérica → 0 links; **no hace falta** para emitir porque embed69 ya trae los 3 hosts. Su protocolo sería `POST /s.php` con `a=1&tok=<const _t>` del script inline → pendiente solo si se quiere ese servidor también.
 - Errores del log que NO son bug: `Unloading plugin / Couldn't find plugin / version=-2147483648` = recarga normal del plugin online.
+
+## build.yml - CI "verde" aunque gradle fallara (30 Oct 2026)
+
+**Sintoma (usuario)**: instalar/actualizar SoloLatino da `Failed to load plugin SoloLatinoProvider: No manifest found`. No era de codigo ni de reproduccion.
+
+**Causa raiz (2)**:
+1. En `build.yml`, el loop `./gradlew make ... && break` / `sleep 30` termina en `sleep` (exit 0) -> el paso "Build Plugins" queda **verde aunque los 3 intentos fallaran**. Gradle falla en algun modulo -> ese cs3 no existe -> se copia solo lo que alcanzo a compilar (parcial: A-C de commits viejos) -> rama `builds` congelada sin SoloLatino (y sin medio repo). El clean solo borraba `*.cs3` de top-level -> los 2 `.cs3` anidados (`AnizoneProvider/build/...`, `RetrotveProvider/build/...`) sobrevivian.
+2. **Desync de versiones**: `plugins.json` SoloLatino `version: 34` vs `build.gradle.kts` `version = 32` (revert "solo stable") -> la app buscaba actualizar a 34 -> cs3 inexistente -> "No manifest found".
+
+**Fix**:
+1. `build.yml`: el build corre con `--continue` (los modulos sanos compilan aunque uno falle); el loop captura el exit real (`if ./gradlew ...; then BUILD_OK=1; break`) -> `GITHUB_ENV`; nuevo paso final "Build status" **falla el run** si `BUILD_OK=0` (cs3 parciales publicados, log rojo). El log del paso muestra `> Task :X:make FAILED` para identificar el modulo culpable. Clean builds folder ahora borra TODO directorio suelto de top-level.
+2. `plugins.json`: SoloLatino `version` 34 -> **32** (fileSize 60000 sin cambio). Verificado por diff programatico: 1/74 entradas cambia solo en version; el resto es normalizacion de indentacion de ediciones manuales previas.
+
+**Diagnostico parcial**: los cs3 parciales del CI llegan hasta modulos C -> el modulo que rompe el build empieza por **D** (Dailymotion/Danimados/Doggitv/Donghualife/Doramasyt, sospechosos). Con el yml arreglado, el log del proximo run dira el modulo exacto.
+
+**Estado**: editado y verificado localmente (JSON valido 74 entradas, semantica 1/74). **Sin compilar ni commitear por regla del repo.**
+
+**Pendiente (usuario)**: (1) `git push` (build.yml + plugins.json disparan el run de Actions); (2) revisar el run: si sale ROJO, buscar `FAILED` en "Build Plugins" y arreglar el modulo que reporte; si sale VERDE con BUILD_OK=1, SoloLatino se publica en `builds/SoloLatinoProvider.cs3`; (3) instalar/actualizar en la app -> debe dejar de dar "No manifest found".
+
+---
+
+## SoloLatinoProvider - Restauracion del fix Cloudflare (30 Oct 2026 v35)
+
+**Sintoma (usuario)**: tras el revert "solo stable" (`ca606da4`), loadLinks vuelve a dar **"enlaces no encontrados"**: `POST /api/player-url HTTP 403 (Just a moment...)` -> `No se encontraron servidores` -> sin links. ConAntiForgeryToken: el revert NO era la cura del "No manifest found" (eso era el CI y el desync de versiones) y **borro el fix** de Oct 29 v34.
+
+**Causa raiz**: `ca606da4 "solo stable"` elimino ~201 lineas del provider: cabeceras `sec-fetch-*` + Origin en `apiHeaders`, el tracking de `lazyToken` (POST `/api/player-embed`), y `resolvePlayerUrlsViaWebView()` (resolver tokens via WebView con `credentials:'same-origin'` cuando Cloudflare bloquea el POST a OkHttp por huella TLS). Sin eso, el 403 de `/api/player-url` no tiene fallback.
+
+**Fix (v35)**:
+1. `SoloLatinoProvider.kt` restaurado **completo** desde el commit `58442670 "cloudflare en solo"` (`git checkout 58442670 -- ...`), verificado **byte-idéntico** (SHA256 `8f1bd18a...`, 65758 B). Esa version ya estaba probada: trae el kickJs con reintentos + `SlBridge.onErr` y SIN los helpers defectuosos (`getWebViewCookies`/`parseWebViewCookies`/`VOE_READY_JS` ya retirados en su dia); el fallback WebView de VOE queda retirado como queria la v33.
+2. Versiones sincronizadas a **35**: `SoloLatinoProvider/build.gradle.kts` (32 -> 35) y `plugins.json` SoloLatino `version: 35`. El diff de plugins.json incluye de paso la normalizacion de indentacion de 2 entradas mal alineadas (Tvenvivo/Telelibre/SeriesKao/Teleonline: `"url"/"status"/"version"` a 3 espacios -> 2).
+3. Nota de checkpoint: el checker de balance `bal3.py` da FALSO MISMATCH en `SoloLatinoProvider.kt` y `Extractors.kt` (raw strings `""""`); la verificacion valida es la identidad por bytes contra `58442670` (y/o kotlinc suelto, ya validado en su dia con 0 errores).
+
+**Estado**: restaurado y verificado por bytes; JSON valido (74 entradas). **Sin compilar ni commitear por regla del repo.**
+
+**Archivos tocados**: `SoloLatinoProvider/src/main/kotlin/com/example/SoloLatinoProvider.kt` (restore), `SoloLatinoProvider/build.gradle.kts` (v35), `plugins.json` (v35), `AGENTS.md` (seccion build.yml + esta), `.github/workflows/build.yml` (del fix CI anterior, mismo push).
+
+**Pendiente (usuario)**: compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`), actualizar `fileSize` en `plugins.json` (aprox 75-80 KB), y `git push` TODO junto (un run de CI trae build.yml + SoloLatino v35). Esperado en el log del run: `Compilando SoloLatinoProvider...` verde y publicacion en `builds/`; en la app: actualizar -> abrir episodio -> `[WV] resolviendo N tokens en WebView` -> `embed69 - PoW solved` -> `loadLinks FIN total emitidos=N`.
+
+---

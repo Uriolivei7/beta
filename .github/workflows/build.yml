@@ -41,6 +41,7 @@ jobs:
           rm -f *.cs3
           rm -f plugins.json
           rm -rf plugins/
+          find . -mindepth 1 -maxdepth 1 -type d ! -name '.git' -exec rm -rf {} +
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -60,10 +61,14 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
+          echo "BUILD_OK=0" >> $GITHUB_ENV
           for i in 1 2 3; do
-            echo "Intento $i de build..."
-            ./gradlew make --stacktrace --refresh-dependencies --no-build-cache && break
-            echo "Intento $i falló, esperando 30s..."
+            echo "=== Intento $i de build ==="
+            if ./gradlew make --continue --stacktrace --refresh-dependencies --no-build-cache; then
+              echo "BUILD_OK=1" >> $GITHUB_ENV
+              break
+            fi
+            echo "Intento $i fallo (exit=$?), esperando 30s..."
             sleep 30
           done
 
@@ -94,3 +99,10 @@ jobs:
             git commit -m "Build: Actualizacion automatica de plugins y JSON"
             git push origin HEAD:builds --force
           fi
+
+      - name: Build status
+        if: ${{ env.BUILD_OK == '0' }}
+        run: |
+          echo "=== EL BUILD GRADLE FALLO: los .cs3 publicados son PARCIALES. ==="
+          echo "=== Ver el paso 'Build Plugins' para ver los modulos FAILED (buscar 'FAILED' y '> Task'). ==="
+          exit 1
