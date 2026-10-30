@@ -888,6 +888,23 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SoloLatinoProvider:make --console=plain -q`); no ejecutada por regla del repo.
 - **Pendiente en dispositivo**: instalar v37 y revisar si la navegación inicial a `/api/player-url` pasa challenge y luego aparece `[WV] servidores resueltos`; si vuelve a dar 403, guardar solo status/título/cookieNames (nunca valores de cookies/tokens) para el siguiente diagnóstico.
 
+## GitHub Actions — JVM target de YoutubeProvider (30 Oct 2026)
+- **Evidencia del run**: los módulos anteriores, incluido `SoloLatinoProvider`, completan `make`; falla `:YoutubeProvider:compileDebugKotlin` con incompatibilidad JVM: `compileDebugJavaWithJavac=11` y `compileDebugKotlin=1.8`. La falla es global y no revoca los enlaces que SoloLatino ya emitió en el dispositivo.
+- **Causa raíz**: el `kotlin { compilerOptions { ... } }` de `YoutubeProvider/build.gradle.kts` estaba anidado dentro de `android {}`, por lo que no alineaba el target del task Kotlin. El root fija Kotlin en 1.8 y el módulo fija Java en 11.
+- **Fix**: mover la configuración `kotlin.compilerOptions` al nivel superior y fijar explícitamente `KotlinJvmCompile.compilerOptions.jvmTarget=JVM_11`, alineado con Java 11.
+- **Diagnóstico del workflow**: `Intento N fallo (exit=0)` era engañoso porque `$?` se consultaba después del bloque `if`; ahora se captura el exit code en `else` antes de ejecutar `sleep`.
+- **Estado**: no ejecutar Gradle según regla del repo. Validación pendiente en el siguiente push de Actions; esperado que pase `:YoutubeProvider:compileDebugKotlin` y `BUILD_OK=1`.
+- **Archivos**: `YoutubeProvider/build.gradle.kts`, `.github/workflows/build.yml`, `AGENTS.md`.
+
+## SeriesKao — resolver episodio por API del router (30 Oct 2026 v30)
+- **Log del usuario**: búsqueda y detalle correctos (396 episodios); `loadLinks` recibe la ficha con `#s1-e12` y no encuentra `iframe#player-iframe`.
+- **Arquitectura verificada en la web**: `episode-router.js` interpreta `#sN-eM`, solicita `GET /api/episodio/{serie|anime}/{slug}/{season}/{episode}` como JSON e inserta `data.html` en `#episode-container`; ese HTML incluye `iframe#player-iframe` con ruta `/vidurl/...`. `/vidurl/...` conserva el mecanismo existente `dataLink` + `POW_CHALLENGE`/`POW_SALT`, que el provider ya resuelve.
+- **Causa raíz**: `loadLinks` descargaba solo la ficha base. El fragmento `#s1-e12` no se envía en HTTP y el iframe del episodio solo aparece tras la llamada al router JS.
+- **Fix**: quitar el fragmento para cargar la ficha; si falta iframe y el data tiene `#sN-eM`, llamar el endpoint API, parsear el HTML JSON y extraer el iframe. Luego continúa el pipeline existente `/vidurl` → PoW → hosts de video.
+- **Versiones**: `SerieskaoProvider/build.gradle.kts` y `plugins.json` a 30; `fileSize` pendiente tras compilar.
+- **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SerieskaoProvider:make --console=plain -q`); no ejecutada por regla del repo.
+- **Pendiente en dispositivo**: instalar v30 y probar Chapulín T1E12; esperar `episode API HTTP 200, iframe=true`, `dataLink`, PoW resuelto y links emitidos. Fuentes web revisadas: `/themes/serieskao/ficha.js?v=3`, `/api/episodio/serie/el-chapulin-colorado-1973/1/12`, `/vidurl/tt0229888-1x12/`.
+
 ### Arquitectura del sitio (sololatino.net)
 - Películas y series latinas (español/VOSE)
 - Cadena: `sololatino.net` → `embed69.org` (PoW + AES decryption) → links directos (vidhidepro, streamwish, voe)

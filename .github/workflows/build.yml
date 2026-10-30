@@ -67,8 +67,10 @@ jobs:
             if ./gradlew make --continue --stacktrace --refresh-dependencies --no-build-cache; then
               echo "BUILD_OK=1" >> $GITHUB_ENV
               break
+            else
+              BUILD_EXIT=$?
+              echo "Intento $i fallo (exit=$BUILD_EXIT), esperando 30s..."
             fi
-            echo "Intento $i fallo (exit=$?), esperando 30s..."
             sleep 30
           done
 
