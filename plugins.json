@@ -75,9 +75,9 @@
   "fileSize": 23000
  },
  {
-   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvenvivoProvider.cs3",
-   "status": 1,
-   "version": 7,
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvenvivoProvider.cs3",
+  "status": 1,
+  "version": 7,
   "apiVersion": 1,
   "name": "TVenVIVO",
   "internalName": "TvenvivoProvider",
@@ -93,9 +93,9 @@
   "fileSize": 47315
  },
  {
-   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
-   "status": 1,
-   "version": 4,
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TelelibreProvider.cs3",
+  "status": 1,
+  "version": 4,
   "apiVersion": 1,
   "name": "TeleLibre",
   "internalName": "TelelibreProvider",
@@ -111,9 +111,9 @@
   "fileSize": 23000
  },
  {
-   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SoloLatinoProvider.cs3",
-   "status": 1,
-   "version": 34,
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/SoloLatinoProvider.cs3",
+  "status": 1,
+  "version": 34,
   "apiVersion": 1,
   "name": "SoloLatino",
   "internalName": "SoloLatinoProvider",
