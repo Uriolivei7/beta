@@ -905,6 +905,22 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SerieskaoProvider:make --console=plain -q`); no ejecutada por regla del repo.
 - **Pendiente en dispositivo**: instalar v30 y probar Chapulín T1E12; esperar `episode API HTTP 200, iframe=true`, `dataLink`, PoW resuelto y links emitidos. Fuentes web revisadas: `/themes/serieskao/ficha.js?v=3`, `/api/episodio/serie/el-chapulin-colorado-1973/1/12`, `/vidurl/tt0229888-1x12/`.
 
+## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
+- **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
+- **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.
+- **Fix**: reenvolver los links del extractor (y del fallback genérico) con `newExtractorLink(name, ...)`, preservando URL, tipo, calidad, referer, headers y extractorData, para que `source` coincida con `OKRU`. El log ahora imprime cada emisión y el total real; el retorno de `loadLinks` depende del número emitido.
+- **Versiones**: `OkruProvider/build.gradle.kts` y `plugins.json` a 6; `fileSize` pendiente tras compilar.
+- **Compilación**: pendiente por el usuario (`.\\gradlew.bat :OkruProvider:make --console=plain -q`); no ejecutada por regla del repo.
+- **Pendiente en dispositivo**: instalar v6 y comprobar `loadLinks emit source=OKRU` + `emitted=N`, luego abrir el enlace. No se pudo confirmar en el log compartido cuántos enlaces de video se emitieron ni si ya se intentó reproducirlos.
+
+### OKRU v7 — corregir suspensión y póster genérico (31 Oct 2026)
+- **Reporte**: compilador `Suspension functions can only be called within coroutine body` en `OkruProvider.kt` línea 263; el HTML de una película tiene `og:image=/res/i/anonym/def_1200x630-r.png` (imagen genérica), por eso el favorito se guarda sin póster real.
+- **Fix de compilación**: el callback normal ya solo acumula `ExtractorLink`; después de que termina `OkRuExtractor`/`loadExtractor`, `emitProviderLinks()` los reenvía desde el cuerpo suspendido de `loadLinks`, donde se puede llamar a `newExtractorLink`.
+- **Fix de póster**: guardar en caché en memoria el thumbnail real (`thumbnail.big/small`/`imageUrl`) recibido en búsqueda, indexado por video ID. Si `og:image` es el placeholder genérico, usar el thumbnail de búsqueda. No guardar el placeholder como `posterUrl`.
+- **Versiones**: `OkruProvider/build.gradle.kts` y `plugins.json` a 7; `fileSize` pendiente.
+- **Compilación**: pendiente por el usuario (`.\\gradlew.bat :OkruProvider:make --console=plain -q`); no ejecutada por regla del repo.
+- **Pendiente en dispositivo**: compilar e instalar v7; confirmar compilación de `loadLinks`, que emite `source=OKRU`, y que al abrir desde resultados/favoritos se conserva el thumbnail real también tras reiniciar la app. Si se abre un OK.ru directo sin haber pasado por búsqueda en la sesión actual, no hay thumbnail en esa caché en memoria y hará falta otra fuente persistente.
+
 ### Arquitectura del sitio (sololatino.net)
 - Películas y series latinas (español/VOSE)
 - Cadena: `sololatino.net` → `embed69.org` (PoW + AES decryption) → links directos (vidhidepro, streamwish, voe)
