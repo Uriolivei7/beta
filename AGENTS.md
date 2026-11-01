@@ -3731,3 +3731,24 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Compilación
 - Comando:  .\gradlew.bat :TvguatemalaProvider:make --console=plain -q — **no ejecutado por regla del repo.**
 - ⏸️ Pendiente: compilar, actualizar ileSize en plugins.json, instalar y probar en dispositivo: home (secciones por colección), search, abrir canal y reproducción del m3u8. Logs: db logcat -s TvguatemalaEnvivo:V.
+
+## CxtvProvider — Estado (31 Oct 2026 v1)
+
+### ✅ Implementado
+- getMainPage(): filas por sección — Lo más destacado, Categorías, Países, Top 50 — parseadas del home /tv y /tv/paises.
+- search(): usa /busqueda/?query= del sitio (GET con parámetro query), filtra por título con fold de acentos, tope 40.
+- load(): detecta canal individual (/tv-en-vivo/<slug>) → 1 episodio "En Vivo"; o sección (país/categoría/top/idioma) → lista de canales como episodios.
+- loadLinks(): extrae data-stream-url del <video id="my-video"> (HLS directo); probe barato (pp.get, 8 s, requiere 200 + #EXTM3U); emite M3U8 con quality = Unknown. Devuelve alse sin lanzar si no hay stream.
+- Stream verificado en PC: playlist.m3u8 → 200, master con 1 variante 720p; chunklist_*.m3u8 → 200.
+- Sin WebView, sin interceptor de video.
+
+### Archivos
+- CxtvProvider/build.gradle.kts (v1, es, Live, status = 1)
+- CxtvProvider/src/main/AndroidManifest.xml (package="com.example")
+- CxtvProvider/src/main/kotlin/com/example/CxtvPlugin.kt (pluginContext + egisterMainAPI)
+- CxtvProvider/src/main/kotlin/com/example/CxtvProvider.kt (provider completo)
+- plugins.json: entrada CxtvEnvivo/CxtvProvider v1, ileSize: 0 pendiente.
+
+### Compilación
+- Comando:  .\gradlew.bat :CxtvProvider:make --console=plain -q — **no ejecutado por regla del repo.**
+- ⏸️ Pendiente: compilar, actualizar ileSize en plugins.json, instalar y probar en dispositivo: home (filas por sección), search, abrir país/categoría/canal, reproducción del m3u8. Logs: db logcat -s CxtvEnvivo:V.
