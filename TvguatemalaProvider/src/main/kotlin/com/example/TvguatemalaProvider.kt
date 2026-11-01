@@ -36,11 +36,11 @@ class TvguatemalaProvider : MainAPI() {
             } else {
                 val a = el.selectFirst("a[href*=/livetv/details/]") ?: continue
                 val url = a.attr("abs:href")
-                val title = a.attr("title").ifBlank {
+                val title = cleanChannelTitle(a.attr("title").ifBlank {
                     a.selectFirst("span.video-item-content")?.text()
                         ?: a.selectFirst("img")?.attr("alt")
                         ?: ""
-                }.trim()
+                })
                 val logo = a.selectFirst("img")?.attr("abs:src") ?: ""
                 if (url.isNotBlank() && title.isNotBlank()) {
                     currentItems.add(newLiveSearchResponse(title, url, TvType.Live) {
@@ -86,13 +86,14 @@ class TvguatemalaProvider : MainAPI() {
         if (u.isBlank()) return null
         return try {
             val doc = fetchDoc(u) ?: return null
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
+            val rawTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
                 ?: doc.selectFirst("h1")?.text()
                 ?: u.substringAfterLast("/")
                     .takeIf { it.contains("-") }
                     ?.replace("-", " ")
                     ?.capitalize()
                     ?: "En Vivo"
+            val title = cleanChannelTitle(rawTitle)
             val poster = doc.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
             newTvSeriesLoadResponse(title, u, TvType.Live, listOf(newEpisode(u) {
                 this.name = title
@@ -127,7 +128,7 @@ class TvguatemalaProvider : MainAPI() {
                 false
             }
             if (!ok) return false
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content") ?: name
+            val title = cleanChannelTitle(doc.selectFirst("meta[property=og:title]")?.attr("content") ?: name)
             callback(newExtractorLink(name, title, m3u8, ExtractorLinkType.M3U8) {
                 this.quality = Qualities.Unknown.value
             })
@@ -157,11 +158,11 @@ class TvguatemalaProvider : MainAPI() {
         for (div in doc.select("div.single-video")) {
             val a = div.selectFirst("a[href*=/livetv/details/]") ?: continue
             val url = a.attr("abs:href")
-            val title = a.attr("title").ifBlank {
+            val title = cleanChannelTitle(a.attr("title").ifBlank {
                 a.selectFirst("span.video-item-content")?.text()
                     ?: a.selectFirst("img")?.attr("alt")
                     ?: ""
-            }.trim()
+            })
             val logo = a.selectFirst("img")?.attr("abs:src") ?: ""
             if (url.isNotBlank() && title.isNotBlank()) {
                 out.add(ChannelInfo(title, url, logo.takeIf { it.isNotBlank() }, null))
@@ -198,6 +199,19 @@ class TvguatemalaProvider : MainAPI() {
         java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
             .replace(Regex("\\p{Mn}+"), "")
             .lowercase()
+
+    private fun cleanChannelTitle(raw: String): String {
+        var title = raw.substringBefore('|').trim()
+        title = title.replace(
+            Regex("(?i)\\s*(?:tv\\s+guatemala|ver\\s+tv\\s+online|tv\\s+online).*$"),
+            ""
+        )
+        title = title.replace(
+            Regex("(?i)\\s+(?:en\\s+vivo|gratis|online|hd|24\\s*/\\s*7|24\\s+horas|ver)(?:\\b.*)?$"),
+            ""
+        )
+        return title.trim().ifBlank { raw.substringBefore('|').trim() }
+    }
 
     private data class ChannelInfo(
         val name: String,

@@ -1,5 +1,12 @@
 # AGENTS.md - Netmirror Plugin Development
 
+## TvguatemalaProvider — Normalización de títulos (31 Oct 2026 v2)
+- El detalle mostraba títulos SEO largos, como “Canal 3 Guatemala En Vivo Gratis 24/7 | Ver TV Online | TV Guatemala En Vivo”; el título SEO de El Chavo también incluía promoción y marca del sitio.
+- Añadida `cleanChannelTitle()` para cortar el texto tras `|`, quitar sufijos promocionales y eliminar “TV Guatemala”. Se aplica en home, búsqueda, detalle y nombre del enlace reproducido.
+- Actualizados `TvguatemalaProvider/build.gradle.kts` y la entrada de `plugins.json` de v1 a v2; `fileSize` queda pendiente hasta generar el artefacto.
+- Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :TvguatemalaProvider:make --console=plain -q`.
+- Pendiente probar en dispositivo Canal 3 (“Canal 3 Guatemala”) y El Chavo (“El Chavo del 8”) en búsqueda, detalle y reproductor.
+
 ## HDFullProvider — Revisión y primer arreglo (31 Oct 2026)
 - **Arquitectura**: el módulo añadido implementa búsqueda/detalle por DOM, temporadas por POST a `/a/episodes` y `loadLinks` decodifica `var ad` (Base64 + ofuscación) en servidor/código/idioma/calidad. El plugin registra HDFull y solo VidMoly/VidMolyCom.
 - **HTML real Doctor Who T1E8**: cuatro entradas: Powvideo/Powwideo ×2 y Streamplay ×2 (subtitulado ES y audio original); audio ES/latino muestra cero opciones.
