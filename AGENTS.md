@@ -3759,3 +3759,10 @@ Cascada de 3 fases (timeout total 60000ms):
 - `CxtvProvider/build.gradle.kts` y `plugins.json` actualizados de v1 a v2; `fileSize` sigue pendiente de generar el artefacto.
 - Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
 - Pendiente probar en dispositivo: filas separadas por país y nombres limpios en búsqueda/detalle/reproductor. La carga del inicio ahora consulta la página de cada país listado y puede tardar más si el directorio contiene muchos países.
+
+## CxtvProvider — Diagnostico de inicio vacio (1 Nov 2026 v3)
+- Se agregaron logs en `getMainPage()` para page/request, cantidad de tarjetas destacadas, enlaces detectados y parseados del directorio de paises, resultado por pagina de pais, Top 50 y resumen final de filas/canales.
+- `fetchDoc()` registra status HTTP, longitud de respuesta y URL para distinguir fallos HTTP/HTML vacio de selectores que no coinciden.
+- Versiones actualizadas a v3 en `CxtvProvider/build.gradle.kts` y `plugins.json`; `fileSize` sigue pendiente.
+- Compilacion no ejecutada por regla del repo. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
+- Pendiente instalar y compartir logs `CxtvEnvivo` desde el inicio de `getMainPage` hasta `FIN` para ajustar el selector/flujo segun lo que entregue realmente el sitio.

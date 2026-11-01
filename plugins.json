@@ -1434,9 +1434,9 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/CxtvProvider.cs3",
   "status": 1,
-  "version": 2,
+  "version": 3,
   "apiVersion": 1,
-  "name": "CxtvEnvivo",
+  "name": "CXTv",
   "internalName": "CxtvProvider",
   "authors": [
    "Ranita"

@@ -13,28 +13,39 @@ import org.jsoup.nodes.Document
 
 class CxtvProvider : MainAPI() {
     override var mainUrl = "https://www.cxtvenvivo.com"
-    override var name = "CxtvEnvivo"
-    override var lang = "es"
+    override var name = "CXTv"
+    override var lang = "mx"
     override val supportedTypes = setOf(TvType.Live)
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = false
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        if (page > 1) return null
+        Log.d(TAG, "getMainPage inicio page=$page request='${request.name}' data='${request.data}'")
+        if (page > 1) {
+            Log.d(TAG, "getMainPage omitido: solo hay pagina 1")
+            return null
+        }
         val sections = mutableListOf<HomePageList>()
-        val doc = fetchDoc(mainUrl + "/tv") ?: return null
+        val doc = fetchDoc(mainUrl + "/tv") ?: run {
+            Log.e(TAG, "getMainPage: no se pudo cargar /tv; no se crean secciones")
+            return null
+        }
 
         val destacados = parseChannelCards(doc.select("div.listagem-cards"))
+        Log.d(TAG, "getMainPage destacados: tarjetas=${doc.select("div.listagem-cards a").size} canales=${destacados.size}")
         if (destacados.isNotEmpty()) {
             sections.add(HomePageList("Lo más destacado", destacados.map { channelItem(it) }))
         }
 
         val paisesDoc = fetchDoc(mainUrl + "/tv/paises")
-        val paises = if (paisesDoc != null) parseSectionCards(paisesDoc.select("a[href*=/tv/paises/]")) else emptyList()
+        val countryAnchors = paisesDoc?.select("a[href*=/tv/paises/]")
+        val paises = if (countryAnchors != null) parseSectionCards(countryAnchors) else emptyList()
+        Log.d(TAG, "getMainPage paises: pagina=${paisesDoc != null} anchors=${countryAnchors?.size ?: 0} parseados=${paises.size}")
         val seccionesPais = paises.amap { pais ->
             val paisDoc = fetchDoc(pais.url)
             val canales = paisDoc?.let { parseChannelCards(it.select("a[href*=/tv-en-vivo/]")) }.orEmpty()
+            Log.d(TAG, "getMainPage pais='${pais.name}' url=${pais.url} pagina=${paisDoc != null} canales=${canales.size}")
             pais.name to canales
         }
         seccionesPais.filter { it.second.isNotEmpty() }.forEach { (pais, canales) ->
@@ -43,11 +54,16 @@ class CxtvProvider : MainAPI() {
 
         val topDoc = fetchDoc(mainUrl + "/tv/mas-vistas")
         val top50 = if (topDoc != null) parseChannelCards(topDoc.select("div.listagem-cards")) else emptyList()
+        Log.d(TAG, "getMainPage top50: pagina=${topDoc != null} canales=${top50.size}")
         if (top50.isNotEmpty()) {
             sections.add(HomePageList("Top 50", top50.map { channelItem(it) }))
         }
 
-        if (sections.isEmpty()) return null
+        if (sections.isEmpty()) {
+            Log.e(TAG, "getMainPage FIN: sin secciones; destacados=${destacados.size}, paises=${paises.size}, top50=${top50.size}")
+            return null
+        }
+        Log.d(TAG, "getMainPage FIN: ${sections.size} secciones -> ${sections.joinToString { "${it.name}=${it.list.size}" }}")
         return newHomePageResponse(sections, false)
     }
 
@@ -92,7 +108,7 @@ class CxtvProvider : MainAPI() {
                     this.posterUrl = posterFor(title, poster.takeIf { it.isNotBlank() })
                 }
             } else {
-                
+
                 val doc = fetchDoc(u) ?: return null
                 val cards = parseChannelCards(doc.select("a[href*=/tv-en-vivo/]"))
                 val title = doc.selectFirst("h1")?.text()
@@ -154,7 +170,9 @@ class CxtvProvider : MainAPI() {
 
     private suspend fun fetchDoc(url: String): Document? {
         return try {
-            val txt = app.get(url, timeout = 15L).text
+            val response = app.get(url, timeout = 15L)
+            val txt = response.text
+            Log.d(TAG, "fetchDoc HTTP ${response.code} len=${txt.length} url=$url")
             Jsoup.parse(txt, url)
         } catch (e: CancellationException) {
             throw e
