@@ -13,13 +13,13 @@ import org.jsoup.nodes.Document
 
 class CxtvProvider : MainAPI() {
     override var mainUrl = "https://www.cxtvenvivo.com"
-    override var name = "CXTv"
+    override var name = "CXTV"
     override var lang = "mx"
     override val supportedTypes = setOf(TvType.Live)
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = false
-    
+
     private val homeCountrySlugs = setOf(
         "peru", "colombia", "argentina-en-vivo", "chile-en-vivo", "bolivia", "brasil",
         "costa-rica", "cuba", "ecuador", "el-salvador", "espana-en-vivo",
