@@ -1,5 +1,16 @@
 # AGENTS.md - Netmirror Plugin Development
 
+## HDFullProvider — Revisión y primer arreglo (31 Oct 2026)
+- **Arquitectura**: el módulo añadido implementa búsqueda/detalle por DOM, temporadas por POST a `/a/episodes` y `loadLinks` decodifica `var ad` (Base64 + ofuscación) en servidor/código/idioma/calidad. El plugin registra HDFull y solo VidMoly/VidMolyCom.
+- **HTML real Doctor Who T1E8**: cuatro entradas: Powvideo/Powwideo ×2 y Streamplay ×2 (subtitulado ES y audio original); audio ES/latino muestra cero opciones.
+- **Causa probable de cero enlaces**: `loadSourceNameExtractor` lanzaba una coroutine IO independiente por link; `loadLinks` podía finalizar antes de ejecutar `callback`. Corregido recolectando primero el resultado de `loadExtractor` y luego invocando callback de forma secuencial. Se agrega log por proveedor/idioma con cantidad de enlaces.
+- **Seguridad**: el fuente agregado incluía credenciales de cuenta y cookies de sesión incrustadas. Se retiraron; `ensureLoggedIn` ahora conserva cookie de idioma y actualiza cookies recibidas del sitio sin hacer login automático. Si se requiere autenticación, debe implementarse como sesión del usuario, nunca con secretos en el repo. Recomendar cambio de las credenciales expuestas.
+- **Extractores faltantes**: no existen Powvideo/Powwideo ni Streamplay localmente; HDFull solo registra VidMoly. El map transforma Powvideo a Powwideo pero el iframe real usa `/embed-...html`, por lo que la URL construida no está verificada. Los hosts externos no fueron accesibles para observar el HTML/JS del player, así que no se añadió extractor especulativo.
+- **Pendiente**: inspeccionar `provider/code` decodificado y HTML/logs de ambos iframes para implementar extractores, registrar APIs, comprobar si Streamplay funciona con los extractores del app, y confirmar tipo de autenticación.
+- **Manifest**: módulo ya aparece en `plugins.json` como `HdfullProvider` v1; confirmar que el artefacto de publicación coincide con nombre/version.
+- **Compilación**: no ejecutada por instrucción del repo. Comando: ` .\gradlew.bat :HDFullProvider:make --console=plain -q`.
+- **Dispositivo**: pendiente instalar y probar T1E8, idiomas, streams, headers/referer y subtítulos.
+
 ## Reglas de trabajo (OBLIGATORIAS)
 - **Las respuestas siempre en español**
 - **NUNCA ejecutar Gradle por cuenta propia.** Ni `compileReleaseKotlin`, ni `make`, ni `installDebug`, ni tests. Aunque el código "debería" compilar y aunque los errores sean obvios: **primero termina todos los cambios del proveedor, y solo compila cuando el usuario lo pida expresamente.** Si crees que hay un error de compilación, descríbelo y sigue editando; no lanc gradle para confirmarlo.
@@ -3693,3 +3704,23 @@ Cascada de 3 fases (timeout total 60000ms):
   - Esperado: `[WV] fase API: challenge=.. cf_clearance=..` → `[WV] servidores resueltos: 2 -> [...]` → `BRANCH: embed69.org` → `loadLinks FIN`.
   - Si sigue en 403: mirar si `cf_clearance=false` (fase 0 no obtuvo cookie → el challenge no es resoluble en navegacion) y si la fase 2 (`reintentando con UA Android`) llega a emitir.
 - Scripts de diagnostico en `$TEMP/opencode/`: `cf_cdp_test.py` (POST real en Chrome), `cf_matrix.py` (matriz de headers en Chrome), `cf_form.py`/`cf_formtok.py`/`cf_formnav.py` (form-urlencoded y navegacion POST → 419).
+
+## TvguatemalaProvider — Estado (31 Oct 2026 v1)
+
+### ✅ Implementado
+- getMainPage(): home con secciones por colección (h2 + tarjetas div.single-video, [href*=/livetv/details/] con 	itle/img). Soporta paginación (page > 1 → null).
+- search(): filtra las tarjetas del home por título (fold sin acentos, distinctBy url, tope 40).
+- load(): ficha de canal /livetv/watch/<slug>/<id> (sigue 301 desde /details/); título de og:title/h1, poster de og:image; TvSeriesLoadResponse con 1 episodio "En Vivo".
+- loadLinks(): extrae .m3u8 del <video src>/<source src> o texto del body; probe barato (pp.get, 8 s, requiere 200 + #EXTM3U); emite M3U8 con quality = Unknown. Devuelve alse sin lanzar si no hay enlace válido.
+- Sin WebView, sin interceptor de video (los streams m3u8 no requieren headers especiales; verificado guastream.com:3091 200 sin Referer/UA).
+
+### Archivos
+- TvguatemalaProvider/build.gradle.kts (v1, es, Live, status = 1)
+- TvguatemalaProvider/src/main/AndroidManifest.xml (package="com.example")
+- TvguatemalaProvider/src/main/kotlin/com/example/TvguatemalaPlugin.kt (pluginContext + egisterMainAPI)
+- TvguatemalaProvider/src/main/kotlin/com/example/TvguatemalaProvider.kt (provider completo)
+- plugins.json: entrada TvguatemalaEnvivo/TvguatemalaProvider v1, ileSize: 0 pendiente.
+
+### Compilación
+- Comando:  .\gradlew.bat :TvguatemalaProvider:make --console=plain -q — **no ejecutado por regla del repo.**
+- ⏸️ Pendiente: compilar, actualizar ileSize en plugins.json, instalar y probar en dispositivo: home (secciones por colección), search, abrir canal y reproducción del m3u8. Logs: db logcat -s TvguatemalaEnvivo:V.

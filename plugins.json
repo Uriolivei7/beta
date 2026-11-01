@@ -1339,6 +1339,24 @@
   "fileSize": 0
  },
  {
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/TvguatemalaProvider.cs3",
+  "status": 1,
+  "version": 1,
+  "apiVersion": 1,
+  "name": "TVGuatemala",
+  "internalName": "TvguatemalaProvider",
+  "authors": [
+   "Ranita"
+  ],
+  "description": "TV en vivo de Guatemala. Canales en vivo de tvguatemalaenvivo.com.",
+  "tvTypes": [
+   "Live"
+  ],
+  "iconUrl": "https://www.tvguatemalaenvivo.com/upload/tv-guatemala-en-vivo-favicon.png",
+  "language": "es",
+  "fileSize": 0
+ },
+ {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/IptvProvider.cs3",
   "status": 1,
   "version": 3,
@@ -1384,7 +1402,7 @@
   "name": "Dailymotion",
   "internalName": "DailymotionProvider",
   "authors": [
-   "recloudstream"
+   "Ranita"
   ],
   "description": "https://www.dailymotion.com/",
   "tvTypes": [
@@ -1392,6 +1410,25 @@
   ],
   "iconUrl": "https://www.dailymotion.com/favicon.ico",
   "language": "en",
+  "fileSize": 0
+ },
+ {
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/HdfullProvider.cs3",
+  "status": 1,
+  "version": 1,
+  "apiVersion": 1,
+  "name": "HDFull",
+  "internalName": "HdfullProvider",
+  "authors": [
+   "Ranita"
+  ],
+  "description": "https://hdfull.love/",
+  "tvTypes": [
+   "TvSeries",
+   "Movie"
+  ],
+  "iconUrl": "https://hdfullcdn.cc/favicon.ico",
+  "language": "mx",
   "fileSize": 0
  }
 ]
