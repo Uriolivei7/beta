@@ -19,6 +19,14 @@ class CxtvProvider : MainAPI() {
     override val hasMainPage = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = false
+    
+    private val homeCountrySlugs = setOf(
+        "peru", "colombia", "argentina-en-vivo", "chile-en-vivo", "bolivia", "brasil",
+        "costa-rica", "cuba", "ecuador", "el-salvador", "espana-en-vivo",
+        "estados-unidos", "guatemala-en-vivo", "honduras", "mejico", "nicaragua",
+        "panama-en-vivo", "paraguay",  "puerto-rico", "republica-dominicana",
+        "uruguay", "venezuela",
+    )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "getMainPage inicio page=$page request='${request.name}' data='${request.data}'")
@@ -42,8 +50,11 @@ class CxtvProvider : MainAPI() {
         val paisesDoc = fetchDoc(mainUrl + "/tv/paises")
         val countryAnchors = paisesDoc?.select("a[href*=/tv/paises/]")
         val paises = if (countryAnchors != null) parseSectionCards(countryAnchors) else emptyList()
-        Log.d(TAG, "getMainPage paises: pagina=${paisesDoc != null} anchors=${countryAnchors?.size ?: 0} parseados=${paises.size}")
-        val seccionesPais = paises.amap { pais ->
+        val paisesSeleccionados = paises.filter { pais ->
+            pais.url.substringAfter("/tv/paises/").trimEnd('/') in homeCountrySlugs
+        }
+        Log.d(TAG, "getMainPage paises: pagina=${paisesDoc != null} anchors=${countryAnchors?.size ?: 0} parseados=${paises.size} seleccionados=${paisesSeleccionados.size}/${homeCountrySlugs.size}")
+        val seccionesPais = paisesSeleccionados.amap { pais ->
             val paisDoc = fetchDoc(pais.url)
             val countryCards = paisDoc?.select("a[href*=/tv-en-vivo/]")
             val canales = countryCards?.let { parseChannelCards(it) }.orEmpty()

@@ -3773,3 +3773,9 @@ Cascada de 3 fases (timeout total 60000ms):
 - `CxtvProvider/build.gradle.kts` y entrada exacta de `CxtvProvider` en `plugins.json` actualizados a v4. `plugins.json` validado; `fileSize` pendiente.
 - Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
 - Pendiente instalar y revisar que `getMainPage FIN` muestre filas/canales por país y que destacados/Top 50 ya no estén vacíos.
+
+## CxtvProvider — Paises seleccionables en portada (1 Nov 2026 v5)
+- Se añadió `homeCountrySlugs` como lista editable en `CxtvProvider.kt`; `getMainPage()` solo consulta y muestra los países incluidos. La selección predeterminada incluye 22 países de Latinoamérica, España y Estados Unidos, reduciendo las peticiones frente a las 98 páginas del directorio.
+- El filtro usa el slug de `/tv/paises/<slug>` y el log informa países encontrados/seleccionados. Para cambiar el conjunto, editar únicamente `homeCountrySlugs`.
+- Versiones v5 en `CxtvProvider/build.gradle.kts` y entrada del provider en `plugins.json`; `fileSize` pendiente. Compilación no ejecutada. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
+- Pendiente probar v5 en dispositivo y confirmar filas y tiempos de carga.
