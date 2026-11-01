@@ -3766,3 +3766,10 @@ Cascada de 3 fases (timeout total 60000ms):
 - Versiones actualizadas a v3 en `CxtvProvider/build.gradle.kts` y `plugins.json`; `fileSize` sigue pendiente.
 - Compilacion no ejecutada por regla del repo. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
 - Pendiente instalar y compartir logs `CxtvEnvivo` desde el inicio de `getMainPage` hasta `FIN` para ajustar el selector/flujo segun lo que entregue realmente el sitio.
+
+## CxtvProvider — Fix parseo del inicio a partir de logs (1 Nov 2026 v4)
+- Los logs v3 mostraron HTTP 200 en todas las páginas, pero 0 canales parseados. Causa: destacados/Top 50 enviaban contenedores `div.listagem-cards` al parser que lee enlaces `a`; las páginas por país sí tenían rutas `/tv-en-vivo/`, pero `data-item_name` vacío bloqueaba el fallback al texto visible.
+- Corregido: las consultas de destacados/Top 50 apuntan a enlaces de canal; la extracción de nombre ignora atributos vacíos y continúa con el texto; el nombre del país elimina el contador final. Añadido log de diagnóstico para tarjetas país sin resultado.
+- `CxtvProvider/build.gradle.kts` y entrada exacta de `CxtvProvider` en `plugins.json` actualizados a v4. `plugins.json` validado; `fileSize` pendiente.
+- Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
+- Pendiente instalar y revisar que `getMainPage FIN` muestre filas/canales por país y que destacados/Top 50 ya no estén vacíos.

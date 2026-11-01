@@ -32,8 +32,9 @@ class CxtvProvider : MainAPI() {
             return null
         }
 
-        val destacados = parseChannelCards(doc.select("div.listagem-cards"))
-        Log.d(TAG, "getMainPage destacados: tarjetas=${doc.select("div.listagem-cards a").size} canales=${destacados.size}")
+        val destacadosCards = doc.select("div.listagem-cards a[href*=/tv-en-vivo/]")
+        val destacados = parseChannelCards(destacadosCards)
+        Log.d(TAG, "getMainPage destacados: tarjetas=${destacadosCards.size} canales=${destacados.size}")
         if (destacados.isNotEmpty()) {
             sections.add(HomePageList("Lo más destacado", destacados.map { channelItem(it) }))
         }
@@ -44,7 +45,12 @@ class CxtvProvider : MainAPI() {
         Log.d(TAG, "getMainPage paises: pagina=${paisesDoc != null} anchors=${countryAnchors?.size ?: 0} parseados=${paises.size}")
         val seccionesPais = paises.amap { pais ->
             val paisDoc = fetchDoc(pais.url)
-            val canales = paisDoc?.let { parseChannelCards(it.select("a[href*=/tv-en-vivo/]")) }.orEmpty()
+            val countryCards = paisDoc?.select("a[href*=/tv-en-vivo/]")
+            val canales = countryCards?.let { parseChannelCards(it) }.orEmpty()
+            if (canales.isEmpty()) {
+                val candidates = paisDoc?.select("a[href]")?.filter { it.attr("abs:href").contains("/tv-en-vivo/") }.orEmpty()
+                Log.w(TAG, "getMainPage pais='${pais.name}': canales=0 candidates=${candidates.size} firstText='${candidates.firstOrNull()?.text()?.take(100)}'")
+            }
             Log.d(TAG, "getMainPage pais='${pais.name}' url=${pais.url} pagina=${paisDoc != null} canales=${canales.size}")
             pais.name to canales
         }
@@ -53,8 +59,9 @@ class CxtvProvider : MainAPI() {
         }
 
         val topDoc = fetchDoc(mainUrl + "/tv/mas-vistas")
-        val top50 = if (topDoc != null) parseChannelCards(topDoc.select("div.listagem-cards")) else emptyList()
-        Log.d(TAG, "getMainPage top50: pagina=${topDoc != null} canales=${top50.size}")
+        val topCards = topDoc?.select("div.listagem-cards a[href*=/tv-en-vivo/]")
+        val top50 = topCards?.let { parseChannelCards(it) }.orEmpty()
+        Log.d(TAG, "getMainPage top50: pagina=${topDoc != null} tarjetas=${topCards?.size ?: 0} canales=${top50.size}")
         if (top50.isNotEmpty()) {
             sections.add(HomePageList("Top 50", top50.map { channelItem(it) }))
         }
@@ -187,12 +194,10 @@ class CxtvProvider : MainAPI() {
         for (a in elements) {
             val href = a.attr("abs:href")
             if (!href.contains("/tv-en-vivo/")) continue
-            val rawTitle = a.selectFirst("h4.resumo")?.text()
-                ?: a.selectFirst("h5")?.text()
-                ?: a.attr("data-item_name")
+            val rawTitle = a.selectFirst("h4.resumo")?.text()?.takeIf { it.isNotBlank() }
+                ?: a.selectFirst("h5")?.text()?.takeIf { it.isNotBlank() }
+                ?: a.attr("data-item_name").takeIf { it.isNotBlank() }
                 ?: a.text().trim()
-                .takeIf { it.isNotBlank() }
-                ?: ""
             val title = cleanChannelTitle(rawTitle)
             val logo = a.selectFirst("img")?.attr("abs:src") ?: ""
             if (href.isNotBlank() && title.isNotBlank()) {
@@ -210,10 +215,8 @@ class CxtvProvider : MainAPI() {
             if (!href.contains("/tv/") || href.contains("/tv-en-vivo/")) continue
             if (href in seen) continue
             seen.add(href)
-            val title = a.selectFirst("h4, h5")?.text()
-                ?: a.text().trim()
-                .takeIf { it.isNotBlank() }
-                ?: ""
+            val title = (a.selectFirst("h4, h5")?.text()?.takeIf { it.isNotBlank() }
+                ?: a.text().trim()).replace(Regex("\\s+\\d+$"), "").trim()
             val logo = a.selectFirst("img")?.attr("abs:src") ?: ""
             if (href.isNotBlank() && title.isNotBlank()) {
                 out.add(ChannelInfo(title.trim(), href, logo.takeIf { it.isNotBlank() }, null))
