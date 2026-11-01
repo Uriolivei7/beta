@@ -3752,3 +3752,10 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Compilación
 - Comando:  .\gradlew.bat :CxtvProvider:make --console=plain -q — **no ejecutado por regla del repo.**
 - ⏸️ Pendiente: compilar, actualizar ileSize en plugins.json, instalar y probar en dispositivo: home (filas por sección), search, abrir país/categoría/canal, reproducción del m3u8. Logs: db logcat -s CxtvEnvivo:V.
+
+## CxtvProvider — Limpieza de títulos y secciones por país (1 Nov 2026 v2)
+- `getMainPage()` ahora toma el directorio `/tv/paises`, visita cada página de país y crea una fila independiente con los canales de ese país, siguiendo el modelo de DoggiTV. Se conserva “Lo más destacado” y “Top 50”; se quitó la fila agregada de categorías/países.
+- `cleanChannelTitle()` se aplica a los nombres de canales extraídos de tarjetas y al título del detalle. Recorta `| cxtv`, frases SEO como “ver online gratis” y el sufijo de ciudad/país; en el ejemplo queda “La Tele”. El detalle prioriza el `<h1>` y usa `og:title` como respaldo.
+- `CxtvProvider/build.gradle.kts` y `plugins.json` actualizados de v1 a v2; `fileSize` sigue pendiente de generar el artefacto.
+- Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
+- Pendiente probar en dispositivo: filas separadas por país y nombres limpios en búsqueda/detalle/reproductor. La carga del inicio ahora consulta la página de cada país listado y puede tardar más si el directorio contiene muchos países.

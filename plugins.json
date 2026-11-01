@@ -1434,7 +1434,7 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/CxtvProvider.cs3",
   "status": 1,
-  "version": 1,
+  "version": 2,
   "apiVersion": 1,
   "name": "CxtvEnvivo",
   "internalName": "CxtvProvider",
@@ -1446,7 +1446,7 @@
    "Live"
   ],
   "iconUrl": "https://www.cxtvenvivo.com/assets/img/ui/favicon.png",
-  "language": "es",
+  "language": "mx",
   "fileSize": 0
  }
 ]

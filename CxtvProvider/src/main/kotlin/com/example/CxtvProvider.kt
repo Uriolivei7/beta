@@ -25,26 +25,22 @@ class CxtvProvider : MainAPI() {
         val sections = mutableListOf<HomePageList>()
         val doc = fetchDoc(mainUrl + "/tv") ?: return null
 
-        // Fila 1: Lo más destacado (canales directos)
         val destacados = parseChannelCards(doc.select("div.listagem-cards"))
         if (destacados.isNotEmpty()) {
             sections.add(HomePageList("Lo más destacado", destacados.map { channelItem(it) }))
         }
 
-        // Fila 2: Categorías
-        val categorias = parseSectionCards(doc.select("div.col-md-8 a[href*=/tv/categorias/]"))
-        if (categorias.isNotEmpty()) {
-            sections.add(HomePageList("Categorías", categorias.map { sectionItem(it) }))
-        }
-
-        // Fila 3: Países
         val paisesDoc = fetchDoc(mainUrl + "/tv/paises")
         val paises = if (paisesDoc != null) parseSectionCards(paisesDoc.select("a[href*=/tv/paises/]")) else emptyList()
-        if (paises.isNotEmpty()) {
-            sections.add(HomePageList("Países", paises.map { sectionItem(it) }))
+        val seccionesPais = paises.amap { pais ->
+            val paisDoc = fetchDoc(pais.url)
+            val canales = paisDoc?.let { parseChannelCards(it.select("a[href*=/tv-en-vivo/]")) }.orEmpty()
+            pais.name to canales
+        }
+        seccionesPais.filter { it.second.isNotEmpty() }.forEach { (pais, canales) ->
+            sections.add(HomePageList(pais, canales.distinctBy { it.url }.map { channelItem(it) }))
         }
 
-        // Fila 4: Top 50
         val topDoc = fetchDoc(mainUrl + "/tv/mas-vistas")
         val top50 = if (topDoc != null) parseChannelCards(topDoc.select("div.listagem-cards")) else emptyList()
         if (top50.isNotEmpty()) {
@@ -80,11 +76,13 @@ class CxtvProvider : MainAPI() {
         if (u.isBlank()) return null
         return try {
             if (u.contains("/tv-en-vivo/")) {
-                // Canal individual
+
                 val doc = fetchDoc(u) ?: return null
-                val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
-                    ?: doc.selectFirst("h1")?.text()
-                    ?: u.substringAfterLast("/").replace("-", " ").capitalize()
+                val title = cleanChannelTitle(
+                    doc.selectFirst("h1")?.text()
+                        ?: doc.selectFirst("meta[property=og:title]")?.attr("content")
+                        ?: u.substringAfterLast("/").replace("-", " ").capitalize()
+                )
                 val poster = doc.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
                 newTvSeriesLoadResponse(title, u, TvType.Live, listOf(newEpisode(u) {
                     this.name = title
@@ -94,7 +92,7 @@ class CxtvProvider : MainAPI() {
                     this.posterUrl = posterFor(title, poster.takeIf { it.isNotBlank() })
                 }
             } else {
-                // Sección (país, categoría, top, idioma): lista de canales
+                
                 val doc = fetchDoc(u) ?: return null
                 val cards = parseChannelCards(doc.select("a[href*=/tv-en-vivo/]"))
                 val title = doc.selectFirst("h1")?.text()
@@ -139,7 +137,9 @@ class CxtvProvider : MainAPI() {
                 false
             }
             if (!ok) return false
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content") ?: name
+            val title = cleanChannelTitle(doc.selectFirst("h1")?.text()
+                ?: doc.selectFirst("meta[property=og:title]")?.attr("content")
+                ?: name)
             callback(newExtractorLink(name, title, streamUrl, ExtractorLinkType.M3U8) {
                 this.quality = Qualities.Unknown.value
             })
@@ -169,12 +169,13 @@ class CxtvProvider : MainAPI() {
         for (a in elements) {
             val href = a.attr("abs:href")
             if (!href.contains("/tv-en-vivo/")) continue
-            val title = a.selectFirst("h4.resumo")?.text()
+            val rawTitle = a.selectFirst("h4.resumo")?.text()
                 ?: a.selectFirst("h5")?.text()
                 ?: a.attr("data-item_name")
                 ?: a.text().trim()
                 .takeIf { it.isNotBlank() }
                 ?: ""
+            val title = cleanChannelTitle(rawTitle)
             val logo = a.selectFirst("img")?.attr("abs:src") ?: ""
             if (href.isNotBlank() && title.isNotBlank()) {
                 out.add(ChannelInfo(title.trim(), href, logo.takeIf { it.isNotBlank() }, null))
@@ -203,12 +204,18 @@ class CxtvProvider : MainAPI() {
         return out
     }
 
-    private fun channelItem(ch: ChannelInfo): SearchResponse =
-        newLiveSearchResponse(ch.name, ch.url, TvType.Live) {
-            this.posterUrl = posterFor(ch.name, ch.logo)
-        }
+    private fun cleanChannelTitle(raw: String): String {
+        var title = raw.trim()
+            .substringBefore("|")
+            .replace(Regex("(?i)\\s*[-–—]\\s*(?:ver\\s+online|ver\\s+en\\s+vivo|online\\s+gratis|gratis\\s+online).*$"), "")
+            .replace(Regex("(?i)\\s*[-–—]\\s*(?:[a-záéíóúñ ]+\\s*,\\s*[a-záéíóúñ ]+)$"), "")
+            .replace(Regex("(?i)\\s+(?:en\\s+vivo|online\\s+gratis|gratis\\s+online|online)$"), "")
+            .trim()
+        if (title.isBlank()) title = raw.substringBefore("|").trim()
+        return title
+    }
 
-    private fun sectionItem(ch: ChannelInfo): SearchResponse =
+    private fun channelItem(ch: ChannelInfo): SearchResponse =
         newLiveSearchResponse(ch.name, ch.url, TvType.Live) {
             this.posterUrl = posterFor(ch.name, ch.logo)
         }
