@@ -572,7 +572,7 @@ class SoloLatinoProvider : MainAPI() {
                                     val normalizedUrl = fixHostsLinks(decryptedUrl)
                                     val originalHost = try { java.net.URL(decryptedUrl).host.lowercase() } catch (_: Exception) { "" }
                                     val vidHideAliases = setOf("morencius.com", "minochinos.com", "mivalyo.com", "dinisglows.com", "dhtpre.com")
-                                    
+
                                     val sourceUrl = if (originalHost in vidHideAliases) decryptedUrl else normalizedUrl
                                     loadSourceNameExtractor(langTag, sourceUrl, fixedSrc, countingSub, countingCallback)
                                 } else {
