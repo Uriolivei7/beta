@@ -842,18 +842,44 @@ private suspend fun tryVidHideProExtraction(
             Variant(key, u)
         }
         val reachable = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
+        val redirectFallback = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
         resolved.amap { v ->
             try {
-
-                val code = withTimeoutOrNull(20000L) {
-                    app.get(v.url, headers = probeHeaders, timeout = 20L).code
-                } ?: -1
+                
+                val probe = withTimeoutOrNull(10000L) {
+                    val response = app.get(v.url, headers = probeHeaders, timeout = 8L, allowRedirects = false)
+                    response.code to response.headers["Location"]
+                } ?: (-1 to null)
+                val code = probe.first
                 Log.d(KAO_TAG, "[VH-Pro] probe ${v.key} -> $code")
-                if (code in 200..299) reachable.add(v)
+                if (code in 200..299) {
+                    reachable.add(v)
+                } else if (code in 300..399) {
+                    val target = probe.second?.let {
+                        runCatching { java.net.URL(java.net.URL(v.url), it).toString() }.getOrNull()
+                    }
+                    var targetOk = false
+                    if (!target.isNullOrBlank() && target != v.url) {
+                        val targetCode = withTimeoutOrNull(10000L) {
+                            app.get(target, headers = probeHeaders, timeout = 8L, allowRedirects = false).code
+                        } ?: -1
+                        Log.d(KAO_TAG, "[VH-Pro] probe ${v.key} redirect -> $targetCode ${target.take(100)}")
+                        if (targetCode in 200..299) {
+                            reachable.add(Variant(v.key, target))
+                            targetOk = true
+                        }
+                    }
+                    if (!targetOk) redirectFallback.add(v)
+                }
             } catch (_: Exception) {}
         }
-        val toEmit = if (reachable.isNotEmpty()) {
-            orderedKeys.mapNotNull { k -> reachable.firstOrNull { it.key == k } }
+        val reachableOrdered = orderedKeys.mapNotNull { k -> reachable.firstOrNull { it.key == k } }
+        val toEmit = if (reachableOrdered.isNotEmpty()) {
+            reachableOrdered + orderedKeys.mapNotNull { k ->
+                redirectFallback.firstOrNull { it.key == k && reachableOrdered.none { ready -> ready.key == k } }
+            }
+        } else if (redirectFallback.isNotEmpty()) {
+            orderedKeys.mapNotNull { k -> redirectFallback.firstOrNull { it.key == k } }
         } else {
             Log.w(KAO_TAG, "[VH-Pro] ningún master responde, emitiendo todos igual")
             resolved

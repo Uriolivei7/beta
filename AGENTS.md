@@ -935,6 +935,13 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones v32 en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - Pendiente instalar v32 y reproducir un episodio que dé “enlaces no encontrados”. Capturar las líneas `SeriesKao` desde `loadLinks START` hasta `loadLinks FIN`; ese intervalo distinguirá ausencia de hash/iframe, fallo API, falta de `dataLink`, PoW, descifrado o cero emisiones.
 
+## SeriesKao — emitir destino probado de VidHide hls4 (3 Nov 2026 v33)
+- **Logs v32 del usuario**: los episodios que sí resuelven VidHide extraen `master.m3u8` de `morencius.com/stream/...`; hls4 devuelve HTTP 200 durante el probe y se emite la URL del espejo. El log no incluye aún el error del reproductor, pero el probe anterior seguía redirects automáticamente y luego conservaba/emite la URL original del espejo, sin comprobar el destino final.
+- **Comparación**: Danimados ya inspecciona redirects sin seguirlos, prueba el `Location` y emite el destino si responde. El parser de hosts/hls de SeriesKao y SoloLatino es esencialmente igual; la diferencia útil para este fallo es el manejo del redirect en el probe.
+- **Fix v33**: SeriesKao ahora prueba cada variante con redirects desactivados. Si recibe 3xx, resuelve `Location`, comprueba el destino y emite esa URL si responde 2xx. Conserva el espejo original como fallback si el destino no valida; las variantes alcanzables siguen teniendo prioridad.
+- `SeriesKaoProvider/build.gradle.kts` y `plugins.json` pasan de v32 a v33; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ **Pendiente en dispositivo**: instalar v33 y probar el mismo episodio de Chapulín/otro episodio VidHide. Revisar `[VH-Pro] probe hls4`, posible `probe hls4 redirect -> ...`, URL de `emit hls4` y respuesta a la solicitud del player. El log de entrada no contiene el error de reproducción posterior, así que el fix aún debe confirmarse en dispositivo.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.
