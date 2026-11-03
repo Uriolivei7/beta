@@ -17,6 +17,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.jsoup.Jsoup
 import java.net.URLEncoder
 import javax.crypto.Cipher
 import javax.crypto.Mac
@@ -845,7 +846,7 @@ private suspend fun tryVidHideProExtraction(
         val redirectFallback = java.util.Collections.synchronizedSet(mutableSetOf<Variant>())
         resolved.amap { v ->
             try {
-                
+
                 val probe = withTimeoutOrNull(10000L) {
                     val response = app.get(v.url, headers = probeHeaders, timeout = 8L, allowRedirects = false)
                     response.code to response.headers["Location"]
@@ -1168,17 +1169,76 @@ suspend fun extractKaoEmbed69(
             .firstOrNull { it.html().contains("dataLink =") }
         if (dataLinkScript == null) {
             Log.d(KAO_TAG, "embed69 - sin dataLink, probando playServerVast")
-            val serverUrls = Regex("""playServerVast\(\s*'([^']+)'\s*\)""")
+            val serverUrls = Regex("""playServerVast\(\s*['"]([^'"]+)['"]\s*\)""")
                 .findAll(embedPageHtml)
                 .map { it.groupValues[1] }
                 .distinct()
-                .toList()
+                .toMutableList()
+
+            fun findServerUrls(html: String): List<String> {
+                val normalizedHtml = html.replace("\\/", "/").replace("&amp;", "&")
+                val candidates = linkedSetOf<String>()
+                val doc = Jsoup.parse(normalizedHtml, embedUrl)
+                doc.select("iframe[src], video[src], source[src], a[href], [data-src], [data-url], [onclick]")
+                    .forEach { element ->
+                        listOf("src", "href", "data-src", "data-url", "onclick").forEach { attr ->
+                            val value = element.attr(attr)
+                            Regex("""(?i)(?:https?:)?//[^\s'"<>\\]+""").findAll(value).forEach { match ->
+                                candidates += match.value.trimEnd(')', ',', ';', '.')
+                            }
+                        }
+                    }
+                Regex("""(?i)(?:https?:)?//[^\s'"<>\\]+""").findAll(normalizedHtml).forEach { match ->
+                    candidates += match.value.trimEnd(')', ',', ';', '.')
+                }
+                val knownHosts = listOf(
+                    "dood", "do7go", "vidhide", "morencius", "minochinos", "mivalyo", "dinisglows", "dhtpre",
+                    "streamwish", "hglink", "swdyu", "cybervynx", "dumbalag", "awish"
+                )
+                return candidates.mapNotNull { raw ->
+                    val url = if (raw.startsWith("//")) "https:$raw" else raw
+                    val host = runCatching { java.net.URL(url).host.lowercase() }.getOrDefault("")
+                    url.takeIf { knownHosts.any(host::contains) && host != "embed69.org" }
+                }.distinct()
+            }
+
             if (serverUrls.isEmpty()) {
-                Log.e(KAO_TAG, "embed69 - tampoco hay playServerVast: ${embedPageHtml.take(300)}")
+                val staticCandidates = findServerUrls(embedPageHtml)
+                Log.d(KAO_TAG, "embed69 - servidores en HTML inicial=${staticCandidates.size}: $staticCandidates")
+                serverUrls.addAll(staticCandidates)
+            }
+            if (serverUrls.isEmpty()) {
+                Log.d(KAO_TAG, "embed69 - probando WebView para player JavaScript")
+                val renderedHtml = renderViaWebView(
+                    pageUrl = embedUrl,
+                    referer = referer,
+                    waitMs = 12000L,
+                    readyJs = "h.includes('dood')||h.includes('vidhide')||h.includes('streamwish')||h.includes('playServerVast')"
+                )
+                if (!renderedHtml.isNullOrBlank()) {
+                    Log.d(KAO_TAG, "embed69 - WebView HTML len=${renderedHtml.length}")
+                    val renderedCandidates = findServerUrls(renderedHtml)
+                    Log.d(KAO_TAG, "embed69 - servidores tras WebView=${renderedCandidates.size}: $renderedCandidates")
+                    serverUrls.addAll(renderedCandidates)
+                    serverUrls.addAll(
+                        Regex("""playServerVast\(\s*['"]([^'"]+)['"]\s*\)""")
+                            .findAll(renderedHtml).map { it.groupValues[1] }
+                    )
+                } else {
+                    Log.w(KAO_TAG, "embed69 - WebView no devolvió HTML")
+                }
+            }
+            val uniqueServerUrls = serverUrls.distinct()
+            if (uniqueServerUrls.isEmpty()) {
+                val doc = embedResp.document
+                Log.e(
+                    KAO_TAG,
+                    "embed69 - player no expuso servidores; scripts=${doc.select("script[src]").map { it.attr("src") }.take(12)} iframes=${doc.select("iframe[src]").map { it.attr("src") }.take(12)}"
+                )
                 return
             }
-            Log.d(KAO_TAG, "embed69 - servers=${serverUrls.size}: $serverUrls")
-            serverUrls.amap { serverUrl ->
+            Log.d(KAO_TAG, "embed69 - servers=${uniqueServerUrls.size}: $uniqueServerUrls")
+            uniqueServerUrls.amap { serverUrl ->
                 loadKaoSourceExtractor("embed69", fixHostsLinksPreservingVidHide(serverUrl), embedUrl, subtitleCallback, callback)
             }
             return

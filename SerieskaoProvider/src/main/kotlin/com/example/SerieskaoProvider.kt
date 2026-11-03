@@ -61,7 +61,7 @@ class SerieskaoProvider : MainAPI() {
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val cdnDomains = listOf("dramiyos", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "cyou")
-        val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/")
+        val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/", "/stream/")
         return Interceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -73,7 +73,7 @@ class SerieskaoProvider : MainAPI() {
             val newRequest = request.newBuilder()
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
                 .header("Referer", extractorLink.referer)
-                .header("Origin", "https://vidhidepro.com")
+                .header("Origin", request.header("Origin") ?: "https://vidhidepro.com")
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()

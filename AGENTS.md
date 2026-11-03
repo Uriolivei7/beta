@@ -942,6 +942,24 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - `SeriesKaoProvider/build.gradle.kts` y `plugins.json` pasan de v32 a v33; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - ⏸️ **Pendiente en dispositivo**: instalar v33 y probar el mismo episodio de Chapulín/otro episodio VidHide. Revisar `[VH-Pro] probe hls4`, posible `probe hls4 redirect -> ...`, URL de `emit hls4` y respuesta a la solicitud del player. El log de entrada no contiene el error de reproducción posterior, así que el fix aún debe confirmarse en dispositivo.
 
+## SeriesKao — interceptar VidHide hls4 en `/stream/` (3 Nov 2026 v34)
+- **Logs v33 del usuario**: Chapulín obtiene VidHide hls4 como `https://morencius.com/stream/.../master.m3u8` y emite el link; el usuario reporta `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)` al reproducir. El extractor `getVideoInterceptor` solo reconocía dominios CDN y rutas `/hls2/`, `/hls3/`, `.urlset/`, por lo que la URL hls4 `/stream/` quedaba fuera y no recibía el tratamiento de headers ni los logs de respuesta del interceptor.
+- **Fix v34**: añadir `/stream/` a las rutas interceptadas para que el master hls4 y sus segmentos reciban UA, Referer, Origin y Accept. Preservar el `Origin` que ya lleva el request (derivado del host espejo) y usar `https://vidhidepro.com` solo como fallback. Se conserva el probe de redirects de v33.
+- **Titán Sim-Biónico sigue siendo un caso distinto**: API y router funcionan, pero `embed69.org/video/tt1709198-1x01/` no tiene `dataLink` ni `playServerVast`; no se emite ningún servidor. Este cambio no resuelve esa página. Hace falta identificar su player/API dinámico antes de añadir un extractor fiable.
+- Versiones a **34** (`SeriesKaoProvider/build.gradle.kts` y `plugins.json`); `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ **Pendiente en dispositivo**: instalar v34 y probar el mismo episodio de Chapulín; confirmar que aparece `[intercept] CDN request` para `/stream/` y observar `[intercept] CDN response` para el master/segmentos. Titán continúa pendiente de inspección de Embed69.
+
+## SeriesKao — fallback WebView y descubrimiento de servidores Embed69 (3 Nov 2026 v35)
+- **Aclaración del usuario**: Embed69 sí muestra tres servidores reproducibles para Titán Sim-Biónico: DoodStream, VidHide y StreamWish. El diagnóstico v32/34 de “no `dataLink` ni `playServerVast`” describe solo el HTML inicial que recibe `app.get`; no demuestra que los servidores no existan en el player renderizado.
+- **Fix v35**: al faltar ambos formatos, buscar URLs conocidas de DoodStream, VidHide y StreamWish en atributos/HTML estático; si no aparecen, abrir la página en WebView y repetir la búsqueda sobre el DOM renderizado. Los candidatos se pasan a `loadKaoSourceExtractor`, incluyendo el mapeo normal de hosts. Se añaden logs de conteo/lista de servidores descubiertos y scripts/iframes si no se encuentra ninguno.
+- `SeriesKaoProvider/build.gradle.kts` y `plugins.json` pasan a v35; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ **Pendiente en dispositivo**: probar Titán T1E1. Buscar `servidores en HTML inicial`, `WebView HTML`, `servidores tras WebView` y `loadLinks FIN`; comprobar que se emiten los tres servidores y reproducir cada uno. La disponibilidad del WebView para esta página todavía no está confirmada.
+
+## SeriesKao — importar Jsoup para fallback Embed69 (3 Nov 2026 v36)
+- Corregido el error de compilación reportado en `SerieskaoExtractors.kt`: faltaba `import org.jsoup.Jsoup` para `findServerUrls`. La falta del símbolo impedía inferir el tipo de `element` y resolver `attr`.
+- Versiones a **36** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ Pendiente compilar por el usuario y probar Titán T1E1 en dispositivo, verificando la detección de servidores en el HTML inicial/WebView.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.
