@@ -3779,3 +3779,10 @@ Cascada de 3 fases (timeout total 60000ms):
 - El filtro usa el slug de `/tv/paises/<slug>` y el log informa países encontrados/seleccionados. Para cambiar el conjunto, editar únicamente `homeCountrySlugs`.
 - Versiones v5 en `CxtvProvider/build.gradle.kts` y entrada del provider en `plugins.json`; `fileSize` pendiente. Compilación no ejecutada. Comando: ` .\gradlew.bat :CxtvProvider:make --console=plain -q`.
 - Pendiente probar v5 en dispositivo y confirmar filas y tiempos de carga.
+
+## SoloLatinoProvider — fallback WebView de Embed69 (3 Nov 2026 v38)
+- Los logs del dispositivo (v37) confirman que el WebView sí resuelve los dos tokens de `/api/player-url`. El servidor `player.pelisserieshoy.com` responde 200 pero no emite; `embed69.org` devuelve HTTP 502 con página de Cloudflare sin `dataLink`; el resultado es `total emitidos=0`.
+- Se añadió recuperación solo en la rama Embed69: si falta `dataLink` y el GET nativo devuelve 502 o el challenge `Just a moment`, renderizar la URL con `renderViaWebView()` esperando `dataLink`, `POW_CHALLENGE` y `POW_SALT`. El HTML renderizado vuelve a pasar por el parseo existente y sigue PoW → AES → extractores.
+- `SoloLatinoProvider/build.gradle.kts` y `plugins.json` pasan de v37 a v38; `fileSize` pendiente hasta generar el artefacto.
+- Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SoloLatinoProvider:make --console=plain -q`.
+- Pendiente probar v38 en Looney Tunes T1E1. Esperado: `embed69 - respuesta bloqueada`, luego `WebView HTML ... dataLink=true`, `PoW solved` y `loadLinks EMIT`. Si WebView también queda en 502, la fuente sigue bloqueada en esa red.

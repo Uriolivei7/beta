@@ -496,10 +496,29 @@ class SoloLatinoProvider : MainAPI() {
                         "Referer" to fixedSrc,
                     )
                     val embedResp = app.get(fixedSrc, headers = embed69Headers, timeout = 30L)
-                    Log.d("SoloLatino", "embed69 - HTTP ${embedResp.code}, length=${embedResp.text.length}")
-                    val embedDoc = embedResp.document
-                    val dataLinkScript = embedDoc.select("script")
+                    var embedHtml = embedResp.text
+                    var embedDoc = embedResp.document
+                    Log.d("SoloLatino", "embed69 - HTTP ${embedResp.code}, length=${embedHtml.length}")
+                    var dataLinkScript = embedDoc.select("script")
                         .firstOrNull { it.html().contains("dataLink =") }
+                    if (dataLinkScript == null && (embedResp.code == 502 || embedHtml.contains("Just a moment", true))) {
+                        Log.w("SoloLatino", "embed69 - respuesta bloqueada; intentando recuperar HTML con WebView")
+                        val browserHtml = renderViaWebView(
+                            pageUrl = fixedSrc,
+                            referer = targetUrl,
+                            waitMs = 12000L,
+                            readyJs = "h.includes('dataLink =')&&h.includes('POW_CHALLENGE')&&h.includes('POW_SALT')"
+                        )
+                        if (!browserHtml.isNullOrBlank()) {
+                            embedHtml = browserHtml
+                            embedDoc = Jsoup.parse(embedHtml, fixedSrc)
+                            dataLinkScript = embedDoc.select("script")
+                                .firstOrNull { it.html().contains("dataLink =") }
+                            Log.d("SoloLatino", "embed69 - WebView HTML length=${embedHtml.length}, dataLink=${dataLinkScript != null}")
+                        } else {
+                            Log.w("SoloLatino", "embed69 - WebView no devolvió HTML")
+                        }
+                    }
                     if (dataLinkScript == null) {
                         Log.e("SoloLatino", "embed69 - No se encontró script con 'dataLink ='")
                         embedDoc.select("script").forEach { s ->
@@ -518,7 +537,7 @@ class SoloLatinoProvider : MainAPI() {
                         val serversList = tryParseJson<List<ServersByLang>>(dataLinkJson)
                             ?: resolveDataLinkExpr(dataLinkJson)?.let { tryParseJson<List<ServersByLang>>(it) }
 
-                        val pageHtml = embedResp.text
+                        val pageHtml = embedHtml
                         val embedChallenge = Regex("""POW_CHALLENGE\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
                         val embedSalt = Regex("""POW_SALT\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
                         if (embedChallenge == null || embedSalt == null) {
