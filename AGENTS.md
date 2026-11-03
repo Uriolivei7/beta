@@ -923,6 +923,18 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Compilación**: pendiente por el usuario (`.\\gradlew.bat :SerieskaoProvider:make --console=plain -q`); no ejecutada por regla del repo.
 - **Pendiente en dispositivo**: instalar v30 y probar Chapulín T1E12; esperar `episode API HTTP 200, iframe=true`, `dataLink`, PoW resuelto y links emitidos. Fuentes web revisadas: `/themes/serieskao/ficha.js?v=3`, `/api/episodio/serie/el-chapulin-colorado-1973/1/12`, `/vidurl/tt0229888-1x12/`.
 
+## SeriesKao — conservar host espejo VidHide (3 Nov 2026 v31)
+- El usuario reporta “enlaces no encontrados”. El código local v30 ya resuelve episodios mediante `/api/episodio/...` cuando la ficha no trae iframe y tiene logs por etapa (`episode API HTTP`, `iframe`, `dataLink`, PoW, hosts y total por extractor). Aún no hay logs del dispositivo para confirmar si el fallo está en esa ruta o al extraer las fuentes.
+- Revisión de VidHide encontró que las URLs espejo se normalizaban a `vidhidepro.com` antes de cargarse, mientras SoloLatino conserva el host original porque el host canónico presenta fallos TLS. Ahora SeriesKao preserva hosts VidHide espejo (`morencius`, `minochinos`, `mivalyo`, `dinisglows`, `dhtpre`), los procesa con su extractor, construye `/stream/...` usando el origen espejo y reintenta el canónico si el espejo no extrae. `Origin` ahora usa esquema + host, sin `/embed`.
+- `SeriesKaoProvider/build.gradle.kts` y `plugins.json` pasan de v30 a v31; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- Pendiente instalar v31 y probar un episodio fallido. Si sigue “enlaces no encontrados”, compartir logs filtrados por `SeriesKao` desde `loadLinks data` hasta el total final; en especial API HTTP/iframe, `dataLink`, PoW, URLs decrypted y `loadKaoSourceExtractor ... 0 links`.
+
+## SeriesKao — instrumentación de diagnóstico loadLinks (3 Nov 2026 v32)
+- Añadidos logs de inicio y cierre con cantidad real de links entregados al callback de CloudStream, y por cada emisión: source, nombre, tipo, calidad y host.
+- La ficha registra HTTP/cantidad de HTML; el flujo del router registra hash/ruta, respuesta API (HTTP, JSON parseado, `success`, longitud de `html`, iframe), y el player registra HTTP/longitud. Se añaden idioma/conteo de embeds, fallos de descifrado y total de URLs descifradas. El PoW registra presencia y longitudes del challenge/salt, sin imprimir sus valores.
+- Versiones v32 en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- Pendiente instalar v32 y reproducir un episodio que dé “enlaces no encontrados”. Capturar las líneas `SeriesKao` desde `loadLinks START` hasta `loadLinks FIN`; ese intervalo distinguirá ausencia de hash/iframe, fallo API, falta de `dataLink`, PoW, descifrado o cero emisiones.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.

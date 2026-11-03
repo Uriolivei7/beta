@@ -117,6 +117,15 @@ fun fixHostsLinks(url: String): String {
         .replaceFirst("https://streamtape.com", "https://streamtape.cc")
 }
 
+private val kaoVidHideMirrorHosts = setOf(
+    "morencius.com", "minochinos.com", "mivalyo.com", "dinisglows.com", "dhtpre.com"
+)
+
+fun fixHostsLinksPreservingVidHide(url: String): String {
+    val host = runCatching { java.net.URL(url).host.lowercase() }.getOrDefault("")
+    return if (host in kaoVidHideMirrorHosts) url else fixHostsLinks(url)
+}
+
 data class KaoServer(
     @JsonProperty("servername") val servername: String? = null,
     @JsonProperty("link") val link: String? = null,
@@ -813,7 +822,8 @@ private suspend fun tryVidHideProExtraction(
         val vidHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Referer" to url,
-            "Origin" to url.substringBeforeLast("/"),
+            "Origin" to runCatching { java.net.URL(url).let { "${it.protocol}://${it.host}" } }
+                .getOrDefault("https://vidhidepro.com"),
         )
 
         data class Variant(val key: String, val url: String)
@@ -824,7 +834,9 @@ private suspend fun tryVidHideProExtraction(
         val resolved = orderedKeys.mapNotNull { key ->
             var u = linksMap[key] ?: return@mapNotNull null
             if (u.startsWith("/")) {
-                u = "https://vidhidepro.com$u"
+                val origin = runCatching { java.net.URL(url).let { "${it.protocol}://${it.host}" } }
+                    .getOrDefault("https://vidhidepro.com")
+                u = "$origin$u"
                 Log.d(KAO_TAG, "[VH-Pro] relative URL, prepended base: ${u.take(120)}")
             }
             Variant(key, u)
@@ -992,11 +1004,22 @@ suspend fun loadKaoSourceExtractor(
         }
     }
 
-    val domain = try { java.net.URL(url).host } catch (_: Exception) { "" }
+    val domain = try { java.net.URL(url).host.lowercase() } catch (_: Exception) { "" }
+    val vidHideHosts = kaoVidHideMirrorHosts + "vidhidepro.com"
     val customHandled = when {
-        domain.contains("vidhidepro") -> tryVidHideProExtraction(url, referer ?: url, source, subtitleCallback) { link ->
-            count++
-            outerScope.launch { callback.invoke(link) }
+        domain in vidHideHosts -> {
+            val emitVidHide: (ExtractorLink) -> Unit = { link ->
+                count++
+                outerScope.launch { callback.invoke(link) }
+            }
+            val directOk = tryVidHideProExtraction(url, referer ?: url, source, subtitleCallback, emitVidHide)
+            if (!directOk && domain != "vidhidepro.com") {
+                val canonical = fixHostsLinks(url)
+                Log.w(KAO_TAG, "[VH-Pro] mirror falló; intentando host canónico: ${canonical.take(120)}")
+                tryVidHideProExtraction(canonical, referer ?: url, source, subtitleCallback, emitVidHide)
+            } else {
+                directOk
+            }
         }
         domain.contains("voe.sx") -> tryVoeExtraction(url, referer ?: url, subtitleCallback) { link ->
             count++
@@ -1130,7 +1153,7 @@ suspend fun extractKaoEmbed69(
             }
             Log.d(KAO_TAG, "embed69 - servers=${serverUrls.size}: $serverUrls")
             serverUrls.amap { serverUrl ->
-                loadKaoSourceExtractor("embed69", fixHostsLinks(serverUrl), embedUrl, subtitleCallback, callback)
+                loadKaoSourceExtractor("embed69", fixHostsLinksPreservingVidHide(serverUrl), embedUrl, subtitleCallback, callback)
             }
             return
         }
@@ -1173,7 +1196,7 @@ suspend fun extractKaoEmbed69(
                 val decryptedUrl = decryptAESLocal(encrypted, aesKey)
                 if (decryptedUrl != null) {
                     Log.d(KAO_TAG, "embed69 - decrypted: ${decryptedUrl.take(100)}")
-                    loadKaoSourceExtractor(langTag, fixHostsLinks(decryptedUrl), embedUrl, subtitleCallback, callback)
+                    loadKaoSourceExtractor(langTag, fixHostsLinksPreservingVidHide(decryptedUrl), embedUrl, subtitleCallback, callback)
                 } else {
                     Log.w(KAO_TAG, "embed69 - decrypt null para $encrypted")
                 }
