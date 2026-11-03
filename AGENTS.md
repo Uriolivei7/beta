@@ -3786,3 +3786,9 @@ Cascada de 3 fases (timeout total 60000ms):
 - `SoloLatinoProvider/build.gradle.kts` y `plugins.json` pasan de v37 a v38; `fileSize` pendiente hasta generar el artefacto.
 - Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SoloLatinoProvider:make --console=plain -q`.
 - Pendiente probar v38 en Looney Tunes T1E1. Esperado: `embed69 - respuesta bloqueada`, luego `WebView HTML ... dataLink=true`, `PoW solved` y `loadLinks EMIT`. Si WebView también queda en 502, la fuente sigue bloqueada en esa red.
+## SoloLatinoProvider — fallback WebView para VidHidePro (3 Nov 2026 v39)
+- Los logs de Looney Tunes T1E1 y El increíble mundo de Gumball T1E1 muestran que la reproducción sí funciona por VOE y StreamWish: se emiten enlaces y el interceptor recibe HTTP 200 para el manifiesto y segmentos. VidHidePro (`morencius.com` → `vidhidepro.com/embed/...`) falla con `SSLHandshakeException: connection closed`/timeout; `loadExtractor` tampoco emite.
+- Se añadió un fallback solo para VidHidePro: si el GET nativo no responde con 2xx o no se puede desempaquetar el player, renderizar `/embed/...` con `renderViaWebView()`, esperar marcadores HLS y volver a desempaquetar el HTML. Si tampoco funciona, permanecen los fallbacks existentes y los otros servidores no se bloquean.
+- `SoloLatinoProvider/build.gradle.kts` y `plugins.json` pasan de v38 a v39; `fileSize` pendiente hasta generar el artefacto.
+- Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :SoloLatinoProvider:make --console=plain -q`.
+- Pendiente probar v39 en los dos episodios: buscar `[VH-Pro] GET nativo falló`, `[VH-Pro] WebView len=..., unpacked=true` y `[VH-Pro] emitted N variants`. Si ambos perfiles de red fallan, VOE/StreamWish siguen siendo enlaces válidos; el fallo queda limitado al host VidHidePro.

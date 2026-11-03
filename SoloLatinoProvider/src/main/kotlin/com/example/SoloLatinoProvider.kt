@@ -1266,17 +1266,34 @@ private suspend fun tryVidHideProExtraction(
             "Accept" to "*/*",
             "Referer" to referer,
         )
-        val res = app.get(url, headers = headers, timeout = 20L)
-        if (!res.isSuccessful) {
-            Log.w("SoloLatino", "[VH-Pro] HTTP ${res.code}")
-            return false
+        var html: String? = null
+        try {
+            val res = app.get(url, headers = headers, timeout = 20L)
+            if (res.isSuccessful) {
+                html = res.text
+                Log.d("SoloLatino", "[VH-Pro] HTTP 200 len=${html.length}")
+            } else {
+                Log.w("SoloLatino", "[VH-Pro] HTTP ${res.code}; probaré WebView")
+            }
+        } catch (e: Exception) {
+            Log.w("SoloLatino", "[VH-Pro] GET nativo falló (${e.message}); probaré WebView")
         }
-        val html = res.text
-        Log.d("SoloLatino", "[VH-Pro] HTTP 200 len=${html.length}")
 
-        val unpacked = unpackPackedJS(html)
+        var unpacked = html?.let { unpackPackedJS(it) }
         if (unpacked.isNullOrBlank()) {
-            Log.w("SoloLatino", "[VH-Pro] packer unpack failed")
+            Log.d("SoloLatino", "[VH-Pro] WebView fallback para cargar el player")
+            html = renderViaWebView(
+                pageUrl = url,
+                referer = referer,
+                waitMs = 12000L,
+                readyJs = "h.includes('hls2')||h.includes('hls3')||h.includes('hls4')||h.includes('.m3u8')"
+            )
+            unpacked = html?.let { unpackPackedJS(it) }
+            Log.d("SoloLatino", "[VH-Pro] WebView len=${html?.length ?: 0}, unpacked=${!unpacked.isNullOrBlank()}")
+        }
+        val pageHtml = html
+        if (pageHtml.isNullOrBlank() || unpacked.isNullOrBlank()) {
+            Log.w("SoloLatino", "[VH-Pro] player no disponible por HTTP ni WebView")
             return false
         }
         Log.d("SoloLatino", "[VH-Pro] unpacked len=${unpacked.length} snippet=${unpacked.take(200)}")
@@ -1356,7 +1373,7 @@ private suspend fun tryVidHideProExtraction(
         Log.d("SoloLatino", "[VH-Pro] emitted ${toEmit.size} variants")
 
         val seenSubs = mutableSetOf<String>()
-        scanHtmlForSubs(html, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
+        scanHtmlForSubs(pageHtml, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
         scanHtmlForSubs(unpacked, url.substringBeforeLast("/"), subtitleCallback, seenSubs)
         firstM3u8?.let { tryExtractSubsFromM3u8(it, url, subtitleCallback) }
         true
