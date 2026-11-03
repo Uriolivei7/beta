@@ -569,7 +569,12 @@ class SoloLatinoProvider : MainAPI() {
                                 val decryptedUrl = decryptAESLocal(encrypted, aesKey)
                                 if (decryptedUrl != null) {
                                     Log.d("SoloLatino", "embed69 - decrypted: ${decryptedUrl.take(100)}")
-                                    loadSourceNameExtractor(langTag, fixHostsLinks(decryptedUrl), fixedSrc, countingSub, countingCallback)
+                                    val normalizedUrl = fixHostsLinks(decryptedUrl)
+                                    val originalHost = try { java.net.URL(decryptedUrl).host.lowercase() } catch (_: Exception) { "" }
+                                    val vidHideAliases = setOf("morencius.com", "minochinos.com", "mivalyo.com", "dinisglows.com", "dhtpre.com")
+                                    
+                                    val sourceUrl = if (originalHost in vidHideAliases) decryptedUrl else normalizedUrl
+                                    loadSourceNameExtractor(langTag, sourceUrl, fixedSrc, countingSub, countingCallback)
                                 } else {
                                     Log.w("SoloLatino", "embed69 - decrypt null para $encrypted")
                                 }
@@ -1106,12 +1111,22 @@ suspend fun loadSourceNameExtractor(
         }
     }
 
-    val knownHosts = listOf("vidhidepro.com", "voe.sx", "streamwish.to")
     val domain = try { java.net.URL(url).host } catch (_: Exception) { "" }
+    val vidHideHosts = setOf("vidhidepro.com", "morencius.com", "minochinos.com", "mivalyo.com", "dinisglows.com", "dhtpre.com")
     val customHandled = when {
-        domain.contains("vidhidepro") -> tryVidHideProExtraction(url, referer ?: url, source, subtitleCallback) { link ->
-            count++
-            outerScope.launch { callback.invoke(link) }
+        domain in vidHideHosts -> {
+            val emitVidHide: (ExtractorLink) -> Unit = { link ->
+                count++
+                outerScope.launch { callback.invoke(link) }
+            }
+            val directOk = tryVidHideProExtraction(url, referer ?: url, source, subtitleCallback, emitVidHide)
+            if (!directOk && domain != "vidhidepro.com") {
+                val canonical = fixHostsLinks(url)
+                Log.w("SoloLatino", "[VH-Pro] mirror falló; intentando host canónico: ${canonical.take(120)}")
+                tryVidHideProExtraction(canonical, referer ?: url, source, subtitleCallback, emitVidHide)
+            } else {
+                directOk
+            }
         }
         domain.contains("voe.sx") -> tryVoeExtraction(url, referer ?: url, subtitleCallback) { link ->
             count++
@@ -1327,7 +1342,8 @@ private suspend fun tryVidHideProExtraction(
         val vidHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Referer" to url,
-            "Origin" to url.substringBeforeLast("/"),
+            "Origin" to runCatching { java.net.URL(url).let { "${it.protocol}://${it.host}" } }
+                .getOrDefault("https://vidhidepro.com"),
         )
 
         data class Variant(val key: String, val url: String)
@@ -1338,7 +1354,9 @@ private suspend fun tryVidHideProExtraction(
         val resolved = orderedKeys.mapNotNull { key ->
             var u = linksMap[key] ?: return@mapNotNull null
             if (u.startsWith("/")) {
-                u = "https://vidhidepro.com$u"
+                val origin = runCatching { java.net.URL(url).let { "${it.protocol}://${it.host}" } }
+                    .getOrDefault("https://vidhidepro.com")
+                u = "$origin$u"
                 Log.d("SoloLatino", "[VH-Pro] relative URL, prepended base: ${u.take(120)}")
             }
             Variant(key, u)
