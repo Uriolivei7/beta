@@ -167,7 +167,10 @@ internal suspend fun tryVidHideProExtractDanimados(
             var u = linksMap[key] ?: return@mapNotNull null
             if (u.startsWith("//")) u = "https:$u"
             if (u.startsWith("/")) {
-                u = "https://vidhidepro.com$u"
+                
+                val origin = runCatching { java.net.URL(url).let { "${it.protocol}://${it.host}" } }
+                    .getOrDefault("https://vidhidepro.com")
+                u = "$origin$u"
                 Log.d(DANI_TAG, "[VH-Pro] relative URL, prepended base: ${u.take(120)}")
             }
             Variant(key, u)

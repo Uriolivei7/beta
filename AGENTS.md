@@ -3806,3 +3806,8 @@ Cascada de 3 fases (timeout total 60000ms):
 - Corregido `Origin` de las solicitudes VidHide para que contenga solo protocolo y host, sin el path `/embed`.
 - Versiones v15 en `DanimadosProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :DanimadosProvider:make --console=plain -q`.
 - Pendiente instalar y probar v15. Revisar `[VH-Pro] probe hls4 redirect -> 200`; comparar fluidez de hls4 redirigido y hls2 con el mismo episodio. Si el destino no es accesible, la URL original queda visible para selección manual, aunque su reproducción dependerá del acceso de red a VidHide.
+
+## DanimadosProvider — usar el host espejo como base de hls4 (3 Nov 2026 v16)
+- Comparación con SoloLatino: ambos desempaquetan VidHide igual, pero SoloLatino resuelve `/stream/...` con el host original (`morencius.com`), mientras Danimados anteponía `vidhidepro.com`. Los logs Danimados confirman que la página fuente `minochinos.com` responde 200 pero el reproductor falla al conectar a `vidhidepro.com` por TLS; SoloLatino obtiene streams bajo el host espejo.
+- Corregido el armado de rutas relativas para usar el origen de la página espejo (`minochinos.com`, `morencius.com`, etc.), manteniendo la resolución de redirecciones y el fallback seleccionable de v15. Versiones v16 en Gradle y `plugins.json`; `fileSize` pendiente.
+- Compilación no ejecutada por regla del repo. Comando: ` .\gradlew.bat :DanimadosProvider:make --console=plain -q`. Pendiente instalar v16 y revisar que hls4 salga como `https://minochinos.com/stream/...` y cargue manifiesto/segmentos; comparar con hls2 en fluidez.
