@@ -446,6 +446,17 @@ class SerieskaoProvider : MainAPI() {
                 ?: Regex("""dataLink\s*=\s*([^;]+);""", RegexOption.DOT_MATCHES_ALL)
                     .find(html)?.groupValues?.get(1)?.let { resolveDataLinkExpr(it) }
 
+        fun logPlayerShape(label: String, html: String) {
+            val doc = org.jsoup.Jsoup.parse(html, playerUrl)
+            val inlineScripts = doc.select("script:not([src])").map { it.data().ifBlank { it.html() } }
+                .filter { it.isNotBlank() }
+            Log.d(TAG, "loadLinks $label title='${doc.title().take(120)}' body='${doc.body()?.text()?.take(450)}'")
+            Log.d(TAG, "loadLinks $label scripts=${doc.select("script").size} inline=${inlineScripts.size} iframes=${doc.select("iframe").size} dataLink=${html.contains("dataLink")} pow=${html.contains("POW_CHALLENGE")}/${html.contains("POW_SALT")} serverWords=${listOf("dood", "vidhide", "streamwish").filter { html.contains(it, true) }}")
+            inlineScripts.take(6).forEachIndexed { index, script ->
+                Log.d(TAG, "loadLinks $label inlineScript#$index len=${script.length} start='${script.take(220)}'")
+            }
+        }
+
         var rawMatch = extractDataLink(playerHtml)
         if (rawMatch == null || !playerHtml.contains("POW_CHALLENGE") || !playerHtml.contains("POW_SALT")) {
             Log.d(TAG, "loadLinks player sin dataLink/PoW; intentando WebView: $playerUrl")
@@ -458,6 +469,7 @@ class SerieskaoProvider : MainAPI() {
             if (!renderedHtml.isNullOrBlank()) {
                 val renderedMatch = extractDataLink(renderedHtml)
                 Log.d(TAG, "loadLinks player WebView len=${renderedHtml.length} dataLink=${renderedMatch != null} pow=${renderedHtml.contains("POW_CHALLENGE") && renderedHtml.contains("POW_SALT")}")
+                logPlayerShape("player WebView", renderedHtml)
                 if (renderedMatch != null) {
                     playerHtml = renderedHtml
                     rawMatch = renderedMatch
@@ -467,8 +479,8 @@ class SerieskaoProvider : MainAPI() {
             }
         }
         if (rawMatch == null) {
-            val playerDoc = org.jsoup.Jsoup.parse(playerHtml, playerUrl)
-            Log.e(TAG, "loadLinks sin dataLink (htmlLen=${playerHtml.length}, tienePOW=${playerHtml.contains("POW_CHALLENGE")}) scripts=${playerDoc.select("script[src]").map { it.attr("src") }.take(10)} iframes=${playerDoc.select("iframe[src]").map { it.attr("src") }.take(10)} -> loadExtractor directo")
+            logPlayerShape("player estático", playerHtml)
+            Log.e(TAG, "loadLinks sin dataLink tras HTTP/WebView (htmlLen=${playerHtml.length}) -> loadExtractor directo")
             loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, emitTracked)
             return@coroutineScope true
         }

@@ -972,6 +972,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones a **38** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - ⏸️ Pendiente compilar por el usuario y probar Titán T1E1: confirmar que el WebView del player interno encuentra `dataLink`/PoW.
 
+## SeriesKao — diagnóstico de forma del player Titán (3 Nov 2026 v39)
+- **Logs v38 del usuario**: `/vidurl/tt1709198-1x01/` responde HTTP 200 con 15184 caracteres. El fallback WebView se ejecuta, pero devuelve solo 2293 caracteres sin `dataLink`/PoW; el HTML estático no tiene scripts externos ni iframes. `loadExtractor` emite 0. La diferencia de longitudes sugiere que el contenido renderizado no es la página completa del player, pero falta ver qué contiene.
+- **Cambio v39**: registrar forma mínima del HTML estático y WebView: título, texto visible limitado a 450 caracteres, contadores de scripts/iframes, presencia de marcadores conocidos y hasta seis scripts inline limitados a 220 caracteres. Esto permite identificar error de acceso o formato alternativo sin volcar el HTML completo.
+- Versiones a **39** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ **Pendiente**: compilar e instalar v39; repetir Titán T1E1 y compartir líneas `loadLinks player WebView`, `player estático` e `inlineScript`. Con esos datos se podrá implementar el parser correcto del player que entrega `/vidurl/`.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.
