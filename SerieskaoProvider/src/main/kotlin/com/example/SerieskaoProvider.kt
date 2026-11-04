@@ -60,7 +60,7 @@ class SerieskaoProvider : MainAPI() {
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val cdnDomains = listOf("dramiyos", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "cyou")
+        val cdnDomains = listOf("dramiyos", "acek-cdn", "vidhidepro", "vidhide", "premilkyway", "cyou", "cdnsync.cloud")
         val cdnPaths = listOf("/hls2/", "/hls3/", ".urlset/", "/stream/")
         return Interceptor { chain ->
             val request = chain.request()

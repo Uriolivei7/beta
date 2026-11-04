@@ -995,6 +995,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones a **42** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - ⏸️ Pendiente compilar, seleccionar VidHide hls4 de Chapulín T1E3 y compartir `[intercept] HLS playlist`, cualquier `CDN network failure` y `playerError`. Esos datos identificarán si el index anuncia segmentos, si sus rutas fallan o si ExoPlayer rechaza el contenido. Titán ya resuelve los tres servidores en v41.
 
+## SeriesKao — incluir cdnsync en interceptor HLS (3 Nov 2026 v43)
+- **Logs v42 de Chapulín T1E1**: el master e index de VidHide HLS4 responden HTTP 200. La playlist anuncia como primer segmento una URL de `redirector.cdnsync.cloud`, host que no estaba en `cdnDomains`, por lo que la solicitud no pasaba por el interceptor ni quedaba registrada. StreamWish también muestra una URI en `tiktokcdn.com` (posible publicidad/segmento inyectado), dato separado del link VidHide.
+- **Cambio v43**: añadir `cdnsync.cloud` a `cdnDomains`, para registrar las respuestas de los segmentos del redirector y aplicar UA/Referer/Origin y los timeouts extendidos. Se preserva el `Origin` original del mirror.
+- Versiones a **43** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ Pendiente probar Chapulín T1E1 con HLS4 y revisar `[intercept] CDN request/response` para `redirector.cdnsync.cloud`, además del `playerError`. El status y tipo de contenido del redirector confirmarán si esa ruta explica el 2004.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.
