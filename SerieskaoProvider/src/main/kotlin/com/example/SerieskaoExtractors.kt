@@ -669,7 +669,7 @@ private const val DUMP_JS = "(function(){try{NativeBridge.onHtml(document.docume
 
 private val webViewMutex = Mutex()
 
-private suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, readyJs: String? = null): String? {
+internal suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, readyJs: String? = null): String? {
     webViewMutex.withLock {
         return withContext(Dispatchers.Main) {
         val appCtx = SerieskaoProvider.pluginContext?.applicationContext ?: run {

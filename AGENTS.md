@@ -960,6 +960,18 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones a **36** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - ⏸️ Pendiente compilar por el usuario y probar Titán T1E1 en dispositivo, verificando la detección de servidores en el HTML inicial/WebView.
 
+## SeriesKao — fallback WebView para el player interno (3 Nov 2026 v37)
+- **Logs v36 del usuario**: Titán T1E1 ahora llega a `https://serieskao.top/vidurl/tt1709198-1x01/` (HTTP 200, HTML 15184), pero no trae `dataLink` ni PoW en el HTML estático; `loadExtractor` termina con 0 links. El fallback WebView v35 solo estaba en la rama de Embed69 externo y no cubría este caso interno.
+- **Fix v37**: al faltar `dataLink` o `POW_CHALLENGE`/`POW_SALT`, renderizar el player interno con WebView y volver a parsear `dataLink`; usar el HTML renderizado si se encuentra. Logs muestran longitud, presencia de dataLink/PoW y scripts/iframes cuando sigue sin resolver.
+- **VidHide hls4**: el mismo log confirma HTTP 200 para master e `index-v1-a1.m3u8` vía interceptor. No contiene la solicitud/respuesta posterior que provoca 2004; el siguiente diagnóstico requiere las líneas `[intercept] CDN request/response` que siguen a la respuesta del index.
+- Versiones a **37** (`SeriesKaoProvider/build.gradle.kts` y `plugins.json`), `fileSize` pendiente. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ **Pendiente**: compilar, probar Titán T1E1 y confirmar `player WebView ... dataLink=true`; para hls4, pegar la secuencia del log desde `master.m3u8` hasta el primer error, incluidos los status HTTP de playlists/segmentos.
+
+## SeriesKao — visibilidad del renderer WebView (3 Nov 2026 v38)
+- Corregido `Cannot access renderViaWebView: it is private in file`: la función top-level pasa de `private` a `internal` para poder llamarse desde `SerieskaoProvider.kt`, manteniéndose encapsulada al módulo.
+- Versiones a **38** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ Pendiente compilar por el usuario y probar Titán T1E1: confirmar que el WebView del player interno encuentra `dataLink`/PoW.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.

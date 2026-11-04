@@ -432,7 +432,7 @@ class SerieskaoProvider : MainAPI() {
             return@coroutineScope true
         }
 
-        val playerHtml = try {
+        var playerHtml = try {
             val response = app.get(playerUrl, referer = data)
             Log.d(TAG, "loadLinks player HTTP ${response.code} len=${response.text.length} host=${runCatching { java.net.URL(playerUrl).host }.getOrDefault("?")}")
             response.text
@@ -441,11 +441,34 @@ class SerieskaoProvider : MainAPI() {
             return@coroutineScope false
         }
 
-        val rawMatch = Regex("""dataLink\s*=\s*(\[.*?\])\s*;""").find(playerHtml)?.groupValues?.get(1)
-            ?: Regex("""dataLink\s*=\s*([^;]+);""", RegexOption.DOT_MATCHES_ALL)
-                .find(playerHtml)?.groupValues?.get(1)?.let { resolveDataLinkExpr(it) }
+        fun extractDataLink(html: String): String? =
+            Regex("""dataLink\s*=\s*(\[.*?\])\s*;""").find(html)?.groupValues?.get(1)
+                ?: Regex("""dataLink\s*=\s*([^;]+);""", RegexOption.DOT_MATCHES_ALL)
+                    .find(html)?.groupValues?.get(1)?.let { resolveDataLinkExpr(it) }
+
+        var rawMatch = extractDataLink(playerHtml)
+        if (rawMatch == null || !playerHtml.contains("POW_CHALLENGE") || !playerHtml.contains("POW_SALT")) {
+            Log.d(TAG, "loadLinks player sin dataLink/PoW; intentando WebView: $playerUrl")
+            val renderedHtml = renderViaWebView(
+                pageUrl = playerUrl,
+                referer = data,
+                waitMs = 12000L,
+                readyJs = "h.includes('dataLink')&&h.includes('POW_CHALLENGE')&&h.includes('POW_SALT')"
+            )
+            if (!renderedHtml.isNullOrBlank()) {
+                val renderedMatch = extractDataLink(renderedHtml)
+                Log.d(TAG, "loadLinks player WebView len=${renderedHtml.length} dataLink=${renderedMatch != null} pow=${renderedHtml.contains("POW_CHALLENGE") && renderedHtml.contains("POW_SALT")}")
+                if (renderedMatch != null) {
+                    playerHtml = renderedHtml
+                    rawMatch = renderedMatch
+                }
+            } else {
+                Log.w(TAG, "loadLinks player WebView sin HTML")
+            }
+        }
         if (rawMatch == null) {
-            Log.e(TAG, "loadLinks sin dataLink (htmlLen=${playerHtml.length}, tienePOW=${playerHtml.contains("POW_CHALLENGE")}) -> loadExtractor directo")
+            val playerDoc = org.jsoup.Jsoup.parse(playerHtml, playerUrl)
+            Log.e(TAG, "loadLinks sin dataLink (htmlLen=${playerHtml.length}, tienePOW=${playerHtml.contains("POW_CHALLENGE")}) scripts=${playerDoc.select("script[src]").map { it.attr("src") }.take(10)} iframes=${playerDoc.select("iframe[src]").map { it.attr("src") }.take(10)} -> loadExtractor directo")
             loadExtractor(fixHostsTitle(playerUrl), data, subtitleCallback, emitTracked)
             return@coroutineScope true
         }
